@@ -1,0 +1,33 @@
+# Build
+/build
+
+# Dependencies
+
+# Executables
+*.out
+*.exe
+*.app
+
+# Libraries
+*.so
+*.a
+*.dll
+*.dylib
+
+# Object and Dependency files
+*.o
+*.obj
+*.lo
+*lai
+
+# CMake generated files
+CMakeCache.txt
+CMakeFiles
+cmake_install.cmake
+
+# IDE and editor files.
+*.vs
+*.sln
+*.suo
+*.vcxproj
+*.vcxproj.user

@@ -1,27 +1,41 @@
-#include <iostream>
-
 #include "SDL3/SDL.h"
+#include "SDL3/SDL_main.h"
+
 #include "vulkan/vulkan.h"
 
-static SDL_Window *window=NULL;
+static SDL_Window* window = NULL;
 
-SDL_AppResult SDL_APPInit(void **appstate, int argc, char *argv)
+int main(int argc, char* argv[])
 {
-        SDL_SetAppMetadata("Example renderer", "0.6", "com.voxov.rndr");
-        if (!SDL_Init(SDL_INIT_VIDEO))
-        {
-                SDL_Log("Couldn't init SDL, %s", SDL_GetError());
-                return SDL_APP_FAILURE;
-        }
+    if (!SDL_Init(SDL_INIT_VIDEO))
+    {
+        SDL_Log("ERR: Video init failed. %s", SDL_GetError());
+        return 1;
+    }
 
-        if (!SDL_CreateWindow("rndr", 640, 480, &window)){
-        {
-                SDL_Log("Couldn't create a window, %s", SDL_GetError());
-                return SDL_APP_FAILURE;
-        }
+    window = SDL_CreateWindow("voxov", 640, 480, SDL_WINDOW_VULKAN);
+    if (!window)
+    {
+        SDL_Log("ERR: Window creation failed. %s", SDL_GetError());
+        return 1;
+    }
 
-        return SDL_APP_CONTINUE;
+    bool running = true;
+    SDL_Event e;
+    while (running)
+    {
+        while(SDL_PollEvent(&e))
+        { 
+            if (e.type == SDL_EVENT_QUIT) 
+            {
+                running = false;
+            }
+        }
+    }
+
+    SDL_DestroyWindow(window);
+    SDL_Quit();
+
+    return 0;
 }
-
-
 

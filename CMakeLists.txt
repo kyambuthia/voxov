@@ -15,6 +15,9 @@ add_executable(${PROJECT_NAME} "${CMAKE_SOURCE_DIR}/src/main.cpp")
 
 target_include_directories(${PROJECT_NAME} PRIVATE ${Vulkan_INCLUDE_DIRS})
 
-target_link_libraries(${PROJECT_NAME} PRIVATE Vulkan::Vulkan SDL3::SDL3)
+target_link_libraries(${PROJECT_NAME} PRIVATE 
+	Vulkan::Vulkan 
+	SDL3::SDL3 
+)
 
 

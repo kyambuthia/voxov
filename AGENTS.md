@@ -4,62 +4,39 @@ This guide provides development practices, build commands, and coding standards 
 
 ## Build Commands
 
-### Basic Build
 ```bash
 # Clone with dependencies
 git clone --recurse-submodules github.com/kyambuthia/voxov.git && cd ./voxov
-
-# Or initialize submodules manually
 git submodule init && git submodule update
 
-# Build the project
+# Build project
 mkdir ./build && cd ./build
-cmake ..
-cmake --build .
-```
+cmake .. && cmake --build .
 
-### Build Options
-```bash
 # Configure build options
-cmake -DVOXOV_BUILD_TESTS=ON \
-      -DVOXOV_BUILD_EXAMPLES=ON \
-      -DVOXOV_ENABLE_ASSERTIONS=ON \
-      ..
+cmake -DVOXOV_BUILD_TESTS=ON -DVOXOV_BUILD_EXAMPLES=ON -DVOXOV_ENABLE_ASSERTIONS=ON ..
 
-# Build specific configuration
+# Build configurations
 cmake --build . --config Release
 cmake --build . --config Debug
-```
 
-### Testing
-```bash
-# Build and run tests
-cmake -DVOXOV_BUILD_TESTS=ON ..
-cmake --build .
-ctest --output-on-failure
+# Manual shader compilation (auto-compiled during build)
+glslc src/renderer/shaders/cube.vert -o cube.vert.spv
+glslc src/renderer/shaders/cube.frag -o cube.frag.spv
 
-# Run single test (when test framework is added)
-ctest -R <test_name> --output-on-failure
-```
+# Build and run tests (when tests are added)
+cmake -DVOXOV_BUILD_TESTS=ON .. && cmake --build . && ctest --output-on-failure
 
-### Linting and Formatting
-```bash
-# Format code with clang-format (using SDL's configuration)
+# Linting and formatting
 find . -name "*.cpp" -o -name "*.hpp" -o -name "*.c" -o -name "*.h" | xargs clang-format -i
-
-# Static analysis with clang-tidy
 cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ..
 run-clang-tidy -p .
-
-# Alternative: Check only specific files
 clang-tidy -p . src/main.cpp
 ```
 
 ## Code Style Guidelines
 
-### Formatting Standards
 Based on SDL's `.clang-format` configuration:
-
 - **Indentation**: 4 spaces (no tabs)
 - **Line Length**: No strict limit (ColumnLimit: 0)
 - **Pointer Alignment**: Right (`type * ptr` not `type* ptr`)
@@ -69,64 +46,54 @@ Based on SDL's `.clang-format` configuration:
 
 ### Naming Conventions
 ```cpp
-// Files: kebab-case for directories, camelCase/PascalCase for files
-src/main.cpp
-src/renderer/vulkanRenderer.cpp
-
+// Files: snake_case
+src/main.cpp, src/renderer/vulkan_app.cpp
 // Variables: snake_case
 static SDL_Window *window = nullptr;
-int window_width = 800;
-
 // Functions: snake_case for C, PascalCase for C++
 SDL_AppResult SDL_AppInit(void **appstate, int argc, char* argv[]);
 class VulkanRenderer { void InitializeDevice(); };
-
 // Constants: UPPER_SNAKE_CASE
 const int MAX_FRAMES_IN_FLIGHT = 3;
-
 // Classes/Structs: PascalCase
-class VulkanContext;
-struct VertexBuffer;
-
-// Private members: trailing underscore or m_ prefix
-class Renderer {
+class VulkanApp; struct Vertex; struct UniformBufferObject;
+// Private members: snake_case (no trailing underscore)
+class VulkanApp {
 private:
-    VkDevice device_;
-    int max_frames_;
+    VkInstance instance;
+    VkDevice device;
 };
 ```
 
-### Import and Include Style
+### Import, Types, and Memory Management
 ```cpp
 // System headers first
 #include <iostream>
 #include <vector>
-
+#include <cstdint>
+#include <memory>
 // External dependencies
 #include <vulkan/vulkan.h>
 #include "SDL3/SDL.h"
 #include "SDL3/SDL_main.h"
-
 // Project headers
-#include "renderer/vulkan_renderer.h"
-#include "utils/logger.h"
-```
+#include "renderer/vulkan_app.hpp"
 
-### Type Guidelines
-```cpp
-// Use standard C++ types
-#include <cstdint>
+// Use standard C++ types and smart pointers
 int32_t texture_width;
 uint64_t memory_size;
+std::unique_ptr<VulkanApp> vulkan_app;
 
-// Prefer smart pointers
-#include <memory>
-std::unique_ptr<VulkanRenderer> renderer;
-std::shared_ptr<Buffer> vertex_buffer;
+// Prefer RAII and smart pointers
+static std::unique_ptr<VulkanApp> vulkan_app = nullptr;
 
-// Use SDL and Vulkan native types where appropriate
-SDL_Window *window;
-VkDevice device;
+// Manual resource management for Vulkan objects
+void cleanup() {
+    if (instance != VK_NULL_HANDLE) {
+        vkDestroyInstance(instance, nullptr);
+        instance = VK_NULL_HANDLE;
+    }
+}
 ```
 
 ### Error Handling
@@ -140,34 +107,19 @@ SDL_AppResult InitializeVulkan() {
     return SDL_APP_CONTINUE;
 }
 
-// Use assertions for internal invariants
-#include <cassert>
-assert(device != VK_NULL_HANDLE && "Vulkan device must be valid");
+// Use exceptions for Vulkan errors
+try {
+    vulkan_app->init(window);
+} catch (const std::exception& e) {
+    SDL_Log("Vulkan initialization failed: %s", e.what());
+    return SDL_APP_FAILURE;
+}
 
 // Resource cleanup with RAII
-class VulkanBuffer {
-public:
-    ~VulkanBuffer() {
-        if (buffer_ != VK_NULL_HANDLE) {
-            vkDestroyBuffer(device_, buffer_, nullptr);
-        }
-    }
-};
-```
-
-### Memory Management
-```cpp
-// Prefer RAII and smart pointers
-class TextureManager {
-    std::unique_ptr<uint8_t[]> texture_data_;
-    std::vector<VkImage> images_;
-};
-
-// Manual resource management for Vulkan objects
-void Cleanup() {
-    if (shader_module_ != VK_NULL_HANDLE) {
-        vkDestroyShaderModule(device_, shader_module_, nullptr);
-        shader_module_ = VK_NULL_HANDLE;
+VulkanApp::~VulkanApp() {
+    if (device != VK_NULL_HANDLE) {
+        vkDeviceWaitIdle(device);
+        vkDestroyDevice(device, nullptr);
     }
 }
 ```
@@ -175,73 +127,40 @@ void Cleanup() {
 ### Code Organization
 ```cpp
 // File structure: declarations first, definitions second
-class VulkanRenderer {
+class VulkanApp {
 public:
-    bool Initialize();
-    void Shutdown();
-
+    void init(SDL_Window* window);
+    void cleanup();
 private:
-    VkInstance instance_ = VK_NULL_HANDLE;
-    VkDevice device_ = VK_NULL_HANDLE;
-    
-    bool CreateInstance();
-    bool CreateDevice();
+    VkInstance instance = VK_NULL_HANDLE;
+    VkDevice device = VK_NULL_HANDLE;
+    void create_instance();
+    void create_logical_device();
 };
-
-bool VulkanRenderer::Initialize() {
-    if (!CreateInstance()) return false;
-    if (!CreateDevice()) return false;
-    return true;
-}
-```
-
-### Comments and Documentation
-```cpp
-// Use clear, concise comments
-// Initialize SDL3 with video and audio subsystems
-if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_AUDIO) < 0) {
-
-// Document complex algorithms or non-obvious choices
-/* 
- * We use a double-buffered swap chain to avoid tearing while
- * maintaining compatibility with older hardware that doesn't support
- * mailbox present modes.
- */
 ```
 
 ### Platform-Specific Code
 ```cpp
-// Use preprocessor guards for platform-specific code
 #ifdef _WIN32
-    // Windows-specific code
-    #include <windows.h>
-#elif defined(__linux__)
-    // Linux-specific code
-    #include <pthread.h>
-#endif
-
-// Prefer cross-platform SDL abstractions when available
-SDL_Delay(16);  // instead of Sleep() or usleep()
+    target_link_libraries(${PROJECT_NAME} PRIVATE setupapi winmm)
+elseif(UNIX AND NOT APPLE)
+    target_link_libraries(${PROJECT_NAME} PRIVATE pthread dl)
+endif()
 ```
 
 ## Development Workflow
 
 1. **Before committing**: Run clang-format and clang-tidy
-2. **Testing**: Enable VOXOV_BUILD_TESTS when adding new features
+2. **Testing**: Currently no tests - add test framework before enabling VOXOV_BUILD_TESTS
 3. **Performance**: Profile with Release builds, use Debug for development
-4. **Documentation**: Update README.md for significant API changes
-5. **Dependencies**: Update submodules when SDL3 or other dependencies change
+4. **Dependencies**: Update submodules when SDL3 or other dependencies change
 
-## Vulkan-Specific Guidelines
+## Vulkan and SDL3 Guidelines
 
 - Always check VkResult return values
 - Use RAII wrappers for Vulkan objects when possible
-- Validate with VK_LAYER_KHRONOS_validation in Debug builds
 - Follow Vulkan naming conventions (CamelCase for structs, UPPER_CASE for enums)
 - Use descriptor sets and command buffers efficiently
-
-## SDL3 Integration
-
 - Use SDL3 callback-based application model (SDL_AppInit, SDL_AppIterate, SDL_AppQuit)
 - Handle SDL_AppEvent for input and window events
 - Leverage SDL's cross-platform abstractions for file I/O and threading

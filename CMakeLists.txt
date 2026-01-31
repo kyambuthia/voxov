@@ -33,6 +33,8 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/SDL" EXCLUDE_FROM_ALL)
 
 # Find packages
 find_package(Vulkan REQUIRED)
+find_package(glm REQUIRED)
+find_package(Vulkan COMPONENTS glslc REQUIRED)
 
 # Collect source files
 file(GLOB_RECURSE VOXOV_SOURCES 
@@ -49,11 +51,13 @@ add_executable(${PROJECT_NAME} ${VOXOV_SOURCES})
 target_include_directories(${PROJECT_NAME} PRIVATE
     ${CMAKE_SOURCE_DIR}/src
     ${Vulkan_INCLUDE_DIRS}
+    ${CMAKE_SOURCE_DIR}/dependencies/SDL/include
 )
 
 target_link_libraries(${PROJECT_NAME} PRIVATE
     Vulkan::Vulkan
     SDL3::SDL3
+    glm::glm
 )
 
 # Platform-specific linking
@@ -75,6 +79,31 @@ target_compile_definitions(${PROJECT_NAME} PRIVATE
     $<$<CONFIG:Release>:VOXOV_RELEASE>
     $<$<BOOL:${VOXOV_ENABLE_ASSERTIONS}>:VOXOV_ENABLE_ASSERTIONS>
 )
+
+# Shader compilation
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cube.vert.spv
+    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/renderer/shaders/cube.vert -o ${CMAKE_CURRENT_BINARY_DIR}/cube.vert.spv
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/renderer/shaders/cube.vert
+    VERBATIM
+)
+
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cube.frag.spv
+    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/renderer/shaders/cube.frag -o ${CMAKE_CURRENT_BINARY_DIR}/cube.frag.spv
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/renderer/shaders/cube.frag
+    VERBATIM
+)
+
+# Add shader target
+add_custom_target(shaders ALL
+    DEPENDS 
+    ${CMAKE_CURRENT_BINARY_DIR}/cube.vert.spv
+    ${CMAKE_CURRENT_BINARY_DIR}/cube.frag.spv
+)
+
+# Make main executable depend on shaders
+add_dependencies(${PROJECT_NAME} shaders)
 
 # Installation
 install(TARGETS ${PROJECT_NAME}

@@ -1,6 +1,7 @@
 #pragma once
 
 #include <memory>
+#include <array>
 #include <vector>
 #include <optional>
 #include <cstdint>
@@ -53,23 +54,23 @@ public:
 
 private:
     // Vulkan objects
-    VkInstance instance;
-    VkDebugUtilsMessengerEXT debug_messenger;
-    VkSurfaceKHR surface;
+    VkInstance instance = VK_NULL_HANDLE;
+    VkDebugUtilsMessengerEXT debug_messenger = VK_NULL_HANDLE;
+    VkSurfaceKHR surface = VK_NULL_HANDLE;
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
-    VkDevice device;
-    VkQueue graphics_queue;
-    VkQueue present_queue;
-    VkSwapchainKHR swap_chain;
+    VkDevice device = VK_NULL_HANDLE;
+    VkQueue graphics_queue = VK_NULL_HANDLE;
+    VkQueue present_queue = VK_NULL_HANDLE;
+    VkSwapchainKHR swap_chain = VK_NULL_HANDLE;
     std::vector<VkImage> swap_chain_images;
     std::vector<VkImageView> swap_chain_image_views;
-    VkFormat swap_chain_image_format;
-    VkExtent2D swap_chain_extent;
-    VkRenderPass render_pass;
-    VkDescriptorSetLayout descriptor_set_layout;
-    VkPipelineLayout pipeline_layout;
-    VkPipeline graphics_pipeline;
-    VkCommandPool command_pool;
+    VkFormat swap_chain_image_format = VK_FORMAT_UNDEFINED;
+    VkExtent2D swap_chain_extent{};
+    VkRenderPass render_pass = VK_NULL_HANDLE;
+    VkDescriptorSetLayout descriptor_set_layout = VK_NULL_HANDLE;
+    VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
+    VkPipeline graphics_pipeline = VK_NULL_HANDLE;
+    VkCommandPool command_pool = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> swap_chain_framebuffers;
     std::vector<VkCommandBuffer> command_buffers;
     
@@ -86,13 +87,13 @@ private:
     std::vector<void*> uniform_buffers_mapped;
     
     // Cube data
-    VkBuffer vertex_buffer;
-    VkDeviceMemory vertex_buffer_memory;
-    VkBuffer index_buffer;
-    VkDeviceMemory index_buffer_memory;
+    VkBuffer vertex_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory vertex_buffer_memory = VK_NULL_HANDLE;
+    VkBuffer index_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory index_buffer_memory = VK_NULL_HANDLE;
     
     // Descriptor sets
-    VkDescriptorPool descriptor_pool;
+    VkDescriptorPool descriptor_pool = VK_NULL_HANDLE;
     std::vector<VkDescriptorSet> descriptor_sets;
     
     // Window

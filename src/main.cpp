@@ -20,6 +20,8 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char* argv[]) {
         return SDL_APP_FAILURE;
     }
 
+    SDL_Log("SDL video driver: %s", SDL_GetCurrentVideoDriver());
+
     auto state = std::make_unique<AppState>();
     state->window = SDL_CreateWindow(
         "VOXOV - Vulkan Test",
@@ -32,9 +34,23 @@ SDL_AppResult SDL_AppInit(void **appstate, int argc, char* argv[]) {
         return SDL_APP_FAILURE;
     }
 
+    SDL_ShowWindow(state->window);
+    SDL_RaiseWindow(state->window);
+    SDL_Log("Window created: size=%dx%d flags=0x%lx", 800, 600, static_cast<unsigned long>(SDL_GetWindowFlags(state->window)));
+
+    int window_w = 0;
+    int window_h = 0;
+    int window_x = 0;
+    int window_y = 0;
+    SDL_GetWindowSize(state->window, &window_w, &window_h);
+    SDL_GetWindowPosition(state->window, &window_x, &window_y);
+    SDL_Log("Window actual: pos=%d,%d size=%dx%d", window_x, window_y, window_w, window_h);
+
     try {
+        SDL_Log("Game init begin");
         state->game = std::make_unique<Game>();
         state->game->init(state->window);
+        SDL_Log("Game init end");
     } catch (const std::exception& e) {
         SDL_Log("Vulkan initialization failed: %s", e.what());
         return SDL_APP_FAILURE;

@@ -31,4 +31,6 @@ void Game::tick() {
     if (vulkan_app) {
         vulkan_app->draw_frame();
     }
+
+    SDL_Delay(16);
 }

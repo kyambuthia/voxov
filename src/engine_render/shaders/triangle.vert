@@ -1,11 +1,22 @@
 #version 450
 
+layout(location = 0) out vec3 v_normal;
+layout(location = 1) out vec3 v_color;
+
 vec2 positions[3] = vec2[](
     vec2(0.0, -0.5),
     vec2(0.5, 0.5),
     vec2(-0.5, 0.5)
 );
 
+vec3 colors[3] = vec3[](
+    vec3(0.9, 0.5, 0.2),
+    vec3(0.2, 0.8, 0.4),
+    vec3(0.2, 0.5, 0.9)
+);
+
 void main() {
     gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
-}*** End Patch})}oops had no newline? need proper patch with newline; apply_patch failed? let's check. We'll reapply. 
+    v_normal = vec3(0.0, 0.0, 1.0);
+    v_color = colors[gl_VertexIndex];
+}

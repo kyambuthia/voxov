@@ -134,10 +134,31 @@ add_custom_command(
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.frag
     VERBATIM
 )
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/stylized_lighting.frag.spv
+    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/stylized_lighting.frag -o ${CMAKE_CURRENT_BINARY_DIR}/stylized_lighting.frag.spv
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/stylized_lighting.frag
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/palette_dither.frag.spv
+    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/palette_dither.frag -o ${CMAKE_CURRENT_BINARY_DIR}/palette_dither.frag.spv
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/palette_dither.frag
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/fullscreen.vert.spv
+    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/fullscreen.vert -o ${CMAKE_CURRENT_BINARY_DIR}/fullscreen.vert.spv
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/fullscreen.vert
+    VERBATIM
+)
 add_custom_target(game_shaders ALL
     DEPENDS
     ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
     ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv
+    ${CMAKE_CURRENT_BINARY_DIR}/stylized_lighting.frag.spv
+    ${CMAKE_CURRENT_BINARY_DIR}/palette_dither.frag.spv
+    ${CMAKE_CURRENT_BINARY_DIR}/fullscreen.vert.spv
 )
 add_dependencies(game game_shaders)
 

@@ -31,25 +31,26 @@ cmake --build .
 
 ## Build Targets
 
-- `game` is the new demo target.
-- `voxov` is the legacy target.
+- `voxov` is the engine demo target.
 
 ## Run
 
 From the build directory:
 
 ```bash
-./bin/game
+./bin/voxov
 ```
 
 Run server + client:
 
 ```bash
-./bin/game --server
-./bin/game --connect 127.0.0.1
+./bin/voxov --server
+./bin/voxov --connect 127.0.0.1
 ```
 
 ## Troubleshooting
 
+- If the window fails to open or the app exits immediately, ensure you have a working display
+  and Vulkan runtime. On Linux, verify `DISPLAY` (X11) or `WAYLAND_DISPLAY` is set.
 - If `glslc` is missing, install the Vulkan SDK and ensure it is in `PATH`.
 - If submodules are missing, re-run `git submodule update --init --recursive`.

@@ -1,10 +1,17 @@
 #include "engine/engine.hpp"
 
+#include <cstdio>
+
 void Engine::init(void *window_handle) {
     EnginePhysicsSettings settings{};
     physics.init(settings);
     net_client.init();
-    renderer.init(window_handle);
+    try {
+        renderer.init(window_handle);
+    } catch (const std::exception &e) {
+        std::fprintf(stderr, "Renderer init failed: %s\n", e.what());
+        throw;
+    }
 }
 
 void Engine::connect(const char *host, uint16_t port) {

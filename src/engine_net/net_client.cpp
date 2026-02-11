@@ -62,6 +62,9 @@ void NetClient::pump() {
 }
 
 void NetClient::send_input(const NetTickInput &input) {
+    if (!client || !peer) {
+        return;
+    }
     InputPacket packet{};
     packet.input = input;
     ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), 0);

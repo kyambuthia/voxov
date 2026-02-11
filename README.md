@@ -18,6 +18,10 @@ GLFW, ENet, fmt, spdlog, VMA (submodules)
 Setup and build instructions:
 - `docs/SETUP.md`
 
+## Notes
+
+- The `voxov` binary requires a working Vulkan runtime and window system (X11/Wayland).
+
 ## Building the project
 get all the dependencies at once with the --recurse-submodules option when cloning the project
 `git clone --recurse-submodules github.com/kyambuthia/voxov.git && cd ./voxoc`

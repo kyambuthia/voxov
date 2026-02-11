@@ -3,8 +3,35 @@
 
 #include <stdexcept>
 #include <fstream>
+#include <cstdio>
 
 static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
+
+static const char *vk_result_string(VkResult result) {
+    switch (result) {
+    case VK_SUCCESS: return "VK_SUCCESS";
+    case VK_NOT_READY: return "VK_NOT_READY";
+    case VK_TIMEOUT: return "VK_TIMEOUT";
+    case VK_EVENT_SET: return "VK_EVENT_SET";
+    case VK_EVENT_RESET: return "VK_EVENT_RESET";
+    case VK_INCOMPLETE: return "VK_INCOMPLETE";
+    case VK_ERROR_OUT_OF_HOST_MEMORY: return "VK_ERROR_OUT_OF_HOST_MEMORY";
+    case VK_ERROR_OUT_OF_DEVICE_MEMORY: return "VK_ERROR_OUT_OF_DEVICE_MEMORY";
+    case VK_ERROR_INITIALIZATION_FAILED: return "VK_ERROR_INITIALIZATION_FAILED";
+    case VK_ERROR_DEVICE_LOST: return "VK_ERROR_DEVICE_LOST";
+    case VK_ERROR_MEMORY_MAP_FAILED: return "VK_ERROR_MEMORY_MAP_FAILED";
+    case VK_ERROR_LAYER_NOT_PRESENT: return "VK_ERROR_LAYER_NOT_PRESENT";
+    case VK_ERROR_EXTENSION_NOT_PRESENT: return "VK_ERROR_EXTENSION_NOT_PRESENT";
+    case VK_ERROR_FEATURE_NOT_PRESENT: return "VK_ERROR_FEATURE_NOT_PRESENT";
+    case VK_ERROR_INCOMPATIBLE_DRIVER: return "VK_ERROR_INCOMPATIBLE_DRIVER";
+    case VK_ERROR_TOO_MANY_OBJECTS: return "VK_ERROR_TOO_MANY_OBJECTS";
+    case VK_ERROR_FORMAT_NOT_SUPPORTED: return "VK_ERROR_FORMAT_NOT_SUPPORTED";
+    case VK_ERROR_SURFACE_LOST_KHR: return "VK_ERROR_SURFACE_LOST_KHR";
+    case VK_ERROR_OUT_OF_DATE_KHR: return "VK_ERROR_OUT_OF_DATE_KHR";
+    case VK_SUBOPTIMAL_KHR: return "VK_SUBOPTIMAL_KHR";
+    default: return "VK_UNKNOWN_ERROR";
+    }
+}
 
 void VulkanRenderer::init(void *window_handle) {
     window = static_cast<GLFWwindow *>(window_handle);
@@ -109,8 +136,12 @@ void VulkanRenderer::end_frame() {
     uint32_t image_index = 0;
     VkResult result = vkAcquireNextImageKHR(
         device, swapchain, UINT64_MAX, image_available[frame_index], VK_NULL_HANDLE, &image_index);
-    if (result != VK_SUCCESS) {
-        throw std::runtime_error("failed to acquire swapchain image");
+    if (result == VK_ERROR_OUT_OF_DATE_KHR) {
+        return;
+    }
+    if (result != VK_SUCCESS && result != VK_SUBOPTIMAL_KHR) {
+        std::fprintf(stderr, "vkAcquireNextImageKHR failed: %s\n", vk_result_string(result));
+        return;
     }
 
     vkResetFences(device, 1, &in_flight[frame_index]);
@@ -127,7 +158,8 @@ void VulkanRenderer::end_frame() {
     submit.pSignalSemaphores = &render_finished[frame_index];
 
     if (vkQueueSubmit(graphics_queue, 1, &submit, in_flight[frame_index]) != VK_SUCCESS) {
-        throw std::runtime_error("failed to submit");
+        std::fprintf(stderr, "vkQueueSubmit failed\n");
+        return;
     }
 
     VkPresentInfoKHR present{};
@@ -137,7 +169,14 @@ void VulkanRenderer::end_frame() {
     present.swapchainCount = 1;
     present.pSwapchains = &swapchain;
     present.pImageIndices = &image_index;
-    vkQueuePresentKHR(present_queue, &present);
+    result = vkQueuePresentKHR(present_queue, &present);
+    if (result == VK_ERROR_OUT_OF_DATE_KHR || result == VK_SUBOPTIMAL_KHR) {
+        return;
+    }
+    if (result != VK_SUCCESS) {
+        std::fprintf(stderr, "vkQueuePresentKHR failed: %s\n", vk_result_string(result));
+        return;
+    }
 
     frame_index = (frame_index + 1) % MAX_FRAMES_IN_FLIGHT;
 }
@@ -150,6 +189,9 @@ void VulkanRenderer::create_instance() {
 
     uint32_t ext_count = 0;
     const char **exts = glfwGetRequiredInstanceExtensions(&ext_count);
+    if (!exts || ext_count == 0) {
+        throw std::runtime_error("glfwGetRequiredInstanceExtensions returned no extensions");
+    }
 
     VkInstanceCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;

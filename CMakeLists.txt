@@ -34,7 +34,6 @@ set(JPH_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(JPH_GENERATE_DEBUG_SYMBOLS OFF CACHE BOOL "" FORCE)
 
 # Dependencies
-add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/SDL" EXCLUDE_FROM_ALL)
 add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/JoltPhysics/Build" EXCLUDE_FROM_ALL)
 
 set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
@@ -89,11 +88,11 @@ add_library(engine STATIC
 target_include_directories(engine PUBLIC src)
 target_link_libraries(engine PUBLIC engine_core engine_render engine_physics engine_net)
 
-add_executable(game
+add_executable(voxov
     src/game/main.cpp
 )
-target_include_directories(game PRIVATE src)
-target_link_libraries(game PRIVATE
+target_include_directories(voxov PRIVATE src)
+target_link_libraries(voxov PRIVATE
     engine
     glfw
     Vulkan::Vulkan
@@ -138,81 +137,11 @@ add_custom_target(game_shaders ALL
     ${CMAKE_CURRENT_BINARY_DIR}/palette_dither.frag.spv
     ${CMAKE_CURRENT_BINARY_DIR}/fullscreen.vert.spv
 )
-add_dependencies(game game_shaders)
+add_dependencies(voxov game_shaders)
 
-# Legacy executable (existing project)
-file(GLOB_RECURSE VOXOV_SOURCES 
-    "${CMAKE_SOURCE_DIR}/src/*.cpp"
-    "${CMAKE_SOURCE_DIR}/src/*.c"
-    "${CMAKE_SOURCE_DIR}/src/*.hpp"
-    "${CMAKE_SOURCE_DIR}/src/*.h"
-)
-list(FILTER VOXOV_SOURCES EXCLUDE REGEX ".*/src/engine/.*")
-list(FILTER VOXOV_SOURCES EXCLUDE REGEX ".*/src/engine_.*")
-list(FILTER VOXOV_SOURCES EXCLUDE REGEX ".*/src/game/.*")
-add_executable(${PROJECT_NAME} ${VOXOV_SOURCES})
-
-# Target properties
-target_include_directories(${PROJECT_NAME} PRIVATE
-    ${CMAKE_SOURCE_DIR}/src
-    ${Vulkan_INCLUDE_DIRS}
-    ${CMAKE_SOURCE_DIR}/dependencies/SDL/include
-)
-
-target_link_libraries(${PROJECT_NAME} PRIVATE
-    Vulkan::Vulkan
-    SDL3::SDL3
-    glm::glm
-    Jolt
-)
-
-# Platform-specific linking
-if(WIN32)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        setupapi
-        winmm
-    )
-elseif(UNIX AND NOT APPLE)
-    target_link_libraries(${PROJECT_NAME} PRIVATE
-        pthread
-        dl
-    )
-endif()
-
-# Debug information
-target_compile_definitions(${PROJECT_NAME} PRIVATE
-    $<$<CONFIG:Debug>:VOXOV_DEBUG>
-    $<$<CONFIG:Release>:VOXOV_RELEASE>
-    $<$<BOOL:${VOXOV_ENABLE_ASSERTIONS}>:VOXOV_ENABLE_ASSERTIONS>
-)
-
-# Shader compilation
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cube.vert.spv
-    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/renderer/shaders/cube.vert -o ${CMAKE_CURRENT_BINARY_DIR}/cube.vert.spv
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/renderer/shaders/cube.vert
-    VERBATIM
-)
-
-add_custom_command(
-    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/cube.frag.spv
-    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/renderer/shaders/cube.frag -o ${CMAKE_CURRENT_BINARY_DIR}/cube.frag.spv
-    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/renderer/shaders/cube.frag
-    VERBATIM
-)
-
-# Add shader target
-add_custom_target(shaders ALL
-    DEPENDS 
-    ${CMAKE_CURRENT_BINARY_DIR}/cube.vert.spv
-    ${CMAKE_CURRENT_BINARY_DIR}/cube.frag.spv
-)
-
-# Make main executable depend on shaders
-add_dependencies(${PROJECT_NAME} shaders)
 
 # Installation
-install(TARGETS ${PROJECT_NAME}
+install(TARGETS voxov
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib

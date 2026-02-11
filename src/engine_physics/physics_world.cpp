@@ -83,7 +83,11 @@ void PhysicsWorld::init(const EnginePhysicsSettings &settings) {
     static ObjectLayerPairFilterImpl object_layer_pair;
 
     temp_allocator = new TempAllocatorImpl(10 * 1024 * 1024);
-    job_system = new JobSystemThreadPool(0, 0, std::thread::hardware_concurrency() - 1);
+    const uint32_t hw_threads = std::thread::hardware_concurrency();
+    const uint32_t worker_threads = hw_threads > 1 ? (hw_threads - 1) : 1;
+    constexpr uint32_t max_jobs = 1024;
+    constexpr uint32_t max_barriers = 1024;
+    job_system = new JobSystemThreadPool(max_jobs, max_barriers, worker_threads);
 
     auto *system = new PhysicsSystem();
     physics_system = system;

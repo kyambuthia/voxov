@@ -11,6 +11,7 @@ requirements to compile and build the vocov source.
 CMAKE
 Vulkan
 JoltPhysics (submodule)
+GLFW, ENet, fmt, spdlog, VMA (submodules)
 
 ## Docs
 

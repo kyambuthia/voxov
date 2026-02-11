@@ -25,9 +25,6 @@ private:
     void create_render_passes();
     void create_framebuffers();
     void create_pipeline();
-    void create_offscreen_targets();
-    void create_postprocess_pipeline();
-    void create_postprocess_descriptors();
     uint32_t find_memory_type(uint32_t type_filter, VkMemoryPropertyFlags properties);
     void create_command_pool();
     void create_command_buffers();
@@ -53,20 +50,9 @@ private:
     std::vector<VkImage> swapchain_images;
     std::vector<VkImageView> swapchain_image_views;
     VkRenderPass render_pass = VK_NULL_HANDLE;
-    VkRenderPass offscreen_render_pass = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers;
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
-    VkImage offscreen_image = VK_NULL_HANDLE;
-    VkDeviceMemory offscreen_memory = VK_NULL_HANDLE;
-    VkImageView offscreen_view = VK_NULL_HANDLE;
-    VkFramebuffer offscreen_framebuffer = VK_NULL_HANDLE;
-    VkSampler offscreen_sampler = VK_NULL_HANDLE;
-    VkDescriptorSetLayout post_desc_layout = VK_NULL_HANDLE;
-    VkDescriptorPool post_desc_pool = VK_NULL_HANDLE;
-    VkDescriptorSet post_desc_set = VK_NULL_HANDLE;
-    VkPipelineLayout post_pipeline_layout = VK_NULL_HANDLE;
-    VkPipeline post_pipeline = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> command_buffers;
 

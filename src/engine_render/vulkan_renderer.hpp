@@ -16,6 +16,8 @@ public:
 
 private:
     void create_instance();
+    void setup_debug_messenger();
+    void destroy_debug_messenger();
     void create_surface(GLFWwindow *window);
     void pick_physical_device();
     void create_device();
@@ -34,6 +36,7 @@ private:
 
     GLFWwindow *window = nullptr;
     VkInstance instance = VK_NULL_HANDLE;
+    VkDebugUtilsMessengerEXT debug_messenger = VK_NULL_HANDLE;
     VkSurfaceKHR surface = VK_NULL_HANDLE;
     VkPhysicalDevice physical_device = VK_NULL_HANDLE;
     VkDevice device = VK_NULL_HANDLE;
@@ -41,6 +44,9 @@ private:
     VkQueue present_queue = VK_NULL_HANDLE;
     uint32_t graphics_family = 0;
     uint32_t present_family = 0;
+
+    bool enable_validation_layers = false;
+    const char *validation_layers[1] = { "VK_LAYER_KHRONOS_validation" };
     VkSwapchainKHR swapchain = VK_NULL_HANDLE;
     VkFormat swapchain_format = VK_FORMAT_UNDEFINED;
     VkExtent2D swapchain_extent{};

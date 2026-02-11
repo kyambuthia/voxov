@@ -4,6 +4,8 @@
 #include <stdexcept>
 #include <fstream>
 #include <cstdio>
+#include <vector>
+#include <cstring>
 
 static constexpr uint32_t MAX_FRAMES_IN_FLIGHT = 2;
 
@@ -35,7 +37,9 @@ static const char *vk_result_string(VkResult result) {
 
 void VulkanRenderer::init(void *window_handle) {
     window = static_cast<GLFWwindow *>(window_handle);
+    enable_validation_layers = true;
     create_instance();
+    setup_debug_messenger();
     create_surface(window);
     pick_physical_device();
     create_device();
@@ -114,6 +118,7 @@ void VulkanRenderer::shutdown() {
     if (device != VK_NULL_HANDLE) {
         vkDestroyDevice(device, nullptr);
     }
+    destroy_debug_messenger();
     if (surface != VK_NULL_HANDLE) {
         vkDestroySurfaceKHR(instance, surface, nullptr);
     }
@@ -192,18 +197,92 @@ void VulkanRenderer::create_instance() {
     if (!exts || ext_count == 0) {
         throw std::runtime_error("glfwGetRequiredInstanceExtensions returned no extensions");
     }
+    std::vector<const char *> extensions(exts, exts + ext_count);
+    if (enable_validation_layers) {
+        extensions.push_back(VK_EXT_DEBUG_UTILS_EXTENSION_NAME);
+    }
+
+    uint32_t layer_count = 0;
+    vkEnumerateInstanceLayerProperties(&layer_count, nullptr);
+    std::vector<VkLayerProperties> layers(layer_count);
+    vkEnumerateInstanceLayerProperties(&layer_count, layers.data());
+    if (enable_validation_layers) {
+        bool found = false;
+        for (const auto &layer : layers) {
+            if (std::strcmp(layer.layerName, validation_layers[0]) == 0) {
+                found = true;
+                break;
+            }
+        }
+        if (!found) {
+            std::fprintf(stderr, "Validation layer not found; continuing without it\n");
+            enable_validation_layers = false;
+        }
+    }
 
     VkInstanceCreateInfo info{};
     info.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
     info.pApplicationInfo = &app;
-    info.enabledExtensionCount = ext_count;
-    info.ppEnabledExtensionNames = exts;
+    info.enabledExtensionCount = static_cast<uint32_t>(extensions.size());
+    info.ppEnabledExtensionNames = extensions.data();
+    if (enable_validation_layers) {
+        info.enabledLayerCount = 1;
+        info.ppEnabledLayerNames = validation_layers;
+    }
 
     if (vkCreateInstance(&info, nullptr, &instance) != VK_SUCCESS) {
         throw std::runtime_error("failed to create instance");
     }
 }
 
+static VKAPI_ATTR VkBool32 VKAPI_CALL debug_callback(
+    VkDebugUtilsMessageSeverityFlagBitsEXT severity,
+    VkDebugUtilsMessageTypeFlagsEXT type,
+    const VkDebugUtilsMessengerCallbackDataEXT *callback_data,
+    void *user_data) {
+    (void)type;
+    (void)user_data;
+    const char *sev =
+        (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT) ? "ERROR" :
+        (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT) ? "WARN" :
+        (severity & VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT) ? "INFO" : "VERBOSE";
+    std::fprintf(stderr, "Vulkan [%s]: %s\n", sev, callback_data->pMessage);
+    return VK_FALSE;
+}
+
+void VulkanRenderer::setup_debug_messenger() {
+    if (!enable_validation_layers) {
+        return;
+    }
+    VkDebugUtilsMessengerCreateInfoEXT info{};
+    info.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
+    info.messageSeverity =
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT;
+    info.messageType =
+        VK_DEBUG_UTILS_MESSAGE_TYPE_GENERAL_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_TYPE_VALIDATION_BIT_EXT |
+        VK_DEBUG_UTILS_MESSAGE_TYPE_PERFORMANCE_BIT_EXT;
+    info.pfnUserCallback = debug_callback;
+
+    auto create_fn = reinterpret_cast<PFN_vkCreateDebugUtilsMessengerEXT>(
+        vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT"));
+    if (create_fn && create_fn(instance, &info, nullptr, &debug_messenger) != VK_SUCCESS) {
+        std::fprintf(stderr, "Failed to create debug messenger\n");
+    }
+}
+
+void VulkanRenderer::destroy_debug_messenger() {
+    if (!debug_messenger) {
+        return;
+    }
+    auto destroy_fn = reinterpret_cast<PFN_vkDestroyDebugUtilsMessengerEXT>(
+        vkGetInstanceProcAddr(instance, "vkDestroyDebugUtilsMessengerEXT"));
+    if (destroy_fn) {
+        destroy_fn(instance, debug_messenger, nullptr);
+    }
+    debug_messenger = VK_NULL_HANDLE;
+}
 void VulkanRenderer::create_surface(GLFWwindow *window_handle) {
     if (glfwCreateWindowSurface(instance, window_handle, nullptr, &surface) != VK_SUCCESS) {
         throw std::runtime_error("failed to create surface");
@@ -267,8 +346,27 @@ void VulkanRenderer::create_swapchain() {
     VkSurfaceCapabilitiesKHR caps{};
     vkGetPhysicalDeviceSurfaceCapabilitiesKHR(physical_device, surface, &caps);
 
-    swapchain_extent = caps.currentExtent;
-    swapchain_format = VK_FORMAT_B8G8R8A8_SRGB;
+    if (caps.currentExtent.width != UINT32_MAX) {
+        swapchain_extent = caps.currentExtent;
+    } else {
+        int w = 0;
+        int h = 0;
+        glfwGetFramebufferSize(window, &w, &h);
+        swapchain_extent.width = static_cast<uint32_t>(w);
+        swapchain_extent.height = static_cast<uint32_t>(h);
+    }
+
+    uint32_t format_count = 0;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, nullptr);
+    std::vector<VkSurfaceFormatKHR> formats(format_count);
+    vkGetPhysicalDeviceSurfaceFormatsKHR(physical_device, surface, &format_count, formats.data());
+    swapchain_format = formats[0].format;
+    for (const auto &f : formats) {
+        if (f.format == VK_FORMAT_B8G8R8A8_SRGB && f.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR) {
+            swapchain_format = f.format;
+            break;
+        }
+    }
 
     VkSwapchainCreateInfoKHR info{};
     info.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
@@ -349,7 +447,7 @@ void VulkanRenderer::create_render_passes() {
     }
 
     VkAttachmentDescription offscreen_color = color;
-    offscreen_color.initialLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
+    offscreen_color.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
     offscreen_color.finalLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
 
     VkRenderPassCreateInfo offscreen_info = info;
@@ -566,46 +664,7 @@ void VulkanRenderer::create_offscreen_targets() {
         throw std::runtime_error("failed to create sampler");
     }
 
-    // Transition offscreen image to shader-read layout so the render pass can assume it.
-    VkCommandBufferAllocateInfo cmd_alloc{};
-    cmd_alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    cmd_alloc.commandPool = command_pool;
-    cmd_alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    cmd_alloc.commandBufferCount = 1;
-
-    VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device, &cmd_alloc, &cmd);
-
-    VkCommandBufferBeginInfo begin{};
-    begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
-    begin.flags = VK_COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT;
-    vkBeginCommandBuffer(cmd, &begin);
-
-    VkImageMemoryBarrier barrier{};
-    barrier.sType = VK_STRUCTURE_TYPE_IMAGE_MEMORY_BARRIER;
-    barrier.oldLayout = VK_IMAGE_LAYOUT_UNDEFINED;
-    barrier.newLayout = VK_IMAGE_LAYOUT_SHADER_READ_ONLY_OPTIMAL;
-    barrier.srcAccessMask = 0;
-    barrier.dstAccessMask = VK_ACCESS_SHADER_READ_BIT;
-    barrier.image = offscreen_image;
-    barrier.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-    barrier.subresourceRange.levelCount = 1;
-    barrier.subresourceRange.layerCount = 1;
-    vkCmdPipelineBarrier(
-        cmd,
-        VK_PIPELINE_STAGE_TOP_OF_PIPE_BIT,
-        VK_PIPELINE_STAGE_FRAGMENT_SHADER_BIT,
-        0, 0, nullptr, 0, nullptr, 1, &barrier);
-
-    vkEndCommandBuffer(cmd);
-
-    VkSubmitInfo submit{};
-    submit.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
-    submit.commandBufferCount = 1;
-    submit.pCommandBuffers = &cmd;
-    vkQueueSubmit(graphics_queue, 1, &submit, VK_NULL_HANDLE);
-    vkQueueWaitIdle(graphics_queue);
-    vkFreeCommandBuffers(device, command_pool, 1, &cmd);
+    // Layout transitions are handled by render passes.
 }
 
 void VulkanRenderer::create_postprocess_descriptors() {

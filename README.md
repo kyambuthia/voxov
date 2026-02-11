@@ -2,12 +2,20 @@
 voxov is a voxel game written with C++ using the vulkan API and SDL3.
 voxov is a learning project as i learn computer graphics.
 
+VOXOV is transitioning into a small, modern engine with Vulkan rendering, Jolt Physics,
+and ENet-based multiplayer.
+
 ## Requirements
 requirements to compile and build the vocov source.
 
 CMAKE
 Vulkan
 JoltPhysics (submodule)
+
+## Docs
+
+Setup and build instructions:
+- `docs/SETUP.md`
 
 ## Building the project
 get all the dependencies at once with the --recurse-submodules option when cloning the project

@@ -61,8 +61,10 @@ void VulkanRenderer::shutdown() {
     }
     for (size_t i = 0; i < image_available.size(); ++i) {
         vkDestroySemaphore(device, image_available[i], nullptr);
-        vkDestroySemaphore(device, render_finished[i], nullptr);
         vkDestroyFence(device, in_flight[i], nullptr);
+    }
+    for (size_t i = 0; i < render_finished.size(); ++i) {
+        vkDestroySemaphore(device, render_finished[i], nullptr);
     }
     if (post_pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, post_pipeline, nullptr);
@@ -166,8 +168,9 @@ void VulkanRenderer::end_frame() {
     submit.pWaitDstStageMask = &wait_stage;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &command_buffers[image_index];
+    VkSemaphore signal_semaphore = render_finished[image_index];
     submit.signalSemaphoreCount = 1;
-    submit.pSignalSemaphores = &render_finished[frame_index];
+    submit.pSignalSemaphores = &signal_semaphore;
 
     if (vkQueueSubmit(graphics_queue, 1, &submit, in_flight[frame_index]) != VK_SUCCESS) {
         std::fprintf(stderr, "vkQueueSubmit failed\n");
@@ -177,7 +180,7 @@ void VulkanRenderer::end_frame() {
     VkPresentInfoKHR present{};
     present.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
     present.waitSemaphoreCount = 1;
-    present.pWaitSemaphores = &render_finished[frame_index];
+    present.pWaitSemaphores = &signal_semaphore;
     present.swapchainCount = 1;
     present.pSwapchains = &swapchain;
     present.pImageIndices = &image_index;
@@ -847,7 +850,7 @@ void VulkanRenderer::create_command_buffers() {
 
 void VulkanRenderer::create_sync_objects() {
     image_available.resize(MAX_FRAMES_IN_FLIGHT);
-    render_finished.resize(MAX_FRAMES_IN_FLIGHT);
+    render_finished.resize(swapchain_images.size());
     in_flight.resize(MAX_FRAMES_IN_FLIGHT);
     images_in_flight.resize(swapchain_images.size(), VK_NULL_HANDLE);
 
@@ -859,8 +862,10 @@ void VulkanRenderer::create_sync_objects() {
 
     for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
         vkCreateSemaphore(device, &sem, nullptr, &image_available[i]);
-        vkCreateSemaphore(device, &sem, nullptr, &render_finished[i]);
         vkCreateFence(device, &fence, nullptr, &in_flight[i]);
+    }
+    for (uint32_t i = 0; i < render_finished.size(); ++i) {
+        vkCreateSemaphore(device, &sem, nullptr, &render_finished[i]);
     }
 }
 

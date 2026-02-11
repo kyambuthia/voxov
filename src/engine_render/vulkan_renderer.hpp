@@ -73,5 +73,6 @@ private:
     std::vector<VkSemaphore> image_available;
     std::vector<VkSemaphore> render_finished;
     std::vector<VkFence> in_flight;
+    std::vector<VkFence> images_in_flight;
     uint32_t frame_index = 0;
 };

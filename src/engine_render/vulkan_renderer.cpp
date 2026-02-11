@@ -149,6 +149,13 @@ void VulkanRenderer::end_frame() {
         return;
     }
 
+    if (images_in_flight.size() > image_index && images_in_flight[image_index] != VK_NULL_HANDLE) {
+        vkWaitForFences(device, 1, &images_in_flight[image_index], VK_TRUE, UINT64_MAX);
+    }
+    if (images_in_flight.size() > image_index) {
+        images_in_flight[image_index] = in_flight[frame_index];
+    }
+
     vkResetFences(device, 1, &in_flight[frame_index]);
 
     VkPipelineStageFlags wait_stage = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
@@ -842,6 +849,7 @@ void VulkanRenderer::create_sync_objects() {
     image_available.resize(MAX_FRAMES_IN_FLIGHT);
     render_finished.resize(MAX_FRAMES_IN_FLIGHT);
     in_flight.resize(MAX_FRAMES_IN_FLIGHT);
+    images_in_flight.resize(swapchain_images.size(), VK_NULL_HANDLE);
 
     VkSemaphoreCreateInfo sem{};
     sem.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
@@ -880,6 +888,7 @@ void VulkanRenderer::record_command_buffer(VkCommandBuffer cmd, uint32_t image_i
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);
 
+    rp.renderPass = render_pass;
     rp.framebuffer = framebuffers[image_index];
     vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, post_pipeline);

@@ -80,7 +80,7 @@ add_library(engine_net STATIC
     src/engine_net/net_client.cpp
     src/engine_net/net_server.cpp
 )
-target_include_directories(engine_net PUBLIC src)
+target_include_directories(engine_net PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/enet/include)
 target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog)
 
 add_library(engine STATIC
@@ -147,6 +147,9 @@ file(GLOB_RECURSE VOXOV_SOURCES
     "${CMAKE_SOURCE_DIR}/src/*.hpp"
     "${CMAKE_SOURCE_DIR}/src/*.h"
 )
+list(FILTER VOXOV_SOURCES EXCLUDE REGEX ".*/src/engine/.*")
+list(FILTER VOXOV_SOURCES EXCLUDE REGEX ".*/src/engine_.*")
+list(FILTER VOXOV_SOURCES EXCLUDE REGEX ".*/src/game/.*")
 add_executable(${PROJECT_NAME} ${VOXOV_SOURCES})
 
 # Target properties

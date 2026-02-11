@@ -3,6 +3,8 @@
 #include <cstdint>
 #include <memory>
 
+#include "engine_render/vulkan_renderer.hpp"
+
 struct RenderFrameContext {
     uint64_t frame_index = 0;
     double alpha = 0.0;
@@ -17,6 +19,5 @@ public:
     void end_frame();
 
 private:
-    class VulkanRenderer;
     std::unique_ptr<VulkanRenderer> backend;
 };

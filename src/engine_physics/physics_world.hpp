@@ -2,13 +2,13 @@
 
 #include <cstdint>
 
-struct PhysicsSettings {
+struct EnginePhysicsSettings {
     float gravity = -9.81f;
 };
 
 class PhysicsWorld {
 public:
-    void init(const PhysicsSettings &settings);
+    void init(const EnginePhysicsSettings &settings);
     void shutdown();
     void step(float dt_seconds);
 

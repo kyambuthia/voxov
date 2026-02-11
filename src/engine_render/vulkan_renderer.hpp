@@ -4,7 +4,7 @@
 #include <GLFW/glfw3.h>
 #include <vector>
 
-#include "engine_render/renderer.hpp"
+struct RenderFrameContext;
 
 class VulkanRenderer {
 public:

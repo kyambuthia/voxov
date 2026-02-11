@@ -1,4 +1,5 @@
 #include "engine_render/vulkan_renderer.hpp"
+#include "engine_render/renderer.hpp"
 
 #include <stdexcept>
 #include <fstream>
@@ -491,11 +492,11 @@ void VulkanRenderer::create_offscreen_targets() {
 
     VkMemoryRequirements mem{};
     vkGetImageMemoryRequirements(device, offscreen_image, &mem);
-    VkMemoryAllocateInfo alloc{};
-    alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
-    alloc.allocationSize = mem.size;
-    alloc.memoryTypeIndex = find_memory_type(mem.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-    if (vkAllocateMemory(device, &alloc, nullptr, &offscreen_memory) != VK_SUCCESS) {
+    VkMemoryAllocateInfo mem_alloc{};
+    mem_alloc.sType = VK_STRUCTURE_TYPE_MEMORY_ALLOCATE_INFO;
+    mem_alloc.allocationSize = mem.size;
+    mem_alloc.memoryTypeIndex = find_memory_type(mem.memoryTypeBits, VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
+    if (vkAllocateMemory(device, &mem_alloc, nullptr, &offscreen_memory) != VK_SUCCESS) {
         throw std::runtime_error("failed to alloc offscreen memory");
     }
     vkBindImageMemory(device, offscreen_image, offscreen_memory, 0);
@@ -524,14 +525,14 @@ void VulkanRenderer::create_offscreen_targets() {
     }
 
     // Transition offscreen image to shader-read layout so the render pass can assume it.
-    VkCommandBufferAllocateInfo alloc{};
-    alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
-    alloc.commandPool = command_pool;
-    alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
-    alloc.commandBufferCount = 1;
+    VkCommandBufferAllocateInfo cmd_alloc{};
+    cmd_alloc.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    cmd_alloc.commandPool = command_pool;
+    cmd_alloc.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    cmd_alloc.commandBufferCount = 1;
 
     VkCommandBuffer cmd = VK_NULL_HANDLE;
-    vkAllocateCommandBuffers(device, &alloc, &cmd);
+    vkAllocateCommandBuffers(device, &cmd_alloc, &cmd);
 
     VkCommandBufferBeginInfo begin{};
     begin.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;

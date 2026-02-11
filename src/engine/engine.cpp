@@ -1,7 +1,7 @@
 #include "engine/engine.hpp"
 
 void Engine::init(void *window_handle) {
-    PhysicsSettings settings{};
+    EnginePhysicsSettings settings{};
     physics.init(settings);
     net_client.init();
     renderer.init(window_handle);

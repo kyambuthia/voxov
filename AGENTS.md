@@ -1,6 +1,15 @@
 # VOXOV Development Guide
 
-This guide provides development practices, build commands, and coding standards for the VOXOV project - a voxel game built with C++, Vulkan, and SDL3.
+This guide provides development practices, build commands, and coding standards for VOXOV.
+VOXOV is transitioning from a learning project into a serious rendering/game engine focused on
+building beautiful, playable games (including classic-style visuals) with multiplayer and co-op support.
+
+## Engine Direction (High Level)
+
+- **Rendering**: Vulkan-first renderer with a clean abstraction layer for materials, meshes, and frame graph.
+- **Game**: Deterministic simulation loop, clean input pipeline, and data-driven content.
+- **Multiplayer**: Authoritative server with client-side prediction and snapshot interpolation.
+- **Quality**: Stable builds, clear module boundaries, and strong tooling (profiling, validation, capture).
 
 ## Build Commands
 

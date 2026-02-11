@@ -7,6 +7,7 @@ requirements to compile and build the vocov source.
 
 CMAKE
 Vulkan
+JoltPhysics (submodule)
 
 ## Building the project
 get all the dependencies at once with the --recurse-submodules option when cloning the project
@@ -17,4 +18,3 @@ or just clone the project and then get the dependencies.
 
 once you have the dependencies, create a build directory, move into it and build the project.
 `mkdir ./build && cd ./build && cmake ../ && cmake --build . `
-

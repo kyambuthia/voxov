@@ -7,7 +7,7 @@ project(voxov
 )
 
 # Set C++ standard
-set(CMAKE_CXX_STANDARD 17)
+set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 set(CMAKE_CXX_EXTENSIONS OFF)
 
@@ -28,23 +28,126 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 
+set(JPH_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
+set(JPH_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(JPH_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
+set(JPH_GENERATE_DEBUG_SYMBOLS OFF CACHE BOOL "" FORCE)
+
 # Dependencies
 add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/SDL" EXCLUDE_FROM_ALL)
+add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/JoltPhysics/Build" EXCLUDE_FROM_ALL)
+
+include(FetchContent)
+set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(ENET_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+FetchContent_Declare(
+    glfw
+    GIT_REPOSITORY https://github.com/glfw/glfw.git
+    GIT_TAG 3.3.9
+)
+FetchContent_Declare(
+    enet
+    GIT_REPOSITORY https://github.com/lsalzman/enet.git
+    GIT_TAG v1.3.17
+)
+FetchContent_Declare(
+    fmt
+    GIT_REPOSITORY https://github.com/fmtlib/fmt.git
+    GIT_TAG 10.2.1
+)
+FetchContent_Declare(
+    spdlog
+    GIT_REPOSITORY https://github.com/gabime/spdlog.git
+    GIT_TAG v1.14.1
+)
+FetchContent_Declare(
+    vma
+    GIT_REPOSITORY https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
+    GIT_TAG v3.1.0
+)
+FetchContent_MakeAvailable(glfw enet fmt spdlog vma)
 
 # Find packages
 find_package(Vulkan REQUIRED)
 find_package(glm REQUIRED)
 find_package(Vulkan COMPONENTS glslc REQUIRED)
 
-# Collect source files
+add_library(engine_core STATIC
+    src/engine_core/timing.cpp
+    src/engine_core/jobs.cpp
+    src/engine_core/memory.cpp
+)
+target_include_directories(engine_core PUBLIC src)
+target_link_libraries(engine_core PUBLIC fmt::fmt spdlog::spdlog)
+
+add_library(engine_render STATIC
+    src/engine_render/renderer.cpp
+    src/engine_render/vulkan_renderer.cpp
+)
+target_include_directories(engine_render PUBLIC src)
+target_include_directories(engine_render PUBLIC ${vma_SOURCE_DIR}/include)
+target_link_libraries(engine_render PUBLIC Vulkan::Vulkan glfw fmt::fmt spdlog::spdlog)
+
+add_library(engine_physics STATIC
+    src/engine_physics/physics_world.cpp
+)
+target_include_directories(engine_physics PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/JoltPhysics)
+target_link_libraries(engine_physics PUBLIC Jolt fmt::fmt spdlog::spdlog)
+
+add_library(engine_net STATIC
+    src/engine_net/net_client.cpp
+    src/engine_net/net_server.cpp
+)
+target_include_directories(engine_net PUBLIC src)
+target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog)
+
+add_library(engine STATIC
+    src/engine/engine.cpp
+)
+target_include_directories(engine PUBLIC src)
+target_link_libraries(engine PUBLIC engine_core engine_render engine_physics engine_net)
+
+add_executable(game
+    src/game/main.cpp
+)
+target_include_directories(game PRIVATE src)
+target_link_libraries(game PRIVATE
+    engine
+    glfw
+    Vulkan::Vulkan
+)
+
+# Shader compilation for game
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
+    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.vert -o ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.vert
+    VERBATIM
+)
+add_custom_command(
+    OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv
+    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.frag -o ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.frag
+    VERBATIM
+)
+add_custom_target(game_shaders ALL
+    DEPENDS
+    ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
+    ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv
+)
+add_dependencies(game game_shaders)
+
+# Legacy executable (existing project)
 file(GLOB_RECURSE VOXOV_SOURCES 
     "${CMAKE_SOURCE_DIR}/src/*.cpp"
     "${CMAKE_SOURCE_DIR}/src/*.c"
     "${CMAKE_SOURCE_DIR}/src/*.hpp"
     "${CMAKE_SOURCE_DIR}/src/*.h"
 )
-
-# Create executable
 add_executable(${PROJECT_NAME} ${VOXOV_SOURCES})
 
 # Target properties
@@ -58,6 +161,7 @@ target_link_libraries(${PROJECT_NAME} PRIVATE
     Vulkan::Vulkan
     SDL3::SDL3
     glm::glm
+    Jolt
 )
 
 # Platform-specific linking
@@ -111,5 +215,3 @@ install(TARGETS ${PROJECT_NAME}
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
 )
-
-

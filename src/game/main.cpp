@@ -1,9 +1,9 @@
 #include "engine/engine.hpp"
 #include "engine_core/timing.hpp"
+#include "engine_input/input_state.hpp"
 #include "engine_net/net_server.hpp"
 #include "platform/platform.hpp"
-
-#include <GLFW/glfw3.h>
+#include "platform/desktop/input_desktop.hpp"
 
 #include <atomic>
 #include <chrono>
@@ -97,29 +97,14 @@ int main(int argc, char **argv) {
 
     FramePacer pacer;
     pacer.init(120.0);
+    DesktopInputBackend desktop_input(platform.glfw_window());
 
     while (!platform.should_close() && keep_running.load()) {
         pacer.begin_frame();
         platform.poll_events();
 
-        float move_x = 0.0f;
-        float move_y = 0.0f;
-
-        GLFWwindow *window = platform.glfw_window();
-        if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
-            move_x -= 1.0f;
-        }
-        if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
-            move_x += 1.0f;
-        }
-        if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
-            move_y += 1.0f;
-        }
-        if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
-            move_y -= 1.0f;
-        }
-
-        engine.set_input(move_x, move_y);
+        const InputState input = desktop_input.poll();
+        engine.set_input(input, false);
         if (run_server) {
             server.pump();
         }

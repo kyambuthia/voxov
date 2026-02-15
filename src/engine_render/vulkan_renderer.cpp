@@ -193,6 +193,14 @@ void VulkanRenderer::upload_scene(const RenderScene &scene) {
 }
 
 void VulkanRenderer::update_overlay_text(const RenderMesh &overlay) {
+    const size_t prev_vertex_count = overlay_vertices.size();
+    const size_t prev_index_count = overlay_indices.size();
+    const bool can_update_in_place =
+        overlay_vertex_buffer != VK_NULL_HANDLE &&
+        overlay_index_buffer != VK_NULL_HANDLE &&
+        prev_vertex_count == overlay.vertices.size() &&
+        prev_index_count == overlay.indices.size();
+
     overlay_vertices = overlay.vertices;
     overlay_indices = overlay.indices;
     overlay_index_count = static_cast<uint32_t>(overlay_indices.size());
@@ -201,21 +209,35 @@ void VulkanRenderer::update_overlay_text(const RenderMesh &overlay) {
         return;
     }
 
-    vkDeviceWaitIdle(device);
-    destroy_mesh_buffers(
-        overlay_vertex_buffer,
-        overlay_vertex_memory,
-        overlay_index_buffer,
-        overlay_index_memory);
+    if (can_update_in_place) {
+        void *vb_ptr = nullptr;
+        const VkDeviceSize vb_size = static_cast<VkDeviceSize>(overlay_vertices.size() * sizeof(RenderVertex));
+        vkMapMemory(device, overlay_vertex_memory, 0, vb_size, 0, &vb_ptr);
+        std::memcpy(vb_ptr, overlay_vertices.data(), static_cast<size_t>(vb_size));
+        vkUnmapMemory(device, overlay_vertex_memory);
 
-    if (!overlay_vertices.empty() && !overlay_indices.empty()) {
-        create_mesh_buffers(
-            overlay_vertices,
-            overlay_indices,
+        void *ib_ptr = nullptr;
+        const VkDeviceSize ib_size = static_cast<VkDeviceSize>(overlay_indices.size() * sizeof(uint32_t));
+        vkMapMemory(device, overlay_index_memory, 0, ib_size, 0, &ib_ptr);
+        std::memcpy(ib_ptr, overlay_indices.data(), static_cast<size_t>(ib_size));
+        vkUnmapMemory(device, overlay_index_memory);
+    } else {
+        vkDeviceWaitIdle(device);
+        destroy_mesh_buffers(
             overlay_vertex_buffer,
             overlay_vertex_memory,
             overlay_index_buffer,
             overlay_index_memory);
+
+        if (!overlay_vertices.empty() && !overlay_indices.empty()) {
+            create_mesh_buffers(
+                overlay_vertices,
+                overlay_indices,
+                overlay_vertex_buffer,
+                overlay_vertex_memory,
+                overlay_index_buffer,
+                overlay_index_memory);
+        }
     }
 }
 

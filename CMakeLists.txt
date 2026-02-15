@@ -66,6 +66,8 @@ target_link_libraries(engine_core PUBLIC fmt::fmt spdlog::spdlog)
 
 add_library(platform_desktop STATIC
     src/platform/platform.cpp
+    src/platform/desktop/input_desktop.cpp
+    src/platform/android/input_android.cpp
 )
 if(VOXOV_ENABLE_ANDROID_BACKEND)
     target_sources(platform_desktop PRIVATE src/platform/android_platform.cpp)
@@ -84,6 +86,7 @@ target_link_libraries(engine_math PUBLIC glm::glm)
 
 add_library(engine_world STATIC
     src/engine_world/voxel_chunk.cpp
+    src/engine_world/physics/voxel_collision.cpp
 )
 target_include_directories(engine_world PUBLIC src)
 target_link_libraries(engine_world PUBLIC engine_math)
@@ -93,6 +96,7 @@ add_library(engine_render STATIC
     src/engine_render/vulkan_renderer.cpp
     src/engine_render/gl_renderer.cpp
     src/engine_render/debug_text.cpp
+    src/engine_render/debug_draw/debug_draw.cpp
 )
 target_include_directories(engine_render PUBLIC src)
 target_include_directories(engine_render PUBLIC ${CMAKE_SOURCE_DIR}/dependencies/VulkanMemoryAllocator/include)
@@ -113,6 +117,7 @@ target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog)
 
 add_library(engine STATIC
     src/engine/engine.cpp
+    src/engine_gameplay/player/player_controller.cpp
 )
 target_include_directories(engine PUBLIC src)
 target_link_libraries(engine PUBLIC engine_core engine_render engine_physics engine_net engine_math engine_world platform_desktop)

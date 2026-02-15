@@ -16,6 +16,13 @@ cmake --build build -j
 ./build/bin/voxov --renderer gl
 ```
 
+Desktop controls:
+- `RMB` toggle look mode + pointer lock
+- `WASD` move
+- `Space` jump
+- `Shift` sprint
+- `Q/E` camera distance in/out
+
 Server modes:
 
 ```bash

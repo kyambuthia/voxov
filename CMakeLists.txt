@@ -29,6 +29,7 @@ if(MSVC)
 else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
+add_compile_definitions(GLM_ENABLE_EXPERIMENTAL)
 
 set(JPH_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
 set(JPH_BUILD_TESTS OFF CACHE BOOL "" FORCE)

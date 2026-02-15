@@ -84,6 +84,11 @@ void test_strafe_axis_sign() {
     const MovementDebug move_a = PlayerControllerSystem::compute_movement_vectors(0.0f, glm::vec2(-1.0f, 0.0f));
     assert(move_d.desired.x > 0.0f);
     assert(move_a.desired.x < 0.0f);
+
+    const MovementDebug move_w = PlayerControllerSystem::compute_movement_vectors(0.0f, glm::vec2(0.0f, 1.0f));
+    const MovementDebug move_s = PlayerControllerSystem::compute_movement_vectors(0.0f, glm::vec2(0.0f, -1.0f));
+    assert(move_w.desired.z > 0.0f);
+    assert(move_s.desired.z < 0.0f);
 }
 
 }

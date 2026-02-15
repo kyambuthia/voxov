@@ -1,34 +1,41 @@
-# VOXOV Architecture
+# VOXOV Architecture (Genesis Baseline)
 
-This document describes the intended module boundaries and the data flow for the tiny
-multiplayer demo and the future engine.
+## Runtime layers
 
-## Module Layout
+- `platform/*`: window/context/input/time abstraction
+- `engine_core/*`: timing/jobs/memory
+- `engine_math/*`: transforms + camera
+- `engine_world/*`: voxel data + chunk meshing
+- `engine_render/*`: renderer API + Vulkan/GL backends
+- `engine_net/*`: ENet transport + channels + replication primitives
+- `engine_physics/*`: Jolt world step
+- `engine/*`: orchestration and fixed-timestep loop
+- `game/main.cpp`: app bootstrap and CLI
 
-- `platform/`: OS, windowing, input, filesystem, timing, threads.
-- `render/`: renderer front-end, frame graph, materials, GPU resources.
-- `sim/`: deterministic simulation and world state.
-- `net/`: networking, replication, prediction, and snapshotting.
-- `engine/`: high-level orchestration, lifecycle, and glue.
+## Frame flow
 
-## Data Flow (High Level)
+1. Platform polls input/events.
+2. Engine advances fixed simulation tick(s).
+3. Net client sends input, receives snapshot/chunk updates.
+4. Renderer draws uploaded scene with active backend.
+5. Debug stats (FPS/CPU ms) are updated each frame.
 
-1. **Platform** collects input and timing.
-2. **Net** exchanges input commands and snapshots with the server.
-3. **Sim** runs fixed-timestep updates, applying local inputs or server snapshots.
-4. **Render** reads the sim state (read-only) to build frames.
-5. **Engine** orchestrates and enforces threading boundaries.
+## Scene baseline
 
-## Multiplayer Model
+- voxel terrain chunk (naive mesh)
+- sky/atmosphere placeholder mesh
+- debug ground grid mesh
+- camera transform controls
 
-- **Authoritative server** owns the truth.
-- **Clients** send input commands; server sends snapshots.
-- **Prediction** for local player on the client.
-- **Interpolation** for remote players.
+## Networking baseline
 
-## Demo Scope (First Cut)
+- authoritative server mode
+- reliable and unreliable channels
+- snapshot replication for moving entity state
+- chunk interest request and chunk state response
 
-- One world with a few entities (players + a few static objects).
-- Simplified physics (capsule or AABB + ground plane).
-- Simple replication: position, velocity, facing.
-- Debug UI overlay for latency and tick rate.
+## Diagnostics baseline
+
+- Vulkan validation layers + debug callback
+- headless server mode
+- unit tests: camera math, net serialization, chunk meshing

@@ -1,23 +1,19 @@
 #pragma once
 
-#include <cstdint>
 #include <memory>
 
-#include "engine_render/vulkan_renderer.hpp"
-
-struct RenderFrameContext {
-    uint64_t frame_index = 0;
-    double alpha = 0.0;
-};
+#include "engine_render/render_backend.hpp"
+#include "platform/platform.hpp"
 
 class Renderer {
 public:
-    void init(void *window_handle);
+    void init(void *window_handle, RenderBackendType backend_type);
     void shutdown();
-    void begin_frame(const RenderFrameContext &ctx);
-    void render_world();
+    void upload_scene(const RenderScene &scene);
+    void update_overlay_text(const RenderMesh &overlay);
+    void begin_frame(const RenderFrameContext &ctx, const Camera &camera, const RenderStats &stats);
     void end_frame();
 
 private:
-    std::unique_ptr<VulkanRenderer> backend;
+    std::unique_ptr<IRenderBackend> backend;
 };

@@ -3,16 +3,18 @@
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <vector>
+#include <glm/glm.hpp>
 
-struct RenderFrameContext;
+#include "engine_render/render_backend.hpp"
 
-class VulkanRenderer {
+class VulkanRenderer : public IRenderBackend {
 public:
-    void init(void *window_handle);
-    void shutdown();
-    void begin_frame(const RenderFrameContext &ctx);
-    void render_world();
-    void end_frame();
+    void init(void *window_handle) override;
+    void shutdown() override;
+    void upload_scene(const RenderScene &scene) override;
+    void update_overlay_text(const RenderMesh &overlay) override;
+    void begin_frame(const RenderFrameContext &ctx, const Camera &camera, const RenderStats &stats) override;
+    void end_frame() override;
 
 private:
     void create_instance();
@@ -29,6 +31,21 @@ private:
     void create_command_pool();
     void create_command_buffers();
     void create_sync_objects();
+    void create_scene_buffers();
+    void create_mesh_buffers(
+        const std::vector<RenderVertex> &vertices,
+        const std::vector<uint32_t> &indices,
+        VkBuffer &out_vertex_buffer,
+        VkDeviceMemory &out_vertex_memory,
+        VkBuffer &out_index_buffer,
+        VkDeviceMemory &out_index_memory);
+    void destroy_mesh_buffers(
+        VkBuffer &inout_vertex_buffer,
+        VkDeviceMemory &inout_vertex_memory,
+        VkBuffer &inout_index_buffer,
+        VkDeviceMemory &inout_index_memory);
+    void destroy_scene_buffers();
+    void create_depth_resources();
     void record_command_buffer(VkCommandBuffer cmd, uint32_t image_index);
 
     GLFWwindow *window = nullptr;
@@ -49,6 +66,10 @@ private:
     VkExtent2D swapchain_extent{};
     std::vector<VkImage> swapchain_images;
     std::vector<VkImageView> swapchain_image_views;
+    VkFormat depth_format = VK_FORMAT_D32_SFLOAT;
+    VkImage depth_image = VK_NULL_HANDLE;
+    VkDeviceMemory depth_memory = VK_NULL_HANDLE;
+    VkImageView depth_image_view = VK_NULL_HANDLE;
     VkRenderPass render_pass = VK_NULL_HANDLE;
     std::vector<VkFramebuffer> framebuffers;
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
@@ -60,5 +81,22 @@ private:
     std::vector<VkSemaphore> render_finished;
     std::vector<VkFence> in_flight;
     std::vector<VkFence> images_in_flight;
+    RenderScene scene_data;
+    std::vector<RenderVertex> static_vertices;
+    std::vector<uint32_t> static_indices;
+    std::vector<RenderVertex> overlay_vertices;
+    std::vector<uint32_t> overlay_indices;
+    VkBuffer static_vertex_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory static_vertex_memory = VK_NULL_HANDLE;
+    VkBuffer static_index_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory static_index_memory = VK_NULL_HANDLE;
+    VkBuffer overlay_vertex_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory overlay_vertex_memory = VK_NULL_HANDLE;
+    VkBuffer overlay_index_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory overlay_index_memory = VK_NULL_HANDLE;
+    uint32_t static_index_count = 0;
+    uint32_t overlay_index_count = 0;
+    glm::mat4 current_view_proj = glm::mat4(1.0f);
+    uint32_t current_image_index = 0;
     uint32_t frame_index = 0;
 };

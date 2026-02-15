@@ -20,6 +20,8 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 option(VOXOV_BUILD_TESTS "Build tests" OFF)
 option(VOXOV_BUILD_EXAMPLES "Build examples" OFF)
 option(VOXOV_ENABLE_ASSERTIONS "Enable assertions in release builds" ON)
+option(VOXOV_ENABLE_ANDROID_BACKEND "Compile Android platform backend skeleton" ON)
+option(VOXOV_ENABLE_WEB_BACKEND "Compile Web platform backend skeleton" ON)
 
 # Compiler-specific options
 if(MSVC)
@@ -52,6 +54,7 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/spdlog" EXCLUDE_FROM_ALL)
 find_package(Vulkan REQUIRED)
 find_package(glm REQUIRED)
 find_package(Vulkan COMPONENTS glslc REQUIRED)
+find_package(OpenGL REQUIRED)
 
 add_library(engine_core STATIC
     src/engine_core/timing.cpp
@@ -61,13 +64,39 @@ add_library(engine_core STATIC
 target_include_directories(engine_core PUBLIC src)
 target_link_libraries(engine_core PUBLIC fmt::fmt spdlog::spdlog)
 
+add_library(platform_desktop STATIC
+    src/platform/platform.cpp
+)
+if(VOXOV_ENABLE_ANDROID_BACKEND)
+    target_sources(platform_desktop PRIVATE src/platform/android_platform.cpp)
+endif()
+if(VOXOV_ENABLE_WEB_BACKEND)
+    target_sources(platform_desktop PRIVATE src/platform/web_platform.cpp)
+endif()
+target_include_directories(platform_desktop PUBLIC src)
+target_link_libraries(platform_desktop PUBLIC glfw)
+
+add_library(engine_math STATIC
+    src/engine_math/camera.cpp
+)
+target_include_directories(engine_math PUBLIC src)
+target_link_libraries(engine_math PUBLIC glm::glm)
+
+add_library(engine_world STATIC
+    src/engine_world/voxel_chunk.cpp
+)
+target_include_directories(engine_world PUBLIC src)
+target_link_libraries(engine_world PUBLIC engine_math)
+
 add_library(engine_render STATIC
     src/engine_render/renderer.cpp
     src/engine_render/vulkan_renderer.cpp
+    src/engine_render/gl_renderer.cpp
+    src/engine_render/debug_text.cpp
 )
 target_include_directories(engine_render PUBLIC src)
 target_include_directories(engine_render PUBLIC ${CMAKE_SOURCE_DIR}/dependencies/VulkanMemoryAllocator/include)
-target_link_libraries(engine_render PUBLIC Vulkan::Vulkan glfw fmt::fmt spdlog::spdlog)
+target_link_libraries(engine_render PUBLIC Vulkan::Vulkan OpenGL::GL glfw glm::glm fmt::fmt spdlog::spdlog)
 
 add_library(engine_physics STATIC
     src/engine_physics/physics_world.cpp
@@ -86,7 +115,7 @@ add_library(engine STATIC
     src/engine/engine.cpp
 )
 target_include_directories(engine PUBLIC src)
-target_link_libraries(engine PUBLIC engine_core engine_render engine_physics engine_net)
+target_link_libraries(engine PUBLIC engine_core engine_render engine_physics engine_net engine_math engine_world platform_desktop)
 
 add_executable(voxov
     src/game/main.cpp
@@ -96,6 +125,7 @@ target_link_libraries(voxov PRIVATE
     engine
     glfw
     Vulkan::Vulkan
+    OpenGL::GL
 )
 
 # Shader compilation for game
@@ -139,6 +169,12 @@ add_custom_target(game_shaders ALL
 )
 add_dependencies(voxov game_shaders)
 
+add_executable(voxov_asset_cooker
+    src/tools/asset_cooker.cpp
+    src/engine_assets/cooked_asset.cpp
+)
+target_include_directories(voxov_asset_cooker PRIVATE src)
+target_link_libraries(voxov_asset_cooker PRIVATE fmt::fmt)
 
 # Installation
 install(TARGETS voxov
@@ -146,3 +182,13 @@ install(TARGETS voxov
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
 )
+
+if(VOXOV_BUILD_TESTS)
+    enable_testing()
+    add_executable(voxov_tests
+        src/tests/test_main.cpp
+    )
+    target_include_directories(voxov_tests PRIVATE src)
+    target_link_libraries(voxov_tests PRIVATE engine_math engine_world engine_net)
+    add_test(NAME voxov_tests COMMAND voxov_tests)
+endif()

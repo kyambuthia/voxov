@@ -1,6 +1,12 @@
 #pragma once
 
 #include <cstdint>
+#include <cstring>
+
+enum class NetChannel : uint8_t {
+    Reliable = 0,
+    Unreliable = 1
+};
 
 struct NetTickInput {
     uint32_t tick = 0;
@@ -17,5 +23,41 @@ struct NetSnapshot {
 
 enum class NetMsgType : uint8_t {
     Input = 1,
-    Snapshot = 2
+    Snapshot = 2,
+    ChunkInterest = 3,
+    ChunkState = 4
 };
+
+struct NetChunkCoord {
+    int16_t x = 0;
+    int16_t z = 0;
+};
+
+struct NetChunkInterest {
+    int16_t center_x = 0;
+    int16_t center_z = 0;
+    uint8_t radius = 2;
+};
+
+struct NetChunkState {
+    NetChunkCoord coord{};
+    uint32_t version = 0;
+};
+
+template <typename T>
+bool net_write_pod(uint8_t *dst, size_t dst_size, const T &value) {
+    if (dst_size < sizeof(T)) {
+        return false;
+    }
+    std::memcpy(dst, &value, sizeof(T));
+    return true;
+}
+
+template <typename T>
+bool net_read_pod(const uint8_t *src, size_t src_size, T &out_value) {
+    if (src_size < sizeof(T)) {
+        return false;
+    }
+    std::memcpy(&out_value, src, sizeof(T));
+    return true;
+}

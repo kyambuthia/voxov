@@ -1,100 +1,111 @@
 #include "engine/engine.hpp"
 #include "engine_core/timing.hpp"
 #include "engine_net/net_server.hpp"
+#include "platform/platform.hpp"
 
 #include <GLFW/glfw3.h>
-#include <cstring>
+
+#include <atomic>
+#include <chrono>
+#include <csignal>
 #include <cstdio>
+#include <cstring>
 #include <exception>
-#include <cstdlib>
+#include <thread>
 
-static void glfw_error_callback(int error, const char *description) {
-    std::fprintf(stderr, "GLFW error %d: %s\n", error, description);
+namespace {
+std::atomic<bool> keep_running{true};
+
+void on_signal(int) {
+    keep_running = false;
 }
-
-static void glfw_close_callback(GLFWwindow *window) {
-    (void)window;
-    std::fprintf(stderr, "GLFW window close requested\n");
 }
 
 int main(int argc, char **argv) {
-    std::fprintf(stderr, "Voxov starting...\n");
-    const char *display = std::getenv("DISPLAY");
-    const char *wayland = std::getenv("WAYLAND_DISPLAY");
-    std::fprintf(stderr, "DISPLAY=%s WAYLAND_DISPLAY=%s\n",
-                 display ? display : "(unset)",
-                 wayland ? wayland : "(unset)");
     bool run_server = false;
+    bool headless_server = false;
     const char *connect_host = nullptr;
     uint16_t connect_port = 7777;
+    RenderBackendType backend = RenderBackendType::Vulkan;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--server") == 0) {
             run_server = true;
+        } else if (std::strcmp(argv[i], "--headless-server") == 0) {
+            run_server = true;
+            headless_server = true;
         } else if (std::strcmp(argv[i], "--connect") == 0 && i + 1 < argc) {
-            connect_host = argv[i + 1];
-            i++;
+            connect_host = argv[++i];
+        } else if (std::strcmp(argv[i], "--renderer") == 0 && i + 1 < argc) {
+            const char *renderer_name = argv[++i];
+            if (std::strcmp(renderer_name, "gl") == 0 || std::strcmp(renderer_name, "opengl") == 0) {
+                backend = RenderBackendType::OpenGL;
+            } else {
+                backend = RenderBackendType::Vulkan;
+            }
         }
     }
 
-    glfwSetErrorCallback(glfw_error_callback);
-    if (!glfwInit()) {
-        std::fprintf(stderr, "GLFW init failed\n");
-        return 1;
-    }
-
-    glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    GLFWwindow *window = glfwCreateWindow(1280, 720, "Voxov Game", nullptr, nullptr);
-    if (!window) {
-        std::fprintf(stderr, "GLFW window creation failed\n");
-        glfwTerminate();
-        return 1;
-    }
-    glfwSetWindowCloseCallback(window, glfw_close_callback);
-    std::fprintf(stderr, "GLFW window created\n");
-
-    Engine engine;
-    try {
-        engine.init(window);
-    } catch (const std::exception &e) {
-        std::fprintf(stderr, "Engine init failed: %s\n", e.what());
-        glfwDestroyWindow(window);
-        glfwTerminate();
-        return 1;
-    }
-    if (connect_host) {
-        engine.connect(connect_host, connect_port);
-    }
+    std::signal(SIGINT, on_signal);
+    std::signal(SIGTERM, on_signal);
 
     NetServer server;
     if (run_server) {
         server.init(connect_port);
     }
 
-    FramePacer pacer;
-    pacer.init(120.0);
+    if (headless_server) {
+        std::fprintf(stderr, "VOXOV headless server started on port %u\n", connect_port);
+        while (keep_running.load()) {
+            server.pump();
+            std::this_thread::sleep_for(std::chrono::milliseconds(1));
+        }
+        server.shutdown();
+        return 0;
+    }
 
-    if (glfwWindowShouldClose(window)) {
-        std::fprintf(stderr, "GLFW window closed immediately after creation\n");
-        engine.shutdown();
-        glfwDestroyWindow(window);
-        glfwTerminate();
+    DesktopPlatform platform;
+    PlatformCreateInfo create_info{};
+    create_info.title = "VOXOV";
+    create_info.width = 1280;
+    create_info.height = 720;
+    create_info.backend = backend;
+
+    if (!platform.init(create_info)) {
+        std::fprintf(stderr, "Platform init failed\n");
+        if (run_server) {
+            server.shutdown();
+        }
         return 1;
     }
 
-    double start_time = glfwGetTime();
-    while (!glfwWindowShouldClose(window)) {
-        pacer.begin_frame();
-        glfwPollEvents();
-        if (glfwWindowShouldClose(window)) {
-            double elapsed = glfwGetTime() - start_time;
-            if (elapsed < 1.0) {
-                std::fprintf(stderr, "Ignoring early close request (elapsed=%.2f)\n", elapsed);
-                glfwSetWindowShouldClose(window, GLFW_FALSE);
-            }
+    Engine engine;
+    try {
+        engine.init(platform.native_window(), backend);
+    } catch (const std::exception &e) {
+        std::fprintf(stderr, "Engine init failed: %s\n", e.what());
+        platform.shutdown();
+        if (run_server) {
+            server.shutdown();
         }
+        return 1;
+    }
+
+    if (connect_host) {
+        engine.connect(connect_host, connect_port);
+    }
+
+    FramePacer pacer;
+    pacer.init(120.0);
+
+    while (!platform.should_close() && keep_running.load()) {
+        pacer.begin_frame();
+        platform.poll_events();
+
         float move_x = 0.0f;
         float move_y = 0.0f;
+
+        GLFWwindow *window = platform.glfw_window();
         if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
             move_x -= 1.0f;
         }
@@ -107,20 +118,27 @@ int main(int argc, char **argv) {
         if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
             move_y -= 1.0f;
         }
+
         engine.set_input(move_x, move_y);
         if (run_server) {
             server.pump();
         }
+
         engine.tick(pacer.frame_dt());
         pacer.end_frame();
+
+        const RenderStats &stats = engine.stats();
+        char title[128]{};
+        std::snprintf(title, sizeof(title), "VOXOV  FPS: %.1f  CPU: %.2fms", stats.fps, stats.cpu_ms);
+        platform.set_window_title(title);
     }
 
     engine.shutdown();
+    platform.shutdown();
+
     if (run_server) {
         server.shutdown();
     }
-    glfwDestroyWindow(window);
-    glfwTerminate();
-    std::fprintf(stderr, "Voxov shutdown complete\n");
+
     return 0;
 }

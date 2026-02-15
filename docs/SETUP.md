@@ -4,7 +4,8 @@
 
 - CMake 3.16+
 - Vulkan SDK (with `glslc`)
-- A C++23 compiler
+- OpenGL development libraries
+- C++23 compiler
 - Git with submodules enabled
 
 ## Clone
@@ -14,43 +15,36 @@ git clone --recurse-submodules github.com/kyambuthia/voxov.git
 cd voxov
 ```
 
-If you already cloned without submodules:
-
-```bash
-git submodule update --init --recursive
-```
-
 ## Configure and Build
 
 ```bash
-mkdir -p build
-cd build
-cmake ..
-cmake --build .
+cmake -S . -B build -DVOXOV_BUILD_TESTS=ON
+cmake --build build -j
 ```
-
-## Build Targets
-
-- `voxov` is the engine demo target.
 
 ## Run
 
-From the build directory:
-
 ```bash
-./bin/voxov
+./build/bin/voxov --renderer vulkan
+./build/bin/voxov --renderer gl
 ```
 
-Run server + client:
+Authoritative server modes:
 
 ```bash
-./bin/voxov --server
-./bin/voxov --connect 127.0.0.1
+./build/bin/voxov --server
+./build/bin/voxov --headless-server
 ```
 
-## Troubleshooting
+Run tests:
 
-- If the window fails to open or the app exits immediately, ensure you have a working display
-  and Vulkan runtime. On Linux, verify `DISPLAY` (X11) or `WAYLAND_DISPLAY` is set.
-- If `glslc` is missing, install the Vulkan SDK and ensure it is in `PATH`.
-- If submodules are missing, re-run `git submodule update --init --recursive`.
+```bash
+ctest --test-dir build --output-on-failure
+```
+
+Cook assets:
+
+```bash
+./build/bin/voxov_asset_cooker gltf assets/ship.glb build/ship.vasset
+./build/bin/voxov_asset_cooker texture assets/albedo.ktx2 build/albedo.vtex
+```

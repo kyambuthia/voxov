@@ -1,33 +1,39 @@
 ## VOXOV
-voxov is a voxel game written with C++ using the vulkan API and SDL3.
-voxov is a learning project as i learn computer graphics.
 
-VOXOV is transitioning into a small, modern engine with Vulkan rendering, Jolt Physics,
-and ENet-based multiplayer.
+VOXOV is a voxel exploration engine foundation in C++ with Vulkan and OpenGL backends.
 
-## Requirements
-requirements to compile and build the vocov source.
+## Build
 
-CMAKE
-Vulkan
-JoltPhysics (submodule)
-GLFW, ENet, fmt, spdlog, VMA (submodules)
+```bash
+cmake -S . -B build -DVOXOV_BUILD_TESTS=ON
+cmake --build build -j
+```
+
+## Run
+
+```bash
+./build/bin/voxov --renderer vulkan
+./build/bin/voxov --renderer gl
+```
+
+Server modes:
+
+```bash
+./build/bin/voxov --server
+./build/bin/voxov --headless-server
+```
+
+Asset cooking:
+
+```bash
+./build/bin/voxov_asset_cooker gltf assets/ship.glb build/ship.vasset
+./build/bin/voxov_asset_cooker texture assets/albedo.ktx2 build/albedo.vtex
+```
 
 ## Docs
 
-Setup and build instructions:
+- `docs/GENESIS_REFACTOR_PLAN.md`
+- `docs/ARCHITECTURE.md`
+- `docs/BUILD_PLATFORMS.md`
+- `docs/EXTENDING.md`
 - `docs/SETUP.md`
-
-## Notes
-
-- The `voxov` binary requires a working Vulkan runtime and window system (X11/Wayland).
-
-## Building the project
-get all the dependencies at once with the --recurse-submodules option when cloning the project
-`git clone --recurse-submodules github.com/kyambuthia/voxov.git && cd ./voxoc`
-
-or just clone the project and then get the dependencies.
-`git clone github.com/kyambuthia/voxov.git && cd ./voxov && git submodule init && git submodule update` 
-
-once you have the dependencies, create a build directory, move into it and build the project.
-`mkdir ./build && cd ./build && cmake ../ && cmake --build . `

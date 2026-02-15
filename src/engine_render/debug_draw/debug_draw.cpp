@@ -73,6 +73,68 @@ RenderMesh build_debug_sphere_mesh(glm::vec3 center, float radius, glm::vec3 col
     return build_uv_sphere(center, radius, color, 12, 8);
 }
 
+RenderMesh build_debug_aabb_mesh(glm::vec3 bmin, glm::vec3 bmax, glm::vec3 color) {
+    RenderMesh mesh;
+    const glm::vec3 p000(bmin.x, bmin.y, bmin.z);
+    const glm::vec3 p001(bmin.x, bmin.y, bmax.z);
+    const glm::vec3 p010(bmin.x, bmax.y, bmin.z);
+    const glm::vec3 p011(bmin.x, bmax.y, bmax.z);
+    const glm::vec3 p100(bmax.x, bmin.y, bmin.z);
+    const glm::vec3 p101(bmax.x, bmin.y, bmax.z);
+    const glm::vec3 p110(bmax.x, bmax.y, bmin.z);
+    const glm::vec3 p111(bmax.x, bmax.y, bmax.z);
+
+    auto q = [&](glm::vec3 a, glm::vec3 b, glm::vec3 c, glm::vec3 d) {
+        append_tri(mesh, {a, color}, {b, color}, {c, color});
+        append_tri(mesh, {a, color}, {c, color}, {d, color});
+    };
+    q(p000, p100, p110, p010);
+    q(p001, p011, p111, p101);
+    q(p000, p001, p101, p100);
+    q(p010, p110, p111, p011);
+    q(p000, p010, p011, p001);
+    q(p100, p101, p111, p110);
+    return mesh;
+}
+
+RenderMesh build_debug_line_mesh(glm::vec3 start, glm::vec3 end, float thickness, glm::vec3 color) {
+    const glm::vec3 d = end - start;
+    const float len = glm::length(d);
+    if (len < 1e-5f) {
+        return build_debug_sphere_mesh(start, thickness, color);
+    }
+
+    RenderMesh mesh;
+    const glm::vec3 dir = d / len;
+    glm::vec3 side = glm::cross(dir, glm::vec3(0.0f, 1.0f, 0.0f));
+    if (glm::length(side) < 1e-4f) {
+        side = glm::cross(dir, glm::vec3(1.0f, 0.0f, 0.0f));
+    }
+    side = glm::normalize(side) * thickness;
+    const glm::vec3 up = glm::normalize(glm::cross(side, dir)) * thickness;
+
+    const glm::vec3 a = start - side - up;
+    const glm::vec3 b = start + side - up;
+    const glm::vec3 c = start + side + up;
+    const glm::vec3 d0 = start - side + up;
+    const glm::vec3 e = end - side - up;
+    const glm::vec3 f = end + side - up;
+    const glm::vec3 g = end + side + up;
+    const glm::vec3 h = end - side + up;
+
+    auto q = [&](glm::vec3 p0, glm::vec3 p1, glm::vec3 p2, glm::vec3 p3) {
+        append_tri(mesh, {p0, color}, {p1, color}, {p2, color});
+        append_tri(mesh, {p0, color}, {p2, color}, {p3, color});
+    };
+    q(a, b, f, e);
+    q(d0, h, g, c);
+    q(a, e, h, d0);
+    q(b, c, g, f);
+    q(a, d0, c, b);
+    q(e, f, g, h);
+    return mesh;
+}
+
 RenderMesh build_debug_capsule_mesh(glm::vec3 feet_position, float radius, float height, glm::vec3 color) {
     RenderMesh mesh;
 

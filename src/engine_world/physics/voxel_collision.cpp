@@ -4,7 +4,7 @@
 
 #include <algorithm>
 #include <cmath>
-#include <glm/glm.hpp>
+#include <limits>
 
 VoxelCollisionWorld::VoxelCollisionWorld(const VoxelChunk *chunk_data)
     : chunk(chunk_data) {}
@@ -47,10 +47,6 @@ bool VoxelCollisionWorld::segment_intersects_aabb(glm::vec3 a, glm::vec3 b, glm:
 }
 
 bool VoxelCollisionWorld::capsule_overlaps(glm::vec3 feet_position, float capsule_radius, float capsule_height) const {
-    if (!chunk) {
-        return false;
-    }
-
     const float lower_center_y = feet_position.y + capsule_radius;
     const float upper_center_y = feet_position.y + std::max(capsule_radius, capsule_height - capsule_radius);
     const glm::vec3 seg_a(feet_position.x, lower_center_y, feet_position.z);
@@ -86,6 +82,140 @@ bool VoxelCollisionWorld::capsule_overlaps(glm::vec3 feet_position, float capsul
     return false;
 }
 
+CapsuleResolveResult VoxelCollisionWorld::resolve_capsule(
+    glm::vec3 feet_position,
+    float capsule_radius,
+    float capsule_height,
+    float skin_width,
+    int max_iterations,
+    float max_correction_per_frame) const {
+    CapsuleResolveResult result{};
+    result.position = feet_position;
+
+    const float lower_center_offset = capsule_radius;
+    const float upper_center_offset = std::max(capsule_radius, capsule_height - capsule_radius);
+
+    float correction_budget = std::max(0.0f, max_correction_per_frame);
+
+    for (int iter = 0; iter < max_iterations; ++iter) {
+        const glm::vec3 seg_a(result.position.x, result.position.y + lower_center_offset, result.position.z);
+        const glm::vec3 seg_b(result.position.x, result.position.y + upper_center_offset, result.position.z);
+
+        const int min_x = static_cast<int>(std::floor(result.position.x - capsule_radius - skin_width));
+        const int max_x = static_cast<int>(std::floor(result.position.x + capsule_radius + skin_width));
+        const int min_y = static_cast<int>(std::floor(result.position.y - skin_width));
+        const int max_y = static_cast<int>(std::floor(result.position.y + capsule_height + skin_width));
+        const int min_z = static_cast<int>(std::floor(result.position.z - capsule_radius - skin_width));
+        const int max_z = static_cast<int>(std::floor(result.position.z + capsule_radius + skin_width));
+
+        bool had_penetration = false;
+        glm::vec3 total_push(0.0f);
+
+        for (int z = min_z; z <= max_z; ++z) {
+            for (int y = min_y; y <= max_y; ++y) {
+                for (int x = min_x; x <= max_x; ++x) {
+                    if (!is_solid_voxel(x, y, z)) {
+                        continue;
+                    }
+
+                    const glm::vec3 box_min(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z));
+                    const glm::vec3 box_max = box_min + glm::vec3(1.0f);
+
+                    float closest_t = 0.0f;
+                    float best_sq = std::numeric_limits<float>::max();
+                    for (int s = 0; s <= 4; ++s) {
+                        const float t = static_cast<float>(s) / 4.0f;
+                        const glm::vec3 p = seg_a + (seg_b - seg_a) * t;
+                        const glm::vec3 q(
+                            std::clamp(p.x, box_min.x, box_max.x),
+                            std::clamp(p.y, box_min.y, box_max.y),
+                            std::clamp(p.z, box_min.z, box_max.z));
+                        const glm::vec3 diff = p - q;
+                        const float sq = glm::dot(diff, diff);
+                        if (sq < best_sq) {
+                            best_sq = sq;
+                            closest_t = t;
+                        }
+                    }
+
+                    const glm::vec3 p = seg_a + (seg_b - seg_a) * closest_t;
+                    const glm::vec3 q(
+                        std::clamp(p.x, box_min.x, box_max.x),
+                        std::clamp(p.y, box_min.y, box_max.y),
+                        std::clamp(p.z, box_min.z, box_max.z));
+
+                    glm::vec3 n = p - q;
+                    float dist = glm::length(n);
+                    const float target_dist = capsule_radius + skin_width;
+                    const float penetration = target_dist - dist;
+
+                    if (penetration <= 0.0f) {
+                        continue;
+                    }
+
+                    had_penetration = true;
+                    result.had_collision = true;
+                    result.overlapped_voxels.push_back(glm::ivec3(x, y, z));
+
+                    if (dist > 1e-5f) {
+                        n /= dist;
+                    } else {
+                        const glm::vec3 c = (box_min + box_max) * 0.5f;
+                        const glm::vec3 d = p - c;
+                        const glm::vec3 ad = glm::abs(d);
+                        if (ad.x >= ad.y && ad.x >= ad.z) {
+                            n = glm::vec3(d.x >= 0.0f ? 1.0f : -1.0f, 0.0f, 0.0f);
+                        } else if (ad.y >= ad.x && ad.y >= ad.z) {
+                            n = glm::vec3(0.0f, d.y >= 0.0f ? 1.0f : -1.0f, 0.0f);
+                        } else {
+                            n = glm::vec3(0.0f, 0.0f, d.z >= 0.0f ? 1.0f : -1.0f);
+                        }
+                    }
+
+                    total_push += n * penetration;
+                }
+            }
+        }
+
+        if (!had_penetration) {
+            break;
+        }
+
+        if (glm::dot(total_push, total_push) <= 1e-8f) {
+            break;
+        }
+
+        float push_len = glm::length(total_push);
+        if (correction_budget > 0.0f && push_len > correction_budget) {
+            total_push *= (correction_budget / push_len);
+            push_len = correction_budget;
+        }
+
+        result.position += total_push;
+        result.total_correction += push_len;
+        result.contact_normal = glm::normalize(total_push);
+
+        if (correction_budget > 0.0f) {
+            correction_budget = std::max(0.0f, correction_budget - push_len);
+        }
+    }
+
+    const float ground_probe_dist = skin_width + 0.03f;
+    result.ground_ray_origin = result.position + glm::vec3(0.0f, skin_width + 0.02f, 0.0f);
+    float hit_distance = 0.0f;
+    if (raycast(result.ground_ray_origin, glm::vec3(0.0f, -1.0f, 0.0f), ground_probe_dist, hit_distance)) {
+        result.grounded = true;
+        result.ground_distance = hit_distance;
+        result.ground_ray_hit = result.ground_ray_origin + glm::vec3(0.0f, -hit_distance, 0.0f);
+    } else {
+        result.grounded = false;
+        result.ground_distance = ground_probe_dist;
+        result.ground_ray_hit = result.ground_ray_origin + glm::vec3(0.0f, -ground_probe_dist, 0.0f);
+    }
+
+    return result;
+}
+
 bool VoxelCollisionWorld::raycast(glm::vec3 origin, glm::vec3 direction, float max_distance, float &out_hit_distance) const {
     if (!chunk) {
         return false;
@@ -97,7 +227,7 @@ bool VoxelCollisionWorld::raycast(glm::vec3 origin, glm::vec3 direction, float m
     }
 
     direction /= len;
-    const float step = 0.1f;
+    const float step = 0.05f;
     float d = 0.0f;
     while (d <= max_distance) {
         const glm::vec3 p = origin + direction * d;

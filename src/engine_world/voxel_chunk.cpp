@@ -1,5 +1,6 @@
 #include "engine_world/voxel_chunk.hpp"
 
+#include <algorithm>
 #include <cmath>
 
 namespace {
@@ -66,11 +67,30 @@ void VoxelChunk::generate_heightmap_terrain() {
     }
 }
 
+void VoxelChunk::generate_flat_ground(int ground_y) {
+    voxels.fill(0);
+    const int max_y = std::clamp(ground_y, 0, CHUNK_Y - 1);
+    for (int z = 0; z < CHUNK_Z; ++z) {
+        for (int x = 0; x < CHUNK_X; ++x) {
+            for (int y = 0; y <= max_y; ++y) {
+                voxels[index(x, y, z)] = 1;
+            }
+        }
+    }
+}
+
 bool VoxelChunk::solid(int x, int y, int z) const {
     if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
         return false;
     }
     return voxels[index(x, y, z)] != 0;
+}
+
+void VoxelChunk::set_solid(int x, int y, int z, bool value) {
+    if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
+        return;
+    }
+    voxels[index(x, y, z)] = value ? 1 : 0;
 }
 
 RenderMesh VoxelChunk::build_naive_mesh() const {

@@ -12,7 +12,9 @@ public:
     static constexpr int CHUNK_Z = 16;
 
     void generate_heightmap_terrain();
+    void generate_flat_ground(int ground_y);
     bool solid(int x, int y, int z) const;
+    void set_solid(int x, int y, int z, bool value);
 
     RenderMesh build_naive_mesh() const;
     RenderMesh build_debug_grid(float span, float step) const;

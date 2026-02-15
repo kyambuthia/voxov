@@ -89,52 +89,32 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
         player.controller.grounded = false;
     }
 
-    player.controller.velocity.y += player.controller.gravity * dt;
-
-    glm::vec3 pos = player.transform.position;
-
-    auto move_axis = [&](int axis, float amount, const glm::vec3 &normal_hint) {
-        if (std::fabs(amount) < 0.00001f) {
-            return;
-        }
-
-        glm::vec3 next = pos;
-        next[axis] += amount;
-        if (!collision_world.capsule_overlaps(next, player.controller.capsuleRadius, player.controller.capsuleHeight)) {
-            pos = next;
-        } else {
-            debug.had_collision = true;
-            debug.contact_normal = normal_hint;
-            player.controller.velocity[axis] = 0.0f;
-        }
-    };
-
-    move_axis(0, player.controller.velocity.x * dt, glm::vec3(player.controller.velocity.x > 0.0f ? -1.0f : 1.0f, 0.0f, 0.0f));
-    move_axis(2, player.controller.velocity.z * dt, glm::vec3(0.0f, 0.0f, player.controller.velocity.z > 0.0f ? -1.0f : 1.0f));
-    move_axis(1, player.controller.velocity.y * dt, glm::vec3(0.0f, player.controller.velocity.y > 0.0f ? -1.0f : 1.0f, 0.0f));
-
-    // Resolve any residual overlap by lifting up in small increments.
-    int iter = 0;
-    while (collision_world.capsule_overlaps(pos, player.controller.capsuleRadius, player.controller.capsuleHeight) && iter < 32) {
-        pos.y += 0.01f;
-        debug.penetration_correction += 0.01f;
-        debug.had_collision = true;
-        debug.contact_normal = glm::vec3(0.0f, 1.0f, 0.0f);
-        ++iter;
+    if (!player.controller.grounded) {
+        player.controller.velocity.y += player.controller.gravity * dt;
     }
 
-    const glm::vec3 ground_probe = pos + glm::vec3(0.0f, -0.06f, 0.0f);
-    const bool grounded_now = collision_world.capsule_overlaps(
-        ground_probe,
+    glm::vec3 next_pos = player.transform.position + player.controller.velocity * dt;
+    const CapsuleResolveResult resolve = collision_world.resolve_capsule(
+        next_pos,
         player.controller.capsuleRadius,
-        player.controller.capsuleHeight);
+        player.controller.capsuleHeight,
+        0.02f,
+        6,
+        0.5f);
 
-    player.controller.grounded = grounded_now;
-    if (grounded_now && player.controller.velocity.y < 0.0f) {
+    player.transform.position = resolve.position;
+    player.controller.grounded = resolve.grounded;
+    if (resolve.grounded && player.controller.velocity.y < 0.0f) {
         player.controller.velocity.y = 0.0f;
     }
 
-    player.transform.position = pos;
+    debug.had_collision = resolve.had_collision;
+    debug.contact_normal = resolve.contact_normal;
+    debug.penetration_correction = resolve.total_correction;
+    debug.grounded = resolve.grounded;
+    debug.grounding_ray_origin = resolve.ground_ray_origin;
+    debug.grounding_ray_hit = resolve.ground_ray_hit;
+    debug.overlapped_voxels = resolve.overlapped_voxels;
 
     if (glm::length(glm::vec2(move.x, move.z)) > 0.001f) {
         const float facing = std::atan2(move.x, move.z);

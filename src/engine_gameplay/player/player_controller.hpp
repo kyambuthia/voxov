@@ -4,6 +4,7 @@
 #include "engine_input/input_state.hpp"
 
 #include <glm/glm.hpp>
+#include <vector>
 
 class VoxelCollisionWorld;
 
@@ -11,6 +12,10 @@ struct PlayerCollisionDebug {
     float penetration_correction = 0.0f;
     glm::vec3 contact_normal = glm::vec3(0.0f, 1.0f, 0.0f);
     bool had_collision = false;
+    bool grounded = false;
+    glm::vec3 grounding_ray_origin = glm::vec3(0.0f);
+    glm::vec3 grounding_ray_hit = glm::vec3(0.0f);
+    std::vector<glm::ivec3> overlapped_voxels;
 };
 
 struct MovementDebug {

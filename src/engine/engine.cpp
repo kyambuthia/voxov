@@ -329,6 +329,22 @@ void Engine::rebuild_dynamic_debug_mesh() {
     append_mesh(scene.overlay_text, player_capsule);
     append_mesh(scene.overlay_text, target_marker);
 
+    if (runtime_options.devhud) {
+        for (const glm::ivec3 &cell : last_collision_debug.overlapped_voxels) {
+            const glm::vec3 bmin(static_cast<float>(cell.x), static_cast<float>(cell.y), static_cast<float>(cell.z));
+            const glm::vec3 bmax = bmin + glm::vec3(1.0f);
+            RenderMesh overlap_box = build_debug_aabb_mesh(bmin, bmax, glm::vec3(0.95f, 0.15f, 0.15f));
+            append_mesh(scene.overlay_text, overlap_box);
+        }
+
+        RenderMesh ground_ray = build_debug_line_mesh(
+            last_collision_debug.grounding_ray_origin,
+            last_collision_debug.grounding_ray_hit,
+            0.01f,
+            glm::vec3(1.0f, 1.0f, 0.2f));
+        append_mesh(scene.overlay_text, ground_ray);
+    }
+
     for (const auto &[player_id, state] : remote_players) {
         (void)player_id;
         RenderMesh remote_capsule = build_debug_capsule_mesh(

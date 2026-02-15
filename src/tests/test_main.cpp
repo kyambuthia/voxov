@@ -1,6 +1,7 @@
 #include "engine_math/camera.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_net/net_common.hpp"
+#include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
 
 #include <cassert>
@@ -91,6 +92,32 @@ void test_strafe_axis_sign() {
     assert(move_s.desired.z < 0.0f);
 }
 
+void test_player_settles_on_ground() {
+    VoxelChunk chunk;
+    chunk.generate_flat_ground(0);
+    VoxelCollisionWorld collision_world(&chunk);
+
+    PlayerEntity player = PlayerControllerSystem::spawn_player(collision_world);
+    player.transform.position = glm::vec3(8.0f, 3.0f, 8.0f);
+    player.controller.grounded = false;
+    player.controller.velocity = glm::vec3(0.0f);
+
+    InputState input{};
+    for (int i = 0; i < 120; ++i) {
+        PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+    }
+
+    const float settled_y = player.transform.position.y;
+    assert(player.controller.grounded);
+    assert(settled_y > 0.8f);
+    assert(settled_y < 1.3f);
+
+    for (int i = 0; i < 60; ++i) {
+        PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+    }
+    assert(player.transform.position.y >= settled_y - 0.02f);
+}
+
 }
 
 int main() {
@@ -99,5 +126,6 @@ int main() {
     test_chunk_meshing();
     test_camera_yaw_response();
     test_strafe_axis_sign();
+    test_player_settles_on_ground();
     return 0;
 }

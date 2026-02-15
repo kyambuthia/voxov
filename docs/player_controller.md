@@ -6,6 +6,7 @@
 - `+Z` is forward at yaw `0`.
 - `+X` is right.
 - Strafe basis uses `right = normalize(cross(up, forward))`.
+- Render camera local basis remains `-Z` forward at zero Euler rotation; third-person camera converts target `view_dir` into that basis before building the view matrix.
 
 ## Input Axis Conventions
 - Move axis:

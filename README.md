@@ -37,6 +37,32 @@ emcmake cmake -S . -B build-web -DVOXOV_ENABLE_WEB_BACKEND=ON
 cmake --build build-web -j
 ```
 
+## Rebuilding Clean
+Linux/macOS:
+```bash
+./scripts/clean_build.sh
+```
+
+Windows (PowerShell):
+```powershell
+.\scripts\clean_build.ps1
+```
+
+Windows (Batch):
+```bat
+scripts\clean_build.bat
+```
+
+Android:
+```bash
+./scripts/clean_android.sh
+```
+
+Web (Emscripten):
+```bash
+./scripts/clean_web.sh
+```
+
 ## Run (desktop)
 Vulkan:
 ```bash

@@ -15,17 +15,37 @@ struct NetTickInput {
 };
 
 struct NetSnapshot {
+    uint32_t player_id = 0;
     uint32_t tick = 0;
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;
+    float vx = 0.0f;
+    float vy = 0.0f;
+    float vz = 0.0f;
 };
 
 enum class NetMsgType : uint8_t {
     Input = 1,
     Snapshot = 2,
     ChunkInterest = 3,
-    ChunkState = 4
+    ChunkState = 4,
+    AssignPlayer = 5,
+    PlayerState = 6
+};
+
+struct NetAssignPlayer {
+    uint32_t player_id = 0;
+};
+
+struct NetPlayerState {
+    uint32_t player_id = 0;
+    float x = 0.0f;
+    float y = 0.0f;
+    float z = 0.0f;
+    float vx = 0.0f;
+    float vy = 0.0f;
+    float vz = 0.0f;
 };
 
 struct NetChunkCoord {

@@ -8,6 +8,7 @@
 #include <atomic>
 #include <chrono>
 #include <csignal>
+#include <cstdlib>
 #include <cstdio>
 #include <cstring>
 #include <exception>
@@ -24,6 +25,8 @@ void on_signal(int) {
 int main(int argc, char **argv) {
     bool run_server = false;
     bool headless_server = false;
+    bool devhud = false;
+    bool noclip = false;
     const char *connect_host = nullptr;
     uint16_t connect_port = 7777;
     RenderBackendType backend = RenderBackendType::Vulkan;
@@ -36,6 +39,8 @@ int main(int argc, char **argv) {
             headless_server = true;
         } else if (std::strcmp(argv[i], "--connect") == 0 && i + 1 < argc) {
             connect_host = argv[++i];
+        } else if (std::strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
+            connect_port = static_cast<uint16_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (std::strcmp(argv[i], "--renderer") == 0 && i + 1 < argc) {
             const char *renderer_name = argv[++i];
             if (std::strcmp(renderer_name, "gl") == 0 || std::strcmp(renderer_name, "opengl") == 0) {
@@ -43,6 +48,10 @@ int main(int argc, char **argv) {
             } else {
                 backend = RenderBackendType::Vulkan;
             }
+        } else if (std::strcmp(argv[i], "--devhud") == 0) {
+            devhud = true;
+        } else if (std::strcmp(argv[i], "--noclip") == 0) {
+            noclip = true;
         }
     }
 
@@ -81,7 +90,10 @@ int main(int argc, char **argv) {
 
     Engine engine;
     try {
-        engine.init(platform.native_window(), backend);
+        EngineRuntimeOptions options{};
+        options.devhud = devhud;
+        options.noclip = noclip;
+        engine.init(platform.native_window(), backend, options);
     } catch (const std::exception &e) {
         std::fprintf(stderr, "Engine init failed: %s\n", e.what());
         platform.shutdown();

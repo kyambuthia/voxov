@@ -16,13 +16,34 @@ bool VoxelCollisionWorld::is_solid_voxel(int x, int y, int z) const {
     return chunk->solid(x, y, z);
 }
 
-bool VoxelCollisionWorld::sphere_overlaps_box(glm::vec3 center, float radius, glm::vec3 bmin, glm::vec3 bmax) const {
-    glm::vec3 p(
-        std::clamp(center.x, bmin.x, bmax.x),
-        std::clamp(center.y, bmin.y, bmax.y),
-        std::clamp(center.z, bmin.z, bmax.z));
-    const glm::vec3 d = center - p;
-    return glm::dot(d, d) <= (radius * radius);
+bool VoxelCollisionWorld::segment_intersects_aabb(glm::vec3 a, glm::vec3 b, glm::vec3 bmin, glm::vec3 bmax) const {
+    const glm::vec3 d = b - a;
+    float tmin = 0.0f;
+    float tmax = 1.0f;
+
+    for (int axis = 0; axis < 3; ++axis) {
+        if (std::fabs(d[axis]) < 1e-6f) {
+            if (a[axis] < bmin[axis] || a[axis] > bmax[axis]) {
+                return false;
+            }
+            continue;
+        }
+
+        const float inv = 1.0f / d[axis];
+        float t1 = (bmin[axis] - a[axis]) * inv;
+        float t2 = (bmax[axis] - a[axis]) * inv;
+        if (t1 > t2) {
+            std::swap(t1, t2);
+        }
+
+        tmin = std::max(tmin, t1);
+        tmax = std::min(tmax, t2);
+        if (tmin > tmax) {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 bool VoxelCollisionWorld::capsule_overlaps(glm::vec3 feet_position, float capsule_radius, float capsule_height) const {
@@ -30,8 +51,10 @@ bool VoxelCollisionWorld::capsule_overlaps(glm::vec3 feet_position, float capsul
         return false;
     }
 
-    const float lower_y = feet_position.y + capsule_radius;
-    const float upper_y = feet_position.y + std::max(capsule_radius, capsule_height - capsule_radius);
+    const float lower_center_y = feet_position.y + capsule_radius;
+    const float upper_center_y = feet_position.y + std::max(capsule_radius, capsule_height - capsule_radius);
+    const glm::vec3 seg_a(feet_position.x, lower_center_y, feet_position.z);
+    const glm::vec3 seg_b(feet_position.x, upper_center_y, feet_position.z);
 
     const int min_x = static_cast<int>(std::floor(feet_position.x - capsule_radius));
     const int max_x = static_cast<int>(std::floor(feet_position.x + capsule_radius));
@@ -47,12 +70,13 @@ bool VoxelCollisionWorld::capsule_overlaps(glm::vec3 feet_position, float capsul
                     continue;
                 }
 
-                const glm::vec3 bmin(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z));
-                const glm::vec3 bmax = bmin + glm::vec3(1.0f);
+                glm::vec3 bmin(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z));
+                glm::vec3 bmax = bmin + glm::vec3(1.0f);
 
-                const float sample_y = std::clamp(bmin.y + 0.5f, lower_y, upper_y);
-                const glm::vec3 sphere_center(feet_position.x, sample_y, feet_position.z);
-                if (sphere_overlaps_box(sphere_center, capsule_radius, bmin, bmax)) {
+                bmin -= glm::vec3(capsule_radius);
+                bmax += glm::vec3(capsule_radius);
+
+                if (segment_intersects_aabb(seg_a, seg_b, bmin, bmax)) {
                     return true;
                 }
             }
@@ -103,7 +127,7 @@ float VoxelCollisionWorld::find_spawn_height(glm::vec2 xz, float capsule_radius,
     }
 
     while (capsule_overlaps(glm::vec3(xz.x, spawn_y, xz.y), capsule_radius, capsule_height)) {
-        spawn_y += 0.2f;
+        spawn_y += 0.1f;
     }
 
     return spawn_y;

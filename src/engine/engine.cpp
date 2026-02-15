@@ -16,7 +16,9 @@ float to_radians(float deg) {
 }
 }
 
-void Engine::init(void *window_handle, RenderBackendType backend_type) {
+void Engine::init(void *window_handle, RenderBackendType backend_type, const EngineRuntimeOptions &options) {
+    runtime_options = options;
+
     EnginePhysicsSettings settings{};
     physics.init(settings);
     net_client.init();
@@ -68,6 +70,35 @@ void Engine::shutdown() {
     physics.shutdown();
 }
 
+void Engine::sync_network_state(uint32_t sim_tick) {
+    NetTickInput input{};
+    input.tick = sim_tick;
+    input.move_x = input_state.move.x;
+    input.move_y = input_state.move.y;
+    net_client.send_input(input);
+
+    net_client.pump();
+
+    uint32_t assigned_id = net_client.local_player_id();
+    if (assigned_id != 0 && local_player.network_id != assigned_id) {
+        local_player.network_id = assigned_id;
+        local_replication.network_id = assigned_id;
+        spdlog::info("Assigned network player id={}", assigned_id);
+    }
+
+    if (net_client.poll_snapshot(latest_snapshot)) {
+        has_snapshot = true;
+    }
+
+    remote_players.clear();
+    for (const auto &[player_id, state] : net_client.player_states()) {
+        if (player_id == local_player.network_id) {
+            continue;
+        }
+        remote_players[player_id] = state;
+    }
+}
+
 void Engine::tick(double frame_dt) {
     PlayerControllerSystem::update_camera_rig(local_player, input_state, touch_input_mode, static_cast<float>(frame_dt));
 
@@ -80,22 +111,15 @@ void Engine::tick(double frame_dt) {
             step_input.jump_pressed = false;
         }
 
-        PlayerControllerSystem::simulate_fixed(
+        last_collision_debug = PlayerControllerSystem::simulate_fixed(
             local_player,
             step_input,
             collision_world,
-            static_cast<float>(fixed.fixed_dt));
+            static_cast<float>(fixed.fixed_dt),
+            runtime_options.noclip);
         jump_consumed = jump_consumed || input_state.jump_pressed;
 
-        NetTickInput input{};
-        input.tick = static_cast<uint32_t>(fixed.tick);
-        input.move_x = step_input.move.x;
-        input.move_y = step_input.move.y;
-        net_client.send_input(input);
-        net_client.pump();
-        if (net_client.poll_snapshot(latest_snapshot)) {
-            has_snapshot = true;
-        }
+        sync_network_state(static_cast<uint32_t>(fixed.tick));
 
         local_replication.position = local_player.transform.position;
         local_replication.velocity = local_player.controller.velocity;
@@ -116,6 +140,37 @@ void Engine::tick(double frame_dt) {
         render_stats.cpu_ms = (fps_accumulator * 1000.0) / static_cast<double>(fps_frames);
         fps_accumulator = 0.0;
         fps_frames = 0;
+    }
+
+    if (runtime_options.devhud) {
+        log_accumulator += frame_dt;
+        if (log_accumulator >= 0.25) {
+            log_accumulator = 0.0;
+            spdlog::info(
+                "devhud dt={:.4f} fixed_dt={:.4f} pos=({:.2f},{:.2f},{:.2f}) vel=({:.2f},{:.2f},{:.2f}) grounded={} pen={:.3f} n=({:.2f},{:.2f},{:.2f}) yaw={:.2f} pitch={:.2f} look=({:.2f},{:.2f}) rmb={} lock={} look_en={} remotes={} noclip={}",
+                frame_dt,
+                fixed.fixed_dt,
+                local_player.transform.position.x,
+                local_player.transform.position.y,
+                local_player.transform.position.z,
+                local_player.controller.velocity.x,
+                local_player.controller.velocity.y,
+                local_player.controller.velocity.z,
+                local_player.controller.grounded ? 1 : 0,
+                last_collision_debug.penetration_correction,
+                last_collision_debug.contact_normal.x,
+                last_collision_debug.contact_normal.y,
+                last_collision_debug.contact_normal.z,
+                local_player.camera_rig.yaw,
+                local_player.camera_rig.pitch,
+                input_state.look_delta.x,
+                input_state.look_delta.y,
+                input_state.rmb_down ? 1 : 0,
+                input_state.pointer_locked ? 1 : 0,
+                input_state.look_enabled ? 1 : 0,
+                static_cast<int>(remote_players.size()),
+                runtime_options.noclip ? 1 : 0);
+        }
     }
 
     refresh_overlay_text();
@@ -172,14 +227,39 @@ void Engine::update_third_person_camera() {
 }
 
 void Engine::refresh_overlay_text() {
-    char text[128]{};
+    if (!runtime_options.devhud) {
+        scene.overlay_text = RenderMesh{};
+        return;
+    }
+
+    char text[320]{};
     std::snprintf(
         text,
         sizeof(text),
-        "FPS %05.1f CPU %05.2fMS G %d",
+        "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d",
         render_stats.fps,
-        render_stats.cpu_ms,
-        local_player.controller.grounded ? 1 : 0);
+        render_stats.cpu_ms / 1000.0,
+        fixed.fixed_dt,
+        local_player.transform.position.x,
+        local_player.transform.position.y,
+        local_player.transform.position.z,
+        local_player.controller.velocity.x,
+        local_player.controller.velocity.y,
+        local_player.controller.velocity.z,
+        local_player.controller.grounded ? 1 : 0,
+        last_collision_debug.penetration_correction,
+        last_collision_debug.contact_normal.x,
+        last_collision_debug.contact_normal.y,
+        last_collision_debug.contact_normal.z,
+        local_player.camera_rig.yaw,
+        local_player.camera_rig.pitch,
+        input_state.look_delta.x,
+        input_state.look_delta.y,
+        input_state.rmb_down ? 1 : 0,
+        input_state.pointer_locked ? 1 : 0,
+        input_state.look_enabled ? 1 : 0,
+        static_cast<int>(remote_players.size()));
+
     scene.overlay_text = build_camera_text_mesh(camera, text);
 }
 
@@ -197,4 +277,14 @@ void Engine::rebuild_dynamic_debug_mesh() {
 
     append_mesh(scene.overlay_text, player_capsule);
     append_mesh(scene.overlay_text, target_marker);
+
+    for (const auto &[player_id, state] : remote_players) {
+        (void)player_id;
+        RenderMesh remote_capsule = build_debug_capsule_mesh(
+            glm::vec3(state.x, state.y, state.z),
+            local_player.controller.capsuleRadius,
+            local_player.controller.capsuleHeight,
+            glm::vec3(0.3f, 0.8f, 0.35f));
+        append_mesh(scene.overlay_text, remote_capsule);
+    }
 }

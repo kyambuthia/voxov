@@ -9,6 +9,9 @@ struct InputState {
     bool jump_held = false;
     bool sprint_held = false;
     bool look_mode = false;
+    bool rmb_down = false;
+    bool pointer_locked = false;
+    bool look_enabled = false;
     float zoom_delta = 0.0f;
 };
 

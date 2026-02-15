@@ -25,17 +25,20 @@
 - voxel terrain chunk (naive mesh)
 - sky/atmosphere placeholder mesh
 - debug ground grid mesh
-- camera transform controls
+- third-person player capsule + camera rig (yaw/pitch orbit, distance clamp, occlusion test)
+- in-world debug overlays (dev HUD text + debug capsules/markers)
 
 ## Networking baseline
 
 - authoritative server mode
 - reliable and unreliable channels
-- snapshot replication for moving entity state
+- player assignment + per-player state replication (server -> all clients)
 - chunk interest request and chunk state response
 
 ## Diagnostics baseline
 
 - Vulkan validation layers + debug callback
 - headless server mode
+- `--devhud` structured runtime telemetry for input/camera/collision/network
+- `--noclip` debug-only comparison mode
 - unit tests: camera math, net serialization, chunk meshing

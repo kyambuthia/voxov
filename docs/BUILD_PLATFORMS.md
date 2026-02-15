@@ -25,6 +25,19 @@ Run headless authoritative server:
 ./build/bin/voxov --headless-server
 ```
 
+LAN replication demo (same Wi-Fi):
+
+```bash
+# server host
+./build/bin/voxov --headless-server --port 7777
+
+# client 1
+./build/bin/voxov --renderer vulkan --connect <SERVER_LAN_IP> --port 7777 --devhud
+
+# client 2
+./build/bin/voxov --renderer gl --connect <SERVER_LAN_IP> --port 7777 --devhud
+```
+
 ## Android (foundation)
 
 Skeleton backend compiled: `src/platform/android_platform.cpp`.

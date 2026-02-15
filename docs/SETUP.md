@@ -29,11 +29,31 @@ cmake --build build -j
 ./build/bin/voxov --renderer gl
 ```
 
+Desktop debug flags:
+
+```bash
+./build/bin/voxov --renderer vulkan --devhud
+./build/bin/voxov --renderer vulkan --devhud --noclip
+```
+
 Authoritative server modes:
 
 ```bash
 ./build/bin/voxov --server
 ./build/bin/voxov --headless-server
+```
+
+LAN (two clients, same Wi-Fi):
+
+```bash
+# PC A
+./build/bin/voxov --headless-server --port 7777
+
+# PC B
+./build/bin/voxov --renderer vulkan --connect <PC_A_LAN_IP> --port 7777 --devhud
+
+# PC C
+./build/bin/voxov --renderer gl --connect <PC_A_LAN_IP> --port 7777 --devhud
 ```
 
 Run tests:

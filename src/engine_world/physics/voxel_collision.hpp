@@ -15,7 +15,7 @@ public:
     float find_spawn_height(glm::vec2 xz, float capsule_radius, float capsule_height) const;
 
 private:
-    bool sphere_overlaps_box(glm::vec3 center, float radius, glm::vec3 bmin, glm::vec3 bmax) const;
+    bool segment_intersects_aabb(glm::vec3 a, glm::vec3 b, glm::vec3 bmin, glm::vec3 bmax) const;
 
     const VoxelChunk *chunk = nullptr;
 };

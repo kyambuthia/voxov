@@ -53,6 +53,10 @@ Server:
 ./build/bin/voxov --server
 ./build/bin/voxov --headless-server
 ```
+Server port override:
+```bash
+./build/bin/voxov --headless-server --port 7777
+```
 
 ## Tests
 ```bash
@@ -65,6 +69,29 @@ ctest --test-dir build --output-on-failure
 - `Space` jump
 - `Shift` sprint
 - `Q/E` camera distance
+- `--devhud` enable gameplay/network instrumentation overlay + structured logs
+- `--noclip` debug-only movement mode (comparison tool; default off)
+
+## LAN Multiplayer (2 PCs, same Wi-Fi)
+PC A (server):
+```bash
+./build/bin/voxov --headless-server --port 7777
+```
+
+PC B (client 1):
+```bash
+./build/bin/voxov --renderer vulkan --connect <PC_A_LAN_IP> --port 7777 --devhud
+```
+
+PC C (client 2):
+```bash
+./build/bin/voxov --renderer gl --connect <PC_A_LAN_IP> --port 7777 --devhud
+```
+
+Validation checklist:
+- both clients show `Assigned network player id=...` in logs
+- devhud `REM` value is `>=1`
+- moving on one client updates the other client’s remote capsule
 
 ## Asset Cooker
 ```bash

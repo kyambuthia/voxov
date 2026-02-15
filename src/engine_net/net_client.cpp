@@ -1,6 +1,7 @@
 #include "engine_net/net_client.hpp"
 
 #include <enet/enet.h>
+
 #include <cstring>
 
 namespace {
@@ -23,6 +24,16 @@ struct ChunkInterestPacket {
 struct ChunkStatePacket {
     NetMsgType type = NetMsgType::ChunkState;
     NetChunkState state{};
+};
+
+struct AssignPlayerPacket {
+    NetMsgType type = NetMsgType::AssignPlayer;
+    NetAssignPlayer payload{};
+};
+
+struct PlayerStatePacket {
+    NetMsgType type = NetMsgType::PlayerState;
+    NetPlayerState state{};
 };
 #pragma pack(pop)
 }
@@ -48,6 +59,8 @@ void NetClient::disconnect() {
 
 void NetClient::shutdown() {
     chunk_updates.clear();
+    replicated_players.clear();
+    assigned_player_id = 0;
     if (client) {
         enet_host_destroy(client);
         client = nullptr;
@@ -65,7 +78,7 @@ void NetClient::pump() {
         if (event.type == ENET_EVENT_TYPE_RECEIVE) {
             if (event.packet->dataLength >= sizeof(SnapshotPacket)) {
                 SnapshotPacket packet{};
-                std::memcpy(&packet, event.packet->data, sizeof(SnapshotPacket));
+                std::memcpy(&packet, event.packet->data, sizeof(packet));
                 if (packet.type == NetMsgType::Snapshot) {
                     latest_snapshot = packet.snapshot;
                     has_snapshot = true;
@@ -74,9 +87,25 @@ void NetClient::pump() {
 
             if (event.packet->dataLength >= sizeof(ChunkStatePacket)) {
                 ChunkStatePacket packet{};
-                std::memcpy(&packet, event.packet->data, sizeof(ChunkStatePacket));
+                std::memcpy(&packet, event.packet->data, sizeof(packet));
                 if (packet.type == NetMsgType::ChunkState) {
                     chunk_updates.push_back(packet.state);
+                }
+            }
+
+            if (event.packet->dataLength >= sizeof(AssignPlayerPacket)) {
+                AssignPlayerPacket packet{};
+                std::memcpy(&packet, event.packet->data, sizeof(packet));
+                if (packet.type == NetMsgType::AssignPlayer) {
+                    assigned_player_id = packet.payload.player_id;
+                }
+            }
+
+            if (event.packet->dataLength >= sizeof(PlayerStatePacket)) {
+                PlayerStatePacket packet{};
+                std::memcpy(&packet, event.packet->data, sizeof(packet));
+                if (packet.type == NetMsgType::PlayerState) {
+                    replicated_players[packet.state.player_id] = packet.state;
                 }
             }
 
@@ -125,4 +154,12 @@ bool NetClient::poll_chunk_state(NetChunkState &out_state) {
     out_state = chunk_updates.back();
     chunk_updates.pop_back();
     return true;
+}
+
+uint32_t NetClient::local_player_id() const {
+    return assigned_player_id;
+}
+
+const std::unordered_map<uint32_t, NetPlayerState> &NetClient::player_states() const {
+    return replicated_players;
 }

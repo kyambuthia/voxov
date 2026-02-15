@@ -5,6 +5,10 @@
 struct InputState {
     glm::vec2 move = glm::vec2(0.0f);
     glm::vec2 look_delta = glm::vec2(0.0f);
+    bool key_w = false;
+    bool key_a = false;
+    bool key_s = false;
+    bool key_d = false;
     bool jump_pressed = false;
     bool jump_held = false;
     bool sprint_held = false;
@@ -12,6 +16,10 @@ struct InputState {
     bool rmb_down = false;
     bool pointer_locked = false;
     bool look_enabled = false;
+    bool menu_toggle_pressed = false;
+    bool menu_up_pressed = false;
+    bool menu_down_pressed = false;
+    bool menu_select_pressed = false;
     float zoom_delta = 0.0f;
 };
 

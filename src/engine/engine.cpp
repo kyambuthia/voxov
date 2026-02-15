@@ -9,6 +9,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <string>
 
 namespace {
 float to_radians(float deg) {
@@ -100,13 +101,38 @@ void Engine::sync_network_state(uint32_t sim_tick) {
 }
 
 void Engine::tick(double frame_dt) {
-    PlayerControllerSystem::update_camera_rig(local_player, input_state, touch_input_mode, static_cast<float>(frame_dt));
+    last_frame_dt = frame_dt;
+
+    GuiMenuActions menu_actions{};
+    gui_menu.handle_input(input_state, runtime_options.devhud, runtime_options.noclip, menu_actions);
+    if (menu_actions.toggle_devhud) {
+        runtime_options.devhud = !runtime_options.devhud;
+    }
+    if (menu_actions.toggle_noclip) {
+        runtime_options.noclip = !runtime_options.noclip;
+    }
+    if (menu_actions.reset_camera) {
+        local_player.camera_rig.yaw = 180.0f;
+        local_player.camera_rig.pitch = -12.0f;
+        local_player.camera_rig.distance = 5.0f;
+    }
+
+    InputState gameplay_input = input_state;
+    if (gui_menu.open()) {
+        gameplay_input.move = glm::vec2(0.0f);
+        gameplay_input.look_delta = glm::vec2(0.0f);
+        gameplay_input.jump_pressed = false;
+        gameplay_input.jump_held = false;
+        gameplay_input.sprint_held = false;
+    }
+
+    PlayerControllerSystem::update_camera_rig(local_player, gameplay_input, touch_input_mode, static_cast<float>(frame_dt));
 
     fixed.accumulator += frame_dt;
     bool jump_consumed = false;
 
     while (fixed.accumulator >= fixed.fixed_dt) {
-        InputState step_input = input_state;
+        InputState step_input = gameplay_input;
         if (jump_consumed) {
             step_input.jump_pressed = false;
         }
@@ -143,13 +169,49 @@ void Engine::tick(double frame_dt) {
     }
 
     if (runtime_options.devhud) {
+        const float yaw_rad = to_radians(local_player.camera_rig.yaw);
+        const glm::vec3 cam_forward = glm::normalize(glm::vec3(std::sin(yaw_rad), 0.0f, std::cos(yaw_rad)));
+        const glm::vec3 strafe_right = glm::normalize(glm::cross(cam_forward, glm::vec3(0.0f, 1.0f, 0.0f)));
+        const glm::vec3 desired_move = cam_forward * input_state.move.y + strafe_right * input_state.move.x;
+
+        const bool any_non_zero =
+            std::fabs(input_state.look_delta.x) > 0.0001f ||
+            std::fabs(input_state.look_delta.y) > 0.0001f ||
+            std::fabs(input_state.move.x) > 0.0001f ||
+            std::fabs(input_state.move.y) > 0.0001f ||
+            input_state.key_w || input_state.key_a || input_state.key_s || input_state.key_d;
+
         log_accumulator += frame_dt;
-        if (log_accumulator >= 0.25) {
+        if (any_non_zero && log_accumulator >= 0.0) {
             log_accumulator = 0.0;
             spdlog::info(
-                "devhud dt={:.4f} fixed_dt={:.4f} pos=({:.2f},{:.2f},{:.2f}) vel=({:.2f},{:.2f},{:.2f}) grounded={} pen={:.3f} n=({:.2f},{:.2f},{:.2f}) yaw={:.2f} pitch={:.2f} look=({:.2f},{:.2f}) rmb={} lock={} look_en={} remotes={} noclip={}",
+                "devhud dt={:.4f} fixed_dt={:.4f} mouse_dx={:.2f} mouse_dy={:.2f} keys[W{} A{} S{} D{}] axes[MoveX={:.2f} MoveY={:.2f} LookX={:.2f} LookY={:.2f}] cam[yaw={:.2f} pitch={:.2f} f=({:.2f},{:.2f},{:.2f}) r=({:.2f},{:.2f},{:.2f})] move[desired=({:.2f},{:.2f},{:.2f}) strafeRight=({:.2f},{:.2f},{:.2f})] pos=({:.2f},{:.2f},{:.2f}) vel=({:.2f},{:.2f},{:.2f}) grounded={} pen={:.3f} n=({:.2f},{:.2f},{:.2f}) mode[rmb={} lock={} look_en={}] remotes={} noclip={}",
                 frame_dt,
                 fixed.fixed_dt,
+                input_state.look_delta.x,
+                input_state.look_delta.y,
+                input_state.key_w ? 1 : 0,
+                input_state.key_a ? 1 : 0,
+                input_state.key_s ? 1 : 0,
+                input_state.key_d ? 1 : 0,
+                input_state.move.x,
+                input_state.move.y,
+                input_state.look_delta.x,
+                input_state.look_delta.y,
+                local_player.camera_rig.yaw,
+                local_player.camera_rig.pitch,
+                cam_forward.x,
+                cam_forward.y,
+                cam_forward.z,
+                strafe_right.x,
+                strafe_right.y,
+                strafe_right.z,
+                desired_move.x,
+                desired_move.y,
+                desired_move.z,
+                strafe_right.x,
+                strafe_right.y,
+                strafe_right.z,
                 local_player.transform.position.x,
                 local_player.transform.position.y,
                 local_player.transform.position.z,
@@ -161,10 +223,6 @@ void Engine::tick(double frame_dt) {
                 last_collision_debug.contact_normal.x,
                 last_collision_debug.contact_normal.y,
                 last_collision_debug.contact_normal.z,
-                local_player.camera_rig.yaw,
-                local_player.camera_rig.pitch,
-                input_state.look_delta.x,
-                input_state.look_delta.y,
                 input_state.rmb_down ? 1 : 0,
                 input_state.pointer_locked ? 1 : 0,
                 input_state.look_enabled ? 1 : 0,
@@ -227,40 +285,44 @@ void Engine::update_third_person_camera() {
 }
 
 void Engine::refresh_overlay_text() {
-    if (!runtime_options.devhud) {
-        scene.overlay_text = RenderMesh{};
-        return;
+    scene.overlay_text = RenderMesh{};
+
+    if (runtime_options.devhud) {
+        char text[320]{};
+        std::snprintf(
+            text,
+            sizeof(text),
+            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d",
+            render_stats.fps,
+            last_frame_dt,
+            fixed.fixed_dt,
+            local_player.transform.position.x,
+            local_player.transform.position.y,
+            local_player.transform.position.z,
+            local_player.controller.velocity.x,
+            local_player.controller.velocity.y,
+            local_player.controller.velocity.z,
+            local_player.controller.grounded ? 1 : 0,
+            last_collision_debug.penetration_correction,
+            last_collision_debug.contact_normal.x,
+            last_collision_debug.contact_normal.y,
+            last_collision_debug.contact_normal.z,
+            local_player.camera_rig.yaw,
+            local_player.camera_rig.pitch,
+            input_state.look_delta.x,
+            input_state.look_delta.y,
+            input_state.rmb_down ? 1 : 0,
+            input_state.pointer_locked ? 1 : 0,
+            input_state.look_enabled ? 1 : 0,
+            static_cast<int>(remote_players.size()));
+        scene.overlay_text = build_camera_text_mesh(camera, text);
     }
 
-    char text[320]{};
-    std::snprintf(
-        text,
-        sizeof(text),
-        "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d",
-        render_stats.fps,
-        render_stats.cpu_ms / 1000.0,
-        fixed.fixed_dt,
-        local_player.transform.position.x,
-        local_player.transform.position.y,
-        local_player.transform.position.z,
-        local_player.controller.velocity.x,
-        local_player.controller.velocity.y,
-        local_player.controller.velocity.z,
-        local_player.controller.grounded ? 1 : 0,
-        last_collision_debug.penetration_correction,
-        last_collision_debug.contact_normal.x,
-        last_collision_debug.contact_normal.y,
-        last_collision_debug.contact_normal.z,
-        local_player.camera_rig.yaw,
-        local_player.camera_rig.pitch,
-        input_state.look_delta.x,
-        input_state.look_delta.y,
-        input_state.rmb_down ? 1 : 0,
-        input_state.pointer_locked ? 1 : 0,
-        input_state.look_enabled ? 1 : 0,
-        static_cast<int>(remote_players.size()));
-
-    scene.overlay_text = build_camera_text_mesh(camera, text);
+    const std::string menu_text = gui_menu.build_text(runtime_options.devhud, runtime_options.noclip);
+    if (!menu_text.empty()) {
+        RenderMesh menu_mesh = build_camera_text_mesh(camera, menu_text);
+        append_mesh(scene.overlay_text, menu_mesh);
+    }
 }
 
 void Engine::rebuild_dynamic_debug_mesh() {

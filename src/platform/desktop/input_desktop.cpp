@@ -76,16 +76,21 @@ InputState DesktopInputBackend::poll() {
     out.pointer_locked = pointer_locked;
     out.look_enabled = active_look_mode;
 
-    if (glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS) {
+    out.key_w = glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS;
+    out.key_a = glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS;
+    out.key_s = glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS;
+    out.key_d = glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS;
+
+    if (out.key_w) {
         out.move.y += 1.0f;
     }
-    if (glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS) {
+    if (out.key_s) {
         out.move.y -= 1.0f;
     }
-    if (glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS) {
+    if (out.key_d) {
         out.move.x += 1.0f;
     }
-    if (glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS) {
+    if (out.key_a) {
         out.move.x -= 1.0f;
     }
 
@@ -97,6 +102,22 @@ InputState DesktopInputBackend::poll() {
     out.jump_held = space_down;
     out.jump_pressed = space_down && !prev_space_down;
     prev_space_down = space_down;
+
+    const bool escape_down = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+    out.menu_toggle_pressed = escape_down && !prev_escape_down;
+    prev_escape_down = escape_down;
+
+    const bool up_down = glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS;
+    out.menu_up_pressed = up_down && !prev_up_down;
+    prev_up_down = up_down;
+
+    const bool down_down = glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS;
+    out.menu_down_pressed = down_down && !prev_down_down;
+    prev_down_down = down_down;
+
+    const bool enter_down = glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS;
+    out.menu_select_pressed = enter_down && !prev_enter_down;
+    prev_enter_down = enter_down;
 
     out.sprint_held = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
                       glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;

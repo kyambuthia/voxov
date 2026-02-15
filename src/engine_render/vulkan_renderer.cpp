@@ -496,26 +496,22 @@ void VulkanRenderer::create_pipeline() {
     input_assembly.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
     input_assembly.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
 
-    VkViewport viewport{};
-    viewport.width = static_cast<float>(swapchain_extent.width);
-    viewport.height = static_cast<float>(swapchain_extent.height);
-    viewport.maxDepth = 1.0f;
-
-    VkRect2D scissor{};
-    scissor.extent = swapchain_extent;
-
     VkPipelineViewportStateCreateInfo viewport_state{};
     viewport_state.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
     viewport_state.viewportCount = 1;
-    viewport_state.pViewports = &viewport;
     viewport_state.scissorCount = 1;
-    viewport_state.pScissors = &scissor;
+
+    VkDynamicState dynamic_states[] = { VK_DYNAMIC_STATE_VIEWPORT, VK_DYNAMIC_STATE_SCISSOR };
+    VkPipelineDynamicStateCreateInfo dynamic_state{};
+    dynamic_state.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamic_state.dynamicStateCount = 2;
+    dynamic_state.pDynamicStates = dynamic_states;
 
     VkPipelineRasterizationStateCreateInfo raster{};
     raster.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
     raster.polygonMode = VK_POLYGON_MODE_FILL;
     raster.lineWidth = 1.0f;
-    raster.cullMode = VK_CULL_MODE_BACK_BIT;
+    raster.cullMode = VK_CULL_MODE_NONE;
     raster.frontFace = VK_FRONT_FACE_COUNTER_CLOCKWISE;
 
     VkPipelineMultisampleStateCreateInfo msaa{};
@@ -548,6 +544,7 @@ void VulkanRenderer::create_pipeline() {
     info.pRasterizationState = &raster;
     info.pMultisampleState = &msaa;
     info.pColorBlendState = &blend;
+    info.pDynamicState = &dynamic_state;
     info.layout = pipeline_layout;
     info.renderPass = render_pass;
     info.subpass = 0;
@@ -637,6 +634,18 @@ void VulkanRenderer::record_command_buffer(VkCommandBuffer cmd, uint32_t image_i
     rp.pClearValues = &clear;
 
     vkCmdBeginRenderPass(cmd, &rp, VK_SUBPASS_CONTENTS_INLINE);
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = static_cast<float>(swapchain_extent.width);
+    viewport.height = static_cast<float>(swapchain_extent.height);
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    VkRect2D scissor{};
+    scissor.offset = { 0, 0 };
+    scissor.extent = swapchain_extent;
+    vkCmdSetViewport(cmd, 0, 1, &viewport);
+    vkCmdSetScissor(cmd, 0, 1, &scissor);
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
     vkCmdDraw(cmd, 3, 1, 0, 0);
     vkCmdEndRenderPass(cmd);

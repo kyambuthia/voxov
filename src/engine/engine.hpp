@@ -8,6 +8,7 @@
 #include "engine_net/net_client.hpp"
 #include "engine_physics/physics_world.hpp"
 #include "engine_render/renderer.hpp"
+#include "engine_ui/gui_menu.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
 #include "platform/platform.hpp"
@@ -52,6 +53,7 @@ private:
     RenderStats render_stats;
     InputState input_state{};
     bool touch_input_mode = false;
+    GuiMenu gui_menu;
     EngineRuntimeOptions runtime_options{};
 
     double fps_accumulator = 0.0;

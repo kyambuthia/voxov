@@ -25,6 +25,24 @@ PlayerEntity PlayerControllerSystem::spawn_player(const VoxelCollisionWorld &col
     return player;
 }
 
+glm::vec3 PlayerControllerSystem::orbit_forward_from_angles(float yaw_deg, float pitch_deg) {
+    const float yaw = to_radians(yaw_deg);
+    const float pitch = to_radians(pitch_deg);
+    return glm::normalize(glm::vec3(
+        std::sin(yaw) * std::cos(pitch),
+        std::sin(pitch),
+        std::cos(yaw) * std::cos(pitch)));
+}
+
+MovementDebug PlayerControllerSystem::compute_movement_vectors(float yaw_deg, glm::vec2 move_axis) {
+    MovementDebug out{};
+    const float yaw_rad = to_radians(yaw_deg);
+    out.forward = glm::normalize(glm::vec3(std::sin(yaw_rad), 0.0f, std::cos(yaw_rad)));
+    out.right = glm::normalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), out.forward));
+    out.desired = out.forward * move_axis.y + out.right * move_axis.x;
+    return out;
+}
+
 void PlayerControllerSystem::update_camera_rig(PlayerEntity &player, const InputState &input, bool touch_mode, float dt) {
     const float sensitivity = touch_mode ? player.camera_rig.sensitivityTouch * dt : player.camera_rig.sensitivityMouse;
     player.camera_rig.yaw += input.look_delta.x * sensitivity;
@@ -45,11 +63,8 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
     bool noclip) {
     PlayerCollisionDebug debug{};
 
-    const float yaw_rad = to_radians(player.camera_rig.yaw);
-    const glm::vec3 cam_fwd = glm::normalize(glm::vec3(std::sin(yaw_rad), 0.0f, std::cos(yaw_rad)));
-    const glm::vec3 cam_right = glm::normalize(glm::cross(cam_fwd, glm::vec3(0.0f, 1.0f, 0.0f)));
-
-    glm::vec3 move = cam_fwd * input.move.y + cam_right * input.move.x;
+    const MovementDebug movement_debug = compute_movement_vectors(player.camera_rig.yaw, input.move);
+    glm::vec3 move = movement_debug.desired;
     if (glm::length(move) > 0.001f) {
         move = glm::normalize(move);
     }

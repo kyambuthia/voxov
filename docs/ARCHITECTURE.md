@@ -7,6 +7,7 @@
 - `engine_math/*`: transforms + camera
 - `engine_world/*`: voxel data + chunk meshing
 - `engine_render/*`: renderer API + Vulkan/GL backends
+- `engine_ui/*`: renderer-agnostic in-game GUI/menu state
 - `engine_net/*`: ENet transport + channels + replication primitives
 - `engine_physics/*`: Jolt world step
 - `engine/*`: orchestration and fixed-timestep loop

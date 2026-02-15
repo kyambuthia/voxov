@@ -118,6 +118,7 @@ target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog)
 add_library(engine STATIC
     src/engine/engine.cpp
     src/engine_gameplay/player/player_controller.cpp
+    src/engine_ui/gui_menu.cpp
 )
 target_include_directories(engine PUBLIC src)
 target_link_libraries(engine PUBLIC engine_core engine_render engine_physics engine_net engine_math engine_world platform_desktop)
@@ -194,6 +195,6 @@ if(VOXOV_BUILD_TESTS)
         src/tests/test_main.cpp
     )
     target_include_directories(voxov_tests PRIVATE src)
-    target_link_libraries(voxov_tests PRIVATE engine_math engine_world engine_net)
+    target_link_libraries(voxov_tests PRIVATE engine engine_math engine_world engine_net)
     add_test(NAME voxov_tests COMMAND voxov_tests)
 endif()

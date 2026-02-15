@@ -69,6 +69,7 @@ ctest --test-dir build --output-on-failure
 - `Space` jump
 - `Shift` sprint
 - `Q/E` camera distance
+- `Esc` GUI menu (W/S or arrows + Enter)
 - `--devhud` enable gameplay/network instrumentation overlay + structured logs
 - `--noclip` debug-only movement mode (comparison tool; default off)
 

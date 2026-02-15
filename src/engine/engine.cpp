@@ -11,12 +11,6 @@
 #include <cstdio>
 #include <string>
 
-namespace {
-float to_radians(float deg) {
-    return deg * 0.01745329251994329577f;
-}
-}
-
 void Engine::init(void *window_handle, RenderBackendType backend_type, const EngineRuntimeOptions &options) {
     runtime_options = options;
 
@@ -169,10 +163,7 @@ void Engine::tick(double frame_dt) {
     }
 
     if (runtime_options.devhud) {
-        const float yaw_rad = to_radians(local_player.camera_rig.yaw);
-        const glm::vec3 cam_forward = glm::normalize(glm::vec3(std::sin(yaw_rad), 0.0f, std::cos(yaw_rad)));
-        const glm::vec3 strafe_right = glm::normalize(glm::cross(cam_forward, glm::vec3(0.0f, 1.0f, 0.0f)));
-        const glm::vec3 desired_move = cam_forward * input_state.move.y + strafe_right * input_state.move.x;
+        const MovementDebug movement_debug = PlayerControllerSystem::compute_movement_vectors(local_player.camera_rig.yaw, input_state.move);
 
         const bool any_non_zero =
             std::fabs(input_state.look_delta.x) > 0.0001f ||
@@ -200,18 +191,18 @@ void Engine::tick(double frame_dt) {
                 input_state.look_delta.y,
                 local_player.camera_rig.yaw,
                 local_player.camera_rig.pitch,
-                cam_forward.x,
-                cam_forward.y,
-                cam_forward.z,
-                strafe_right.x,
-                strafe_right.y,
-                strafe_right.z,
-                desired_move.x,
-                desired_move.y,
-                desired_move.z,
-                strafe_right.x,
-                strafe_right.y,
-                strafe_right.z,
+                movement_debug.forward.x,
+                movement_debug.forward.y,
+                movement_debug.forward.z,
+                movement_debug.right.x,
+                movement_debug.right.y,
+                movement_debug.right.z,
+                movement_debug.desired.x,
+                movement_debug.desired.y,
+                movement_debug.desired.z,
+                movement_debug.right.x,
+                movement_debug.right.y,
+                movement_debug.right.z,
                 local_player.transform.position.x,
                 local_player.transform.position.y,
                 local_player.transform.position.z,
@@ -262,12 +253,9 @@ void Engine::build_static_scene() {
 void Engine::update_third_person_camera() {
     const glm::vec3 pivot = local_player.transform.position + glm::vec3(0.0f, local_player.camera_rig.pivotHeight, 0.0f);
 
-    const float yaw = to_radians(local_player.camera_rig.yaw);
-    const float pitch = to_radians(local_player.camera_rig.pitch);
-    const glm::vec3 orbit_forward = glm::normalize(glm::vec3(
-        std::sin(yaw) * std::cos(pitch),
-        std::sin(pitch),
-        std::cos(yaw) * std::cos(pitch)));
+    const glm::vec3 orbit_forward = PlayerControllerSystem::orbit_forward_from_angles(
+        local_player.camera_rig.yaw,
+        local_player.camera_rig.pitch);
 
     float camera_distance = local_player.camera_rig.distance;
     float hit_distance = 0.0f;

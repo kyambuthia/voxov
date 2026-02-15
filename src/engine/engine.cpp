@@ -267,7 +267,8 @@ void Engine::update_third_person_camera() {
     const glm::vec3 view_dir = glm::normalize(pivot - camera_pos);
 
     camera.transform.position = camera_pos;
-    camera.transform.euler_radians.y = std::atan2(view_dir.x, view_dir.z);
+    // Camera basis uses local -Z as forward at zero rotation, so solve yaw from -view_dir.
+    camera.transform.euler_radians.y = std::atan2(-view_dir.x, -view_dir.z);
     camera.transform.euler_radians.x = std::asin(std::clamp(view_dir.y, -1.0f, 1.0f));
     camera.transform.euler_radians.z = 0.0f;
 }

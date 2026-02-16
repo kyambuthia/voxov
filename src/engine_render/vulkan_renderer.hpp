@@ -32,6 +32,8 @@ private:
     void create_command_pool();
     void create_command_buffers();
     void create_sync_objects();
+    void cleanup_swapchain_resources();
+    void recreate_swapchain();
     void create_scene_buffers();
     void create_mesh_buffers(
         const std::vector<RenderVertex> &vertices,

@@ -28,8 +28,8 @@ void Renderer::update_overlay_text(const RenderMesh &overlay) {
     backend->update_overlay_text(overlay);
 }
 
-void Renderer::begin_frame(const RenderFrameContext &ctx, const Camera &camera, const RenderStats &stats) {
-    backend->begin_frame(ctx, camera, stats);
+void Renderer::begin_frame(const RenderFrameContext &ctx, const RenderStats &stats) {
+    backend->begin_frame(ctx, stats);
 }
 
 void Renderer::end_frame() {

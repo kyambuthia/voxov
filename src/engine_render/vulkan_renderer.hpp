@@ -3,6 +3,7 @@
 #include <vulkan/vulkan.h>
 #include <GLFW/glfw3.h>
 #include <vector>
+#include <array>
 #include <glm/glm.hpp>
 
 #include "engine_render/render_backend.hpp"
@@ -13,7 +14,7 @@ public:
     void shutdown() override;
     void upload_scene(const RenderScene &scene) override;
     void update_overlay_text(const RenderMesh &overlay) override;
-    void begin_frame(const RenderFrameContext &ctx, const Camera &camera, const RenderStats &stats) override;
+    void begin_frame(const RenderFrameContext &ctx, const RenderStats &stats) override;
     void end_frame() override;
 
 private:
@@ -96,7 +97,9 @@ private:
     VkDeviceMemory overlay_index_memory = VK_NULL_HANDLE;
     uint32_t static_index_count = 0;
     uint32_t overlay_index_count = 0;
-    glm::mat4 current_view_proj = glm::mat4(1.0f);
+    std::array<glm::mat4, 2> current_view_proj = { glm::mat4(1.0f), glm::mat4(1.0f) };
+    std::array<glm::vec4, 2> current_viewports = { glm::vec4(0.0f), glm::vec4(0.0f) };
+    uint32_t current_view_count = 1;
     uint32_t current_image_index = 0;
     uint32_t frame_index = 0;
 };

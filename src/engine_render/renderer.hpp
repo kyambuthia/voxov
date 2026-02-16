@@ -11,7 +11,7 @@ public:
     void shutdown();
     void upload_scene(const RenderScene &scene);
     void update_overlay_text(const RenderMesh &overlay);
-    void begin_frame(const RenderFrameContext &ctx, const Camera &camera, const RenderStats &stats);
+    void begin_frame(const RenderFrameContext &ctx, const RenderStats &stats);
     void end_frame();
 
 private:

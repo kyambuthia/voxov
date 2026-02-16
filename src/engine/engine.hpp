@@ -18,6 +18,7 @@
 struct EngineRuntimeOptions {
     bool devhud = false;
     bool noclip = false;
+    bool splitscreen = false;
 };
 
 class Engine {
@@ -26,14 +27,14 @@ public:
     void connect(const char *host, uint16_t port);
     void shutdown();
     void tick(double frame_dt);
-    void set_input(const InputState &input, bool touch_mode);
+    void set_input(const InputState &input_primary, const InputState &input_secondary, bool touch_mode);
     const RenderStats &stats() const;
 
 private:
     void build_static_scene();
     void rebuild_dynamic_debug_mesh();
     void refresh_overlay_text();
-    void update_third_person_camera();
+    void update_third_person_camera(PlayerEntity &player, Camera &out_camera);
     void sync_network_state(uint32_t sim_tick);
 
     FixedStep fixed;
@@ -45,13 +46,16 @@ private:
     VoxelCollisionWorld collision_world{nullptr};
 
     Camera camera;
+    Camera secondary_camera;
     PlayerEntity local_player;
+    PlayerEntity local_player_secondary;
     ReplicatedPlayerMotion local_replication{};
     std::unordered_map<uint32_t, NetPlayerState> remote_players;
 
     RenderScene scene;
     RenderStats render_stats;
     InputState input_state{};
+    InputState input_state_secondary{};
     bool touch_input_mode = false;
     GuiMenu gui_menu;
     EngineRuntimeOptions runtime_options{};
@@ -65,4 +69,5 @@ private:
     NetSnapshot latest_snapshot{};
     bool has_snapshot = false;
     PlayerCollisionDebug last_collision_debug{};
+    PlayerCollisionDebug last_collision_debug_secondary{};
 };

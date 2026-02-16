@@ -20,7 +20,16 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
 
     build_static_scene();
     local_player = PlayerControllerSystem::spawn_player(collision_world);
-    update_third_person_camera();
+    if (runtime_options.splitscreen) {
+        local_player_secondary = PlayerControllerSystem::spawn_player(collision_world);
+        local_player_secondary.network_id = 2;
+        local_player_secondary.transform.position.x += 2.5f;
+        local_player_secondary.camera_rig.yaw = 180.0f;
+    }
+    update_third_person_camera(local_player, camera);
+    if (runtime_options.splitscreen) {
+        update_third_person_camera(local_player_secondary, secondary_camera);
+    }
     refresh_overlay_text();
     rebuild_dynamic_debug_mesh();
 
@@ -53,8 +62,9 @@ void Engine::connect(const char *host, uint16_t port) {
     net_client.set_chunk_interest(interest);
 }
 
-void Engine::set_input(const InputState &input, bool touch_mode) {
-    input_state = input;
+void Engine::set_input(const InputState &input_primary, const InputState &input_secondary, bool touch_mode) {
+    input_state = input_primary;
+    input_state_secondary = input_secondary;
     touch_input_mode = touch_mode;
 }
 
@@ -120,7 +130,19 @@ void Engine::tick(double frame_dt) {
         gameplay_input.sprint_held = false;
     }
 
+    InputState gameplay_input_secondary = input_state_secondary;
+    if (gui_menu.open()) {
+        gameplay_input_secondary.move = glm::vec2(0.0f);
+        gameplay_input_secondary.look_delta = glm::vec2(0.0f);
+        gameplay_input_secondary.jump_pressed = false;
+        gameplay_input_secondary.jump_held = false;
+        gameplay_input_secondary.sprint_held = false;
+    }
+
     PlayerControllerSystem::update_camera_rig(local_player, gameplay_input, touch_input_mode, static_cast<float>(frame_dt));
+    if (runtime_options.splitscreen) {
+        PlayerControllerSystem::update_camera_rig(local_player_secondary, gameplay_input_secondary, false, static_cast<float>(frame_dt));
+    }
 
     fixed.accumulator += frame_dt;
     bool jump_consumed = false;
@@ -137,6 +159,16 @@ void Engine::tick(double frame_dt) {
             collision_world,
             static_cast<float>(fixed.fixed_dt),
             runtime_options.noclip);
+
+        if (runtime_options.splitscreen) {
+            InputState step_input_secondary = gameplay_input_secondary;
+            last_collision_debug_secondary = PlayerControllerSystem::simulate_fixed(
+                local_player_secondary,
+                step_input_secondary,
+                collision_world,
+                static_cast<float>(fixed.fixed_dt),
+                runtime_options.noclip);
+        }
         jump_consumed = jump_consumed || input_state.jump_pressed;
 
         sync_network_state(static_cast<uint32_t>(fixed.tick));
@@ -151,7 +183,10 @@ void Engine::tick(double frame_dt) {
 
     input_state.jump_pressed = false;
 
-    update_third_person_camera();
+    update_third_person_camera(local_player, camera);
+    if (runtime_options.splitscreen) {
+        update_third_person_camera(local_player_secondary, secondary_camera);
+    }
 
     fps_accumulator += frame_dt;
     fps_frames++;
@@ -232,7 +267,16 @@ void Engine::tick(double frame_dt) {
     ctx.delta_seconds = frame_dt;
     ctx.aspect_ratio = 16.0f / 9.0f;
 
-    renderer.begin_frame(ctx, camera, render_stats);
+    ctx.view_count = runtime_options.splitscreen ? 2u : 1u;
+    ctx.views[0].camera = camera;
+    if (runtime_options.splitscreen) {
+        ctx.views[0].viewport = glm::vec4(0.0f, 0.0f, 0.5f, 1.0f);
+        ctx.views[1].camera = secondary_camera;
+        ctx.views[1].viewport = glm::vec4(0.5f, 0.0f, 0.5f, 1.0f);
+    } else {
+        ctx.views[0].viewport = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
+    }
+    renderer.begin_frame(ctx, render_stats);
     renderer.end_frame();
 }
 
@@ -250,27 +294,27 @@ void Engine::build_static_scene() {
     scene.debug_grid = world_chunk.build_debug_grid(96.0f, 1.0f);
 }
 
-void Engine::update_third_person_camera() {
-    const glm::vec3 pivot = local_player.transform.position + glm::vec3(0.0f, local_player.camera_rig.pivotHeight, 0.0f);
+void Engine::update_third_person_camera(PlayerEntity &player, Camera &out_camera) {
+    const glm::vec3 pivot = player.transform.position + glm::vec3(0.0f, player.camera_rig.pivotHeight, 0.0f);
 
     const glm::vec3 orbit_forward = PlayerControllerSystem::orbit_forward_from_angles(
-        local_player.camera_rig.yaw,
-        local_player.camera_rig.pitch);
+        player.camera_rig.yaw,
+        player.camera_rig.pitch);
 
-    float camera_distance = local_player.camera_rig.distance;
+    float camera_distance = player.camera_rig.distance;
     float hit_distance = 0.0f;
-    if (collision_world.raycast(pivot, -orbit_forward, local_player.camera_rig.distance, hit_distance)) {
-        camera_distance = std::max(local_player.camera_rig.minDistance, hit_distance - 0.15f);
+    if (collision_world.raycast(pivot, -orbit_forward, player.camera_rig.distance, hit_distance)) {
+        camera_distance = std::max(player.camera_rig.minDistance, hit_distance - 0.15f);
     }
 
     const glm::vec3 camera_pos = pivot - orbit_forward * camera_distance;
     const glm::vec3 view_dir = glm::normalize(pivot - camera_pos);
 
-    camera.transform.position = camera_pos;
+    out_camera.transform.position = camera_pos;
     // Camera basis uses local -Z as forward at zero rotation, so solve yaw from -view_dir.
-    camera.transform.euler_radians.y = std::atan2(-view_dir.x, -view_dir.z);
-    camera.transform.euler_radians.x = std::asin(std::clamp(view_dir.y, -1.0f, 1.0f));
-    camera.transform.euler_radians.z = 0.0f;
+    out_camera.transform.euler_radians.y = std::atan2(-view_dir.x, -view_dir.z);
+    out_camera.transform.euler_radians.x = std::asin(std::clamp(view_dir.y, -1.0f, 1.0f));
+    out_camera.transform.euler_radians.z = 0.0f;
 }
 
 void Engine::refresh_overlay_text() {
@@ -328,6 +372,20 @@ void Engine::rebuild_dynamic_debug_mesh() {
 
     append_mesh(scene.overlay_text, player_capsule);
     append_mesh(scene.overlay_text, target_marker);
+
+    if (runtime_options.splitscreen) {
+        RenderMesh p2_capsule = build_debug_capsule_mesh(
+            local_player_secondary.transform.position,
+            local_player_secondary.controller.capsuleRadius,
+            local_player_secondary.controller.capsuleHeight,
+            glm::vec3(0.35f, 0.55f, 0.95f));
+        RenderMesh p2_target = build_debug_sphere_mesh(
+            local_player_secondary.transform.position + glm::vec3(0.0f, local_player_secondary.camera_rig.pivotHeight, 0.0f),
+            0.10f,
+            glm::vec3(0.6f, 0.85f, 1.0f));
+        append_mesh(scene.overlay_text, p2_capsule);
+        append_mesh(scene.overlay_text, p2_target);
+    }
 
     if (runtime_options.devhud) {
         for (const glm::ivec3 &cell : last_collision_debug.overlapped_voxels) {

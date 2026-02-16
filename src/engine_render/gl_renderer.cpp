@@ -7,6 +7,8 @@
 #include <GL/gl.h>
 #endif
 
+#include <algorithm>
+
 #include <glm/gtc/type_ptr.hpp>
 
 void GLRenderer::init(void *window_handle) {
@@ -38,8 +40,7 @@ void GLRenderer::draw_mesh(const RenderMesh &mesh) const {
     glEnd();
 }
 
-void GLRenderer::begin_frame(const RenderFrameContext &ctx, const Camera &camera, const RenderStats &stats) {
-    (void)ctx;
+void GLRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStats &stats) {
     (void)stats;
 
     int width = 0;
@@ -53,20 +54,35 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx, const Camera &camera
     glClearColor(0.08f, 0.1f, 0.14f, 1.0f);
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-    glm::mat4 p = glm::perspective(camera.fov_y_radians, static_cast<float>(width) / static_cast<float>(height), camera.z_near, camera.z_far);
-    glm::mat4 v = camera.view();
+    const uint32_t view_count = std::max(1u, std::min(ctx.view_count, 2u));
+    for (uint32_t i = 0; i < view_count; ++i) {
+        const RenderView &view = ctx.views[i];
+        const int vx = static_cast<int>(view.viewport.x * static_cast<float>(width));
+        const int vy = static_cast<int>(view.viewport.y * static_cast<float>(height));
+        const int vw = std::max(1, static_cast<int>(view.viewport.z * static_cast<float>(width)));
+        const int vh = std::max(1, static_cast<int>(view.viewport.w * static_cast<float>(height)));
 
-    glMatrixMode(GL_PROJECTION);
-    glLoadMatrixf(glm::value_ptr(p));
-    glMatrixMode(GL_MODELVIEW);
-    glLoadMatrixf(glm::value_ptr(v));
+        glViewport(vx, vy, vw, vh);
 
-    for (const RenderMesh &mesh : scene.opaque_meshes) {
-        draw_mesh(mesh);
+        glm::mat4 p = glm::perspective(
+            view.camera.fov_y_radians,
+            static_cast<float>(vw) / static_cast<float>(vh),
+            view.camera.z_near,
+            view.camera.z_far);
+        glm::mat4 v = view.camera.view();
+
+        glMatrixMode(GL_PROJECTION);
+        glLoadMatrixf(glm::value_ptr(p));
+        glMatrixMode(GL_MODELVIEW);
+        glLoadMatrixf(glm::value_ptr(v));
+
+        for (const RenderMesh &mesh : scene.opaque_meshes) {
+            draw_mesh(mesh);
+        }
+
+        draw_mesh(scene.debug_grid);
+        draw_mesh(scene.overlay_text);
     }
-
-    draw_mesh(scene.debug_grid);
-    draw_mesh(scene.overlay_text);
 }
 
 void GLRenderer::end_frame() {

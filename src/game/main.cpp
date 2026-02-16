@@ -5,6 +5,9 @@
 #include "platform/platform.hpp"
 #include "platform/desktop/input_desktop.hpp"
 
+#include <GLFW/glfw3.h>
+#include <glm/glm.hpp>
+
 #include <atomic>
 #include <chrono>
 #include <csignal>
@@ -20,6 +23,54 @@ std::atomic<bool> keep_running{true};
 void on_signal(int) {
     keep_running = false;
 }
+
+InputState poll_secondary_split_input(GLFWwindow *window) {
+    InputState out{};
+    if (!window) {
+        return out;
+    }
+
+    if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
+        out.move.y += 1.0f;
+    }
+    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
+        out.move.y -= 1.0f;
+    }
+    if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
+        out.move.x += 1.0f;
+    }
+    if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
+        out.move.x -= 1.0f;
+    }
+    if (out.move.x != 0.0f || out.move.y != 0.0f) {
+        out.move = glm::normalize(out.move);
+    }
+
+    constexpr float look_speed = 5.0f;
+    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
+        out.look_delta.x -= look_speed;
+    }
+    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
+        out.look_delta.x += look_speed;
+    }
+    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+        out.look_delta.y -= look_speed;
+    }
+    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+        out.look_delta.y += look_speed;
+    }
+
+    const bool rctrl_down =
+        glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS ||
+        glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS;
+    out.jump_held = rctrl_down;
+    out.jump_pressed = rctrl_down;
+    out.sprint_held =
+        glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS ||
+        glfwGetKey(window, GLFW_KEY_SLASH) == GLFW_PRESS;
+
+    return out;
+}
 }
 
 int main(int argc, char **argv) {
@@ -27,6 +78,7 @@ int main(int argc, char **argv) {
     bool headless_server = false;
     bool devhud = false;
     bool noclip = false;
+    bool splitscreen = false;
     const char *connect_host = nullptr;
     uint16_t connect_port = 7777;
     RenderBackendType backend = RenderBackendType::Vulkan;
@@ -52,6 +104,8 @@ int main(int argc, char **argv) {
             devhud = true;
         } else if (std::strcmp(argv[i], "--noclip") == 0) {
             noclip = true;
+        } else if (std::strcmp(argv[i], "--splitscreen") == 0) {
+            splitscreen = true;
         }
     }
 
@@ -93,6 +147,7 @@ int main(int argc, char **argv) {
         EngineRuntimeOptions options{};
         options.devhud = devhud;
         options.noclip = noclip;
+        options.splitscreen = splitscreen;
         engine.init(platform.native_window(), backend, options);
     } catch (const std::exception &e) {
         std::fprintf(stderr, "Engine init failed: %s\n", e.what());
@@ -116,7 +171,8 @@ int main(int argc, char **argv) {
         platform.poll_events();
 
         const InputState input = desktop_input.poll();
-        engine.set_input(input, false);
+        const InputState input_secondary = splitscreen ? poll_secondary_split_input(platform.glfw_window()) : InputState{};
+        engine.set_input(input, input_secondary, false);
         if (run_server) {
             server.pump();
         }

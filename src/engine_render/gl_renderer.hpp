@@ -10,7 +10,7 @@ public:
     void shutdown() override;
     void upload_scene(const RenderScene &scene) override;
     void update_overlay_text(const RenderMesh &overlay) override;
-    void begin_frame(const RenderFrameContext &ctx, const Camera &camera, const RenderStats &stats) override;
+    void begin_frame(const RenderFrameContext &ctx, const RenderStats &stats) override;
     void end_frame() override;
 
 private:

@@ -241,9 +241,14 @@ void VulkanRenderer::update_overlay_text(const RenderMesh &overlay) {
     }
 }
 
-void VulkanRenderer::begin_frame(const RenderFrameContext &ctx, const Camera &camera, const RenderStats &stats) {
+void VulkanRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStats &stats) {
     (void)stats;
-    current_view_proj = camera.projection(ctx.aspect_ratio) * camera.view();
+    current_view_count = std::max(1u, std::min(ctx.view_count, 2u));
+    for (uint32_t i = 0; i < current_view_count; ++i) {
+        current_viewports[i] = ctx.views[i].viewport;
+        const Camera &camera = ctx.views[i].camera;
+        current_view_proj[i] = camera.projection(ctx.aspect_ratio) * camera.view();
+    }
 }
 
 void VulkanRenderer::end_frame() {
@@ -1049,39 +1054,47 @@ void VulkanRenderer::record_command_buffer(VkCommandBuffer cmd, uint32_t image_i
         begin_label(cmd, &label);
     }
 
-    VkViewport viewport{};
-    viewport.x = 0.0f;
-    viewport.y = 0.0f;
-    viewport.width = static_cast<float>(swapchain_extent.width);
-    viewport.height = static_cast<float>(swapchain_extent.height);
-    viewport.minDepth = 0.0f;
-    viewport.maxDepth = 1.0f;
-
-    VkRect2D scissor{};
-    scissor.offset = { 0, 0 };
-    scissor.extent = swapchain_extent;
-
-    vkCmdSetViewport(cmd, 0, 1, &viewport);
-    vkCmdSetScissor(cmd, 0, 1, &scissor);
-
     vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
 
-    PushConstants push{};
-    push.view_proj = current_view_proj;
-    vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &push);
+    for (uint32_t i = 0; i < current_view_count; ++i) {
+        const glm::vec4 vp = current_viewports[i];
+        const int vx = static_cast<int>(vp.x * static_cast<float>(swapchain_extent.width));
+        const int vy = static_cast<int>(vp.y * static_cast<float>(swapchain_extent.height));
+        const uint32_t vw = std::max(1u, static_cast<uint32_t>(vp.z * static_cast<float>(swapchain_extent.width)));
+        const uint32_t vh = std::max(1u, static_cast<uint32_t>(vp.w * static_cast<float>(swapchain_extent.height)));
 
-    if (static_vertex_buffer != VK_NULL_HANDLE && static_index_buffer != VK_NULL_HANDLE && static_index_count > 0) {
-        VkDeviceSize offsets[] = { 0 };
-        vkCmdBindVertexBuffers(cmd, 0, 1, &static_vertex_buffer, offsets);
-        vkCmdBindIndexBuffer(cmd, static_index_buffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, static_index_count, 1, 0, 0, 0);
-    }
+        VkViewport viewport{};
+        viewport.x = static_cast<float>(vx);
+        viewport.y = static_cast<float>(vy);
+        viewport.width = static_cast<float>(vw);
+        viewport.height = static_cast<float>(vh);
+        viewport.minDepth = 0.0f;
+        viewport.maxDepth = 1.0f;
 
-    if (overlay_vertex_buffer != VK_NULL_HANDLE && overlay_index_buffer != VK_NULL_HANDLE && overlay_index_count > 0) {
-        VkDeviceSize offsets[] = { 0 };
-        vkCmdBindVertexBuffers(cmd, 0, 1, &overlay_vertex_buffer, offsets);
-        vkCmdBindIndexBuffer(cmd, overlay_index_buffer, 0, VK_INDEX_TYPE_UINT32);
-        vkCmdDrawIndexed(cmd, overlay_index_count, 1, 0, 0, 0);
+        VkRect2D scissor{};
+        scissor.offset = { vx, vy };
+        scissor.extent = { vw, vh };
+
+        vkCmdSetViewport(cmd, 0, 1, &viewport);
+        vkCmdSetScissor(cmd, 0, 1, &scissor);
+
+        PushConstants push{};
+        push.view_proj = current_view_proj[i];
+        vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &push);
+
+        if (static_vertex_buffer != VK_NULL_HANDLE && static_index_buffer != VK_NULL_HANDLE && static_index_count > 0) {
+            const VkDeviceSize offsets[] = { 0 };
+            vkCmdBindVertexBuffers(cmd, 0, 1, &static_vertex_buffer, offsets);
+            vkCmdBindIndexBuffer(cmd, static_index_buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, static_index_count, 1, 0, 0, 0);
+        }
+
+        if (overlay_vertex_buffer != VK_NULL_HANDLE && overlay_index_buffer != VK_NULL_HANDLE && overlay_index_count > 0) {
+            const VkDeviceSize offsets[] = { 0 };
+            vkCmdBindVertexBuffers(cmd, 0, 1, &overlay_vertex_buffer, offsets);
+            vkCmdBindIndexBuffer(cmd, overlay_index_buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, overlay_index_count, 1, 0, 0, 0);
+        }
     }
 
     if (end_label) {

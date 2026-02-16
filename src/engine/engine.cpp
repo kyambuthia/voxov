@@ -208,7 +208,7 @@ void Engine::tick(double frame_dt) {
             input_state.key_w || input_state.key_a || input_state.key_s || input_state.key_d;
 
         log_accumulator += frame_dt;
-        if (any_non_zero && log_accumulator >= 0.0) {
+        if (any_non_zero && log_accumulator >= 0.2) {
             log_accumulator = 0.0;
             spdlog::info(
                 "devhud dt={:.4f} fixed_dt={:.4f} mouse_dx={:.2f} mouse_dy={:.2f} keys[W{} A{} S{} D{}] axes[MoveX={:.2f} MoveY={:.2f} LookX={:.2f} LookY={:.2f}] cam[yaw={:.2f} pitch={:.2f} f=({:.2f},{:.2f},{:.2f}) r=({:.2f},{:.2f},{:.2f})] move[desired=({:.2f},{:.2f},{:.2f}) strafeRight=({:.2f},{:.2f},{:.2f})] pos=({:.2f},{:.2f},{:.2f}) vel=({:.2f},{:.2f},{:.2f}) grounded={} pen={:.3f} n=({:.2f},{:.2f},{:.2f}) mode[rmb={} lock={} look_en={}] remotes={} noclip={}",

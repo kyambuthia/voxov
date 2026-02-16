@@ -27,6 +27,7 @@ private:
     void send_chunk_state(_ENetPeer *peer, ClientState &state, NetChunkCoord coord, uint32_t version);
     void broadcast_player_states();
 
+    bool initialized = false;
     _ENetHost *server = nullptr;
     std::unordered_map<_ENetPeer *, ClientState> clients;
     uint32_t next_player_id = 1;

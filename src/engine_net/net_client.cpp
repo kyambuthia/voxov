@@ -3,6 +3,7 @@
 #include <enet/enet.h>
 
 #include <cstring>
+#include <cstdio>
 
 namespace {
 #pragma pack(push, 1)
@@ -39,15 +40,38 @@ struct PlayerStatePacket {
 }
 
 void NetClient::init() {
-    enet_initialize();
+    if (initialized) {
+        return;
+    }
+
+    if (enet_initialize() != 0) {
+        std::fprintf(stderr, "NetClient: enet_initialize failed\n");
+        return;
+    }
     client = enet_host_create(nullptr, 1, 2, 0, 0);
+    if (!client) {
+        std::fprintf(stderr, "NetClient: enet_host_create failed\n");
+        enet_deinitialize();
+        return;
+    }
+    initialized = true;
 }
 
 void NetClient::connect(const char *host, uint16_t port) {
+    if (!initialized || !client || !host) {
+        return;
+    }
+
     ENetAddress address{};
-    enet_address_set_host(&address, host);
+    if (enet_address_set_host(&address, host) != 0) {
+        std::fprintf(stderr, "NetClient: failed to resolve host '%s'\n", host);
+        return;
+    }
     address.port = port;
     peer = enet_host_connect(client, &address, 2, 0);
+    if (!peer) {
+        std::fprintf(stderr, "NetClient: enet_host_connect failed\n");
+    }
 }
 
 void NetClient::disconnect() {
@@ -65,7 +89,10 @@ void NetClient::shutdown() {
         enet_host_destroy(client);
         client = nullptr;
     }
-    enet_deinitialize();
+    if (initialized) {
+        enet_deinitialize();
+        initialized = false;
+    }
 }
 
 void NetClient::pump() {

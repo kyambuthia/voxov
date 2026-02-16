@@ -3,6 +3,7 @@
 #include <enet/enet.h>
 
 #include <cstring>
+#include <cstdio>
 
 namespace {
 #pragma pack(push, 1)
@@ -70,12 +71,25 @@ void NetServer::broadcast_player_states() {
 }
 
 void NetServer::init(uint16_t port) {
-    enet_initialize();
+    if (initialized) {
+        return;
+    }
+
+    if (enet_initialize() != 0) {
+        std::fprintf(stderr, "NetServer: enet_initialize failed\n");
+        return;
+    }
+    initialized = true;
 
     ENetAddress address{};
     address.host = ENET_HOST_ANY;
     address.port = port;
     server = enet_host_create(&address, 32, 2, 0, 0);
+    if (!server) {
+        std::fprintf(stderr, "NetServer: enet_host_create failed on port %u\n", port);
+        enet_deinitialize();
+        initialized = false;
+    }
 }
 
 void NetServer::shutdown() {
@@ -84,7 +98,10 @@ void NetServer::shutdown() {
         enet_host_destroy(server);
         server = nullptr;
     }
-    enet_deinitialize();
+    if (initialized) {
+        enet_deinitialize();
+        initialized = false;
+    }
 }
 
 void NetServer::pump() {

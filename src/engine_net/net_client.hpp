@@ -23,6 +23,7 @@ public:
     const std::unordered_map<uint32_t, NetPlayerState> &player_states() const;
 
 private:
+    bool initialized = false;
     _ENetHost *client = nullptr;
     _ENetPeer *peer = nullptr;
     bool has_snapshot = false;

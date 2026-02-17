@@ -395,9 +395,7 @@ void Engine::refresh_overlay_text() {
 
 void Engine::rebuild_dynamic_debug_mesh() {
     scene.debug_world = RenderMesh{};
-    if (!runtime_options.debug_collision) {
-        return;
-    }
+    const bool collision_debug_enabled = runtime_options.debug_collision;
 
     RenderMesh player_capsule = build_debug_capsule_mesh(
         local_player.transform.position,
@@ -431,7 +429,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
         }
     }
 
-    if (runtime_options.devhud || runtime_options.debug_collision_only) {
+    if (collision_debug_enabled && (runtime_options.devhud || runtime_options.debug_collision_only)) {
         for (const glm::ivec3 &cell : last_collision_debug.overlapped_voxels) {
             const glm::vec3 bmin(static_cast<float>(cell.x), static_cast<float>(cell.y), static_cast<float>(cell.z));
             const glm::vec3 bmax = bmin + glm::vec3(1.0f);

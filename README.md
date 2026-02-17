@@ -1,6 +1,13 @@
 ## VOXOV
 Voxel exploration engine foundation (C++23), renderer-agnostic gameplay path, Vulkan + OpenGL backends.
 
+## Status
+`WIP` (work in progress). This project is actively evolving and APIs, runtime behavior, and platform support can change between commits.
+
+Current notes:
+- Vulkan path is under active stabilization (validation-clean sync and swapchain behavior still being improved).
+- Some CPUs may require disabling aggressive Jolt SIMD options (e.g. AVX2/F16C/FMADD/LZCNT) to avoid illegal-instruction startup failures.
+
 ## Prereqs
 - `cmake>=3.16`
 - C++23 compiler (`clang++`/`g++`/MSVC)

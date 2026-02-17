@@ -158,17 +158,40 @@ jobs:
         run: |
           echo "${{ secrets.ANDROID_TEST_KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/voxov-test-upload.jks"
 
-      - name: Build signed APK (Debug - matches local render path)
+      - name: Build signed APK (Release)
         env:
           ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/voxov-test-upload.jks
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_TEST_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_TEST_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_TEST_KEY_PASSWORD }}
-        run: gradle -p android :app:assembleDebug --stacktrace --no-daemon
+        run: gradle -p android :app:assembleRelease --stacktrace --no-daemon
+
+      - name: Verify APK contains native library
+        run: |
+          APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
+          test -f "${APK_PATH}"
+          unzip -l "${APK_PATH}" | tee /tmp/apk-contents.txt
+          grep -q "lib/arm64-v8a/libvoxov.so" /tmp/apk-contents.txt
+
+      - name: Android smoke test (startup render markers)
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          arch: x86_64
+          profile: pixel_6
+          script: |
+            adb install -r android/app/build/outputs/apk/release/app-release.apk
+            adb logcat -c
+            adb shell am start -n com.voxov.game/android.app.NativeActivity
+            sleep 10
+            adb logcat -d | tee /tmp/voxov-logcat.txt
+            grep -q "APP_CMD_INIT_WINDOW" /tmp/voxov-logcat.txt
+            grep -q "EGL ready" /tmp/voxov-logcat.txt
+            grep -q "frame=1" /tmp/voxov-logcat.txt
 
       - name: Prepare android artifact
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk "VOXOV-${GITHUB_REF_NAME}-android-arm64-v8a.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "VOXOV-${GITHUB_REF_NAME}-android-arm64-v8a.apk"
 
       - name: Upload android artifact
         uses: actions/upload-artifact@v4

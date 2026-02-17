@@ -42,12 +42,14 @@ cmake .. && cmake --build .
 ```
 
 - Android setup/build details: `docs/ANDROID.md`
+- Web setup/build details: `docs/WEB.md`
 - Full setup guide: `docs/SETUP.md`
 
 ## Docs
 - Docs overview and setup: `docs/SETUP.md`
 - Run and test: `docs/RUNNING.md`
 - Android: `docs/ANDROID.md`
+- Web: `docs/WEB.md`
 - Build/release details: `docs/RELEASES.md`
 - Full docs folder: `docs/`
 

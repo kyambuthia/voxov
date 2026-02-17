@@ -65,6 +65,26 @@ if(ANDROID)
     return()
 endif()
 
+if(EMSCRIPTEN)
+    message(STATUS "Configuring VOXOV for Web (Emscripten)")
+
+    add_executable(voxov_web
+        src/game/web_main.cpp
+        src/platform/web_platform.cpp
+    )
+    target_include_directories(voxov_web PRIVATE src)
+    target_compile_definitions(voxov_web PRIVATE VOXOV_PLATFORM_WEB=1)
+    target_link_options(voxov_web PRIVATE
+        "-sUSE_WEBGL2=1"
+        "-sMIN_WEBGL_VERSION=2"
+        "-sMAX_WEBGL_VERSION=2"
+        "-sALLOW_MEMORY_GROWTH=1"
+        "-sWASM=1"
+    )
+    set_target_properties(voxov_web PROPERTIES OUTPUT_NAME "voxov_web")
+    return()
+endif()
+
 # Compiler-specific options
 if(MSVC)
     add_compile_options(/W4)
@@ -198,6 +218,8 @@ else()
 endif()
 
 add_library(engine_physics STATIC
+    src/engine_physics/avbd_solver.cpp
+    src/engine_physics/jolt_solver.cpp
     src/engine_physics/physics_world.cpp
 )
 target_include_directories(engine_physics PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/JoltPhysics)

@@ -1,10 +1,8 @@
 #pragma once
 
-#include <cstdint>
+#include "engine_physics/physics_solver.hpp"
 
-struct EnginePhysicsSettings {
-    float gravity = -9.81f;
-};
+#include <memory>
 
 class PhysicsWorld {
 public:
@@ -13,7 +11,5 @@ public:
     void step(float dt_seconds);
 
 private:
-    void *physics_system = nullptr;
-    void *temp_allocator = nullptr;
-    void *job_system = nullptr;
+    std::unique_ptr<IPhysicsSolver> solver;
 };

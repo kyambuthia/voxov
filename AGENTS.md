@@ -174,3 +174,30 @@ endif()
 - Handle SDL_AppEvent for input and window events
 - Leverage SDL's cross-platform abstractions for file I/O and threading
 - Use SDL_Log for consistent logging across platforms
+
+## Web Target Guidance
+
+VOXOV targets web in addition to desktop/mobile/console classes. Follow these rules:
+
+1. Prefer a lean WebGL2-compatible rendering path for web bring-up; keep Vulkan as primary desktop path.
+2. Keep gameplay/simulation logic renderer-agnostic and platform-agnostic.
+3. Reuse mobile constraints for web by default:
+   - strict memory budgets
+   - bounded chunk residency
+   - conservative physics budgets
+4. Avoid blocking IO patterns and platform assumptions that do not map to browser sandboxes.
+5. Keep input abstraction unified across desktop/mouse, mobile/touch, and web pointer/touch.
+6. Treat web as a first-class CI target once baseline rendering/input loop is stable.
+
+## XR Target Guidance
+
+VOXOV also targets 3D headsets as an explicit platform class:
+
+1. Meta Quest/Oculus and PC VR headsets should use an OpenXR-based runtime path.
+2. Apple Vision Pro should be treated as a dedicated visionOS target with platform-specific integration.
+3. Engine/gameplay systems must stay XR-agnostic; XR specifics belong in platform and renderer layers.
+4. XR rendering requirements are mandatory:
+   - stereo view/projection per eye
+   - strict frame pacing and low-latency pose updates
+   - comfort-safe locomotion options
+5. XR support should follow after mobile/web baseline stabilization, not block core shipping milestones.

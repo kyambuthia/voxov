@@ -7,6 +7,7 @@ VOXOV must ship from one shared codebase across:
 - Desktop: Linux, Windows, macOS
 - Mobile: Android, iOS
 - Consoles: PlayStation/Xbox/Nintendo platform targets
+- XR/AR headsets: Quest/Oculus, PC VR headsets, Apple Vision Pro
 
 Design implications:
 
@@ -14,6 +15,16 @@ Design implications:
 - Rendering abstraction supports backend/platform surface differences without gameplay forks.
 - Input, file IO, threading, timing, networking, and save paths use engine abstractions, not ad-hoc platform calls.
 - New engine systems are accepted only if they can map to all target platform classes or include a documented fallback path.
+
+## XR/AR Tenet
+
+XR/AR is a first-class platform target, not a post-port.
+
+- Quest/Oculus and PC VR target an OpenXR path.
+- Apple Vision Pro targets a visionOS-specific path.
+- Gameplay/simulation remains shared and headset-agnostic.
+- XR-specific logic lives in platform/render/input layers (stereo views, pose tracking, motion controllers, frame timing).
+- Comfort and frame pacing are mandatory quality gates for headset builds.
 
 ## Gameplay Tenet: Multi-Modal Traversal
 
@@ -36,6 +47,7 @@ Design implications:
 - `engine_math/*`: transforms + camera
 - `engine_world/*`: voxel data + chunk meshing
 - `engine_render/*`: renderer API + Vulkan/GL backends
+- `engine_xr/*`: XR session, stereo camera state, action bindings, and compositor-facing frame flow
 - `engine_ui/*`: renderer-agnostic in-game GUI/menu state
 - `engine_net/*`: ENet transport + channels + replication primitives
 - `engine_physics/*`: Jolt world step

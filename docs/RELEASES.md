@@ -61,3 +61,20 @@ git push origin v0.0.1
   - `USE_F16C=OFF`
   - `USE_FMADD=OFF`
   - `USE_LZCNT=OFF`
+
+## Android release reliability checklist
+
+Before publishing a new tag:
+
+1. Ensure the tag includes latest Android runtime fixes and workflow changes.
+2. Ensure signing secrets are configured in GitHub:
+   - `ANDROID_TEST_KEYSTORE_B64`
+   - `ANDROID_TEST_KEYSTORE_PASSWORD`
+   - `ANDROID_TEST_KEY_ALIAS`
+   - `ANDROID_TEST_KEY_PASSWORD`
+3. Confirm release workflow passes:
+   - APK contains `lib/arm64-v8a/libvoxov.so`
+   - Emulator smoke markers appear in logcat:
+     - `APP_CMD_INIT_WINDOW`
+     - `EGL ready`
+     - `frame=1`

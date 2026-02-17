@@ -4,11 +4,20 @@
 #include <GLES2/gl2.h>
 
 #include <cmath>
+#include <cinttypes>
 #include <cstdint>
 #include <ctime>
 
 namespace {
 constexpr const char *kLogTag = "VOXOV";
+
+#ifndef EGL_OPENGL_ES3_BIT
+#ifdef EGL_OPENGL_ES3_BIT_KHR
+#define EGL_OPENGL_ES3_BIT EGL_OPENGL_ES3_BIT_KHR
+#else
+#define EGL_OPENGL_ES3_BIT 0x0040
+#endif
+#endif
 
 const char *egl_error_to_string(EGLint err) {
     switch (err) {
@@ -65,7 +74,7 @@ struct AndroidRenderer {
         }
 
         const EGLint config_attrs_es3[] = {
-            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT_KHR,
+            EGL_RENDERABLE_TYPE, EGL_OPENGL_ES3_BIT,
             EGL_SURFACE_TYPE, EGL_WINDOW_BIT,
             EGL_RED_SIZE, 8,
             EGL_GREEN_SIZE, 8,
@@ -187,7 +196,7 @@ struct AndroidRenderer {
 
         ++frame_counter;
         if (frame_counter == 1 || frame_counter % 300 == 0) {
-            __android_log_print(ANDROID_LOG_INFO, kLogTag, "frame=%llu size=%dx%d focused=%d", frame_counter, width, height, focused ? 1 : 0);
+            __android_log_print(ANDROID_LOG_INFO, kLogTag, "frame=%" PRIu64 " size=%dx%d focused=%d", frame_counter, width, height, focused ? 1 : 0);
         }
     }
 };

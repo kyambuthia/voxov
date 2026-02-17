@@ -1,4 +1,5 @@
 #include "engine_world/voxel_chunk.hpp"
+#include "engine_render/debug_draw/debug_draw.hpp"
 
 #include <android/input.h>
 #include <android/log.h>
@@ -151,10 +152,13 @@ struct AndroidRenderer {
     GLint u_mvp = -1;
     GpuMesh terrain_gpu{};
     GpuMesh grid_gpu{};
+    GpuMesh capsule_gpu{};
 
     VoxelChunk world{};
     RenderMesh terrain_mesh{};
     RenderMesh grid_mesh{};
+    RenderMesh capsule_mesh{};
+    glm::vec3 player_feet_position = glm::vec3(4.5f, 6.0f, 5.5f);
 
     glm::vec3 cam_pos = glm::vec3(8.0f, 8.0f, 22.0f);
     float cam_yaw = 3.14159f;
@@ -184,6 +188,7 @@ struct AndroidRenderer {
     void shutdown_gl_resources() {
         destroy_mesh(terrain_gpu);
         destroy_mesh(grid_gpu);
+        destroy_mesh(capsule_gpu);
         if (program != 0) {
             glDeleteProgram(program);
             program = 0;
@@ -322,8 +327,14 @@ struct AndroidRenderer {
         world.generate_heightmap_terrain();
         terrain_mesh = world.build_naive_mesh();
         grid_mesh = world.build_debug_grid(64.0f, 1.0f);
+        capsule_mesh = build_debug_capsule_mesh(
+            player_feet_position,
+            0.45f,
+            1.8f,
+            glm::vec3(0.95f, 0.5f, 0.2f));
         terrain_gpu = upload_mesh(terrain_mesh);
         grid_gpu = upload_mesh(grid_mesh);
+        capsule_gpu = upload_mesh(capsule_mesh);
 
         clock_gettime(CLOCK_MONOTONIC, &last_time);
         has_last_time = true;
@@ -437,6 +448,7 @@ struct AndroidRenderer {
 
             draw_mesh(terrain_gpu, mvp);
             draw_mesh(grid_gpu, mvp);
+            draw_mesh(capsule_gpu, mvp);
         }
 
         if (eglSwapBuffers(display, surface) == EGL_FALSE) {

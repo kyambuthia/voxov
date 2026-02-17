@@ -14,7 +14,8 @@
             android:name="android.app.NativeActivity"
             android:configChanges="orientation|keyboardHidden|keyboard|screenSize|smallestScreenSize|screenLayout|uiMode"
             android:exported="true"
-            android:launchMode="singleTask">
+            android:launchMode="singleTask"
+            android:screenOrientation="sensorLandscape">
             <meta-data
                 android:name="android.app.lib_name"
                 android:value="voxov" />

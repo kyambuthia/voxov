@@ -36,6 +36,7 @@ if(ANDROID)
         src/game/android_main.cpp
         src/platform/android_platform.cpp
         src/platform/android/input_android.cpp
+        src/engine_render/debug_draw/debug_draw.cpp
         src/engine_world/voxel_chunk.cpp
         ${VOXOV_ANDROID_GLUE_DIR}/android_native_app_glue.c
     )

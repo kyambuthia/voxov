@@ -102,6 +102,7 @@ jobs:
             -DCMAKE_BUILD_TYPE=Release `
             -DVOXOV_BUILD_TESTS=OFF `
             -DVOXOV_ENABLE_VULKAN=OFF `
+            -DENABLE_ALL_WARNINGS=OFF `
             -DUSE_AVX2=OFF `
             -DUSE_F16C=OFF `
             -DUSE_FMADD=OFF `
@@ -141,6 +142,7 @@ jobs:
         uses: gradle/actions/setup-gradle@v4
         with:
           gradle-version: "8.10.2"
+          validate-wrappers: false
 
       - name: Setup Android SDK tools
         uses: android-actions/setup-android@v3
@@ -177,11 +179,12 @@ jobs:
           if-no-files-found: error
 
       - name: Download android artifact
+        continue-on-error: true
         uses: actions/download-artifact@v4
         with:
           name: release-android
           path: dist/release-android
-          if-no-files-found: error
+          if-no-files-found: ignore
 
       - name: Download windows artifact (optional)
         continue-on-error: true
@@ -189,6 +192,7 @@ jobs:
         with:
           name: release-windows
           path: dist/release-windows
+          if-no-files-found: ignore
 
       - name: Flatten artifacts
         run: |

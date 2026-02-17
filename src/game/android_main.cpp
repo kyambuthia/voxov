@@ -1,12 +1,21 @@
+#include "engine_world/voxel_chunk.hpp"
+
+#include <android/input.h>
 #include <android/log.h>
 #include <android_native_app_glue.h>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 
+#include <algorithm>
 #include <cmath>
-#include <cinttypes>
 #include <cstdint>
 #include <ctime>
+#include <string>
+#include <vector>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 namespace {
 constexpr const char *kLogTag = "VOXOV";
@@ -40,6 +49,94 @@ const char *egl_error_to_string(EGLint err) {
     }
 }
 
+GLuint compile_shader(GLenum type, const char *src) {
+    GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &src, nullptr);
+    glCompileShader(shader);
+    GLint ok = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+    if (ok == GL_FALSE) {
+        GLint len = 0;
+        glGetShaderiv(shader, GL_INFO_LOG_LENGTH, &len);
+        std::vector<char> log(std::max(1, len), 0);
+        glGetShaderInfoLog(shader, static_cast<GLsizei>(log.size()), nullptr, log.data());
+        __android_log_print(ANDROID_LOG_ERROR, kLogTag, "shader compile failed: %s", log.data());
+        glDeleteShader(shader);
+        return 0;
+    }
+    return shader;
+}
+
+GLuint create_program() {
+    static const char *kVs = R"(
+        attribute vec3 aPos;
+        attribute vec3 aColor;
+        uniform mat4 uMVP;
+        varying vec3 vColor;
+        void main() {
+            vColor = aColor;
+            gl_Position = uMVP * vec4(aPos, 1.0);
+        }
+    )";
+    static const char *kFs = R"(
+        precision mediump float;
+        varying vec3 vColor;
+        void main() {
+            gl_FragColor = vec4(vColor, 1.0);
+        }
+    )";
+
+    const GLuint vs = compile_shader(GL_VERTEX_SHADER, kVs);
+    const GLuint fs = compile_shader(GL_FRAGMENT_SHADER, kFs);
+    if (!vs || !fs) {
+        if (vs) {
+            glDeleteShader(vs);
+        }
+        if (fs) {
+            glDeleteShader(fs);
+        }
+        return 0;
+    }
+
+    GLuint program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glBindAttribLocation(program, 0, "aPos");
+    glBindAttribLocation(program, 1, "aColor");
+    glLinkProgram(program);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    GLint ok = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &ok);
+    if (ok == GL_FALSE) {
+        GLint len = 0;
+        glGetProgramiv(program, GL_INFO_LOG_LENGTH, &len);
+        std::vector<char> log(std::max(1, len), 0);
+        glGetProgramInfoLog(program, static_cast<GLsizei>(log.size()), nullptr, log.data());
+        __android_log_print(ANDROID_LOG_ERROR, kLogTag, "program link failed: %s", log.data());
+        glDeleteProgram(program);
+        return 0;
+    }
+
+    return program;
+}
+
+struct TouchState {
+    int32_t left_pointer = -1;
+    int32_t right_pointer = -1;
+    glm::vec2 left_origin = glm::vec2(0.0f);
+    glm::vec2 left_value = glm::vec2(0.0f);
+    glm::vec2 right_prev = glm::vec2(0.0f);
+    glm::vec2 look_delta = glm::vec2(0.0f);
+};
+
+struct GpuMesh {
+    GLuint vbo = 0;
+    GLuint ibo = 0;
+    GLsizei index_count = 0;
+};
+
 struct AndroidRenderer {
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLSurface surface = EGL_NO_SURFACE;
@@ -48,10 +145,76 @@ struct AndroidRenderer {
     int32_t height = 0;
     bool focused = false;
     int gles_version = 0;
+    bool can_draw_uint_indices = false;
+
+    GLuint program = 0;
+    GLint u_mvp = -1;
+    GpuMesh terrain_gpu{};
+    GpuMesh grid_gpu{};
+
+    VoxelChunk world{};
+    RenderMesh terrain_mesh{};
+    RenderMesh grid_mesh{};
+
+    glm::vec3 cam_pos = glm::vec3(8.0f, 8.0f, 22.0f);
+    float cam_yaw = 3.14159f;
+    float cam_pitch = -0.25f;
+    TouchState touch{};
+
+    timespec last_time{};
+    bool has_last_time = false;
     uint64_t frame_counter = 0;
 
     bool can_render() const {
         return display != EGL_NO_DISPLAY && surface != EGL_NO_SURFACE && context != EGL_NO_CONTEXT;
+    }
+
+    void destroy_mesh(GpuMesh &mesh) {
+        if (mesh.vbo != 0) {
+            glDeleteBuffers(1, &mesh.vbo);
+            mesh.vbo = 0;
+        }
+        if (mesh.ibo != 0) {
+            glDeleteBuffers(1, &mesh.ibo);
+            mesh.ibo = 0;
+        }
+        mesh.index_count = 0;
+    }
+
+    void shutdown_gl_resources() {
+        destroy_mesh(terrain_gpu);
+        destroy_mesh(grid_gpu);
+        if (program != 0) {
+            glDeleteProgram(program);
+            program = 0;
+        }
+        u_mvp = -1;
+    }
+
+    GpuMesh upload_mesh(const RenderMesh &mesh) {
+        GpuMesh out{};
+        if (mesh.vertices.empty() || mesh.indices.empty()) {
+            return out;
+        }
+
+        glGenBuffers(1, &out.vbo);
+        glBindBuffer(GL_ARRAY_BUFFER, out.vbo);
+        glBufferData(
+            GL_ARRAY_BUFFER,
+            static_cast<GLsizeiptr>(mesh.vertices.size() * sizeof(RenderVertex)),
+            mesh.vertices.data(),
+            GL_STATIC_DRAW);
+
+        glGenBuffers(1, &out.ibo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, out.ibo);
+        glBufferData(
+            GL_ELEMENT_ARRAY_BUFFER,
+            static_cast<GLsizeiptr>(mesh.indices.size() * sizeof(uint32_t)),
+            mesh.indices.data(),
+            GL_STATIC_DRAW);
+
+        out.index_count = static_cast<GLsizei>(mesh.indices.size());
+        return out;
     }
 
     bool initialize(android_app *app) {
@@ -141,17 +304,52 @@ struct AndroidRenderer {
         eglQuerySurface(display, surface, EGL_WIDTH, &width);
         eglQuerySurface(display, surface, EGL_HEIGHT, &height);
 
+        const char *extensions = reinterpret_cast<const char *>(glGetString(GL_EXTENSIONS));
+        const bool has_uint_ext = extensions != nullptr && std::string(extensions).find("GL_OES_element_index_uint") != std::string::npos;
+        can_draw_uint_indices = (gles_version >= 3) || has_uint_ext;
+
+        glEnable(GL_DEPTH_TEST);
+        glDisable(GL_CULL_FACE);
+        glDepthFunc(GL_LEQUAL);
+
+        program = create_program();
+        if (program == 0) {
+            shutdown();
+            return false;
+        }
+        u_mvp = glGetUniformLocation(program, "uMVP");
+
+        world.generate_heightmap_terrain();
+        terrain_mesh = world.build_naive_mesh();
+        grid_mesh = world.build_debug_grid(64.0f, 1.0f);
+        terrain_gpu = upload_mesh(terrain_mesh);
+        grid_gpu = upload_mesh(grid_mesh);
+
+        clock_gettime(CLOCK_MONOTONIC, &last_time);
+        has_last_time = true;
+        frame_counter = 0;
+
         __android_log_print(
-            ANDROID_LOG_INFO, kLogTag, "EGL ready (%d x %d), GLES%d: %s",
-            width, height, gles_version, glGetString(GL_VERSION));
+            ANDROID_LOG_INFO,
+            kLogTag,
+            "EGL ready (%d x %d), GLES%d: %s, uint_indices=%d terrain_tris=%d",
+            width,
+            height,
+            gles_version,
+            glGetString(GL_VERSION),
+            can_draw_uint_indices ? 1 : 0,
+            static_cast<int>(terrain_mesh.indices.size() / 3));
         return true;
     }
 
     void shutdown() {
+        if (can_render()) {
+            shutdown_gl_resources();
+        }
+
         if (display != EGL_NO_DISPLAY) {
             eglMakeCurrent(display, EGL_NO_SURFACE, EGL_NO_SURFACE, EGL_NO_CONTEXT);
         }
-
         if (context != EGL_NO_CONTEXT) {
             eglDestroyContext(display, context);
             context = EGL_NO_CONTEXT;
@@ -168,7 +366,41 @@ struct AndroidRenderer {
         width = 0;
         height = 0;
         gles_version = 0;
+        can_draw_uint_indices = false;
+        has_last_time = false;
         frame_counter = 0;
+    }
+
+    void update_camera(double dt_seconds) {
+        const float look_scale = 0.0035f;
+        cam_yaw += touch.look_delta.x * look_scale;
+        cam_pitch += touch.look_delta.y * look_scale;
+        cam_pitch = std::clamp(cam_pitch, -1.2f, 1.2f);
+        touch.look_delta = glm::vec2(0.0f);
+
+        const glm::vec3 forward_flat = glm::normalize(glm::vec3(std::sin(cam_yaw), 0.0f, -std::cos(cam_yaw)));
+        const glm::vec3 right_flat = glm::normalize(glm::cross(forward_flat, glm::vec3(0.0f, 1.0f, 0.0f)));
+        const float speed = 10.0f;
+        cam_pos += (forward_flat * touch.left_value.y + right_flat * touch.left_value.x) * speed * static_cast<float>(dt_seconds);
+    }
+
+    void draw_mesh(const GpuMesh &mesh, const glm::mat4 &mvp) {
+        if (mesh.vbo == 0 || mesh.ibo == 0 || mesh.index_count <= 0) {
+            return;
+        }
+
+        glUseProgram(program);
+        glUniformMatrix4fv(u_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
+
+        glBindBuffer(GL_ARRAY_BUFFER, mesh.vbo);
+        glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.ibo);
+        glEnableVertexAttribArray(0);
+        glEnableVertexAttribArray(1);
+        glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(RenderVertex), reinterpret_cast<void *>(offsetof(RenderVertex, position)));
+        glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(RenderVertex), reinterpret_cast<void *>(offsetof(RenderVertex, color)));
+        glDrawElements(GL_TRIANGLES, mesh.index_count, GL_UNSIGNED_INT, nullptr);
+        glDisableVertexAttribArray(0);
+        glDisableVertexAttribArray(1);
     }
 
     void render_frame() {
@@ -176,18 +408,37 @@ struct AndroidRenderer {
             return;
         }
 
-        timespec ts{};
-        clock_gettime(CLOCK_MONOTONIC, &ts);
-        const float t = static_cast<float>(ts.tv_sec) + static_cast<float>(ts.tv_nsec) * 1.0e-9f;
+        timespec now{};
+        clock_gettime(CLOCK_MONOTONIC, &now);
+        double dt_seconds = 1.0 / 60.0;
+        if (has_last_time) {
+            dt_seconds = static_cast<double>(now.tv_sec - last_time.tv_sec) +
+                         static_cast<double>(now.tv_nsec - last_time.tv_nsec) * 1.0e-9;
+            dt_seconds = std::clamp(dt_seconds, 1.0 / 240.0, 0.05);
+        }
+        last_time = now;
+        has_last_time = true;
 
-        const float pulse = 0.5f + 0.5f * std::sin(t * 0.9f);
-        const float r = 0.08f + 0.22f * pulse;
-        const float g = 0.10f + 0.18f * (1.0f - pulse);
-        const float b = 0.22f + 0.35f * pulse;
+        update_camera(dt_seconds);
 
         glViewport(0, 0, width, height);
-        glClearColor(r, g, b, 1.0f);
+        glClearColor(0.08f, 0.1f, 0.14f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+        if (can_draw_uint_indices) {
+            const float aspect = (height > 0) ? static_cast<float>(width) / static_cast<float>(height) : 1.0f;
+            const glm::vec3 forward = glm::normalize(glm::vec3(
+                std::cos(cam_pitch) * std::sin(cam_yaw),
+                std::sin(cam_pitch),
+                -std::cos(cam_pitch) * std::cos(cam_yaw)));
+            const glm::mat4 view = glm::lookAt(cam_pos, cam_pos + forward, glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::mat4 proj = glm::perspective(glm::radians(70.0f), aspect, 0.1f, 2000.0f);
+            const glm::mat4 mvp = proj * view;
+
+            draw_mesh(terrain_gpu, mvp);
+            draw_mesh(grid_gpu, mvp);
+        }
+
         if (eglSwapBuffers(display, surface) == EGL_FALSE) {
             __android_log_print(ANDROID_LOG_ERROR, kLogTag, "eglSwapBuffers failed: %s", egl_error_to_string(eglGetError()));
             shutdown();
@@ -196,8 +447,93 @@ struct AndroidRenderer {
 
         ++frame_counter;
         if (frame_counter == 1 || frame_counter % 300 == 0) {
-            __android_log_print(ANDROID_LOG_INFO, kLogTag, "frame=%" PRIu64 " size=%dx%d focused=%d", frame_counter, width, height, focused ? 1 : 0);
+            __android_log_print(
+                ANDROID_LOG_INFO,
+                kLogTag,
+                "frame=%llu dt=%.3fms cam=(%.2f,%.2f,%.2f) move=(%.2f,%.2f)",
+                static_cast<unsigned long long>(frame_counter),
+                dt_seconds * 1000.0,
+                cam_pos.x,
+                cam_pos.y,
+                cam_pos.z,
+                touch.left_value.x,
+                touch.left_value.y);
         }
+    }
+
+    static float clamp_unit(float x) {
+        return std::clamp(x, -1.0f, 1.0f);
+    }
+
+    int32_t on_input(android_app *app, AInputEvent *event) {
+        if (event == nullptr || AInputEvent_getType(event) != AINPUT_EVENT_TYPE_MOTION) {
+            return 0;
+        }
+
+        const int32_t action = AMotionEvent_getAction(event);
+        const int32_t masked = action & AMOTION_EVENT_ACTION_MASK;
+        const int32_t action_index = (action & AMOTION_EVENT_ACTION_POINTER_INDEX_MASK) >> AMOTION_EVENT_ACTION_POINTER_INDEX_SHIFT;
+        const int32_t pointer_count = AMotionEvent_getPointerCount(event);
+
+        auto assign_pointer = [&](int32_t pointer_id, float x, float y) {
+            if (x < static_cast<float>(width) * 0.5f) {
+                if (touch.left_pointer == -1) {
+                    touch.left_pointer = pointer_id;
+                    touch.left_origin = glm::vec2(x, y);
+                    touch.left_value = glm::vec2(0.0f);
+                }
+            } else {
+                if (touch.right_pointer == -1) {
+                    touch.right_pointer = pointer_id;
+                    touch.right_prev = glm::vec2(x, y);
+                }
+            }
+        };
+
+        if (masked == AMOTION_EVENT_ACTION_DOWN || masked == AMOTION_EVENT_ACTION_POINTER_DOWN) {
+            const int32_t pointer_id = AMotionEvent_getPointerId(event, action_index);
+            const float x = AMotionEvent_getX(event, action_index);
+            const float y = AMotionEvent_getY(event, action_index);
+            assign_pointer(pointer_id, x, y);
+        }
+
+        if (masked == AMOTION_EVENT_ACTION_UP || masked == AMOTION_EVENT_ACTION_POINTER_UP || masked == AMOTION_EVENT_ACTION_CANCEL) {
+            const int32_t pointer_id = AMotionEvent_getPointerId(event, action_index);
+            if (touch.left_pointer == pointer_id) {
+                touch.left_pointer = -1;
+                touch.left_value = glm::vec2(0.0f);
+            }
+            if (touch.right_pointer == pointer_id) {
+                touch.right_pointer = -1;
+            }
+        }
+
+        if (masked == AMOTION_EVENT_ACTION_MOVE) {
+            for (int32_t i = 0; i < pointer_count; ++i) {
+                const int32_t pointer_id = AMotionEvent_getPointerId(event, i);
+                const float x = AMotionEvent_getX(event, i);
+                const float y = AMotionEvent_getY(event, i);
+
+                if (pointer_id == touch.left_pointer) {
+                    glm::vec2 delta = glm::vec2(x, y) - touch.left_origin;
+                    const float radius = 140.0f;
+                    if (glm::length(delta) > radius) {
+                        delta = glm::normalize(delta) * radius;
+                    }
+                    touch.left_value.x = clamp_unit(delta.x / radius);
+                    touch.left_value.y = clamp_unit(-delta.y / radius);
+                }
+
+                if (pointer_id == touch.right_pointer) {
+                    const glm::vec2 pos(x, y);
+                    touch.look_delta += (pos - touch.right_prev);
+                    touch.right_prev = pos;
+                }
+            }
+        }
+
+        (void)app;
+        return 1;
     }
 };
 
@@ -228,6 +564,14 @@ void handle_app_cmd(android_app *app, int32_t cmd) {
         break;
     }
 }
+
+int32_t handle_input(android_app *app, AInputEvent *event) {
+    auto *renderer = reinterpret_cast<AndroidRenderer *>(app->userData);
+    if (renderer == nullptr) {
+        return 0;
+    }
+    return renderer->on_input(app, event);
+}
 }
 
 void android_main(android_app *app) {
@@ -236,6 +580,7 @@ void android_main(android_app *app) {
     AndroidRenderer renderer{};
     app->userData = &renderer;
     app->onAppCmd = handle_app_cmd;
+    app->onInputEvent = handle_input;
     __android_log_print(ANDROID_LOG_INFO, kLogTag, "android_main started");
 
     while (true) {
@@ -253,7 +598,6 @@ void android_main(android_app *app) {
                 return;
             }
 
-            // Once rendering becomes available, stop blocking on events and draw.
             if (renderer.can_render()) {
                 break;
             }

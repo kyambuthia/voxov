@@ -1,5 +1,6 @@
 # Build
 /build
+/build-*/
 
 # Dependencies
 
@@ -34,3 +35,9 @@ cmake_install.cmake
 
 # Dear ImGui local state
 imgui.ini
+
+# Android local build artifacts
+/android/.gradle/
+/android/build/
+/android/app/build/
+/android/app/.cxx/

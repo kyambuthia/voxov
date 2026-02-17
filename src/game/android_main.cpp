@@ -161,6 +161,8 @@ struct AndroidRenderer {
     glm::vec3 player_feet_position = glm::vec3(4.5f, 6.0f, 5.5f);
 
     glm::vec3 cam_pos = glm::vec3(8.0f, 8.0f, 22.0f);
+    float camera_distance = 5.0f;
+    float camera_pivot_height = 1.0f;
     float cam_yaw = 3.14159f;
     float cam_pitch = -0.25f;
     TouchState touch{};
@@ -382,7 +384,7 @@ struct AndroidRenderer {
         frame_counter = 0;
     }
 
-    void update_camera(double dt_seconds) {
+    void update_player_and_camera(double dt_seconds) {
         const float look_scale = 0.0035f;
         cam_yaw += touch.look_delta.x * look_scale;
         cam_pitch += touch.look_delta.y * look_scale;
@@ -391,8 +393,23 @@ struct AndroidRenderer {
 
         const glm::vec3 forward_flat = glm::normalize(glm::vec3(std::sin(cam_yaw), 0.0f, -std::cos(cam_yaw)));
         const glm::vec3 right_flat = glm::normalize(glm::cross(forward_flat, glm::vec3(0.0f, 1.0f, 0.0f)));
-        const float speed = 10.0f;
-        cam_pos += (forward_flat * touch.left_value.y + right_flat * touch.left_value.x) * speed * static_cast<float>(dt_seconds);
+        const float speed = 8.0f;
+        player_feet_position += (forward_flat * touch.left_value.y + right_flat * touch.left_value.x) * speed * static_cast<float>(dt_seconds);
+
+        const glm::vec3 pivot = player_feet_position + glm::vec3(0.0f, camera_pivot_height, 0.0f);
+        const glm::vec3 orbit_forward = glm::normalize(glm::vec3(
+            std::cos(cam_pitch) * std::sin(cam_yaw),
+            std::sin(cam_pitch),
+            -std::cos(cam_pitch) * std::cos(cam_yaw)));
+        cam_pos = pivot - orbit_forward * camera_distance;
+
+        capsule_mesh = build_debug_capsule_mesh(
+            player_feet_position,
+            0.45f,
+            1.8f,
+            glm::vec3(0.95f, 0.5f, 0.2f));
+        destroy_mesh(capsule_gpu);
+        capsule_gpu = upload_mesh(capsule_mesh);
     }
 
     void draw_mesh(const GpuMesh &mesh, const glm::mat4 &mvp) {
@@ -430,7 +447,7 @@ struct AndroidRenderer {
         last_time = now;
         has_last_time = true;
 
-        update_camera(dt_seconds);
+        update_player_and_camera(dt_seconds);
 
         glViewport(0, 0, width, height);
         glClearColor(0.08f, 0.1f, 0.14f, 1.0f);
@@ -462,9 +479,12 @@ struct AndroidRenderer {
             __android_log_print(
                 ANDROID_LOG_INFO,
                 kLogTag,
-                "frame=%llu dt=%.3fms cam=(%.2f,%.2f,%.2f) move=(%.2f,%.2f)",
+                "frame=%llu dt=%.3fms player=(%.2f,%.2f,%.2f) cam=(%.2f,%.2f,%.2f) move=(%.2f,%.2f)",
                 static_cast<unsigned long long>(frame_counter),
                 dt_seconds * 1000.0,
+                player_feet_position.x,
+                player_feet_position.y,
+                player_feet_position.z,
                 cam_pos.x,
                 cam_pos.y,
                 cam_pos.z,

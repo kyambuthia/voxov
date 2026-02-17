@@ -455,11 +455,8 @@ struct AndroidRenderer {
 
         if (can_draw_uint_indices) {
             const float aspect = (height > 0) ? static_cast<float>(width) / static_cast<float>(height) : 1.0f;
-            const glm::vec3 forward = glm::normalize(glm::vec3(
-                std::cos(cam_pitch) * std::sin(cam_yaw),
-                std::sin(cam_pitch),
-                -std::cos(cam_pitch) * std::cos(cam_yaw)));
-            const glm::mat4 view = glm::lookAt(cam_pos, cam_pos + forward, glm::vec3(0.0f, 1.0f, 0.0f));
+            const glm::vec3 pivot = player_feet_position + glm::vec3(0.0f, camera_pivot_height, 0.0f);
+            const glm::mat4 view = glm::lookAt(cam_pos, pivot, glm::vec3(0.0f, 1.0f, 0.0f));
             const glm::mat4 proj = glm::perspective(glm::radians(70.0f), aspect, 0.1f, 2000.0f);
             const glm::mat4 mvp = proj * view;
 

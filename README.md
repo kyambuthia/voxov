@@ -45,6 +45,7 @@ Latest screenshots:
 - Android build/setup: `docs/ANDROID.md`
 - Architecture: `docs/ARCHITECTURE.md`
 - Infinite voxel world design (renderer + networking + multiplayer): `docs/VOXEL_WORLD_DESIGN.md`
+- AVBD physics integration (mobile + cross-platform plan): `docs/AVBD_INTEGRATION.md`
 - Extending guide: `docs/EXTENDING.md`
 
 ## Networking
@@ -60,5 +61,6 @@ For full server/client setup and validation steps, see `docs/NETWORKING.md`.
 - `docs/ANDROID.md`
 - `docs/ARCHITECTURE.md`
 - `docs/VOXEL_WORLD_DESIGN.md`
+- `docs/AVBD_INTEGRATION.md`
 - `docs/EXTENDING.md`
 - `docs/GENESIS_REFACTOR_PLAN.md`

@@ -97,7 +97,7 @@ ctest --test-dir build --output-on-failure
 ```
 
 ## Controls (desktop)
-- `RMB` hold or toggle look mode + pointer lock
+- Mouse controls third-person camera orbit (GTA-style while focused)
 - `W/A/S/D` move
 - `Space` jump
 - `Shift` sprint

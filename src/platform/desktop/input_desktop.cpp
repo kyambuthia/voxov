@@ -27,8 +27,7 @@ InputState DesktopInputBackend::poll() {
     }
 
     const bool rmb_down = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
-
-    const bool active_look_mode = rmb_down;
+    const bool active_look_mode = glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE;
     set_pointer_lock(active_look_mode);
     out.look_mode = active_look_mode;
     out.rmb_down = rmb_down;

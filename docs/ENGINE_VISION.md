@@ -12,12 +12,12 @@ and co-op support.
 - **Multiplayer**: authoritative server, client prediction, snapshot interpolation.
 - **Data-driven**: assets and world data are externalized and reloadable.
 - **Tools**: debugging, profiling, and validation are first-class.
+- **True cross-platform**: one shared architecture targeting desktop, mobile (Android/iOS), and consoles.
 
 ## Non-Goals (For Now)
 
 - Massive open worlds or MMO-scale networking.
 - Full editor suite (focus on runtime first).
-- Shipping console builds.
 
 ## Near-Term Milestone: Tiny Multiplayer Demo
 

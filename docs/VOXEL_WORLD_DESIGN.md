@@ -9,6 +9,16 @@ This document defines a practical baseline architecture for:
 3. Multiplayer-ready deterministic world generation.
 4. Stable frame time and bounded memory.
 
+## Non-Negotiable Platform Tenet
+
+This system must be deployable from a shared architecture to:
+
+1. Desktop (Linux/Windows/macOS)
+2. Mobile (Android/iOS)
+3. Consoles (PlayStation/Xbox/Nintendo platform targets)
+
+Platform constraints are treated as first-class design inputs, not post-porting work.
+
 Assumptions:
 
 1. Near-ground gameplay is voxel/chunk based.
@@ -16,7 +26,7 @@ Assumptions:
 3. Generation is deterministic and chunk-local:
    `(planet_seed, lod, chunk_coord) -> density/material/mesh`.
 4. Authoritative server controls game state; clients can generate terrain locally from shared seeds.
-5. Initial baseline targets Linux + Vulkan, single GPU queue family or separate transfer queue when available.
+5. Initial implementation and profiling can start on Linux + Vulkan, but APIs, memory budgets, and threading plans must remain compatible with mobile and console classes.
 
 ---
 
@@ -180,11 +190,18 @@ Upgrade path:
 
 ### Memory Budget and Residency
 
-Example budgets (desktop baseline):
+Example budgets (profile-based):
 
-1. Voxel data CPU budget: 1.0-1.5 GB cap.
-2. Mesh CPU cache: 512 MB cap.
-3. GPU mesh buffer pool: 512 MB-1 GB.
+1. Mobile profile:
+   - Voxel data CPU budget: 256-512 MB
+   - Mesh CPU cache: 128-256 MB
+   - GPU mesh buffer pool: 128-256 MB
+2. Desktop baseline profile:
+   - Voxel data CPU budget: 1.0-1.5 GB
+   - Mesh CPU cache: 512 MB
+   - GPU mesh buffer pool: 512 MB-1 GB
+3. Console profile:
+   - Tune per platform TRC/TCR memory guidance with fixed budgets and deterministic streaming caps.
 
 Eviction:
 
@@ -291,6 +308,10 @@ Implementation:
 1. Build `VkDrawIndexedIndirectCommand` list for visible chunks.
 2. Frustum culling baseline on CPU.
 3. Optional GPU culling compute pass writing compacted indirect list.
+
+Mobile/console note:
+
+1. Keep fallback path for devices with tighter compute/descriptor limits (CPU culling + smaller indirect batches).
 
 ### Descriptors and Materials
 
@@ -538,6 +559,10 @@ MeshData build_chunk_mesh(const ChunkVoxels &vox, const NeighborMask &neighbors)
 2. Procedural terrain base is not streamed as full voxels:
    - Only planet definitions + seeds + generation version hash.
 3. Client generates base terrain locally, then applies replicated edits/deltas.
+
+Cross-platform networking note:
+
+1. Protocol and serialization must be endian-safe and deterministic across ARM/x86 targets.
 
 ### Replication Payloads
 

@@ -1,5 +1,20 @@
 # VOXOV Architecture (Genesis Baseline)
 
+## Architecture Tenet: True Cross-Platform
+
+VOXOV must ship from one shared codebase across:
+
+- Desktop: Linux, Windows, macOS
+- Mobile: Android, iOS
+- Consoles: PlayStation/Xbox/Nintendo platform targets
+
+Design implications:
+
+- Platform code stays behind `platform/*` interfaces; engine/game logic remains platform-agnostic.
+- Rendering abstraction supports backend/platform surface differences without gameplay forks.
+- Input, file IO, threading, timing, networking, and save paths use engine abstractions, not ad-hoc platform calls.
+- New engine systems are accepted only if they can map to all target platform classes or include a documented fallback path.
+
 ## Runtime layers
 
 - `platform/*`: window/context/input/time abstraction

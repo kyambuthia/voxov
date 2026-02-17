@@ -15,6 +15,20 @@ Design implications:
 - Input, file IO, threading, timing, networking, and save paths use engine abstractions, not ad-hoc platform calls.
 - New engine systems are accepted only if they can map to all target platform classes or include a documented fallback path.
 
+## Gameplay Tenet: Multi-Modal Traversal
+
+Core gameplay must support seamless traversal via:
+
+- Walking on terrain
+- Driving land vehicles (cars)
+- Flying aircraft both within a planet and between planets
+
+Design implications:
+
+- Movement/controller architecture must support mode switching without duplicating netcode or camera stacks.
+- Physics uses a shared authority model with mode-specific tuning (capsule, wheeled, aircraft) under one replication protocol.
+- Streaming and LOD systems must prioritize content along current traversal velocity (ground and high-speed flight profiles).
+
 ## Runtime layers
 
 - `platform/*`: window/context/input/time abstraction
@@ -42,6 +56,7 @@ Design implications:
 - sky/atmosphere placeholder mesh
 - debug ground grid mesh
 - third-person player capsule + camera rig (yaw/pitch orbit, distance clamp, occlusion test)
+- vehicle and aircraft placeholder actors for traversal mode integration
 - in-world debug overlays (dev HUD text + debug capsules/markers)
 
 ## Networking baseline

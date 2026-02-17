@@ -9,6 +9,7 @@ and co-op support.
 
 - **Visual quality**: clean lighting, strong material response, and stable frame pacing.
 - **Playable**: input latency, camera control, and interaction feel good.
+- **Traversal**: players can walk, drive cars, and fly aircraft on-planet and between planets.
 - **Multiplayer**: authoritative server, client prediction, snapshot interpolation.
 - **Data-driven**: assets and world data are externalized and reloadable.
 - **Tools**: debugging, profiling, and validation are first-class.

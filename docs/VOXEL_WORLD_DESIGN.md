@@ -19,6 +19,16 @@ This system must be deployable from a shared architecture to:
 
 Platform constraints are treated as first-class design inputs, not post-porting work.
 
+## Non-Negotiable Gameplay Tenet
+
+Traversal must support all of the following as first-class modes:
+
+1. Walking on planetary surfaces
+2. Driving land vehicles (cars)
+3. Flying aircraft on-planet and traveling between planets
+
+World streaming, LOD selection, networking, and camera/control architecture must be designed around these speed/altitude regimes.
+
 Assumptions:
 
 1. Near-ground gameplay is voxel/chunk based.
@@ -27,6 +37,10 @@ Assumptions:
    `(planet_seed, lod, chunk_coord) -> density/material/mesh`.
 4. Authoritative server controls game state; clients can generate terrain locally from shared seeds.
 5. Initial implementation and profiling can start on Linux + Vulkan, but APIs, memory budgets, and threading plans must remain compatible with mobile and console classes.
+6. Traversal profile tiers are used by streaming:
+   - `ground` (walking/cars): dense local chunk residency
+   - `air` (aircraft in atmosphere): forward-biased larger radius
+   - `space` (interplanetary): planet proxy mode + aggressive chunk eviction
 
 ---
 
@@ -74,6 +88,9 @@ Assumptions:
    - Use universe-space positions and planet proxy rendering.
 3. On approach:
    - Switch to target `planet_space` and warm stream chunks before touchdown.
+4. Use traversal mode handoff:
+   - Aircraft remains authoritative through atmosphere-to-space transition.
+   - Ground controllers (capsule/car) activate only after local terrain residency thresholds are satisfied.
 
 ---
 
@@ -282,6 +299,7 @@ priority = w_dist * distance_weight
          + w_view * frustum_weight
          + w_vel  * velocity_alignment
          + w_game * gameplay_importance
+         + w_mode * traversal_mode_bias
 ```
 
 Implementation:
@@ -352,6 +370,7 @@ GI alternative to full voxel GI:
 
 1. Render planets as sphere proxy meshes with macro material maps.
 2. No voxel chunk residency except small safety bubble around player if needed.
+3. Aircraft traversal continues with planet-level navigation and target-planet approach assists.
 
 ### Descent (planet enter)
 
@@ -360,12 +379,14 @@ GI alternative to full voxel GI:
    - Request near/mid rings under projected landing trajectory.
 3. Crossfade:
    - Blend proxy planet surface with voxel terrain over altitude band.
+4. If descending in aircraft, keep high-speed forward prefetch cone until landing envelope is reached.
 
 ### Ascent (planet leave)
 
 1. Trigger threshold at `altitude > exit_voxel_altitude`.
 2. Fade out voxel detail and keep proxy sphere.
 3. Aggressively evict chunk data for departed planet (keep small cache only).
+4. If taking off from car/walk mode, switch control authority to aircraft profile before chunk eviction ramps.
 
 ---
 
@@ -398,6 +419,9 @@ RenderWorld
 
 NetWorldSync
   - seed/planet metadata replication, voxel edits, snapshot hooks
+
+TraversalSystem
+  - locomotion mode state machine (walk/car/aircraft), handoff rules, and shared input intent mapping
 ```
 
 ---

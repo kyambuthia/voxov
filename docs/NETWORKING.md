@@ -12,30 +12,30 @@ VOXOV currently uses an authoritative server model over ENet.
 ## Runtime Modes
 
 - Combined client + server in one process:
-  - `./build/bin/voxov --server`
+  - `./build/desktop/main/bin/voxov --server`
 - Headless dedicated server:
-  - `./build/bin/voxov --headless-server --port 7777`
+  - `./build/desktop/main/bin/voxov --headless-server --port 7777`
 - Client connect:
-  - `./build/bin/voxov --connect <SERVER_IP> --port 7777 --renderer vulkan`
+  - `./build/desktop/main/bin/voxov --connect <SERVER_IP> --port 7777 --renderer vulkan`
 
 ## LAN Bring-up (2-3 machines)
 
 Server machine:
 
 ```bash
-./build/bin/voxov --headless-server --port 7777
+./build/desktop/main/bin/voxov --headless-server --port 7777
 ```
 
 Client machine A:
 
 ```bash
-./build/bin/voxov --renderer vulkan --connect <SERVER_LAN_IP> --port 7777 --devhud
+./build/desktop/main/bin/voxov --renderer vulkan --connect <SERVER_LAN_IP> --port 7777 --devhud
 ```
 
 Client machine B:
 
 ```bash
-./build/bin/voxov --renderer gl --connect <SERVER_LAN_IP> --port 7777 --devhud
+./build/desktop/main/bin/voxov --renderer gl --connect <SERVER_LAN_IP> --port 7777 --devhud
 ```
 
 ## Validation Checklist

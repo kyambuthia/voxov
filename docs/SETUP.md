@@ -32,8 +32,8 @@ git submodule update --init --recursive
 Default desktop build:
 
 ```bash
-cmake -S . -B build -DVOXOV_BUILD_TESTS=ON
-cmake --build build -j
+cmake -S . -B build/desktop/main -DVOXOV_BUILD_TESTS=ON
+cmake --build build/desktop/main --parallel
 ```
 
 Useful configure flags:
@@ -48,19 +48,19 @@ Useful configure flags:
 Vulkan:
 
 ```bash
-./build/bin/voxov --renderer vulkan
+./build/desktop/main/bin/voxov --renderer vulkan
 ```
 
 OpenGL:
 
 ```bash
-./build/bin/voxov --renderer gl
+./build/desktop/main/bin/voxov --renderer gl
 ```
 
 Headless authoritative server:
 
 ```bash
-./build/bin/voxov --headless-server --port 7777
+./build/desktop/main/bin/voxov --headless-server --port 7777
 ```
 
 ## 5. Debug and Visual Debug
@@ -68,17 +68,17 @@ Headless authoritative server:
 General gameplay debug:
 
 ```bash
-./build/bin/voxov --devhud
-./build/bin/voxov --devhud --noclip
+./build/desktop/main/bin/voxov --devhud
+./build/desktop/main/bin/voxov --devhud --noclip
 ```
 
 Collision visual debugging:
 
 ```bash
-./build/bin/voxov --debug-collision
-./build/bin/voxov --debug-xray
-./build/bin/voxov --debug-collision-only
-./build/bin/voxov --debug-freeze
+./build/desktop/main/bin/voxov --debug-collision
+./build/desktop/main/bin/voxov --debug-xray
+./build/desktop/main/bin/voxov --debug-collision-only
+./build/desktop/main/bin/voxov --debug-freeze
 ```
 
 Hotkeys:
@@ -91,14 +91,14 @@ Hotkeys:
 ## 6. Tests
 
 ```bash
-ctest --test-dir build --output-on-failure
+ctest --test-dir build/desktop/main --output-on-failure
 ```
 
 ## 7. Asset Cooker
 
 ```bash
-./build/bin/voxov_asset_cooker gltf assets/ship.glb build/ship.vasset
-./build/bin/voxov_asset_cooker texture assets/albedo.ktx2 build/albedo.vtex
+./build/desktop/main/bin/voxov_asset_cooker gltf assets/ship.glb build/desktop/main/ship.vasset
+./build/desktop/main/bin/voxov_asset_cooker texture assets/albedo.ktx2 build/desktop/main/albedo.vtex
 ```
 
 ## 8. Clean Rebuild

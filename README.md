@@ -1,20 +1,20 @@
 ## Install (Start Here)
 
 ### Windows
-## 👉👉👉 Download here: https://github.com/kyambuthia/voxov/releases/tag/0.0.20
-- In the release assets, download: `VOXOV-0.0.20-windows-x86_64.zip`
-- Extract the ZIP.
-- Run `voxov.exe`.
+## 👉 Download: https://github.com/kyambuthia/voxov/releases/tag/0.0.20
+- From release assets, download: `VOXOV-0.0.20-windows-x86_64.zip`
+- Extract the archive.
+- Launch `voxov.exe`.
 
 ### Android
-## 👉👉👉 Download here: https://github.com/kyambuthia/voxov/releases/tag/0.0.20
-- In the release assets, download: `VOXOV-0.0.20-android-arm64-v8a.apk`
-- Open the APK on your phone and allow install from unknown sources if prompted.
+## 👉 Download: https://github.com/kyambuthia/voxov/releases/tag/0.0.20
+- From release assets, download: `VOXOV-0.0.20-android-arm64-v8a.apk`
+- Open the APK on your device and allow installation from unknown sources if prompted.
 - Launch `VOXOV`.
 
 ### Linux
-## 👉👉👉 Download here: https://github.com/kyambuthia/voxov/releases/tag/0.0.20
-- In the release assets, download: `VOXOV-0.0.20-linux-x86_64`
+## 👉 Download: https://github.com/kyambuthia/voxov/releases/tag/0.0.20
+- From release assets, download: `VOXOV-0.0.20-linux-x86_64`
 - Run:
 
 ```bash
@@ -23,11 +23,11 @@ chmod +x VOXOV-0.0.20-linux-x86_64
 ```
 
 ## About VOXOV
-VOXOV is a cross-platform multiplayer co-op voxel game in development.
-It targets desktop, mobile, and console-class platforms from one shared codebase.
+VOXOV is a cross-platform multiplayer co-op voxel game currently in active development.
+The project targets desktop, mobile, and console-class platforms from a shared codebase.
 
 ## Setup From Source
-- Clone with submodules:
+- Clone the repository with submodules:
 
 ```bash
 git clone --recurse-submodules github.com/kyambuthia/voxov.git
@@ -37,12 +37,12 @@ cd voxov
 - Build (desktop):
 
 ```bash
-mkdir build && cd build
-cmake .. && cmake --build .
+cmake -S . -B build/desktop/main
+cmake --build build/desktop/main --parallel
 ```
 
-- Android setup/build details: `docs/ANDROID.md`
-- Web setup/build details: `docs/WEB.md`
+- Android setup and build details: `docs/ANDROID.md`
+- Web setup and build details: `docs/WEB.md`
 - Full setup guide: `docs/SETUP.md`
 
 ## Docs

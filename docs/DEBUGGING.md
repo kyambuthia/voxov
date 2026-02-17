@@ -14,18 +14,18 @@
 General gameplay debug:
 
 ```bash
-./build/bin/voxov --devhud
-./build/bin/voxov --devhud --noclip
-./build/bin/voxov --splitscreen
+./build/desktop/main/bin/voxov --devhud
+./build/desktop/main/bin/voxov --devhud --noclip
+./build/desktop/main/bin/voxov --splitscreen
 ```
 
 Collision visualization:
 
 ```bash
-./build/bin/voxov --debug-collision
-./build/bin/voxov --debug-xray
-./build/bin/voxov --debug-collision-only
-./build/bin/voxov --debug-freeze
+./build/desktop/main/bin/voxov --debug-collision
+./build/desktop/main/bin/voxov --debug-xray
+./build/desktop/main/bin/voxov --debug-collision-only
+./build/desktop/main/bin/voxov --debug-freeze
 ```
 
 ## Debug Hotkeys

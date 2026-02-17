@@ -20,21 +20,19 @@ This is a foundation target for bring-up and logging. Full gameplay/render loop 
 ## Build from command line (arm64)
 
 ```bash
-cmake -S . -B build-android-arm64 \
+cmake -S . -B build/android/arm64-cmake \
   -G Ninja \
-  -DANDROID=ON \
-  -DCMAKE_SYSTEM_NAME=Android \
-  -DCMAKE_ANDROID_NDK="$ANDROID_NDK_HOME" \
-  -DCMAKE_ANDROID_ARCH_ABI=arm64-v8a \
-  -DCMAKE_ANDROID_API=29 \
+  -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=arm64-v8a \
+  -DANDROID_PLATFORM=29 \
   -DCMAKE_BUILD_TYPE=Debug
 
-cmake --build build-android-arm64 --parallel
+cmake --build build/android/arm64-cmake --parallel
 ```
 
 Expected output:
 
-- `build-android-arm64/lib/libvoxov.so` (or equivalent library output path)
+- `build/android/arm64-cmake/lib/libvoxov.so` (or equivalent library output path)
 
 ## Android Studio integration (externalNativeBuild)
 

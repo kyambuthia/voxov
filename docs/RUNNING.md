@@ -5,20 +5,20 @@
 Vulkan:
 
 ```bash
-./build/bin/voxov --renderer vulkan
+./build/desktop/main/bin/voxov --renderer vulkan
 ```
 
 OpenGL:
 
 ```bash
-./build/bin/voxov --renderer gl
+./build/desktop/main/bin/voxov --renderer gl
 ```
 
 Window size and mode:
 
 ```bash
-./build/bin/voxov --renderer vulkan --windowed --width 1600 --height 900
-./build/bin/voxov --renderer vulkan --fullscreen
+./build/desktop/main/bin/voxov --renderer vulkan --windowed --width 1600 --height 900
+./build/desktop/main/bin/voxov --renderer vulkan --fullscreen
 ```
 
 Runtime toggle:
@@ -30,26 +30,26 @@ Runtime toggle:
 Combined client + server in one process:
 
 ```bash
-./build/bin/voxov --server
+./build/desktop/main/bin/voxov --server
 ```
 
 Headless dedicated server:
 
 ```bash
-./build/bin/voxov --headless-server --port 7777
+./build/desktop/main/bin/voxov --headless-server --port 7777
 ```
 
 ## Testing
 
 ```bash
-ctest --test-dir build --output-on-failure
+ctest --test-dir build/desktop/main --output-on-failure
 ```
 
 ## Asset Cooker
 
 ```bash
-./build/bin/voxov_asset_cooker gltf assets/ship.glb build/ship.vasset
-./build/bin/voxov_asset_cooker texture assets/albedo.ktx2 build/albedo.vtex
+./build/desktop/main/bin/voxov_asset_cooker gltf assets/ship.glb build/desktop/main/ship.vasset
+./build/desktop/main/bin/voxov_asset_cooker texture assets/albedo.ktx2 build/desktop/main/albedo.vtex
 ```
 
 ## Related Docs

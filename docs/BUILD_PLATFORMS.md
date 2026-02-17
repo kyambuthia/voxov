@@ -16,32 +16,32 @@ cmake --build build -j
 Run Vulkan backend:
 
 ```bash
-./build/bin/voxov --renderer vulkan
+./build/desktop/main/bin/voxov --renderer vulkan
 ```
 
 Run OpenGL backend:
 
 ```bash
-./build/bin/voxov --renderer gl
+./build/desktop/main/bin/voxov --renderer gl
 ```
 
 Run headless authoritative server:
 
 ```bash
-./build/bin/voxov --headless-server
+./build/desktop/main/bin/voxov --headless-server
 ```
 
 LAN replication demo (same Wi-Fi):
 
 ```bash
 # server host
-./build/bin/voxov --headless-server --port 7777
+./build/desktop/main/bin/voxov --headless-server --port 7777
 
 # client 1
-./build/bin/voxov --renderer vulkan --connect <SERVER_LAN_IP> --port 7777 --devhud
+./build/desktop/main/bin/voxov --renderer vulkan --connect <SERVER_LAN_IP> --port 7777 --devhud
 
 # client 2
-./build/bin/voxov --renderer gl --connect <SERVER_LAN_IP> --port 7777 --devhud
+./build/desktop/main/bin/voxov --renderer gl --connect <SERVER_LAN_IP> --port 7777 --devhud
 ```
 
 ## Android (bring-up)

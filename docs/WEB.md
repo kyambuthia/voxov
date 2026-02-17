@@ -14,33 +14,33 @@ Web support is currently an MVP target with a minimal runtime loop and WebGL2 br
 From repository root:
 
 ```bash
-emcmake cmake -S . -B build-web -G Ninja
+EM_CACHE=./build/web/cache emcmake cmake -S . -B build/web/main -G Ninja
 ```
 
 ## Build
 
 ```bash
-cmake --build build-web --parallel
+EM_CACHE=./build/web/cache cmake --build build/web/main --parallel
 ```
 
 Expected output:
 
-- `build-web/voxov_web.js`
-- `build-web/voxov_web.wasm`
-- `build-web/voxov_web.html`
+- `build/web/main/bin/voxov_web.js`
+- `build/web/main/bin/voxov_web.wasm`
+- `build/web/main/bin/voxov_web.html`
 
 ## Run locally
 
 Option 1:
 
 ```bash
-emrun --no_browser --port 8080 build-web/voxov_web.html
+emrun --no_browser --port 8080 build/web/main/bin/voxov_web.html
 ```
 
 Option 2:
 
 ```bash
-python3 -m http.server 8080 --directory build-web
+python3 -m http.server 8080 --directory build/web/main/bin
 ```
 
 Then open:

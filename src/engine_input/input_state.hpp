@@ -20,6 +20,10 @@ struct InputState {
     bool menu_up_pressed = false;
     bool menu_down_pressed = false;
     bool menu_select_pressed = false;
+    bool debug_toggle_pressed = false;
+    bool debug_xray_toggle_pressed = false;
+    bool debug_collision_only_toggle_pressed = false;
+    bool debug_freeze_toggle_pressed = false;
     float zoom_delta = 0.0f;
 };
 

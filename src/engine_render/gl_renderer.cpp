@@ -26,8 +26,9 @@ void GLRenderer::upload_scene(const RenderScene &new_scene) {
     scene = new_scene;
 }
 
-void GLRenderer::update_overlay_text(const RenderMesh &overlay) {
-    scene.overlay_text = overlay;
+void GLRenderer::update_dynamic_meshes(const RenderMesh &debug_world, const RenderMesh &debug_screen) {
+    scene.debug_world = debug_world;
+    scene.debug_screen = debug_screen;
 }
 
 void GLRenderer::draw_mesh(const RenderMesh &mesh) const {
@@ -81,7 +82,17 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStats &s
         }
 
         draw_mesh(scene.debug_grid);
-        draw_mesh(scene.overlay_text);
+        if (ctx.debug_xray) {
+            glDisable(GL_DEPTH_TEST);
+            draw_mesh(scene.debug_world);
+            glEnable(GL_DEPTH_TEST);
+        } else {
+            draw_mesh(scene.debug_world);
+        }
+
+        glDisable(GL_DEPTH_TEST);
+        draw_mesh(scene.debug_screen);
+        glEnable(GL_DEPTH_TEST);
     }
 }
 

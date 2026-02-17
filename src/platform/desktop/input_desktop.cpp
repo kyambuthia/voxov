@@ -78,6 +78,22 @@ InputState DesktopInputBackend::poll() {
     out.menu_select_pressed = enter_down && !prev_enter_down;
     prev_enter_down = enter_down;
 
+    const bool f1_down = glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS;
+    out.debug_toggle_pressed = f1_down && !prev_f1_down;
+    prev_f1_down = f1_down;
+
+    const bool f2_down = glfwGetKey(window, GLFW_KEY_F2) == GLFW_PRESS;
+    out.debug_xray_toggle_pressed = f2_down && !prev_f2_down;
+    prev_f2_down = f2_down;
+
+    const bool f3_down = glfwGetKey(window, GLFW_KEY_F3) == GLFW_PRESS;
+    out.debug_collision_only_toggle_pressed = f3_down && !prev_f3_down;
+    prev_f3_down = f3_down;
+
+    const bool f4_down = glfwGetKey(window, GLFW_KEY_F4) == GLFW_PRESS;
+    out.debug_freeze_toggle_pressed = f4_down && !prev_f4_down;
+    prev_f4_down = f4_down;
+
     out.sprint_held = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
                       glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
 

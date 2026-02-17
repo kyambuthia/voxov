@@ -141,8 +141,10 @@ void VulkanRenderer::upload_scene(const RenderScene &scene) {
     scene_data = scene;
     static_vertices.clear();
     static_indices.clear();
-    overlay_vertices = scene.overlay_text.vertices;
-    overlay_indices = scene.overlay_text.indices;
+    debug_world_vertices = scene.debug_world.vertices;
+    debug_world_indices = scene.debug_world.indices;
+    debug_screen_vertices = scene.debug_screen.vertices;
+    debug_screen_indices = scene.debug_screen.indices;
 
     auto append_mesh = [&](const RenderMesh &mesh) {
         uint32_t base = static_cast<uint32_t>(static_vertices.size());
@@ -158,61 +160,30 @@ void VulkanRenderer::upload_scene(const RenderScene &scene) {
     append_mesh(scene.debug_grid);
 
     static_index_count = static_cast<uint32_t>(static_indices.size());
-    overlay_index_count = static_cast<uint32_t>(overlay_indices.size());
+    debug_world_index_count = static_cast<uint32_t>(debug_world_indices.size());
+    debug_screen_index_count = static_cast<uint32_t>(debug_screen_indices.size());
     create_scene_buffers();
 }
 
-void VulkanRenderer::update_overlay_text(const RenderMesh &overlay) {
-    const size_t prev_vertex_count = overlay_vertices.size();
-    const size_t prev_index_count = overlay_indices.size();
-    const bool can_update_in_place =
-        overlay_vertex_buffer != VK_NULL_HANDLE &&
-        overlay_index_buffer != VK_NULL_HANDLE &&
-        prev_vertex_count == overlay.vertices.size() &&
-        prev_index_count == overlay.indices.size();
+void VulkanRenderer::update_dynamic_meshes(const RenderMesh &debug_world, const RenderMesh &debug_screen) {
+    debug_world_vertices = debug_world.vertices;
+    debug_world_indices = debug_world.indices;
+    debug_world_index_count = static_cast<uint32_t>(debug_world_indices.size());
+    debug_screen_vertices = debug_screen.vertices;
+    debug_screen_indices = debug_screen.indices;
+    debug_screen_index_count = static_cast<uint32_t>(debug_screen_indices.size());
 
-    overlay_vertices = overlay.vertices;
-    overlay_indices = overlay.indices;
-    overlay_index_count = static_cast<uint32_t>(overlay_indices.size());
-
+    scene_data.debug_world = debug_world;
+    scene_data.debug_screen = debug_screen;
     if (device == VK_NULL_HANDLE) {
         return;
     }
-
-    if (can_update_in_place) {
-        void *vb_ptr = nullptr;
-        const VkDeviceSize vb_size = static_cast<VkDeviceSize>(overlay_vertices.size() * sizeof(RenderVertex));
-        vkMapMemory(device, overlay_vertex_memory, 0, vb_size, 0, &vb_ptr);
-        std::memcpy(vb_ptr, overlay_vertices.data(), static_cast<size_t>(vb_size));
-        vkUnmapMemory(device, overlay_vertex_memory);
-
-        void *ib_ptr = nullptr;
-        const VkDeviceSize ib_size = static_cast<VkDeviceSize>(overlay_indices.size() * sizeof(uint32_t));
-        vkMapMemory(device, overlay_index_memory, 0, ib_size, 0, &ib_ptr);
-        std::memcpy(ib_ptr, overlay_indices.data(), static_cast<size_t>(ib_size));
-        vkUnmapMemory(device, overlay_index_memory);
-    } else {
-        vkDeviceWaitIdle(device);
-        destroy_mesh_buffers(
-            overlay_vertex_buffer,
-            overlay_vertex_memory,
-            overlay_index_buffer,
-            overlay_index_memory);
-
-        if (!overlay_vertices.empty() && !overlay_indices.empty()) {
-            create_mesh_buffers(
-                overlay_vertices,
-                overlay_indices,
-                overlay_vertex_buffer,
-                overlay_vertex_memory,
-                overlay_index_buffer,
-                overlay_index_memory);
-        }
-    }
+    create_scene_buffers();
 }
 
 void VulkanRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStats &stats) {
     (void)stats;
+    current_debug_xray = ctx.debug_xray;
     current_view_count = std::max(1u, std::min(ctx.view_count, 2u));
     for (uint32_t i = 0; i < current_view_count; ++i) {
         current_viewports[i] = ctx.views[i].viewport;
@@ -805,6 +776,14 @@ void VulkanRenderer::create_pipeline() {
         throw std::runtime_error("failed to create pipeline");
     }
 
+    VkPipelineDepthStencilStateCreateInfo depth_disabled = depth_stencil;
+    depth_disabled.depthTestEnable = VK_FALSE;
+    depth_disabled.depthWriteEnable = VK_FALSE;
+    info.pDepthStencilState = &depth_disabled;
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline_no_depth) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create debug no-depth pipeline");
+    }
+
     vkDestroyShaderModule(device, vert_module, nullptr);
     vkDestroyShaderModule(device, frag_module, nullptr);
 }
@@ -864,6 +843,10 @@ void VulkanRenderer::cleanup_swapchain_resources() {
     if (pipeline != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, pipeline, nullptr);
         pipeline = VK_NULL_HANDLE;
+    }
+    if (pipeline_no_depth != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, pipeline_no_depth, nullptr);
+        pipeline_no_depth = VK_NULL_HANDLE;
     }
     if (pipeline_layout != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
@@ -978,10 +961,15 @@ void VulkanRenderer::destroy_scene_buffers() {
         static_index_buffer,
         static_index_memory);
     destroy_mesh_buffers(
-        overlay_vertex_buffer,
-        overlay_vertex_memory,
-        overlay_index_buffer,
-        overlay_index_memory);
+        debug_world_vertex_buffer,
+        debug_world_vertex_memory,
+        debug_world_index_buffer,
+        debug_world_index_memory);
+    destroy_mesh_buffers(
+        debug_screen_vertex_buffer,
+        debug_screen_vertex_memory,
+        debug_screen_index_buffer,
+        debug_screen_index_memory);
 }
 
 void VulkanRenderer::create_mesh_buffers(
@@ -1085,14 +1073,24 @@ void VulkanRenderer::create_scene_buffers() {
             static_index_memory);
     }
 
-    if (!overlay_vertices.empty() && !overlay_indices.empty()) {
+    if (!debug_world_vertices.empty() && !debug_world_indices.empty()) {
         create_mesh_buffers(
-            overlay_vertices,
-            overlay_indices,
-            overlay_vertex_buffer,
-            overlay_vertex_memory,
-            overlay_index_buffer,
-            overlay_index_memory);
+            debug_world_vertices,
+            debug_world_indices,
+            debug_world_vertex_buffer,
+            debug_world_vertex_memory,
+            debug_world_index_buffer,
+            debug_world_index_memory);
+    }
+
+    if (!debug_screen_vertices.empty() && !debug_screen_indices.empty()) {
+        create_mesh_buffers(
+            debug_screen_vertices,
+            debug_screen_indices,
+            debug_screen_vertex_buffer,
+            debug_screen_vertex_memory,
+            debug_screen_index_buffer,
+            debug_screen_index_memory);
     }
 }
 
@@ -1128,8 +1126,6 @@ void VulkanRenderer::record_command_buffer(VkCommandBuffer cmd, uint32_t image_i
         begin_label(cmd, &label);
     }
 
-    vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
-
     for (uint32_t i = 0; i < current_view_count; ++i) {
         const glm::vec4 vp = current_viewports[i];
         const int vx = static_cast<int>(vp.x * static_cast<float>(swapchain_extent.width));
@@ -1157,17 +1153,30 @@ void VulkanRenderer::record_command_buffer(VkCommandBuffer cmd, uint32_t image_i
         vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &push);
 
         if (static_vertex_buffer != VK_NULL_HANDLE && static_index_buffer != VK_NULL_HANDLE && static_index_count > 0) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
             const VkDeviceSize offsets[] = { 0 };
             vkCmdBindVertexBuffers(cmd, 0, 1, &static_vertex_buffer, offsets);
             vkCmdBindIndexBuffer(cmd, static_index_buffer, 0, VK_INDEX_TYPE_UINT32);
             vkCmdDrawIndexed(cmd, static_index_count, 1, 0, 0, 0);
         }
 
-        if (overlay_vertex_buffer != VK_NULL_HANDLE && overlay_index_buffer != VK_NULL_HANDLE && overlay_index_count > 0) {
+        if (debug_world_vertex_buffer != VK_NULL_HANDLE && debug_world_index_buffer != VK_NULL_HANDLE && debug_world_index_count > 0) {
+            vkCmdBindPipeline(
+                cmd,
+                VK_PIPELINE_BIND_POINT_GRAPHICS,
+                current_debug_xray ? pipeline_no_depth : pipeline);
             const VkDeviceSize offsets[] = { 0 };
-            vkCmdBindVertexBuffers(cmd, 0, 1, &overlay_vertex_buffer, offsets);
-            vkCmdBindIndexBuffer(cmd, overlay_index_buffer, 0, VK_INDEX_TYPE_UINT32);
-            vkCmdDrawIndexed(cmd, overlay_index_count, 1, 0, 0, 0);
+            vkCmdBindVertexBuffers(cmd, 0, 1, &debug_world_vertex_buffer, offsets);
+            vkCmdBindIndexBuffer(cmd, debug_world_index_buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, debug_world_index_count, 1, 0, 0, 0);
+        }
+
+        if (debug_screen_vertex_buffer != VK_NULL_HANDLE && debug_screen_index_buffer != VK_NULL_HANDLE && debug_screen_index_count > 0) {
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_no_depth);
+            const VkDeviceSize offsets[] = { 0 };
+            vkCmdBindVertexBuffers(cmd, 0, 1, &debug_screen_vertex_buffer, offsets);
+            vkCmdBindIndexBuffer(cmd, debug_screen_index_buffer, 0, VK_INDEX_TYPE_UINT32);
+            vkCmdDrawIndexed(cmd, debug_screen_index_count, 1, 0, 0, 0);
         }
     }
 

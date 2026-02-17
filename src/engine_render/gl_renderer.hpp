@@ -9,7 +9,7 @@ public:
     void init(void *window_handle) override;
     void shutdown() override;
     void upload_scene(const RenderScene &scene) override;
-    void update_overlay_text(const RenderMesh &overlay) override;
+    void update_dynamic_meshes(const RenderMesh &debug_world, const RenderMesh &debug_screen) override;
     void begin_frame(const RenderFrameContext &ctx, const RenderStats &stats) override;
     void end_frame() override;
 

@@ -48,7 +48,7 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
     try {
         renderer.init(window_handle, backend_type);
         renderer.upload_scene(scene);
-        renderer.update_overlay_text(scene.overlay_text);
+        renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
     } catch (const std::exception &e) {
         std::fprintf(stderr, "Renderer init failed: %s\n", e.what());
         throw;
@@ -108,6 +108,22 @@ void Engine::sync_network_state(uint32_t sim_tick) {
 
 void Engine::tick(double frame_dt) {
     last_frame_dt = frame_dt;
+
+    if (input_state.debug_toggle_pressed) {
+        runtime_options.debug_collision = !runtime_options.debug_collision;
+    }
+    if (input_state.debug_xray_toggle_pressed) {
+        runtime_options.debug_xray = !runtime_options.debug_xray;
+    }
+    if (input_state.debug_collision_only_toggle_pressed) {
+        runtime_options.debug_collision_only = !runtime_options.debug_collision_only;
+    }
+    if (input_state.debug_freeze_toggle_pressed) {
+        runtime_options.debug_freeze = !runtime_options.debug_freeze;
+        if (!runtime_options.debug_freeze) {
+            frozen_debug_world = RenderMesh{};
+        }
+    }
 
     GuiMenuActions menu_actions{};
     gui_menu.handle_input(input_state, runtime_options.devhud, runtime_options.noclip, menu_actions);
@@ -265,8 +281,15 @@ void Engine::tick(double frame_dt) {
     }
 
     refresh_overlay_text();
-    rebuild_dynamic_debug_mesh();
-    renderer.update_overlay_text(scene.overlay_text);
+    if (!runtime_options.debug_freeze || frozen_debug_world.vertices.empty()) {
+        rebuild_dynamic_debug_mesh();
+        if (runtime_options.debug_freeze) {
+            frozen_debug_world = scene.debug_world;
+        }
+    } else {
+        scene.debug_world = frozen_debug_world;
+    }
+    renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
 
     RenderFrameContext ctx{};
     ctx.frame_index = frame_index++;
@@ -283,6 +306,7 @@ void Engine::tick(double frame_dt) {
     } else {
         ctx.views[0].viewport = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
     }
+    ctx.debug_xray = runtime_options.debug_collision && runtime_options.debug_xray;
     renderer.begin_frame(ctx, render_stats);
     renderer.end_frame();
 }
@@ -329,7 +353,7 @@ void Engine::update_third_person_camera(PlayerEntity &player, const glm::vec3 &r
 }
 
 void Engine::refresh_overlay_text() {
-    scene.overlay_text = RenderMesh{};
+    scene.debug_screen = RenderMesh{};
 
     if (runtime_options.devhud) {
         char text[320]{};
@@ -359,17 +383,22 @@ void Engine::refresh_overlay_text() {
             input_state.pointer_locked ? 1 : 0,
             input_state.look_enabled ? 1 : 0,
             static_cast<int>(remote_players.size()));
-        scene.overlay_text = build_camera_text_mesh(camera, text);
+        scene.debug_screen = build_camera_text_mesh(camera, text);
     }
 
     const std::string menu_text = gui_menu.build_text(runtime_options.devhud, runtime_options.noclip);
     if (!menu_text.empty()) {
         RenderMesh menu_mesh = build_camera_text_mesh(camera, menu_text);
-        append_mesh(scene.overlay_text, menu_mesh);
+        append_mesh(scene.debug_screen, menu_mesh);
     }
 }
 
 void Engine::rebuild_dynamic_debug_mesh() {
+    scene.debug_world = RenderMesh{};
+    if (!runtime_options.debug_collision) {
+        return;
+    }
+
     RenderMesh player_capsule = build_debug_capsule_mesh(
         local_player.transform.position,
         local_player.controller.capsuleRadius,
@@ -381,8 +410,10 @@ void Engine::rebuild_dynamic_debug_mesh() {
         0.12f,
         glm::vec3(0.2f, 0.85f, 1.0f));
 
-    append_mesh(scene.overlay_text, player_capsule);
-    append_mesh(scene.overlay_text, target_marker);
+    if (!runtime_options.debug_collision_only) {
+        append_mesh(scene.debug_world, player_capsule);
+        append_mesh(scene.debug_world, target_marker);
+    }
 
     if (runtime_options.splitscreen) {
         RenderMesh p2_capsule = build_debug_capsule_mesh(
@@ -394,16 +425,18 @@ void Engine::rebuild_dynamic_debug_mesh() {
             local_player_secondary.transform.position + glm::vec3(0.0f, local_player_secondary.camera_rig.pivotHeight, 0.0f),
             0.10f,
             glm::vec3(0.6f, 0.85f, 1.0f));
-        append_mesh(scene.overlay_text, p2_capsule);
-        append_mesh(scene.overlay_text, p2_target);
+        if (!runtime_options.debug_collision_only) {
+            append_mesh(scene.debug_world, p2_capsule);
+            append_mesh(scene.debug_world, p2_target);
+        }
     }
 
-    if (runtime_options.devhud) {
+    if (runtime_options.devhud || runtime_options.debug_collision_only) {
         for (const glm::ivec3 &cell : last_collision_debug.overlapped_voxels) {
             const glm::vec3 bmin(static_cast<float>(cell.x), static_cast<float>(cell.y), static_cast<float>(cell.z));
             const glm::vec3 bmax = bmin + glm::vec3(1.0f);
             RenderMesh overlap_box = build_debug_aabb_mesh(bmin, bmax, glm::vec3(0.95f, 0.15f, 0.15f));
-            append_mesh(scene.overlay_text, overlap_box);
+            append_mesh(scene.debug_world, overlap_box);
         }
 
         RenderMesh ground_ray = build_debug_line_mesh(
@@ -411,16 +444,26 @@ void Engine::rebuild_dynamic_debug_mesh() {
             last_collision_debug.grounding_ray_hit,
             0.01f,
             glm::vec3(1.0f, 1.0f, 0.2f));
-        append_mesh(scene.overlay_text, ground_ray);
+        append_mesh(scene.debug_world, ground_ray);
+
+        RenderMesh normal_line = build_debug_line_mesh(
+            local_player.transform.position + glm::vec3(0.0f, 0.05f, 0.0f),
+            local_player.transform.position + glm::vec3(0.0f, 0.05f, 0.0f) + last_collision_debug.contact_normal * 0.6f,
+            0.01f,
+            glm::vec3(1.0f, 0.4f, 0.1f));
+        append_mesh(scene.debug_world, normal_line);
     }
 
     for (const auto &[player_id, state] : remote_players) {
         (void)player_id;
+        if (runtime_options.debug_collision_only) {
+            continue;
+        }
         RenderMesh remote_capsule = build_debug_capsule_mesh(
             glm::vec3(state.x, state.y, state.z),
             local_player.controller.capsuleRadius,
             local_player.controller.capsuleHeight,
             glm::vec3(0.3f, 0.8f, 0.35f));
-        append_mesh(scene.overlay_text, remote_capsule);
+        append_mesh(scene.debug_world, remote_capsule);
     }
 }

@@ -10,7 +10,7 @@ public:
     void init(void *window_handle, RenderBackendType backend_type);
     void shutdown();
     void upload_scene(const RenderScene &scene);
-    void update_overlay_text(const RenderMesh &overlay);
+    void update_dynamic_meshes(const RenderMesh &debug_world, const RenderMesh &debug_screen);
     void begin_frame(const RenderFrameContext &ctx, const RenderStats &stats);
     void end_frame();
 

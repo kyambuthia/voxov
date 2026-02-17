@@ -18,7 +18,8 @@ struct RenderMesh {
 struct RenderScene {
     std::vector<RenderMesh> opaque_meshes;
     RenderMesh debug_grid;
-    RenderMesh overlay_text;
+    RenderMesh debug_world;
+    RenderMesh debug_screen;
 };
 
 struct RenderStats {

@@ -24,8 +24,8 @@ void Renderer::upload_scene(const RenderScene &scene) {
     backend->upload_scene(scene);
 }
 
-void Renderer::update_overlay_text(const RenderMesh &overlay) {
-    backend->update_overlay_text(overlay);
+void Renderer::update_dynamic_meshes(const RenderMesh &debug_world, const RenderMesh &debug_screen) {
+    backend->update_dynamic_meshes(debug_world, debug_screen);
 }
 
 void Renderer::begin_frame(const RenderFrameContext &ctx, const RenderStats &stats) {

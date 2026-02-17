@@ -106,6 +106,18 @@ ctest --test-dir build --output-on-failure
 - `--devhud` enable gameplay/network instrumentation overlay + structured logs
 - `--noclip` debug-only movement mode (comparison tool; default off)
 - `--splitscreen` local 2-player split view (P1: mouse+WASD, P2: IJKL + arrow keys, Ctrl jump)
+- `F1` toggle collision debug draw
+- `F2` toggle debug xray mode (depth-disabled debug draw)
+- `F3` toggle collision-only debug primitives
+- `F4` freeze/unfreeze current debug frame
+
+## Visual Debug Flags
+```bash
+./build/bin/voxov --debug-collision
+./build/bin/voxov --debug-xray
+./build/bin/voxov --debug-collision-only
+./build/bin/voxov --debug-freeze
+```
 
 ## LAN Multiplayer (2 PCs, same Wi-Fi)
 PC A (server):

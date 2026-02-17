@@ -19,6 +19,10 @@ struct EngineRuntimeOptions {
     bool devhud = false;
     bool noclip = false;
     bool splitscreen = false;
+    bool debug_collision = false;
+    bool debug_xray = false;
+    bool debug_collision_only = false;
+    bool debug_freeze = false;
 };
 
 class Engine {
@@ -73,4 +77,5 @@ private:
     bool has_snapshot = false;
     PlayerCollisionDebug last_collision_debug{};
     PlayerCollisionDebug last_collision_debug_secondary{};
+    RenderMesh frozen_debug_world{};
 };

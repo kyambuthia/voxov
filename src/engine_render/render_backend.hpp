@@ -18,6 +18,7 @@ struct RenderFrameContext {
     float aspect_ratio = 16.0f / 9.0f;
     std::array<RenderView, 2> views{};
     uint32_t view_count = 1;
+    bool debug_xray = false;
 };
 
 class IRenderBackend {
@@ -28,7 +29,7 @@ public:
     virtual void shutdown() = 0;
 
     virtual void upload_scene(const RenderScene &scene) = 0;
-    virtual void update_overlay_text(const RenderMesh &overlay) = 0;
+    virtual void update_dynamic_meshes(const RenderMesh &debug_world, const RenderMesh &debug_screen) = 0;
     virtual void begin_frame(const RenderFrameContext &ctx, const RenderStats &stats) = 0;
     virtual void end_frame() = 0;
 };

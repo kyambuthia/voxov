@@ -13,7 +13,7 @@ public:
     void init(void *window_handle) override;
     void shutdown() override;
     void upload_scene(const RenderScene &scene) override;
-    void update_overlay_text(const RenderMesh &overlay) override;
+    void update_dynamic_meshes(const RenderMesh &debug_world, const RenderMesh &debug_screen) override;
     void begin_frame(const RenderFrameContext &ctx, const RenderStats &stats) override;
     void end_frame() override;
 
@@ -77,6 +77,7 @@ private:
     std::vector<VkFramebuffer> framebuffers;
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
+    VkPipeline pipeline_no_depth = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> command_buffers;
 
@@ -87,21 +88,29 @@ private:
     RenderScene scene_data;
     std::vector<RenderVertex> static_vertices;
     std::vector<uint32_t> static_indices;
-    std::vector<RenderVertex> overlay_vertices;
-    std::vector<uint32_t> overlay_indices;
+    std::vector<RenderVertex> debug_world_vertices;
+    std::vector<uint32_t> debug_world_indices;
+    std::vector<RenderVertex> debug_screen_vertices;
+    std::vector<uint32_t> debug_screen_indices;
     VkBuffer static_vertex_buffer = VK_NULL_HANDLE;
     VkDeviceMemory static_vertex_memory = VK_NULL_HANDLE;
     VkBuffer static_index_buffer = VK_NULL_HANDLE;
     VkDeviceMemory static_index_memory = VK_NULL_HANDLE;
-    VkBuffer overlay_vertex_buffer = VK_NULL_HANDLE;
-    VkDeviceMemory overlay_vertex_memory = VK_NULL_HANDLE;
-    VkBuffer overlay_index_buffer = VK_NULL_HANDLE;
-    VkDeviceMemory overlay_index_memory = VK_NULL_HANDLE;
+    VkBuffer debug_world_vertex_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory debug_world_vertex_memory = VK_NULL_HANDLE;
+    VkBuffer debug_world_index_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory debug_world_index_memory = VK_NULL_HANDLE;
+    VkBuffer debug_screen_vertex_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory debug_screen_vertex_memory = VK_NULL_HANDLE;
+    VkBuffer debug_screen_index_buffer = VK_NULL_HANDLE;
+    VkDeviceMemory debug_screen_index_memory = VK_NULL_HANDLE;
     uint32_t static_index_count = 0;
-    uint32_t overlay_index_count = 0;
+    uint32_t debug_world_index_count = 0;
+    uint32_t debug_screen_index_count = 0;
     std::array<glm::mat4, 2> current_view_proj = { glm::mat4(1.0f), glm::mat4(1.0f) };
     std::array<glm::vec4, 2> current_viewports = { glm::vec4(0.0f), glm::vec4(0.0f) };
     uint32_t current_view_count = 1;
     uint32_t current_image_index = 0;
     uint32_t frame_index = 0;
+    bool current_debug_xray = false;
 };

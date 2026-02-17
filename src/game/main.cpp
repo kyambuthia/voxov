@@ -79,6 +79,10 @@ int main(int argc, char **argv) {
     bool devhud = false;
     bool noclip = false;
     bool splitscreen = false;
+    bool debug_collision = false;
+    bool debug_xray = false;
+    bool debug_collision_only = false;
+    bool debug_freeze = false;
     const char *connect_host = nullptr;
     uint16_t connect_port = 7777;
     RenderBackendType backend = RenderBackendType::Vulkan;
@@ -106,6 +110,17 @@ int main(int argc, char **argv) {
             noclip = true;
         } else if (std::strcmp(argv[i], "--splitscreen") == 0) {
             splitscreen = true;
+        } else if (std::strcmp(argv[i], "--debug-collision") == 0) {
+            debug_collision = true;
+        } else if (std::strcmp(argv[i], "--debug-xray") == 0) {
+            debug_collision = true;
+            debug_xray = true;
+        } else if (std::strcmp(argv[i], "--debug-collision-only") == 0) {
+            debug_collision = true;
+            debug_collision_only = true;
+        } else if (std::strcmp(argv[i], "--debug-freeze") == 0) {
+            debug_collision = true;
+            debug_freeze = true;
         }
     }
 
@@ -148,6 +163,10 @@ int main(int argc, char **argv) {
         options.devhud = devhud;
         options.noclip = noclip;
         options.splitscreen = splitscreen;
+        options.debug_collision = debug_collision;
+        options.debug_xray = debug_xray;
+        options.debug_collision_only = debug_collision_only;
+        options.debug_freeze = debug_freeze;
         engine.init(platform.native_window(), backend, options);
     } catch (const std::exception &e) {
         std::fprintf(stderr, "Engine init failed: %s\n", e.what());

@@ -44,15 +44,17 @@ LAN replication demo (same Wi-Fi):
 ./build/bin/voxov --renderer gl --connect <SERVER_LAN_IP> --port 7777 --devhud
 ```
 
-## Android (foundation)
+## Android (bring-up)
 
-Skeleton backend compiled: `src/platform/android_platform.cpp`.
-Desktop build keeps it as a no-op stub unless `__ANDROID__` is defined.
+Android now has a dedicated CMake path when `ANDROID=ON`:
 
-Suggested next step:
-- add `src/platform/android_platform.cpp`
-- add `VOXOV_PLATFORM_ANDROID` compile option
-- route Vulkan backend window surface creation through platform abstraction.
+- Target: `voxov_android` (shared library)
+- Entry point: `src/game/android_main.cpp`
+- Native glue: NDK `android_native_app_glue`
+
+Build details and Android Studio setup:
+
+- `docs/ANDROID.md`
 
 ## iOS (planned)
 

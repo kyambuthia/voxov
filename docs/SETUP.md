@@ -124,3 +124,7 @@ scripts\clean_build.bat
 ## 9. Releases
 
 For release tags and downloadable binaries, see `docs/RELEASES.md`.
+
+## 10. Android
+
+For Android NDK/Android Studio bring-up and build steps, see `docs/ANDROID.md`.

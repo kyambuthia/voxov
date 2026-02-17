@@ -23,6 +23,40 @@ option(VOXOV_ENABLE_ASSERTIONS "Enable assertions in release builds" ON)
 option(VOXOV_ENABLE_ANDROID_BACKEND "Compile Android platform backend skeleton" ON)
 option(VOXOV_ENABLE_WEB_BACKEND "Compile Web platform backend skeleton" ON)
 
+if(ANDROID)
+    message(STATUS "Configuring VOXOV for Android")
+
+    set(VOXOV_ANDROID_GLUE_DIR "${CMAKE_ANDROID_NDK}/sources/android/native_app_glue")
+    if(NOT EXISTS "${VOXOV_ANDROID_GLUE_DIR}/android_native_app_glue.c")
+        message(FATAL_ERROR "android_native_app_glue.c not found at ${VOXOV_ANDROID_GLUE_DIR}. Check NDK setup.")
+    endif()
+
+    add_library(voxov_android SHARED
+        src/game/android_main.cpp
+        src/platform/android_platform.cpp
+        src/platform/android/input_android.cpp
+        ${VOXOV_ANDROID_GLUE_DIR}/android_native_app_glue.c
+    )
+    target_include_directories(voxov_android PRIVATE
+        src
+        ${VOXOV_ANDROID_GLUE_DIR}
+    )
+    target_compile_definitions(voxov_android PRIVATE VOXOV_PLATFORM_ANDROID=1)
+
+    find_library(android_lib android REQUIRED)
+    find_library(log_lib log REQUIRED)
+    target_link_libraries(voxov_android PRIVATE
+        ${android_lib}
+        ${log_lib}
+    )
+
+    set_target_properties(voxov_android PROPERTIES OUTPUT_NAME "voxov")
+    install(TARGETS voxov_android
+        LIBRARY DESTINATION lib
+    )
+    return()
+endif()
+
 # Compiler-specific options
 if(MSVC)
     add_compile_options(/W4)

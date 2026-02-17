@@ -24,6 +24,7 @@ public:
 
 private:
     bool initialized = false;
+    bool connected = false;
     _ENetHost *client = nullptr;
     _ENetPeer *peer = nullptr;
     bool has_snapshot = false;
@@ -31,4 +32,6 @@ private:
     std::vector<NetChunkState> chunk_updates;
     uint32_t assigned_player_id = 0;
     std::unordered_map<uint32_t, NetPlayerState> replicated_players;
+    bool has_pending_interest = false;
+    NetChunkInterest pending_interest{};
 };

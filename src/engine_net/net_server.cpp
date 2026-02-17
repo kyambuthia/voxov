@@ -1,6 +1,7 @@
 #include "engine_net/net_server.hpp"
 
 #include <enet/enet.h>
+#include <spdlog/spdlog.h>
 
 #include <cstring>
 #include <cstdio>
@@ -120,6 +121,7 @@ void NetServer::pump() {
             state.state.y = 8.0f;
             state.state.z = 8.0f;
             clients[event.peer] = state;
+            spdlog::info("NetServer: client connected, assigned player_id={}, clients={}", state.player_id, clients.size());
 
             AssignPlayerPacket assign{};
             assign.payload.player_id = state.player_id;
@@ -129,6 +131,7 @@ void NetServer::pump() {
         }
         case ENET_EVENT_TYPE_DISCONNECT:
             clients.erase(event.peer);
+            spdlog::info("NetServer: client disconnected, clients={}", clients.size());
             break;
         case ENET_EVENT_TYPE_RECEIVE: {
             auto it = clients.find(event.peer);

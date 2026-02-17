@@ -1,6 +1,7 @@
 #include "engine_net/net_client.hpp"
 
 #include <enet/enet.h>
+#include <spdlog/spdlog.h>
 
 #include <cstring>
 #include <cstdio>
@@ -61,6 +62,7 @@ void NetClient::connect(const char *host, uint16_t port) {
     if (!initialized || !client || !host) {
         return;
     }
+    disconnect();
 
     ENetAddress address{};
     if (enet_address_set_host(&address, host) != 0) {
@@ -71,20 +73,28 @@ void NetClient::connect(const char *host, uint16_t port) {
     peer = enet_host_connect(client, &address, 2, 0);
     if (!peer) {
         std::fprintf(stderr, "NetClient: enet_host_connect failed\n");
+        return;
     }
+    connected = false;
+    assigned_player_id = 0;
+    spdlog::info("NetClient: connecting to {}:{}", host, port);
 }
 
 void NetClient::disconnect() {
     if (peer) {
         enet_peer_disconnect(peer, 0);
+        enet_host_flush(client);
         peer = nullptr;
     }
+    connected = false;
 }
 
 void NetClient::shutdown() {
     chunk_updates.clear();
     replicated_players.clear();
     assigned_player_id = 0;
+    connected = false;
+    has_pending_interest = false;
     if (client) {
         enet_host_destroy(client);
         client = nullptr;
@@ -102,6 +112,36 @@ void NetClient::pump() {
 
     ENetEvent event{};
     while (enet_host_service(client, &event, 0) > 0) {
+        if (event.type == ENET_EVENT_TYPE_CONNECT) {
+            connected = true;
+            const ENetAddress &addr = event.peer->address;
+            spdlog::info(
+                "NetClient: connected to {}.{}.{}.{}:{}",
+                static_cast<int>((addr.host >> 0) & 0xFF),
+                static_cast<int>((addr.host >> 8) & 0xFF),
+                static_cast<int>((addr.host >> 16) & 0xFF),
+                static_cast<int>((addr.host >> 24) & 0xFF),
+                static_cast<int>(addr.port));
+            if (has_pending_interest && peer) {
+                ChunkInterestPacket packet{};
+                packet.interest = pending_interest;
+                ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE);
+                enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Reliable), net_packet);
+                has_pending_interest = false;
+            }
+            continue;
+        }
+
+        if (event.type == ENET_EVENT_TYPE_DISCONNECT) {
+            spdlog::warn("NetClient: disconnected from server");
+            connected = false;
+            peer = nullptr;
+            assigned_player_id = 0;
+            replicated_players.clear();
+            has_snapshot = false;
+            continue;
+        }
+
         if (event.type == ENET_EVENT_TYPE_RECEIVE) {
             if (event.packet->dataLength >= sizeof(SnapshotPacket)) {
                 SnapshotPacket packet{};
@@ -142,7 +182,7 @@ void NetClient::pump() {
 }
 
 void NetClient::send_input(const NetTickInput &input) {
-    if (!client || !peer) {
+    if (!client || !peer || !connected) {
         return;
     }
 
@@ -153,7 +193,10 @@ void NetClient::send_input(const NetTickInput &input) {
 }
 
 void NetClient::set_chunk_interest(const NetChunkInterest &interest) {
-    if (!client || !peer) {
+    pending_interest = interest;
+    has_pending_interest = true;
+
+    if (!client || !peer || !connected) {
         return;
     }
 
@@ -161,6 +204,7 @@ void NetClient::set_chunk_interest(const NetChunkInterest &interest) {
     packet.interest = interest;
     ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE);
     enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Reliable), net_packet);
+    has_pending_interest = false;
 }
 
 bool NetClient::poll_snapshot(NetSnapshot &out_snapshot) {

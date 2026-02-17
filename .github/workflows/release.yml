@@ -50,21 +50,14 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
-      - name: Package artifacts
+      - name: Prepare executable artifact
         run: |
-          mkdir -p release
-          cp build/bin/voxov release/
-          cp build/bin/voxov_asset_cooker release/
-          cp README.md release/
-          cp LICENSE release/LICENSE || true
-          ARCHIVE="voxov-linux-x86_64-${GITHUB_REF_NAME}.tar.gz"
-          tar -C release -czf "${ARCHIVE}" .
-          sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+          cp build/bin/voxov "voxov-linux-x86_64-${GITHUB_REF_NAME}"
+          chmod +x "voxov-linux-x86_64-${GITHUB_REF_NAME}"
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           generate_release_notes: true
           files: |
-            voxov-linux-x86_64-${{ github.ref_name }}.tar.gz
-            voxov-linux-x86_64-${{ github.ref_name }}.tar.gz.sha256
+            voxov-linux-x86_64-${{ github.ref_name }}

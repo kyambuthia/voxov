@@ -13,15 +13,9 @@ The release workflow builds Linux artifacts and publishes them to GitHub Release
 
 ## What gets published
 
-- `voxov-linux-x86_64-<tag>.tar.gz`
-- `voxov-linux-x86_64-<tag>.tar.gz.sha256`
+- `voxov-linux-x86_64-<tag>`
 
-Archive contents:
-
-- `voxov`
-- `voxov_asset_cooker`
-- `README.md`
-- `LICENSE` (if present)
+This is a single executable artifact intended for direct download and run.
 
 ## Create a release tag
 

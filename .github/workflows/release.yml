@@ -103,6 +103,8 @@ jobs:
             -DVOXOV_BUILD_TESTS=OFF `
             -DVOXOV_ENABLE_VULKAN=OFF `
             -DENABLE_ALL_WARNINGS=OFF `
+            -DJPH_USE_DX12=OFF `
+            -DJPH_USE_DXC=OFF `
             -DUSE_AVX2=OFF `
             -DUSE_F16C=OFF `
             -DUSE_FMADD=OFF `

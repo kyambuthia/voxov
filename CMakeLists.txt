@@ -94,7 +94,7 @@ if(VOXOV_ENABLE_WEB_BACKEND)
     target_sources(platform_desktop PRIVATE src/platform/web_platform.cpp)
 endif()
 target_include_directories(platform_desktop PUBLIC src)
-target_link_libraries(platform_desktop PUBLIC glfw)
+target_link_libraries(platform_desktop PUBLIC glfw glm::glm)
 
 add_library(engine_math STATIC
     src/engine_math/camera.cpp

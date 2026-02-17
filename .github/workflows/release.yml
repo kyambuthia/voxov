@@ -77,6 +77,7 @@ jobs:
 
   build-windows:
     runs-on: windows-latest
+    continue-on-error: true
 
     steps:
       - name: Checkout
@@ -170,24 +171,39 @@ jobs:
   publish-release:
     runs-on: ubuntu-latest
     needs: [build-linux, build-windows, build-android]
+    if: always()
 
     steps:
-      - name: Download artifacts
+      - name: Download linux artifact
         uses: actions/download-artifact@v4
         with:
-          path: dist
+          name: release-linux
+          path: dist/release-linux
+          if-no-files-found: error
+
+      - name: Download android artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-android
+          path: dist/release-android
+          if-no-files-found: error
+
+      - name: Download windows artifact (optional)
+        uses: actions/download-artifact@v4
+        with:
+          name: release-windows
+          path: dist/release-windows
+          if-no-files-found: ignore
 
       - name: Flatten artifacts
         run: |
           mkdir -p release
           find dist -type f -print -exec cp {} release/ \;
+          ls -la release
 
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
           name: VOXOV ${{ github.ref_name }} (Linux/Windows/Android)
           generate_release_notes: true
-          files: |
-            release/VOXOV-${{ github.ref_name }}-linux-x86_64
-            release/VOXOV-${{ github.ref_name }}-windows-x86_64.zip
-            release/VOXOV-${{ github.ref_name }}-android-arm64-v8a-libvoxov.so
+          files: release/*

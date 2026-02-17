@@ -25,4 +25,7 @@ struct RenderScene {
 struct RenderStats {
     double fps = 0.0;
     double cpu_ms = 0.0;
+    bool net_connected = false;
+    uint32_t net_local_player_id = 0;
+    uint32_t net_remote_count = 0;
 };

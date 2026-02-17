@@ -9,7 +9,18 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
+#include <cstdint>
 #include <string>
+
+namespace {
+glm::vec3 player_color_from_id(uint32_t player_id) {
+    const uint32_t h = (player_id * 2654435761u) ^ 0x9e3779b9u;
+    const float r = 0.25f + 0.65f * static_cast<float>((h >> 0) & 0xFF) / 255.0f;
+    const float g = 0.25f + 0.65f * static_cast<float>((h >> 8) & 0xFF) / 255.0f;
+    const float b = 0.25f + 0.65f * static_cast<float>((h >> 16) & 0xFF) / 255.0f;
+    return glm::vec3(r, g, b);
+}
+}
 
 void Engine::init(void *window_handle, RenderBackendType backend_type, const EngineRuntimeOptions &options) {
     runtime_options = options;
@@ -280,6 +291,10 @@ void Engine::tick(double frame_dt) {
         }
     }
 
+    render_stats.net_connected = net_client.is_connected();
+    render_stats.net_local_player_id = local_player.network_id;
+    render_stats.net_remote_count = static_cast<uint32_t>(remote_players.size());
+
     refresh_overlay_text();
     if (!runtime_options.debug_freeze || frozen_debug_world.vertices.empty()) {
         rebuild_dynamic_debug_mesh();
@@ -360,7 +375,7 @@ void Engine::refresh_overlay_text() {
         std::snprintf(
             text,
             sizeof(text),
-            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d",
+            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u",
             render_stats.fps,
             last_frame_dt,
             fixed.fixed_dt,
@@ -382,7 +397,9 @@ void Engine::refresh_overlay_text() {
             input_state.rmb_down ? 1 : 0,
             input_state.pointer_locked ? 1 : 0,
             input_state.look_enabled ? 1 : 0,
-            static_cast<int>(remote_players.size()));
+            static_cast<int>(remote_players.size()),
+            render_stats.net_connected ? 1 : 0,
+            render_stats.net_local_player_id);
         scene.debug_screen = build_camera_text_mesh(camera, text);
     }
 
@@ -461,7 +478,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
             glm::vec3(state.x, state.y, state.z),
             local_player.controller.capsuleRadius,
             local_player.controller.capsuleHeight,
-            glm::vec3(0.3f, 0.8f, 0.35f));
+            player_color_from_id(player_id));
         append_mesh(scene.debug_world, remote_capsule);
     }
 }

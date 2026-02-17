@@ -231,6 +231,10 @@ uint32_t NetClient::local_player_id() const {
     return assigned_player_id;
 }
 
+bool NetClient::is_connected() const {
+    return connected;
+}
+
 const std::unordered_map<uint32_t, NetPlayerState> &NetClient::player_states() const {
     return replicated_players;
 }

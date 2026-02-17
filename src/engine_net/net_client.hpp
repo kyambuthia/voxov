@@ -20,6 +20,7 @@ public:
     bool poll_snapshot(NetSnapshot &out_snapshot);
     bool poll_chunk_state(NetChunkState &out_state);
     uint32_t local_player_id() const;
+    bool is_connected() const;
     const std::unordered_map<uint32_t, NetPlayerState> &player_states() const;
 
 private:

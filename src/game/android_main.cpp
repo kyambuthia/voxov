@@ -252,6 +252,11 @@ void android_main(android_app *app) {
                 __android_log_print(ANDROID_LOG_INFO, kLogTag, "android_main exit");
                 return;
             }
+
+            // Once rendering becomes available, stop blocking on events and draw.
+            if (renderer.can_render()) {
+                break;
+            }
         }
 
         if (!renderer.can_render() && app->window != nullptr) {

@@ -71,6 +71,8 @@ set(JPH_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
 set(JPH_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(JPH_BUILD_TOOLS OFF CACHE BOOL "" FORCE)
 set(JPH_GENERATE_DEBUG_SYMBOLS OFF CACHE BOOL "" FORCE)
+# Prevent MinGW/GCC false-positive warnings in Jolt from failing CI due to -Werror.
+set(ENABLE_ALL_WARNINGS OFF CACHE BOOL "" FORCE)
 
 # Dependencies
 add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/JoltPhysics/Build" EXCLUDE_FROM_ALL)

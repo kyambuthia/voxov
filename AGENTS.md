@@ -18,30 +18,52 @@ building beautiful, playable games (including classic-style visuals) with multip
 git clone --recurse-submodules github.com/kyambuthia/voxov.git && cd ./voxov
 git submodule init && git submodule update
 
-# Build project
-mkdir ./build && cd ./build
-cmake .. && cmake --build .
+# Build output policy (required)
+# Always build under ./build/<target>/...
+# - desktop: ./build/desktop/main
+# - web: ./build/web/main
+# - android native cmake: ./build/android/arm64-cmake
+
+# Build project (desktop)
+cmake -S . -B ./build/desktop/main
+cmake --build ./build/desktop/main
 
 # Configure build options
-cmake -DVOXOV_BUILD_TESTS=ON -DVOXOV_BUILD_EXAMPLES=ON -DVOXOV_ENABLE_ASSERTIONS=ON ..
+cmake -S . -B ./build/desktop/main -DVOXOV_BUILD_TESTS=ON -DVOXOV_BUILD_EXAMPLES=ON -DVOXOV_ENABLE_ASSERTIONS=ON
 
 # Build configurations
-cmake --build . --config Release
-cmake --build . --config Debug
+cmake --build ./build/desktop/main --config Release
+cmake --build ./build/desktop/main --config Debug
+
+# Web (Emscripten)
+EM_CACHE=./build/web/cache emcmake cmake -S . -B ./build/web/main -G Ninja
+EM_CACHE=./build/web/cache cmake --build ./build/web/main --parallel
+
+# Android native CMake (if building directly without Gradle)
+cmake -S . -B ./build/android/arm64-cmake \
+  -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=arm64-v8a \
+  -DANDROID_PLATFORM=29
+cmake --build ./build/android/arm64-cmake --parallel
 
 # Manual shader compilation (auto-compiled during build)
 glslc src/renderer/shaders/cube.vert -o cube.vert.spv
 glslc src/renderer/shaders/cube.frag -o cube.frag.spv
 
 # Build and run tests (when tests are added)
-cmake -DVOXOV_BUILD_TESTS=ON .. && cmake --build . && ctest --output-on-failure
+cmake -S . -B ./build/desktop/tests -DVOXOV_BUILD_TESTS=ON && cmake --build ./build/desktop/tests && ctest --test-dir ./build/desktop/tests --output-on-failure
 
 # Linting and formatting
 find . -name "*.cpp" -o -name "*.hpp" -o -name "*.c" -o -name "*.h" | xargs clang-format -i
-cmake -DCMAKE_EXPORT_COMPILE_COMMANDS=ON ..
-run-clang-tidy -p .
-clang-tidy -p . src/main.cpp
+cmake -S . -B ./build/desktop/clang -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+run-clang-tidy -p ./build/desktop/clang
+clang-tidy -p ./build/desktop/clang src/main.cpp
 ```
+
+## Build Directory Rule
+
+Agents must not create top-level build directories like `build-*` in repo root.
+All generated build outputs must live under `./build/<target>/...`.
 
 ## Code Style Guidelines
 

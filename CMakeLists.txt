@@ -81,7 +81,7 @@ if(EMSCRIPTEN)
         "-sALLOW_MEMORY_GROWTH=1"
         "-sWASM=1"
     )
-    set_target_properties(voxov_web PROPERTIES OUTPUT_NAME "voxov_web")
+    set_target_properties(voxov_web PROPERTIES OUTPUT_NAME "voxov_web" SUFFIX ".html")
     return()
 endif()
 

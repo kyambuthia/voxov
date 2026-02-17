@@ -15,7 +15,7 @@ The release workflow builds multi-platform artifacts and publishes them to GitHu
 
 - `VOXOV-<tag>-linux-x86_64`
 - `VOXOV-<tag>-windows-x86_64.zip`
-- `VOXOV-<tag>-android-arm64-v8a-libvoxov.so`
+- `VOXOV-<tag>-android-arm64-v8a.apk`
 
 Naming format is intentional so users can identify platform/architecture quickly in release assets.
 
@@ -23,7 +23,7 @@ Notes:
 
 - Linux asset is a direct executable.
 - Windows asset is a zip containing `voxov.exe` (current CI release profile builds OpenGL-only on Windows for stability).
-- Android asset is the native shared library output (`libvoxov.so`) from the Android NDK target.
+- Android asset is an installable APK (arm64-v8a).
 
 ## Release title and source archives
 

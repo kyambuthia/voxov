@@ -131,36 +131,37 @@ jobs:
         with:
           submodules: recursive
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - name: Setup Gradle
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: "8.10.2"
+
       - name: Setup Android SDK tools
         uses: android-actions/setup-android@v3
 
       - name: Install Android NDK
         run: |
-          sdkmanager --install "ndk;29.0.14206865" "cmake;3.22.1"
+          sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;29.0.14206865" "cmake;3.22.1"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/29.0.14206865" >> "$GITHUB_ENV"
 
-      - name: Configure
-        run: |
-          cmake -S . -B build-android -G Ninja \
-            -DANDROID=ON \
-            -DCMAKE_SYSTEM_NAME=Android \
-            -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
-            -DANDROID_ABI=arm64-v8a \
-            -DANDROID_PLATFORM=android-29 \
-            -DCMAKE_BUILD_TYPE=Release
-
-      - name: Build
-        run: cmake --build build-android --parallel
+      - name: Build APK (Release)
+        run: gradle -p android :app:assembleRelease --stacktrace --no-daemon
 
       - name: Prepare android artifact
         run: |
-          cp build-android/lib/libvoxov.so "VOXOV-${GITHUB_REF_NAME}-android-arm64-v8a-libvoxov.so"
+          cp android/app/build/outputs/apk/release/app-release.apk "VOXOV-${GITHUB_REF_NAME}-android-arm64-v8a.apk"
 
       - name: Upload android artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-android
-          path: VOXOV-${{ github.ref_name }}-android-arm64-v8a-libvoxov.so
+          path: VOXOV-${{ github.ref_name }}-android-arm64-v8a.apk
 
   publish-release:
     runs-on: ubuntu-latest

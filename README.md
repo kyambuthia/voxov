@@ -27,6 +27,7 @@ Latest gameplay clip (GIF from latest screencast):
 - Release process and binaries: `docs/RELEASES.md`
 - Build matrix and platform notes: `docs/BUILD_PLATFORMS.md`
 - Architecture: `docs/ARCHITECTURE.md`
+- Infinite voxel world design (renderer + networking + multiplayer): `docs/VOXEL_WORLD_DESIGN.md`
 - Extending guide: `docs/EXTENDING.md`
 
 ## Networking
@@ -40,5 +41,6 @@ For full server/client setup and validation steps, see `docs/NETWORKING.md`.
 - `docs/RELEASES.md`
 - `docs/BUILD_PLATFORMS.md`
 - `docs/ARCHITECTURE.md`
+- `docs/VOXEL_WORLD_DESIGN.md`
 - `docs/EXTENDING.md`
 - `docs/GENESIS_REFACTOR_PLAN.md`

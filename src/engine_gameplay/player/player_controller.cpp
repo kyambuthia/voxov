@@ -22,6 +22,7 @@ PlayerEntity PlayerControllerSystem::spawn_player(const VoxelCollisionWorld &col
         glm::vec2(player.transform.position.x, player.transform.position.z),
         player.controller.capsuleRadius,
         player.controller.capsuleHeight);
+    player.transform.position.y += 0.05f;
     return player;
 }
 
@@ -62,6 +63,7 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
     float dt,
     bool noclip) {
     PlayerCollisionDebug debug{};
+    const bool was_grounded = player.controller.grounded;
 
     const MovementDebug movement_debug = compute_movement_vectors(player.camera_rig.yaw, input.move);
     glm::vec3 move = movement_debug.desired;
@@ -94,18 +96,62 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
     }
 
     glm::vec3 next_pos = player.transform.position + player.controller.velocity * dt;
-    const CapsuleResolveResult resolve = collision_world.resolve_capsule(
+    CapsuleResolveResult resolve = collision_world.resolve_capsule(
         next_pos,
         player.controller.capsuleRadius,
         player.controller.capsuleHeight,
         0.02f,
-        6,
-        0.5f);
+        8,
+        1.2f);
+
+    if (was_grounded && glm::length(glm::vec2(move.x, move.z)) > 0.001f && resolve.had_collision) {
+        const float step_height = 0.65f;
+        glm::vec3 step_test = player.transform.position;
+        step_test.x += move.x * speed * dt;
+        step_test.z += move.z * speed * dt;
+        step_test.y += step_height;
+
+        CapsuleResolveResult step_resolve = collision_world.resolve_capsule(
+            step_test,
+            player.controller.capsuleRadius,
+            player.controller.capsuleHeight,
+            0.02f,
+            8,
+            1.2f);
+
+        float step_hit_distance = 0.0f;
+        const glm::vec3 step_origin = step_resolve.position + glm::vec3(0.0f, 0.12f, 0.0f);
+        if (collision_world.raycast(step_origin, glm::vec3(0.0f, -1.0f, 0.0f), step_height + 0.25f, step_hit_distance)) {
+            step_resolve.position.y = step_origin.y - step_hit_distance + 0.02f;
+            step_resolve.grounded = true;
+        }
+
+        const float base_progress = glm::length(glm::vec2(
+            resolve.position.x - player.transform.position.x,
+            resolve.position.z - player.transform.position.z));
+        const float step_progress = glm::length(glm::vec2(
+            step_resolve.position.x - player.transform.position.x,
+            step_resolve.position.z - player.transform.position.z));
+        if (step_progress > base_progress + 0.01f) {
+            resolve = step_resolve;
+        }
+    }
 
     player.transform.position = resolve.position;
     player.controller.grounded = resolve.grounded;
     if (resolve.grounded && player.controller.velocity.y < 0.0f) {
         player.controller.velocity.y = 0.0f;
+    }
+
+    if (!resolve.grounded && was_grounded && !input.jump_pressed && player.controller.velocity.y <= 0.0f) {
+        float snap_hit_distance = 0.0f;
+        const glm::vec3 snap_origin = player.transform.position + glm::vec3(0.0f, 0.10f, 0.0f);
+        const float max_snap_distance = 0.90f;
+        if (collision_world.raycast(snap_origin, glm::vec3(0.0f, -1.0f, 0.0f), max_snap_distance, snap_hit_distance)) {
+            player.transform.position.y = snap_origin.y - snap_hit_distance + 0.02f;
+            player.controller.grounded = true;
+            player.controller.velocity.y = 0.0f;
+        }
     }
 
     debug.had_collision = resolve.had_collision;

@@ -200,7 +200,7 @@ CapsuleResolveResult VoxelCollisionWorld::resolve_capsule(
         }
     }
 
-    const float ground_probe_dist = skin_width + 0.03f;
+    const float ground_probe_dist = std::max(0.12f, skin_width + 0.03f);
     result.ground_ray_origin = result.position + glm::vec3(0.0f, skin_width + 0.02f, 0.0f);
     float hit_distance = 0.0f;
     if (raycast(result.ground_ray_origin, glm::vec3(0.0f, -1.0f, 0.0f), ground_probe_dist, hit_distance)) {

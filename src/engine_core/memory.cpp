@@ -1,6 +1,9 @@
 #include "engine_core/memory.hpp"
 
 #include <cstdlib>
+#ifdef _WIN32
+#include <malloc.h>
+#endif
 
 LinearArena::~LinearArena() {
     shutdown();
@@ -9,7 +12,20 @@ LinearArena::~LinearArena() {
 void LinearArena::init(size_t bytes) {
     shutdown();
     capacity = bytes;
-    base = static_cast<uint8_t *>(std::aligned_alloc(16, capacity));
+    if (capacity == 0) {
+        return;
+    }
+
+#ifdef _WIN32
+    base = static_cast<uint8_t *>(_aligned_malloc(capacity, 16));
+#else
+    void *ptr = nullptr;
+    if (posix_memalign(&ptr, 16, capacity) == 0) {
+        base = static_cast<uint8_t *>(ptr);
+    } else {
+        base = nullptr;
+    }
+#endif
     offset = 0;
 }
 
@@ -19,7 +35,11 @@ void LinearArena::reset() {
 
 void LinearArena::shutdown() {
     if (base) {
+#ifdef _WIN32
+        _aligned_free(base);
+#else
         std::free(base);
+#endif
         base = nullptr;
     }
     capacity = 0;

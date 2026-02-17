@@ -24,7 +24,7 @@ Gameplay tested on Android:
 
 ![VOXOV Android Gameplay GIF](docs/media/voxov_android_gameplay.gif)
 
-Latest gameplay clip (GIF):
+Gameplay clip tested on Debian 13 PC - tag (GIF):
 
 ![VOXOV Gameplay GIF](docs/media/voxov_state.gif)
 

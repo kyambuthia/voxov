@@ -20,7 +20,11 @@ Current notes:
 - Some CPUs may require disabling aggressive Jolt SIMD options (e.g. AVX2/F16C/FMADD/LZCNT) to avoid illegal-instruction startup failures.
 
 ## Current Showcase
-Latest gameplay clip (GIF from latest screencast):
+Gameplay tested on Android:
+
+<video src="docs/media/voxov_android_gameplay_optimized.mp4" controls muted playsinline width="720"></video>
+
+Latest gameplay clip (GIF):
 
 ![VOXOV Gameplay GIF](docs/media/voxov_state.gif)
 

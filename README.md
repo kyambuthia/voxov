@@ -1,21 +1,30 @@
-## VOXOV
-Download builds: https://github.com/kyambuthia/voxov/releases
+## Install (Start Here)
 
-## Latest Release (0.0.20)
-- Release page: https://github.com/kyambuthia/voxov/releases/tag/0.0.20
-- Android APK: https://github.com/kyambuthia/voxov/releases/download/0.0.20/VOXOV-0.0.20-android-arm64-v8a.apk
-- Windows ZIP: https://github.com/kyambuthia/voxov/releases/download/0.0.20/VOXOV-0.0.20-windows-x86_64.zip
-- Linux binary: https://github.com/kyambuthia/voxov/releases/download/0.0.20/VOXOV-0.0.20-linux-x86_64
+### Windows
+## 👉👉👉 Download here: https://github.com/kyambuthia/voxov/releases/tag/0.0.20
+- In the release assets, download: `VOXOV-0.0.20-windows-x86_64.zip`
+- Extract the ZIP.
+- Run `voxov.exe`.
 
-## Install
-- Android (arm64): download APK, allow install from unknown sources, install, launch `VOXOV`.
-- Windows (x86_64): download ZIP, extract, run `voxov.exe`.
-- Linux (x86_64): download binary, then run:
+### Android
+## 👉👉👉 Download here: https://github.com/kyambuthia/voxov/releases/tag/0.0.20
+- In the release assets, download: `VOXOV-0.0.20-android-arm64-v8a.apk`
+- Open the APK on your phone and allow install from unknown sources if prompted.
+- Launch `VOXOV`.
+
+### Linux
+## 👉👉👉 Download here: https://github.com/kyambuthia/voxov/releases/tag/0.0.20
+- In the release assets, download: `VOXOV-0.0.20-linux-x86_64`
+- Run:
 
 ```bash
 chmod +x VOXOV-0.0.20-linux-x86_64
 ./VOXOV-0.0.20-linux-x86_64
 ```
+
+## About VOXOV
+VOXOV is a cross-platform multiplayer co-op voxel game in development.
+It targets desktop, mobile, and console-class platforms from one shared codebase.
 
 ## Setup From Source
 - Clone with submodules:

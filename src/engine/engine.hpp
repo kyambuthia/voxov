@@ -35,6 +35,7 @@ private:
     void rebuild_dynamic_debug_mesh();
     void refresh_overlay_text();
     void update_third_person_camera(PlayerEntity &player, Camera &out_camera);
+    void update_third_person_camera(PlayerEntity &player, const glm::vec3 &render_position, Camera &out_camera);
     void sync_network_state(uint32_t sim_tick);
 
     FixedStep fixed;
@@ -49,6 +50,8 @@ private:
     Camera secondary_camera;
     PlayerEntity local_player;
     PlayerEntity local_player_secondary;
+    glm::vec3 local_player_prev_position = glm::vec3(0.0f);
+    glm::vec3 local_player_secondary_prev_position = glm::vec3(0.0f);
     ReplicatedPlayerMotion local_replication{};
     std::unordered_map<uint32_t, NetPlayerState> remote_players;
 

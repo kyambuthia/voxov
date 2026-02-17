@@ -20,11 +20,13 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
 
     build_static_scene();
     local_player = PlayerControllerSystem::spawn_player(collision_world);
+    local_player_prev_position = local_player.transform.position;
     if (runtime_options.splitscreen) {
         local_player_secondary = PlayerControllerSystem::spawn_player(collision_world);
         local_player_secondary.network_id = 2;
         local_player_secondary.transform.position.x += 2.5f;
         local_player_secondary.camera_rig.yaw = 180.0f;
+        local_player_secondary_prev_position = local_player_secondary.transform.position;
     }
     update_third_person_camera(local_player, camera);
     if (runtime_options.splitscreen) {
@@ -148,6 +150,7 @@ void Engine::tick(double frame_dt) {
     bool jump_consumed = false;
 
     while (fixed.accumulator >= fixed.fixed_dt) {
+        local_player_prev_position = local_player.transform.position;
         InputState step_input = gameplay_input;
         if (jump_consumed) {
             step_input.jump_pressed = false;
@@ -161,6 +164,7 @@ void Engine::tick(double frame_dt) {
             runtime_options.noclip);
 
         if (runtime_options.splitscreen) {
+            local_player_secondary_prev_position = local_player_secondary.transform.position;
             InputState step_input_secondary = gameplay_input_secondary;
             last_collision_debug_secondary = PlayerControllerSystem::simulate_fixed(
                 local_player_secondary,
@@ -183,9 +187,12 @@ void Engine::tick(double frame_dt) {
 
     input_state.jump_pressed = false;
 
-    update_third_person_camera(local_player, camera);
+    const float alpha = static_cast<float>(std::clamp(fixed.accumulator / fixed.fixed_dt, 0.0, 1.0));
+    const glm::vec3 local_player_render_position = glm::mix(local_player_prev_position, local_player.transform.position, alpha);
+    update_third_person_camera(local_player, local_player_render_position, camera);
     if (runtime_options.splitscreen) {
-        update_third_person_camera(local_player_secondary, secondary_camera);
+        const glm::vec3 secondary_render_position = glm::mix(local_player_secondary_prev_position, local_player_secondary.transform.position, alpha);
+        update_third_person_camera(local_player_secondary, secondary_render_position, secondary_camera);
     }
 
     fps_accumulator += frame_dt;
@@ -295,7 +302,11 @@ void Engine::build_static_scene() {
 }
 
 void Engine::update_third_person_camera(PlayerEntity &player, Camera &out_camera) {
-    const glm::vec3 pivot = player.transform.position + glm::vec3(0.0f, player.camera_rig.pivotHeight, 0.0f);
+    update_third_person_camera(player, player.transform.position, out_camera);
+}
+
+void Engine::update_third_person_camera(PlayerEntity &player, const glm::vec3 &render_position, Camera &out_camera) {
+    const glm::vec3 pivot = render_position + glm::vec3(0.0f, player.camera_rig.pivotHeight, 0.0f);
 
     const glm::vec3 orbit_forward = PlayerControllerSystem::orbit_forward_from_angles(
         player.camera_rig.yaw,

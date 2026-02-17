@@ -38,7 +38,7 @@ MovementDebug PlayerControllerSystem::compute_movement_vectors(float yaw_deg, gl
     MovementDebug out{};
     const float yaw_rad = to_radians(yaw_deg);
     out.forward = glm::normalize(glm::vec3(std::sin(yaw_rad), 0.0f, std::cos(yaw_rad)));
-    out.right = glm::normalize(glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), out.forward));
+    out.right = glm::normalize(glm::cross(out.forward, glm::vec3(0.0f, 1.0f, 0.0f)));
     out.desired = out.forward * move_axis.y + out.right * move_axis.x;
     return out;
 }

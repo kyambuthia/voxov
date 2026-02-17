@@ -1,5 +1,5 @@
 ## VOXOV
-Voxel exploration engine foundation (C++23), renderer-agnostic gameplay path, Vulkan + OpenGL backends.
+Download platform builds from GitHub Releases: https://github.com/kyambuthia/voxov/releases
 
 ## Status
 `WIP` (work in progress). This project is actively evolving and APIs, runtime behavior, and platform support can change between commits.

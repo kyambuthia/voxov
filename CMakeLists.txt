@@ -39,6 +39,7 @@ if(ANDROID)
     )
     target_include_directories(voxov_android PRIVATE
         src
+        dependencies/glm
         ${VOXOV_ANDROID_GLUE_DIR}
     )
     target_compile_definitions(voxov_android PRIVATE VOXOV_PLATFORM_ANDROID=1)

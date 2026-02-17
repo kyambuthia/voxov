@@ -2,6 +2,11 @@ plugins {
     id "com.android.application"
 }
 
+def has_ci_signing_env = System.getenv("ANDROID_KEYSTORE_PATH") &&
+    System.getenv("ANDROID_KEYSTORE_PASSWORD") &&
+    System.getenv("ANDROID_KEY_ALIAS") &&
+    System.getenv("ANDROID_KEY_PASSWORD")
+
 android {
     namespace "com.voxov.game"
     compileSdk 34
@@ -9,10 +14,12 @@ android {
 
     signingConfigs {
         release {
-            storeFile file(System.getenv("ANDROID_KEYSTORE_PATH"))
-            storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
-            keyAlias System.getenv("ANDROID_KEY_ALIAS")
-            keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            if (has_ci_signing_env) {
+                storeFile file(System.getenv("ANDROID_KEYSTORE_PATH"))
+                storePassword System.getenv("ANDROID_KEYSTORE_PASSWORD")
+                keyAlias System.getenv("ANDROID_KEY_ALIAS")
+                keyPassword System.getenv("ANDROID_KEY_PASSWORD")
+            }
         }
     }
 
@@ -38,6 +45,9 @@ android {
     buildTypes {
         debug {
             minifyEnabled false
+            if (has_ci_signing_env) {
+                signingConfig signingConfigs.release
+            }
         }
         release {
             minifyEnabled false

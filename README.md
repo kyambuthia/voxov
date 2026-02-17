@@ -22,9 +22,7 @@ Current notes:
 ## Current Showcase
 Gameplay tested on Android:
 
-- Android gameplay video (MP4): [docs/media/voxov_android_gameplay_optimized.mp4](docs/media/voxov_android_gameplay_optimized.mp4)
-- Preview (GIF):
-  [![VOXOV Android Gameplay Preview](docs/media/voxov_state.gif)](docs/media/voxov_android_gameplay_optimized.mp4)
+![VOXOV Android Gameplay GIF](docs/media/voxov_android_gameplay.gif)
 
 Latest gameplay clip (GIF):
 

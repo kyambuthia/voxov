@@ -8,6 +8,16 @@ Current notes:
 - Vulkan path is under active stabilization (validation-clean sync and swapchain behavior still being improved).
 - Some CPUs may require disabling aggressive Jolt SIMD options (e.g. AVX2/F16C/FMADD/LZCNT) to avoid illegal-instruction startup failures.
 
+## Current Showcase
+Latest screenshots:
+
+![VOXOV Screenshot 1](docs/media/voxov_state_01.png)
+![VOXOV Screenshot 2](docs/media/voxov_state_02.png)
+
+Latest gameplay clip (GIF from latest screencast):
+
+![VOXOV Gameplay GIF](docs/media/voxov_state.gif)
+
 ## Prereqs
 - `cmake>=3.16`
 - C++23 compiler (`clang++`/`g++`/MSVC)

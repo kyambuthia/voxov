@@ -22,7 +22,7 @@ Naming format is intentional so users can identify platform/architecture quickly
 Notes:
 
 - Linux asset is a direct executable.
-- Windows asset is a zip containing `voxov.exe`.
+- Windows asset is a zip containing `voxov.exe` (current CI release profile builds OpenGL-only on Windows for stability).
 - Android asset is the native shared library output (`libvoxov.so`) from the Android NDK target.
 
 ## Release title and source archives

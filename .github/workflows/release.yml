@@ -85,13 +85,6 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Setup Vulkan SDK
-        uses: humbletim/setup-vulkan-sdk@v1.2.1
-        with:
-          vulkan-query-version: latest
-          vulkan-components: Vulkan-Headers, Vulkan-Loader, SPIRV-Tools, Glslang
-          vulkan-use-cache: true
-
       - name: Install DXC
         shell: powershell
         run: |
@@ -108,6 +101,7 @@ jobs:
           cmake -S . -B build -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DVOXOV_BUILD_TESTS=OFF `
+            -DVOXOV_ENABLE_VULKAN=OFF `
             -DUSE_AVX2=OFF `
             -DUSE_F16C=OFF `
             -DUSE_FMADD=OFF `

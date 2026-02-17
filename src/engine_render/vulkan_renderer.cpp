@@ -264,7 +264,7 @@ void VulkanRenderer::end_frame() {
     submit.pWaitDstStageMask = &wait_stage;
     submit.commandBufferCount = 1;
     submit.pCommandBuffers = &command_buffers[image_index];
-    VkSemaphore signal_semaphore = render_finished[frame_index];
+    VkSemaphore signal_semaphore = render_finished[image_index];
     submit.signalSemaphoreCount = 1;
     submit.pSignalSemaphores = &signal_semaphore;
 
@@ -926,12 +926,28 @@ void VulkanRenderer::recreate_swapchain() {
     create_framebuffers();
     create_pipeline();
     create_command_buffers();
+    if (render_finished.size() != swapchain_images.size()) {
+        for (VkSemaphore semaphore : render_finished) {
+            if (semaphore != VK_NULL_HANDLE) {
+                vkDestroySemaphore(device, semaphore, nullptr);
+            }
+        }
+        render_finished.assign(swapchain_images.size(), VK_NULL_HANDLE);
+
+        VkSemaphoreCreateInfo sem{};
+        sem.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+        for (size_t i = 0; i < render_finished.size(); ++i) {
+            if (vkCreateSemaphore(device, &sem, nullptr, &render_finished[i]) != VK_SUCCESS) {
+                throw std::runtime_error("failed to recreate render-finished semaphores");
+            }
+        }
+    }
     images_in_flight.assign(swapchain_images.size(), VK_NULL_HANDLE);
 }
 
 void VulkanRenderer::create_sync_objects() {
     image_available.resize(MAX_FRAMES_IN_FLIGHT);
-    render_finished.resize(MAX_FRAMES_IN_FLIGHT);
+    render_finished.resize(swapchain_images.size());
     in_flight.resize(MAX_FRAMES_IN_FLIGHT);
     images_in_flight.resize(swapchain_images.size(), VK_NULL_HANDLE);
 
@@ -948,7 +964,7 @@ void VulkanRenderer::create_sync_objects() {
             throw std::runtime_error("failed to create sync objects");
         }
     }
-    for (uint32_t i = 0; i < MAX_FRAMES_IN_FLIGHT; ++i) {
+    for (uint32_t i = 0; i < render_finished.size(); ++i) {
         if (vkCreateSemaphore(device, &sem, nullptr, &render_finished[i]) != VK_SUCCESS) {
             throw std::runtime_error("failed to create render-finished semaphore");
         }

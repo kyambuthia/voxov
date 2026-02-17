@@ -129,6 +129,10 @@ ctest --test-dir build --output-on-failure
 ./build/bin/voxov --debug-freeze
 ```
 
+## Dear ImGui Integration
+- Dear ImGui is integrated and currently rendered in the OpenGL backend (`--renderer gl`).
+- The in-game "VOXOV Debug" panel shows runtime metrics and debug hotkey reminders.
+
 ## LAN Multiplayer (2 PCs, same Wi-Fi)
 PC A (server):
 ```bash

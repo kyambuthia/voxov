@@ -58,6 +58,21 @@ find_package(Vulkan REQUIRED)
 find_package(Vulkan COMPONENTS glslc REQUIRED)
 find_package(OpenGL REQUIRED)
 
+add_library(imgui STATIC
+    dependencies/imgui/imgui.cpp
+    dependencies/imgui/imgui_demo.cpp
+    dependencies/imgui/imgui_draw.cpp
+    dependencies/imgui/imgui_tables.cpp
+    dependencies/imgui/imgui_widgets.cpp
+    dependencies/imgui/backends/imgui_impl_glfw.cpp
+    dependencies/imgui/backends/imgui_impl_opengl3.cpp
+)
+target_include_directories(imgui PUBLIC
+    dependencies/imgui
+    dependencies/imgui/backends
+)
+target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
+
 add_library(engine_core STATIC
     src/engine_core/timing.cpp
     src/engine_core/jobs.cpp
@@ -102,7 +117,7 @@ add_library(engine_render STATIC
 )
 target_include_directories(engine_render PUBLIC src)
 target_include_directories(engine_render PUBLIC ${CMAKE_SOURCE_DIR}/dependencies/VulkanMemoryAllocator/include)
-target_link_libraries(engine_render PUBLIC Vulkan::Vulkan OpenGL::GL glfw glm::glm fmt::fmt spdlog::spdlog)
+target_link_libraries(engine_render PUBLIC Vulkan::Vulkan OpenGL::GL glfw glm::glm fmt::fmt spdlog::spdlog imgui)
 
 add_library(engine_physics STATIC
     src/engine_physics/physics_world.cpp

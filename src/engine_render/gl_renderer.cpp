@@ -10,15 +10,36 @@
 #include <algorithm>
 
 #include <glm/gtc/type_ptr.hpp>
+#include <imgui.h>
+#include <imgui_impl_glfw.h>
+#include <imgui_impl_opengl3.h>
 
 void GLRenderer::init(void *window_handle) {
     window = static_cast<GLFWwindow *>(window_handle);
     glfwMakeContextCurrent(window);
     glEnable(GL_DEPTH_TEST);
     glDisable(GL_CULL_FACE);
+
+    IMGUI_CHECKVERSION();
+    ImGui::CreateContext();
+    ImGuiIO &io = ImGui::GetIO();
+    io.ConfigFlags |= ImGuiConfigFlags_NavEnableKeyboard;
+    ImGui::StyleColorsDark();
+
+    if (ImGui_ImplGlfw_InitForOpenGL(window, true) && ImGui_ImplOpenGL3_Init("#version 130")) {
+        imgui_ready = true;
+    }
 }
 
 void GLRenderer::shutdown() {
+    if (imgui_ready) {
+        ImGui_ImplOpenGL3_Shutdown();
+        ImGui_ImplGlfw_Shutdown();
+        imgui_ready = false;
+    }
+    if (ImGui::GetCurrentContext() != nullptr) {
+        ImGui::DestroyContext();
+    }
     scene = RenderScene{};
 }
 
@@ -42,8 +63,6 @@ void GLRenderer::draw_mesh(const RenderMesh &mesh) const {
 }
 
 void GLRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStats &stats) {
-    (void)stats;
-
     int width = 0;
     int height = 0;
     glfwGetFramebufferSize(window, &width, &height);
@@ -93,6 +112,29 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStats &s
         glDisable(GL_DEPTH_TEST);
         draw_mesh(scene.debug_screen);
         glEnable(GL_DEPTH_TEST);
+    }
+
+    if (imgui_ready) {
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        ImGui::SetNextWindowBgAlpha(0.85f);
+        if (ImGui::Begin("VOXOV Debug")) {
+            ImGui::Text("Renderer: OpenGL + Dear ImGui");
+            ImGui::Text("FPS: %.1f", static_cast<float>(stats.fps));
+            ImGui::Text("CPU ms: %.2f", static_cast<float>(stats.cpu_ms));
+            ImGui::Separator();
+            ImGui::Text("Hotkeys");
+            ImGui::BulletText("F1 Debug Collision");
+            ImGui::BulletText("F2 Debug XRay");
+            ImGui::BulletText("F3 Collision Only");
+            ImGui::BulletText("F4 Freeze Debug");
+        }
+        ImGui::End();
+
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
     }
 }
 

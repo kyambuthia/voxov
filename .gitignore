@@ -31,3 +31,6 @@ cmake_install.cmake
 *.suo
 *.vcxproj
 *.vcxproj.user
+
+# Dear ImGui local state
+imgui.ini

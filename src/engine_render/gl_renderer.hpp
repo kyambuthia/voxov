@@ -18,4 +18,5 @@ private:
 
     GLFWwindow *window = nullptr;
     RenderScene scene;
+    bool imgui_ready = false;
 };

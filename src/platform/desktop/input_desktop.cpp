@@ -27,7 +27,15 @@ InputState DesktopInputBackend::poll() {
     }
 
     const bool rmb_down = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
-    const bool active_look_mode = glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE;
+    const bool window_focused = glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE;
+    const bool rmb_pressed = rmb_down && !prev_rmb_down;
+    prev_rmb_down = rmb_down;
+
+    if (rmb_pressed) {
+        look_capture_enabled = true;
+    }
+
+    const bool active_look_mode = window_focused && look_capture_enabled;
     set_pointer_lock(active_look_mode);
     out.look_mode = active_look_mode;
     out.rmb_down = rmb_down;
@@ -63,6 +71,10 @@ InputState DesktopInputBackend::poll() {
 
     const bool escape_down = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
     out.menu_toggle_pressed = escape_down && !prev_escape_down;
+    if (escape_down && !prev_escape_down) {
+        look_capture_enabled = false;
+        set_pointer_lock(false);
+    }
     prev_escape_down = escape_down;
 
     const bool up_down = glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS;
@@ -110,7 +122,7 @@ InputState DesktopInputBackend::poll() {
     prev_mouse_x = x;
     prev_mouse_y = y;
 
-    if (active_look_mode) {
+    if (pointer_locked) {
         out.look_delta.x = mouse_dx;
         out.look_delta.y = mouse_dy;
     }

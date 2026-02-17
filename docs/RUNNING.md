@@ -24,6 +24,8 @@ Window size and mode:
 Runtime toggle:
 
 - Press `F11` to toggle fullscreen/windowed.
+- Press `Esc` to release mouse capture (so you can move/resize windows).
+- Right-click in the game window to recapture mouse look.
 
 Combined client + server in one process:
 

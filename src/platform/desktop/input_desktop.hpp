@@ -23,6 +23,8 @@ private:
     bool prev_f2_down = false;
     bool prev_f3_down = false;
     bool prev_f4_down = false;
+    bool prev_rmb_down = false;
+    bool look_capture_enabled = true;
     double prev_mouse_x = 0.0;
     double prev_mouse_y = 0.0;
     bool mouse_initialized = false;

@@ -90,8 +90,22 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/spdlog" EXCLUDE_FROM_ALL)
 
 # Find packages
 find_package(Vulkan REQUIRED)
-find_package(Vulkan COMPONENTS glslc REQUIRED)
 find_package(OpenGL REQUIRED)
+
+set(VOXOV_SHADER_COMPILER "")
+set(VOXOV_SHADER_COMPILER_ARGS "")
+if(TARGET Vulkan::glslc)
+    set(VOXOV_SHADER_COMPILER Vulkan::glslc)
+    set(VOXOV_SHADER_COMPILER_ARGS "")
+else()
+    find_program(VOXOV_GLSLANG_VALIDATOR glslangValidator)
+    if(VOXOV_GLSLANG_VALIDATOR)
+        set(VOXOV_SHADER_COMPILER "${VOXOV_GLSLANG_VALIDATOR}")
+        set(VOXOV_SHADER_COMPILER_ARGS -V)
+    else()
+        message(FATAL_ERROR "No shader compiler found. Install glslc or glslangValidator.")
+    endif()
+endif()
 
 add_library(imgui STATIC
     dependencies/imgui/imgui.cpp
@@ -190,31 +204,31 @@ target_link_libraries(voxov PRIVATE
 # Shader compilation for game
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
-    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.vert -o ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
+    COMMAND ${VOXOV_SHADER_COMPILER} ${VOXOV_SHADER_COMPILER_ARGS} ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.vert -o ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.vert
     VERBATIM
 )
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv
-    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.frag -o ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv
+    COMMAND ${VOXOV_SHADER_COMPILER} ${VOXOV_SHADER_COMPILER_ARGS} ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.frag -o ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.frag
     VERBATIM
 )
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/stylized_lighting.frag.spv
-    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/stylized_lighting.frag -o ${CMAKE_CURRENT_BINARY_DIR}/stylized_lighting.frag.spv
+    COMMAND ${VOXOV_SHADER_COMPILER} ${VOXOV_SHADER_COMPILER_ARGS} ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/stylized_lighting.frag -o ${CMAKE_CURRENT_BINARY_DIR}/stylized_lighting.frag.spv
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/stylized_lighting.frag
     VERBATIM
 )
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/palette_dither.frag.spv
-    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/palette_dither.frag -o ${CMAKE_CURRENT_BINARY_DIR}/palette_dither.frag.spv
+    COMMAND ${VOXOV_SHADER_COMPILER} ${VOXOV_SHADER_COMPILER_ARGS} ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/palette_dither.frag -o ${CMAKE_CURRENT_BINARY_DIR}/palette_dither.frag.spv
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/palette_dither.frag
     VERBATIM
 )
 add_custom_command(
     OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/fullscreen.vert.spv
-    COMMAND Vulkan::glslc ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/fullscreen.vert -o ${CMAKE_CURRENT_BINARY_DIR}/fullscreen.vert.spv
+    COMMAND ${VOXOV_SHADER_COMPILER} ${VOXOV_SHADER_COMPILER_ARGS} ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/fullscreen.vert -o ${CMAKE_CURRENT_BINARY_DIR}/fullscreen.vert.spv
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/fullscreen.vert
     VERBATIM
 )

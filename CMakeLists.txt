@@ -47,9 +47,13 @@ if(ANDROID)
 
     find_library(android_lib android REQUIRED)
     find_library(log_lib log REQUIRED)
+    find_library(egl_lib EGL REQUIRED)
+    find_library(glesv3_lib GLESv3 REQUIRED)
     target_link_libraries(voxov_android PRIVATE
         ${android_lib}
         ${log_lib}
+        ${egl_lib}
+        ${glesv3_lib}
     )
 
     set_target_properties(voxov_android PROPERTIES OUTPUT_NAME "voxov")

@@ -66,12 +66,13 @@ add_library(imgui STATIC
     dependencies/imgui/imgui_widgets.cpp
     dependencies/imgui/backends/imgui_impl_glfw.cpp
     dependencies/imgui/backends/imgui_impl_opengl3.cpp
+    dependencies/imgui/backends/imgui_impl_vulkan.cpp
 )
 target_include_directories(imgui PUBLIC
     dependencies/imgui
     dependencies/imgui/backends
 )
-target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
+target_link_libraries(imgui PUBLIC glfw OpenGL::GL Vulkan::Vulkan)
 
 add_library(engine_core STATIC
     src/engine_core/timing.cpp

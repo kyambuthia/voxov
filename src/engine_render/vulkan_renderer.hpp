@@ -34,6 +34,8 @@ private:
     void create_sync_objects();
     void cleanup_swapchain_resources();
     void recreate_swapchain();
+    void init_imgui();
+    void shutdown_imgui();
     void create_scene_buffers();
     void create_mesh_buffers(
         const std::vector<RenderVertex> &vertices,
@@ -85,6 +87,8 @@ private:
     std::vector<VkSemaphore> render_finished;
     std::vector<VkFence> in_flight;
     std::vector<VkFence> images_in_flight;
+    VkDescriptorPool imgui_descriptor_pool = VK_NULL_HANDLE;
+    bool imgui_ready = false;
     RenderScene scene_data;
     std::vector<RenderVertex> static_vertices;
     std::vector<uint32_t> static_indices;

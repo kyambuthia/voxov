@@ -136,6 +136,7 @@ struct GpuMesh {
     GLuint vbo = 0;
     GLuint ibo = 0;
     GLsizei index_count = 0;
+    GLenum index_type = GL_UNSIGNED_INT;
 };
 
 struct AndroidRenderer {
@@ -214,11 +215,40 @@ struct AndroidRenderer {
 
         glGenBuffers(1, &out.ibo);
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, out.ibo);
-        glBufferData(
-            GL_ELEMENT_ARRAY_BUFFER,
-            static_cast<GLsizeiptr>(mesh.indices.size() * sizeof(uint32_t)),
-            mesh.indices.data(),
-            GL_STATIC_DRAW);
+        if (can_draw_uint_indices) {
+            glBufferData(
+                GL_ELEMENT_ARRAY_BUFFER,
+                static_cast<GLsizeiptr>(mesh.indices.size() * sizeof(uint32_t)),
+                mesh.indices.data(),
+                GL_STATIC_DRAW);
+            out.index_type = GL_UNSIGNED_INT;
+        } else {
+            uint32_t max_index = 0;
+            for (uint32_t idx : mesh.indices) {
+                max_index = std::max(max_index, idx);
+            }
+            if (max_index > 65535u) {
+                __android_log_print(
+                    ANDROID_LOG_ERROR,
+                    kLogTag,
+                    "mesh index overflow for GLES2 path: max_index=%u, count=%u",
+                    max_index,
+                    static_cast<unsigned>(mesh.indices.size()));
+                destroy_mesh(out);
+                return out;
+            }
+
+            std::vector<uint16_t> indices16(mesh.indices.size());
+            for (size_t i = 0; i < mesh.indices.size(); ++i) {
+                indices16[i] = static_cast<uint16_t>(mesh.indices[i]);
+            }
+            glBufferData(
+                GL_ELEMENT_ARRAY_BUFFER,
+                static_cast<GLsizeiptr>(indices16.size() * sizeof(uint16_t)),
+                indices16.data(),
+                GL_STATIC_DRAW);
+            out.index_type = GL_UNSIGNED_SHORT;
+        }
 
         out.index_count = static_cast<GLsizei>(mesh.indices.size());
         return out;
@@ -426,7 +456,7 @@ struct AndroidRenderer {
         glEnableVertexAttribArray(1);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(RenderVertex), reinterpret_cast<void *>(offsetof(RenderVertex, position)));
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(RenderVertex), reinterpret_cast<void *>(offsetof(RenderVertex, color)));
-        glDrawElements(GL_TRIANGLES, mesh.index_count, GL_UNSIGNED_INT, nullptr);
+        glDrawElements(GL_TRIANGLES, mesh.index_count, mesh.index_type, nullptr);
         glDisableVertexAttribArray(0);
         glDisableVertexAttribArray(1);
     }
@@ -453,17 +483,15 @@ struct AndroidRenderer {
         glClearColor(0.08f, 0.1f, 0.14f, 1.0f);
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
-        if (can_draw_uint_indices) {
-            const float aspect = (height > 0) ? static_cast<float>(width) / static_cast<float>(height) : 1.0f;
-            const glm::vec3 pivot = player_feet_position + glm::vec3(0.0f, camera_pivot_height, 0.0f);
-            const glm::mat4 view = glm::lookAt(cam_pos, pivot, glm::vec3(0.0f, 1.0f, 0.0f));
-            const glm::mat4 proj = glm::perspective(glm::radians(70.0f), aspect, 0.1f, 2000.0f);
-            const glm::mat4 mvp = proj * view;
+        const float aspect = (height > 0) ? static_cast<float>(width) / static_cast<float>(height) : 1.0f;
+        const glm::vec3 pivot = player_feet_position + glm::vec3(0.0f, camera_pivot_height, 0.0f);
+        const glm::mat4 view = glm::lookAt(cam_pos, pivot, glm::vec3(0.0f, 1.0f, 0.0f));
+        const glm::mat4 proj = glm::perspective(glm::radians(70.0f), aspect, 0.1f, 2000.0f);
+        const glm::mat4 mvp = proj * view;
 
-            draw_mesh(terrain_gpu, mvp);
-            draw_mesh(grid_gpu, mvp);
-            draw_mesh(capsule_gpu, mvp);
-        }
+        draw_mesh(terrain_gpu, mvp);
+        draw_mesh(grid_gpu, mvp);
+        draw_mesh(capsule_gpu, mvp);
 
         if (eglSwapBuffers(display, surface) == EGL_FALSE) {
             __android_log_print(ANDROID_LOG_ERROR, kLogTag, "eglSwapBuffers failed: %s", egl_error_to_string(eglGetError()));

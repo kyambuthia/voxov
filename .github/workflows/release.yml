@@ -154,12 +154,21 @@ jobs:
           sdkmanager --install "platform-tools" "platforms;android-34" "build-tools;34.0.0" "ndk;26.1.10909125" "cmake;3.22.1"
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/26.1.10909125" >> "$GITHUB_ENV"
 
-      - name: Build APK (Debug - known good render path)
-        run: gradle -p android :app:assembleDebug --stacktrace --no-daemon
+      - name: Decode test keystore
+        run: |
+          echo "${{ secrets.ANDROID_TEST_KEYSTORE_B64 }}" | base64 -d > "$RUNNER_TEMP/voxov-test-upload.jks"
+
+      - name: Build signed APK (Release)
+        env:
+          ANDROID_KEYSTORE_PATH: ${{ runner.temp }}/voxov-test-upload.jks
+          ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_TEST_KEYSTORE_PASSWORD }}
+          ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_TEST_KEY_ALIAS }}
+          ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_TEST_KEY_PASSWORD }}
+        run: gradle -p android :app:assembleRelease --stacktrace --no-daemon
 
       - name: Prepare android artifact
         run: |
-          cp android/app/build/outputs/apk/debug/app-debug.apk "VOXOV-${GITHUB_REF_NAME}-android-arm64-v8a.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "VOXOV-${GITHUB_REF_NAME}-android-arm64-v8a.apk"
 
       - name: Upload android artifact
         uses: actions/upload-artifact@v4

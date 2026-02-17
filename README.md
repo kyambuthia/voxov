@@ -24,6 +24,7 @@ Latest gameplay clip (GIF from latest screencast):
 - Running and testing: `docs/RUNNING.md`
 - Debugging and visual debug: `docs/DEBUGGING.md`
 - Networking and multiplayer bring-up: `docs/NETWORKING.md`
+- Release process and binaries: `docs/RELEASES.md`
 - Build matrix and platform notes: `docs/BUILD_PLATFORMS.md`
 - Architecture: `docs/ARCHITECTURE.md`
 - Extending guide: `docs/EXTENDING.md`
@@ -36,6 +37,7 @@ For full server/client setup and validation steps, see `docs/NETWORKING.md`.
 - `docs/RUNNING.md`
 - `docs/DEBUGGING.md`
 - `docs/NETWORKING.md`
+- `docs/RELEASES.md`
 - `docs/BUILD_PLATFORMS.md`
 - `docs/ARCHITECTURE.md`
 - `docs/EXTENDING.md`

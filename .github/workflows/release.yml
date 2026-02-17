@@ -1,0 +1,70 @@
+name: release
+
+on:
+  push:
+    tags:
+      - "v*.*.*"
+      - "*.*.*"
+
+permissions:
+  contents: write
+
+jobs:
+  build-and-release-linux:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            build-essential \
+            cmake \
+            ninja-build \
+            glslc \
+            libgl1-mesa-dev \
+            libvulkan-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxcursor-dev \
+            libxi-dev \
+            libxinerama-dev \
+            libxkbcommon-dev \
+            libxrandr-dev
+
+      - name: Configure
+        run: |
+          cmake -S . -B build -G Ninja \
+            -DCMAKE_BUILD_TYPE=Release \
+            -DVOXOV_BUILD_TESTS=OFF \
+            -DUSE_AVX2=OFF \
+            -DUSE_F16C=OFF \
+            -DUSE_FMADD=OFF \
+            -DUSE_LZCNT=OFF
+
+      - name: Build
+        run: cmake --build build --parallel
+
+      - name: Package artifacts
+        run: |
+          mkdir -p release
+          cp build/bin/voxov release/
+          cp build/bin/voxov_asset_cooker release/
+          cp README.md release/
+          cp LICENSE release/LICENSE || true
+          ARCHIVE="voxov-linux-x86_64-${GITHUB_REF_NAME}.tar.gz"
+          tar -C release -czf "${ARCHIVE}" .
+          sha256sum "${ARCHIVE}" > "${ARCHIVE}.sha256"
+
+      - name: Publish GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          generate_release_notes: true
+          files: |
+            voxov-linux-x86_64-${{ github.ref_name }}.tar.gz
+            voxov-linux-x86_64-${{ github.ref_name }}.tar.gz.sha256

@@ -84,15 +84,12 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install Vulkan SDK
-        shell: powershell
-        run: |
-          choco install vulkan-sdk --yes --no-progress
-          $VulkanBin = (Get-ChildItem 'C:\VulkanSDK' -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName + '\Bin'
-          $VulkanLib = (Get-ChildItem 'C:\VulkanSDK' -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName + '\Lib'
-          "$VulkanBin" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-          "VULKAN_SDK=$((Get-ChildItem 'C:\VulkanSDK' -Directory | Sort-Object Name -Descending | Select-Object -First 1).FullName)" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
-          "LIB=$env:LIB;$VulkanLib" | Out-File -FilePath $env:GITHUB_ENV -Encoding utf8 -Append
+      - name: Setup Vulkan SDK
+        uses: humbletim/setup-vulkan-sdk@v1.2.1
+        with:
+          vulkan-query-version: latest
+          vulkan-components: Vulkan-Headers, Vulkan-Loader, Glslang
+          vulkan-use-cache: true
 
       - name: Install DXC
         shell: powershell

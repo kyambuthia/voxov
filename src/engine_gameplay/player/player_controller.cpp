@@ -1,23 +1,92 @@
 #include "engine_gameplay/player/player_controller.hpp"
 
 #include "engine_world/physics/voxel_collision.hpp"
+#include "engine_world/voxel_chunk.hpp"
 
 #include <glm/gtx/quaternion.hpp>
 
 #include <algorithm>
 #include <cmath>
+#include <limits>
 
 namespace {
 float to_radians(float deg) {
     return deg * 0.01745329251994329577f;
+}
+
+int top_solid_y(const VoxelCollisionWorld &collision_world, int x, int z) {
+    for (int y = VoxelChunk::CHUNK_Y - 1; y >= 0; --y) {
+        if (collision_world.is_solid_voxel(x, y, z)) {
+            return y;
+        }
+    }
+    return -1;
+}
+
+bool has_flat_patch(const VoxelCollisionWorld &collision_world, int cx, int cz, int expected_top_y) {
+    for (int dz = -1; dz <= 1; ++dz) {
+        for (int dx = -1; dx <= 1; ++dx) {
+            const int x = cx + dx;
+            const int z = cz + dz;
+            if (x < 0 || z < 0 || x >= VoxelChunk::CHUNK_X || z >= VoxelChunk::CHUNK_Z) {
+                return false;
+            }
+            if (top_solid_y(collision_world, x, z) != expected_top_y) {
+                return false;
+            }
+            if (collision_world.is_solid_voxel(x, expected_top_y + 1, z)) {
+                return false;
+            }
+        }
+    }
+    return true;
+}
+
+glm::vec2 find_flat_spawn_xz(const VoxelCollisionWorld &collision_world, glm::vec2 preferred) {
+    const int preferred_x = static_cast<int>(std::clamp(std::floor(preferred.x), 1.0f, static_cast<float>(VoxelChunk::CHUNK_X - 2)));
+    const int preferred_z = static_cast<int>(std::clamp(std::floor(preferred.y), 1.0f, static_cast<float>(VoxelChunk::CHUNK_Z - 2)));
+
+    float best_dist_sq = std::numeric_limits<float>::max();
+    glm::vec2 best = glm::vec2(static_cast<float>(preferred_x) + 0.5f, static_cast<float>(preferred_z) + 0.5f);
+
+    for (int radius = 0; radius <= 6; ++radius) {
+        for (int z = preferred_z - radius; z <= preferred_z + radius; ++z) {
+            for (int x = preferred_x - radius; x <= preferred_x + radius; ++x) {
+                if (x < 1 || z < 1 || x >= VoxelChunk::CHUNK_X - 1 || z >= VoxelChunk::CHUNK_Z - 1) {
+                    continue;
+                }
+                const int top_y = top_solid_y(collision_world, x, z);
+                if (top_y < 0) {
+                    continue;
+                }
+                if (!has_flat_patch(collision_world, x, z, top_y)) {
+                    continue;
+                }
+
+                const float dx = static_cast<float>(x - preferred_x);
+                const float dz = static_cast<float>(z - preferred_z);
+                const float dist_sq = dx * dx + dz * dz;
+                if (dist_sq < best_dist_sq) {
+                    best_dist_sq = dist_sq;
+                    best = glm::vec2(static_cast<float>(x) + 0.5f, static_cast<float>(z) + 0.5f);
+                }
+            }
+        }
+        if (best_dist_sq < std::numeric_limits<float>::max()) {
+            break;
+        }
+    }
+
+    return best;
 }
 }
 
 PlayerEntity PlayerControllerSystem::spawn_player(const VoxelCollisionWorld &collision_world) {
     PlayerEntity player{};
     player.network_id = 1;
-    player.transform.position.x = 8.0f;
-    player.transform.position.z = 8.0f;
+    const glm::vec2 spawn_xz = find_flat_spawn_xz(collision_world, glm::vec2(8.0f, 8.0f));
+    player.transform.position.x = spawn_xz.x;
+    player.transform.position.z = spawn_xz.y;
     player.transform.position.y = collision_world.find_spawn_height(
         glm::vec2(player.transform.position.x, player.transform.position.z),
         player.controller.capsuleRadius,

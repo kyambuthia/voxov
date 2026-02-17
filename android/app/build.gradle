@@ -5,6 +5,7 @@ plugins {
 android {
     namespace "com.voxov.game"
     compileSdk 34
+    ndkVersion "26.1.10909125"
 
     defaultConfig {
         applicationId "com.voxov.game"
@@ -26,6 +27,9 @@ android {
     }
 
     buildTypes {
+        debug {
+            minifyEnabled false
+        }
         release {
             minifyEnabled false
             signingConfig signingConfigs.debug

@@ -28,7 +28,6 @@ jobs:
             cmake \
             ninja-build \
             glslc \
-            unzip \
             libgl1-mesa-dev \
             libvulkan-dev \
             libwayland-dev \
@@ -41,8 +40,8 @@ jobs:
 
       - name: Install DXC
         run: |
-          DXC_VERSION="v1.8.2505"
-          DXC_ARCHIVE="linux_dxc_${DXC_VERSION#v}.x86_64.tar.gz"
+          DXC_VERSION="v1.8.2505.1"
+          DXC_ARCHIVE="linux_dxc_2025_07_14.x86_64.tar.gz"
           curl -L -o "${DXC_ARCHIVE}" "https://github.com/microsoft/DirectXShaderCompiler/releases/download/${DXC_VERSION}/${DXC_ARCHIVE}"
           tar -xzf "${DXC_ARCHIVE}"
           sudo install -m 0755 bin/dxc /usr/local/bin/dxc

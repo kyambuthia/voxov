@@ -14,6 +14,17 @@ OpenGL:
 ./build/bin/voxov --renderer gl
 ```
 
+Window size and mode:
+
+```bash
+./build/bin/voxov --renderer vulkan --windowed --width 1600 --height 900
+./build/bin/voxov --renderer vulkan --fullscreen
+```
+
+Runtime toggle:
+
+- Press `F11` to toggle fullscreen/windowed.
+
 Combined client + server in one process:
 
 ```bash

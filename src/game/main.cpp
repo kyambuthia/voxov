@@ -83,6 +83,9 @@ int main(int argc, char **argv) {
     bool debug_xray = false;
     bool debug_collision_only = false;
     bool debug_freeze = false;
+    bool start_fullscreen = false;
+    int window_width = 1280;
+    int window_height = 720;
     const char *connect_host = nullptr;
     uint16_t connect_port = 7777;
     RenderBackendType backend = RenderBackendType::Vulkan;
@@ -121,6 +124,14 @@ int main(int argc, char **argv) {
         } else if (std::strcmp(argv[i], "--debug-freeze") == 0) {
             debug_collision = true;
             debug_freeze = true;
+        } else if (std::strcmp(argv[i], "--fullscreen") == 0) {
+            start_fullscreen = true;
+        } else if (std::strcmp(argv[i], "--windowed") == 0) {
+            start_fullscreen = false;
+        } else if (std::strcmp(argv[i], "--width") == 0 && i + 1 < argc) {
+            window_width = std::atoi(argv[++i]);
+        } else if (std::strcmp(argv[i], "--height") == 0 && i + 1 < argc) {
+            window_height = std::atoi(argv[++i]);
         }
     }
 
@@ -145,8 +156,9 @@ int main(int argc, char **argv) {
     DesktopPlatform platform;
     PlatformCreateInfo create_info{};
     create_info.title = "VOXOV";
-    create_info.width = 1280;
-    create_info.height = 720;
+    create_info.width = (window_width > 0) ? window_width : 1280;
+    create_info.height = (window_height > 0) ? window_height : 720;
+    create_info.fullscreen = start_fullscreen;
     create_info.backend = backend;
 
     if (!platform.init(create_info)) {
@@ -184,10 +196,17 @@ int main(int argc, char **argv) {
     FramePacer pacer;
     pacer.init(120.0);
     DesktopInputBackend desktop_input(platform.glfw_window());
+    bool f11_was_down = false;
 
     while (!platform.should_close() && keep_running.load()) {
         pacer.begin_frame();
         platform.poll_events();
+
+        const bool f11_down = glfwGetKey(platform.glfw_window(), GLFW_KEY_F11) == GLFW_PRESS;
+        if (f11_down && !f11_was_down) {
+            platform.toggle_fullscreen();
+        }
+        f11_was_down = f11_down;
 
         const InputState input = desktop_input.poll();
         const InputState input_secondary = splitscreen ? poll_secondary_split_input(platform.glfw_window()) : InputState{};

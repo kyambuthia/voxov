@@ -24,6 +24,15 @@ bool DesktopPlatform::init(const PlatformCreateInfo &create_info) {
         return false;
     }
 
+    windowed_width = create_info.width;
+    windowed_height = create_info.height;
+    glfwGetWindowPos(window, &windowed_x, &windowed_y);
+    fullscreen = false;
+
+    if (create_info.fullscreen) {
+        set_fullscreen(true);
+    }
+
     if (create_info.backend == RenderBackendType::OpenGL) {
         glfwMakeContextCurrent(window);
         glfwSwapInterval(1);
@@ -64,4 +73,49 @@ void DesktopPlatform::set_window_title(const char *title) {
     if (window) {
         glfwSetWindowTitle(window, title);
     }
+}
+
+void DesktopPlatform::set_window_size(int width, int height) {
+    if (!window) {
+        return;
+    }
+    const int clamped_w = (width > 0) ? width : 1;
+    const int clamped_h = (height > 0) ? height : 1;
+    if (!fullscreen) {
+        windowed_width = clamped_w;
+        windowed_height = clamped_h;
+    }
+    glfwSetWindowSize(window, clamped_w, clamped_h);
+}
+
+void DesktopPlatform::set_fullscreen(bool enabled) {
+    if (!window || fullscreen == enabled) {
+        return;
+    }
+
+    if (enabled) {
+        glfwGetWindowPos(window, &windowed_x, &windowed_y);
+        glfwGetWindowSize(window, &windowed_width, &windowed_height);
+        GLFWmonitor *monitor = glfwGetPrimaryMonitor();
+        const GLFWvidmode *mode = monitor ? glfwGetVideoMode(monitor) : nullptr;
+        if (!monitor || !mode) {
+            return;
+        }
+        glfwSetWindowMonitor(window, monitor, 0, 0, mode->width, mode->height, mode->refreshRate);
+        fullscreen = true;
+        return;
+    }
+
+    const int restore_w = (windowed_width > 0) ? windowed_width : 1280;
+    const int restore_h = (windowed_height > 0) ? windowed_height : 720;
+    glfwSetWindowMonitor(window, nullptr, windowed_x, windowed_y, restore_w, restore_h, 0);
+    fullscreen = false;
+}
+
+bool DesktopPlatform::is_fullscreen() const {
+    return fullscreen;
+}
+
+void DesktopPlatform::toggle_fullscreen() {
+    set_fullscreen(!fullscreen);
 }

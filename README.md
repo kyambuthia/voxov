@@ -1,6 +1,17 @@
 ## VOXOV
 Download platform builds from GitHub Releases: https://github.com/kyambuthia/voxov/releases
 
+## Download Builds (0.0.14)
+- Release page: https://github.com/kyambuthia/voxov/releases/tag/0.0.14
+- Android APK: https://github.com/kyambuthia/voxov/releases/download/0.0.14/VOXOV-0.0.14-android-arm64-v8a.apk
+- Windows executable (zip): https://github.com/kyambuthia/voxov/releases/download/0.0.14/VOXOV-0.0.14-windows-x86_64.zip
+- Linux executable: https://github.com/kyambuthia/voxov/releases/download/0.0.14/VOXOV-0.0.14-linux-x86_64
+
+Short requirements to run:
+- Android: Android 8.0+ recommended, arm64 device. Enable installation from unknown sources, install APK, launch `VOXOV`.
+- Windows: 64-bit Windows 10/11. Unzip and run `voxov.exe` from the extracted folder.
+- Linux: 64-bit Linux with OpenGL drivers (`libGL`) and common X11/Wayland runtime libs. `chmod +x VOXOV-0.0.14-linux-x86_64` then run it.
+
 ## Status
 `WIP` (work in progress). This project is actively evolving and APIs, runtime behavior, and platform support can change between commits.
 

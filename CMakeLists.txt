@@ -38,6 +38,7 @@ if(ANDROID)
         src/platform/android/input_android.cpp
         src/engine_render/debug_draw/debug_draw.cpp
         src/engine_world/voxel_chunk.cpp
+        src/engine_world/physics/voxel_collision.cpp
         ${VOXOV_ANDROID_GLUE_DIR}/android_native_app_glue.c
     )
     target_include_directories(voxov_android PRIVATE

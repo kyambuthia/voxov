@@ -63,17 +63,30 @@ jobs:
       - name: Build
         run: cmake --build build --parallel
 
-      - name: Prepare executable artifact
+      - name: Prepare linux artifact bundle
         run: |
-          ASSET="VOXOV-${GITHUB_REF_NAME}-linux-x86_64"
-          cp build/bin/voxov "${ASSET}"
-          chmod +x "${ASSET}"
+          ASSET_DIR="VOXOV-${GITHUB_REF_NAME}-linux-x86_64"
+          mkdir -p "${ASSET_DIR}"
+          cp build/bin/voxov "${ASSET_DIR}/"
+          chmod +x "${ASSET_DIR}/voxov"
+          cp build/*.spv "${ASSET_DIR}/" 2>/dev/null || true
+          cp /usr/local/lib/libdxcompiler.so "${ASSET_DIR}/" 2>/dev/null || true
+          cp /usr/local/lib/libdxil.so "${ASSET_DIR}/" 2>/dev/null || true
+          cat > "${ASSET_DIR}/run.sh" << 'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          export LD_LIBRARY_PATH="${SCRIPT_DIR}:${LD_LIBRARY_PATH:-}"
+          exec "${SCRIPT_DIR}/voxov" "$@"
+          EOF
+          chmod +x "${ASSET_DIR}/run.sh"
+          tar -czf "${ASSET_DIR}.tar.gz" "${ASSET_DIR}"
 
       - name: Upload linux artifact
         uses: actions/upload-artifact@v4
         with:
           name: release-linux
-          path: VOXOV-${{ github.ref_name }}-linux-x86_64
+          path: VOXOV-${{ github.ref_name }}-linux-x86_64.tar.gz
 
   build-windows:
     runs-on: windows-latest
@@ -116,8 +129,13 @@ jobs:
       - name: Prepare windows artifact
         shell: powershell
         run: |
-          $AssetZip = "VOXOV-$env:GITHUB_REF_NAME-windows-x86_64.zip"
-          Compress-Archive -Path "build/bin/voxov.exe" -DestinationPath $AssetZip -Force
+          $AssetDir = "VOXOV-$env:GITHUB_REF_NAME-windows-x86_64"
+          New-Item -ItemType Directory -Force -Path $AssetDir | Out-Null
+          Copy-Item "build/bin/voxov.exe" "$AssetDir/" -Force
+          Copy-Item "build/bin/*.dll" "$AssetDir/" -ErrorAction SilentlyContinue
+          Copy-Item "build/*.spv" "$AssetDir/" -ErrorAction SilentlyContinue
+          $AssetZip = "$AssetDir.zip"
+          Compress-Archive -Path "$AssetDir/*" -DestinationPath $AssetZip -Force
 
       - name: Upload windows artifact
         uses: actions/upload-artifact@v4

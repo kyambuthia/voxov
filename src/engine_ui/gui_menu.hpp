@@ -7,7 +7,9 @@
 struct GuiMenuActions {
     bool start_game = false;
     bool host_local = false;
+    bool host_lan = false;
     bool join_local = false;
+    bool join_nearby = false;
     bool toggle_devhud = false;
     bool toggle_noclip = false;
     bool reset_camera = false;
@@ -22,13 +24,15 @@ public:
     bool open() const;
     int selected() const;
     int count() const;
-    std::string build_text(bool devhud_enabled, bool noclip_enabled) const;
+    void set_selected(int index);
+    std::string build_text(bool devhud_enabled, bool noclip_enabled, const std::string &multiplayer_hint = std::string()) const;
 
 private:
     enum class MenuPage {
         Main,
         Multiplayer,
-        Settings
+        Settings,
+        MultiplayerGuide
     };
 
     int item_count() const;

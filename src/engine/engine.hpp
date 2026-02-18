@@ -7,6 +7,7 @@
 #include "engine_audio/ui_audio.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net/net_client.hpp"
+#include "engine_net/lan_discovery.hpp"
 #include "engine_net/net_server.hpp"
 #include "engine_physics/physics_world.hpp"
 #include "engine_render/renderer.hpp"
@@ -43,14 +44,18 @@ private:
     void update_third_person_camera(PlayerEntity &player, Camera &out_camera);
     void update_third_person_camera(PlayerEntity &player, const glm::vec3 &render_position, Camera &out_camera);
     void sync_network_state(uint32_t sim_tick);
-    void start_local_server(uint16_t port);
+    void start_local_server(uint16_t port, bool loopback_only);
 
     FixedStep fixed;
     Renderer renderer;
     PhysicsWorld physics;
     NetClient net_client;
+    LanDiscovery lan_discovery;
     NetServer local_server;
+    bool local_server_loopback = true;
     bool local_server_running = false;
+    bool searching_nearby = false;
+    std::string multiplayer_hint;
     bool gameplay_started = false;
 
     VoxelChunk world_chunk;

@@ -8,6 +8,7 @@
 #include "engine_input/input_state.hpp"
 #include "engine_audio/ui_audio.hpp"
 #include "engine_net/net_client.hpp"
+#include "engine_net/lan_discovery.hpp"
 #include "engine_net/net_server.hpp"
 
 #include <android/input.h>
@@ -227,7 +228,8 @@ RenderMesh build_overlay_text_mesh(
     float origin_x_px,
     float origin_y_px,
     float cell_size_px,
-    const glm::vec3 &color) {
+    const glm::vec3 &color,
+    float line_spacing_scale = 1.0f) {
     RenderMesh mesh{};
     if (width <= 0 || height <= 0 || text.empty()) {
         return mesh;
@@ -236,7 +238,7 @@ RenderMesh build_overlay_text_mesh(
     float pen_x = origin_x_px;
     float pen_y = origin_y_px;
     const float char_advance = 6.0f * cell_size_px;
-    const float line_advance = 8.0f * cell_size_px;
+    const float line_advance = 8.0f * cell_size_px * std::max(1.0f, line_spacing_scale);
 
     for (char c : text) {
         if (c == '\n') {
@@ -330,15 +332,19 @@ struct AndroidRenderer {
     bool pending_menu_down = false;
     bool pending_menu_select = false;
     NetClient net_client{};
+    LanDiscovery lan_discovery{};
     NetServer local_server{};
     bool net_initialized = false;
     bool net_connected = false;
     bool net_connecting = false;
     double net_connect_elapsed = 0.0;
     bool local_server_running = false;
+    bool local_server_loopback = true;
     bool hosting_local = false;
+    bool searching_nearby = false;
     uint32_t net_tick = 0;
     std::string ui_text_cache;
+    std::string multiplayer_hint;
 
     timespec last_time{};
     bool has_last_time = false;
@@ -369,6 +375,7 @@ struct AndroidRenderer {
         }
         local_server.shutdown();
         local_server_running = false;
+        local_server_loopback = true;
         hosting_local = false;
         __android_log_print(ANDROID_LOG_INFO, kLogTag, "Local server stopped");
     }
@@ -386,6 +393,8 @@ struct AndroidRenderer {
     void shutdown_network() {
         stop_client();
         stop_local_server();
+        lan_discovery.stop();
+        searching_nearby = false;
         if (net_initialized) {
             net_client.shutdown();
             net_initialized = false;
@@ -414,23 +423,43 @@ struct AndroidRenderer {
         if (!local_server_running) {
             local_server.init(kLocalPlayPort, true);
             local_server_running = true;
+            local_server_loopback = true;
             hosting_local = true;
             __android_log_print(ANDROID_LOG_INFO, kLogTag, "Loopback-only local server started on %u", kLocalPlayPort);
         }
+        lan_discovery.stop();
+        searching_nearby = false;
+        multiplayer_hint = "Hosting this device only.";
         connect_local();
     }
 
-    void join_local_secure() {
+    void host_lan_secure() {
         init_network_if_needed();
-        if (hosting_local) {
+        if (!local_server_running || local_server_loopback) {
             stop_local_server();
+            local_server.init(kLocalPlayPort, false);
+            local_server_running = true;
+            local_server_loopback = false;
         }
+        lan_discovery.start_host(kLocalPlayPort, "VOXOV Host");
+        searching_nearby = false;
+        multiplayer_hint = "Hosting Wi-Fi game. Friends tap Join Nearby.";
         connect_local();
+    }
+
+    void join_nearby_secure() {
+        init_network_if_needed();
+        lan_discovery.start_client();
+        searching_nearby = true;
+        multiplayer_hint = "Searching nearby Wi-Fi hosts...";
     }
 
     void pump_network(double dt_seconds) {
         if (local_server_running) {
             local_server.pump();
+            if (!local_server_loopback) {
+                lan_discovery.pump();
+            }
         }
         if (!net_initialized) {
             return;
@@ -454,6 +483,22 @@ struct AndroidRenderer {
         }
 
         if (!net_connected) {
+            if (searching_nearby) {
+                lan_discovery.pump();
+                LanHostEntry host{};
+                if (lan_discovery.pop_host(host)) {
+                    net_client.connect(host.ip.c_str(), host.port);
+                    NetChunkInterest interest{};
+                    interest.center_x = 0;
+                    interest.center_z = 0;
+                    interest.radius = 2;
+                    net_client.set_chunk_interest(interest);
+                    net_connecting = true;
+                    net_connect_elapsed = 0.0;
+                    searching_nearby = false;
+                    multiplayer_hint = "Joining " + host.name + " (" + host.ip + ")";
+                }
+            }
             return;
         }
 
@@ -766,7 +811,15 @@ struct AndroidRenderer {
         }
         if (actions.join_local) {
             gameplay_started = true;
-            join_local_secure();
+            join_nearby_secure();
+        }
+        if (actions.host_lan) {
+            gameplay_started = true;
+            host_lan_secure();
+        }
+        if (actions.join_nearby) {
+            gameplay_started = true;
+            join_nearby_secure();
         }
         if (actions.reset_camera) {
             cam_yaw = 3.14159f;
@@ -781,7 +834,7 @@ struct AndroidRenderer {
                                   menu_input.menu_down_pressed ||
                                   menu_input.menu_select_pressed;
         if (menu_changed) {
-            const std::string menu_text = gui_menu.build_text(devhud, noclip);
+            const std::string menu_text = gui_menu.build_text(devhud, noclip, multiplayer_hint);
             __android_log_print(
                 ANDROID_LOG_INFO,
                 kLogTag,
@@ -873,55 +926,9 @@ struct AndroidRenderer {
         if (width <= 0 || height <= 0) {
             return;
         }
-
-        auto draw_rect = [&](int x, int y_top, int w, int h, float r, float g, float b) {
-            if (w <= 0 || h <= 0) {
-                return;
-            }
-            const int sx = std::clamp(x, 0, width - 1);
-            const int ex = std::clamp(x + w, 0, width);
-            const int y_bottom = height - (y_top + h);
-            const int sy = std::clamp(y_bottom, 0, height - 1);
-            const int ey = std::clamp(y_bottom + h, 0, height);
-            const int sw = ex - sx;
-            const int sh = ey - sy;
-            if (sw <= 0 || sh <= 0) {
-                return;
-            }
-            glScissor(sx, sy, sw, sh);
-            glClearColor(r, g, b, 1.0f);
-            glClear(GL_COLOR_BUFFER_BIT);
-        };
-
         glDisable(GL_DEPTH_TEST);
-        glEnable(GL_SCISSOR_TEST);
 
-        draw_rect(18, 18, 120, 64, 0.18f, 0.24f, 0.32f);
-        draw_rect(22, 22, 112, 56, 0.12f, 0.17f, 0.24f);
-
-        if (gui_menu.open()) {
-            const int panel_x = 24;
-            const int panel_y = 96;
-            const int panel_w = std::min(420, width - 48);
-            const int panel_h = std::min(440, height - 120);
-            draw_rect(panel_x, panel_y, panel_w, panel_h, 0.06f, 0.08f, 0.12f);
-            draw_rect(panel_x + 4, panel_y + 4, panel_w - 8, panel_h - 8, 0.09f, 0.11f, 0.16f);
-
-            const int row_count = gui_menu.count();
-            const int row_h = 56;
-            for (int i = 0; i < row_count; ++i) {
-                const int row_y = panel_y + 24 + i * (row_h + 8);
-                const bool selected = (i == gui_menu.selected());
-                if (selected) {
-                    draw_rect(panel_x + 16, row_y, panel_w - 32, row_h, 0.20f, 0.28f, 0.40f);
-                    draw_rect(panel_x + 20, row_y + 4, panel_w - 40, row_h - 8, 0.15f, 0.22f, 0.32f);
-                } else {
-                    draw_rect(panel_x + 20, row_y + 6, panel_w - 40, row_h - 12, 0.11f, 0.15f, 0.22f);
-                }
-            }
-        }
-
-        const std::string menu_text = gui_menu.open() ? gui_menu.build_text(devhud, noclip) : std::string();
+        const std::string menu_text = gui_menu.open() ? gui_menu.build_text(devhud, noclip, multiplayer_hint) : std::string();
         if (menu_text != ui_text_cache) {
             destroy_mesh(ui_text_gpu);
             ui_text_mesh = RenderMesh{};
@@ -930,15 +937,15 @@ struct AndroidRenderer {
                     menu_text,
                     width,
                     height,
-                    40.0f,
-                    120.0f,
-                    2.4f,
-                    glm::vec3(0.93f, 0.95f, 0.99f));
+                    36.0f,
+                    96.0f,
+                    3.8f,
+                    glm::vec3(0.93f, 0.95f, 0.99f),
+                    1.35f);
                 ui_text_gpu = upload_mesh(ui_text_mesh);
             }
             ui_text_cache = menu_text;
         }
-        glDisable(GL_SCISSOR_TEST);
 
         if (ui_text_gpu.vbo != 0 && ui_text_gpu.ibo != 0 && ui_text_gpu.index_count > 0) {
             draw_mesh(ui_text_gpu, glm::mat4(1.0f));
@@ -1050,6 +1057,32 @@ struct AndroidRenderer {
                 return 1;
             }
             if (gui_menu.open()) {
+                const int panel_x = 24;
+                const int panel_y = 96;
+                const int panel_w = std::min(420, width - 48);
+                const int panel_h = std::min(440, height - 120);
+                const int row_h = 56;
+                const int row_gap = 8;
+                const int row_start_y = panel_y + 24;
+                const int row_count = gui_menu.count();
+                const bool inside_panel =
+                    (x >= static_cast<float>(panel_x) && x <= static_cast<float>(panel_x + panel_w) &&
+                     y >= static_cast<float>(panel_y) && y <= static_cast<float>(panel_y + panel_h));
+                if (inside_panel) {
+                    const float local_y = y - static_cast<float>(row_start_y);
+                    if (local_y >= 0.0f) {
+                        const float row_span = static_cast<float>(row_h + row_gap);
+                        const int tapped_row = static_cast<int>(local_y / row_span);
+                        if (tapped_row >= 0 && tapped_row < row_count) {
+                            const float in_row_y = local_y - static_cast<float>(tapped_row) * row_span;
+                            if (in_row_y <= static_cast<float>(row_h)) {
+                                gui_menu.set_selected(tapped_row);
+                                pending_menu_select = true;
+                                return 1;
+                            }
+                        }
+                    }
+                }
                 if (x < static_cast<float>(width) * 0.5f) {
                     if (y < static_cast<float>(height) * 0.5f) {
                         pending_menu_up = true;

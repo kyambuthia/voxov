@@ -52,6 +52,7 @@ if(ANDROID)
         src/engine_world/physics/voxel_collision.cpp
         src/engine_net/net_client.cpp
         src/engine_net/net_server.cpp
+        src/engine_net/lan_discovery.cpp
         ${VOXOV_ANDROID_GLUE_DIR}/android_native_app_glue.c
     )
     target_include_directories(voxov_android PRIVATE
@@ -251,9 +252,13 @@ target_link_libraries(engine_physics PUBLIC Jolt fmt::fmt spdlog::spdlog)
 add_library(engine_net STATIC
     src/engine_net/net_client.cpp
     src/engine_net/net_server.cpp
+    src/engine_net/lan_discovery.cpp
 )
 target_include_directories(engine_net PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/enet/include)
 target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog)
+if(WIN32)
+    target_link_libraries(engine_net PUBLIC ws2_32)
+endif()
 
 add_library(engine STATIC
     src/engine/engine.cpp

@@ -8,9 +8,11 @@ int GuiMenu::item_count() const {
     case MenuPage::Main:
         return 4;
     case MenuPage::Multiplayer:
-        return 3;
+        return 5;
     case MenuPage::Settings:
         return 4;
+    case MenuPage::MultiplayerGuide:
+        return 1;
     default:
         return 0;
     }
@@ -89,12 +91,22 @@ void GuiMenu::handle_input(const InputState &input, bool devhud_enabled, bool no
             out_actions.close_menu = true;
             break;
         case 1:
-            out_actions.join_local = true;
+            out_actions.host_lan = true;
             out_actions.start_game = true;
             is_open = false;
             out_actions.close_menu = true;
             break;
         case 2:
+            out_actions.join_nearby = true;
+            out_actions.start_game = true;
+            is_open = false;
+            out_actions.close_menu = true;
+            break;
+        case 3:
+            page = MenuPage::MultiplayerGuide;
+            selected_item = 0;
+            break;
+        case 4:
             page = MenuPage::Main;
             selected_item = 0;
             break;
@@ -122,6 +134,12 @@ void GuiMenu::handle_input(const InputState &input, bool devhud_enabled, bool no
         default:
             break;
         }
+        return;
+    }
+
+    if (page == MenuPage::MultiplayerGuide) {
+        page = MenuPage::Multiplayer;
+        selected_item = 0;
     }
 }
 
@@ -137,12 +155,21 @@ int GuiMenu::count() const {
     return item_count();
 }
 
-std::string GuiMenu::build_text(bool devhud_enabled, bool noclip_enabled) const {
+void GuiMenu::set_selected(int index) {
+    const int n = item_count();
+    if (n <= 0) {
+        selected_item = 0;
+        return;
+    }
+    selected_item = std::clamp(index, 0, n - 1);
+}
+
+std::string GuiMenu::build_text(bool devhud_enabled, bool noclip_enabled, const std::string &multiplayer_hint) const {
     if (!is_open) {
         return std::string();
     }
 
-    char buffer[512]{};
+    char buffer[768]{};
     if (page == MenuPage::Main) {
         std::snprintf(
             buffer,
@@ -159,11 +186,31 @@ std::string GuiMenu::build_text(bool devhud_enabled, bool noclip_enabled) const 
         std::snprintf(
             buffer,
             sizeof(buffer),
-            "MULTIPLAYER\n\n%s HOST LOCAL GAME\n%s JOIN LOCALHOST\n%s BACK\n\nUP/DOWN + ENTER | ESC",
+            "MULTIPLAYER\n\n%s HOST THIS DEVICE\n%s HOST WI-FI GAME (INVITE)\n%s JOIN NEARBY WI-FI GAME\n%s HOW HOST/JOIN/INVITE WORKS\n%s BACK\n\nUP/DOWN + ENTER | ESC",
             selected_item == 0 ? ">" : " ",
             selected_item == 1 ? ">" : " ",
-            selected_item == 2 ? ">" : " ");
-        return std::string(buffer);
+            selected_item == 2 ? ">" : " ",
+            selected_item == 3 ? ">" : " ",
+            selected_item == 4 ? ">" : " ");
+        std::string out(buffer);
+        if (!multiplayer_hint.empty()) {
+            out += "\n\nSTATUS: ";
+            out += multiplayer_hint;
+        }
+        return out;
+    }
+
+    if (page == MenuPage::MultiplayerGuide) {
+        std::snprintf(
+            buffer,
+            sizeof(buffer),
+            "HOST / JOIN / INVITE\n\n1. HOST WI-FI GAME to start a LAN session.\n2. Friends on same Wi-Fi tap JOIN NEARBY.\n3. INVITE TEXT: \"Open VOXOV > Multiplayer > Join Nearby\"\n4. If no host appears, ensure same Wi-Fi and retry.\n\nSELECT TO GO BACK");
+        std::string out(buffer);
+        if (!multiplayer_hint.empty()) {
+            out += "\n\nSTATUS: ";
+            out += multiplayer_hint;
+        }
+        return out;
     }
 
     std::snprintf(

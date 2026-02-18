@@ -6,6 +6,12 @@ def has_ci_signing_env = System.getenv("ANDROID_KEYSTORE_PATH") &&
     System.getenv("ANDROID_KEYSTORE_PASSWORD") &&
     System.getenv("ANDROID_KEY_ALIAS") &&
     System.getenv("ANDROID_KEY_PASSWORD")
+def prebuilt_voxov_so = System.getenv("VOXOV_ANDROID_PREBUILT_SO")
+def use_prebuilt_voxov_so = prebuilt_voxov_so && file(prebuilt_voxov_so).exists()
+
+if (use_prebuilt_voxov_so) {
+    logger.lifecycle("Using prebuilt native lib: ${prebuilt_voxov_so}")
+}
 
 android {
     namespace "com.voxov.game"
@@ -34,10 +40,20 @@ android {
             abiFilters "arm64-v8a"
         }
 
-        externalNativeBuild {
-            cmake {
-                arguments "-DVOXOV_ENABLE_VULKAN=OFF"
-                targets "voxov_android"
+        if (!use_prebuilt_voxov_so) {
+            externalNativeBuild {
+                cmake {
+                    arguments "-DVOXOV_ENABLE_VULKAN=OFF"
+                    targets "voxov_android"
+                }
+            }
+        }
+    }
+
+    sourceSets {
+        main {
+            if (use_prebuilt_voxov_so) {
+                jniLibs.srcDirs += ["${buildDir}/generated/prebuiltJniLibs"]
             }
         }
     }
@@ -55,10 +71,32 @@ android {
         }
     }
 
-    externalNativeBuild {
-        cmake {
-            path "../../CMakeLists.txt"
-            version "3.22.1"
+    packaging {
+        jniLibs {
+            keepDebugSymbols += ["**/libvoxov.so"]
+        }
+    }
+
+    if (!use_prebuilt_voxov_so) {
+        externalNativeBuild {
+            cmake {
+                path "../../CMakeLists.txt"
+                version "3.22.1"
+            }
+        }
+    }
+}
+
+if (use_prebuilt_voxov_so) {
+    tasks.register("preparePrebuiltVoxovSo", Copy) {
+        from(prebuilt_voxov_so)
+        into("${buildDir}/generated/prebuiltJniLibs/arm64-v8a")
+        rename { "libvoxov.so" }
+    }
+
+    tasks.configureEach { task ->
+        if (task.name.startsWith("merge") && task.name.endsWith("JniLibFolders")) {
+            task.dependsOn("preparePrebuiltVoxovSo")
         }
     }
 }

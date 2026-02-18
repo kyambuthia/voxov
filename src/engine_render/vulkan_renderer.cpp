@@ -219,6 +219,19 @@ void VulkanRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStat
             ImGui::BulletText("F4 Freeze Debug");
         }
         ImGui::End();
+        if (!stats.menu_text.empty()) {
+            ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.92f);
+            const ImGuiWindowFlags menu_flags =
+                ImGuiWindowFlags_NoCollapse |
+                ImGuiWindowFlags_NoResize |
+                ImGuiWindowFlags_NoSavedSettings;
+            if (ImGui::Begin("VOXOV Menu", nullptr, menu_flags)) {
+                ImGui::TextUnformatted(stats.menu_text.c_str());
+            }
+            ImGui::End();
+        }
         ImGui::Render();
     }
 }

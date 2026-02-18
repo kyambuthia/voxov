@@ -28,6 +28,7 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
     EnginePhysicsSettings settings{};
     physics.init(settings);
     net_client.init();
+    ui_audio.init();
 
     build_static_scene();
     local_player = PlayerControllerSystem::spawn_player(collision_world);
@@ -77,7 +78,7 @@ void Engine::connect(const char *host, uint16_t port) {
 
 void Engine::start_local_server(uint16_t port) {
     if (!local_server_running) {
-        local_server.init(port);
+        local_server.init(port, true);
         local_server_running = true;
         spdlog::info("Started local server on {}", port);
     }
@@ -95,6 +96,7 @@ void Engine::shutdown() {
         local_server_running = false;
     }
     renderer.shutdown();
+    ui_audio.shutdown();
     net_client.disconnect();
     net_client.shutdown();
     physics.shutdown();
@@ -150,6 +152,12 @@ void Engine::tick(double frame_dt) {
 
     GuiMenuActions menu_actions{};
     gui_menu.handle_input(input_state, runtime_options.devhud, runtime_options.noclip, menu_actions);
+    if (menu_actions.ui_move_sfx) {
+        ui_audio.play_move();
+    }
+    if (menu_actions.ui_select_sfx) {
+        ui_audio.play_click();
+    }
     if (menu_actions.start_game) {
         gameplay_started = true;
     }
@@ -438,10 +446,7 @@ void Engine::refresh_overlay_text() {
     }
 
     const std::string menu_text = gui_menu.build_text(runtime_options.devhud, runtime_options.noclip);
-    if (!menu_text.empty()) {
-        RenderMesh menu_mesh = build_camera_text_mesh(camera, menu_text);
-        append_mesh(scene.debug_screen, menu_mesh);
-    }
+    render_stats.menu_text = menu_text;
 }
 
 void Engine::rebuild_dynamic_debug_mesh() {

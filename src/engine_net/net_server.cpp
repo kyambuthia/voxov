@@ -71,7 +71,7 @@ void NetServer::broadcast_player_states() {
     }
 }
 
-void NetServer::init(uint16_t port) {
+void NetServer::init(uint16_t port, bool loopback_only) {
     if (initialized) {
         return;
     }
@@ -83,7 +83,17 @@ void NetServer::init(uint16_t port) {
     initialized = true;
 
     ENetAddress address{};
-    address.host = ENET_HOST_ANY;
+    local_only = loopback_only;
+    if (local_only) {
+        if (enet_address_set_host(&address, "127.0.0.1") != 0) {
+            std::fprintf(stderr, "NetServer: failed to resolve loopback host\n");
+            enet_deinitialize();
+            initialized = false;
+            return;
+        }
+    } else {
+        address.host = ENET_HOST_ANY;
+    }
     address.port = port;
     server = enet_host_create(&address, 32, 2, 0, 0);
     if (!server) {
@@ -120,6 +130,18 @@ void NetServer::pump() {
             state.state.x = 8.0f + static_cast<float>((state.player_id % 3) * 2);
             state.state.y = 8.0f;
             state.state.z = 8.0f;
+            if (local_only) {
+                char ip_buffer[64]{};
+                if (enet_address_get_host_ip(&event.peer->address, ip_buffer, sizeof(ip_buffer)) != 0) {
+                    std::snprintf(ip_buffer, sizeof(ip_buffer), "%s", "unknown");
+                }
+                const bool localhost = std::strcmp(ip_buffer, "127.0.0.1") == 0 || std::strcmp(ip_buffer, "::1") == 0;
+                if (!localhost) {
+                    spdlog::warn("NetServer: rejected non-local peer {} in loopback-only mode", ip_buffer);
+                    enet_peer_disconnect_now(event.peer, 0);
+                    break;
+                }
+            }
             clients[event.peer] = state;
             spdlog::info("NetServer: client connected, assigned player_id={}, clients={}", state.player_id, clients.size());
 

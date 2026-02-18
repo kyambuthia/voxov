@@ -27,6 +27,13 @@ option(VOXOV_ENABLE_VULKAN "Enable Vulkan backend and shader toolchain requireme
 if(ANDROID)
     message(STATUS "Configuring VOXOV for Android")
 
+    set(ENET_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
+    set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/enet" EXCLUDE_FROM_ALL)
+    add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/fmt" EXCLUDE_FROM_ALL)
+    add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/spdlog" EXCLUDE_FROM_ALL)
+
     set(VOXOV_ANDROID_GLUE_DIR "${CMAKE_ANDROID_NDK}/sources/android/native_app_glue")
     if(NOT EXISTS "${VOXOV_ANDROID_GLUE_DIR}/android_native_app_glue.c")
         message(FATAL_ERROR "android_native_app_glue.c not found at ${VOXOV_ANDROID_GLUE_DIR}. Check NDK setup.")
@@ -37,17 +44,27 @@ if(ANDROID)
         src/platform/android_platform.cpp
         src/platform/android/input_android.cpp
         src/engine_ui/gui_menu.cpp
+        src/engine_audio/ui_audio.cpp
+        src/engine_math/camera.cpp
+        src/engine_render/debug_text.cpp
         src/engine_render/debug_draw/debug_draw.cpp
         src/engine_world/voxel_chunk.cpp
         src/engine_world/physics/voxel_collision.cpp
+        src/engine_net/net_client.cpp
+        src/engine_net/net_server.cpp
         ${VOXOV_ANDROID_GLUE_DIR}/android_native_app_glue.c
     )
     target_include_directories(voxov_android PRIVATE
         src
         dependencies/glm
+        dependencies/miniaudio
+        dependencies/enet/include
         ${VOXOV_ANDROID_GLUE_DIR}
     )
-    target_compile_definitions(voxov_android PRIVATE VOXOV_PLATFORM_ANDROID=1)
+    target_compile_definitions(voxov_android PRIVATE
+        VOXOV_PLATFORM_ANDROID=1
+        GLM_ENABLE_EXPERIMENTAL
+    )
 
     find_library(android_lib android REQUIRED)
     find_library(log_lib log REQUIRED)
@@ -58,6 +75,9 @@ if(ANDROID)
         ${log_lib}
         ${egl_lib}
         ${glesv3_lib}
+        enet
+        fmt::fmt
+        spdlog::spdlog
     )
 
     set_target_properties(voxov_android PROPERTIES OUTPUT_NAME "voxov")
@@ -237,10 +257,11 @@ target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog)
 
 add_library(engine STATIC
     src/engine/engine.cpp
+    src/engine_audio/ui_audio.cpp
     src/engine_gameplay/player/player_controller.cpp
     src/engine_ui/gui_menu.cpp
 )
-target_include_directories(engine PUBLIC src)
+target_include_directories(engine PUBLIC src dependencies/miniaudio)
 target_link_libraries(engine PUBLIC engine_core engine_render engine_physics engine_net engine_math engine_world platform_desktop)
 
 add_executable(voxov

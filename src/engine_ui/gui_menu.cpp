@@ -21,6 +21,7 @@ void GuiMenu::handle_input(const InputState &input, bool devhud_enabled, bool no
     (void)noclip_enabled;
 
     if (input.menu_toggle_pressed) {
+        out_actions.ui_select_sfx = true;
         is_open = !is_open;
         if (!is_open) {
             out_actions.close_menu = true;
@@ -35,12 +36,14 @@ void GuiMenu::handle_input(const InputState &input, bool devhud_enabled, bool no
     }
 
     if (input.menu_up_pressed) {
+        out_actions.ui_move_sfx = true;
         selected_item--;
         if (selected_item < 0) {
             selected_item = item_count() - 1;
         }
     }
     if (input.menu_down_pressed) {
+        out_actions.ui_move_sfx = true;
         selected_item++;
         if (selected_item >= item_count()) {
             selected_item = 0;
@@ -50,6 +53,7 @@ void GuiMenu::handle_input(const InputState &input, bool devhud_enabled, bool no
     if (!input.menu_select_pressed) {
         return;
     }
+    out_actions.ui_select_sfx = true;
 
     if (page == MenuPage::Main) {
         switch (selected_item) {

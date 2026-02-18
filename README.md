@@ -54,6 +54,10 @@ cmake --build build/desktop/main --parallel
 - Build/release details: `docs/RELEASES.md`
 - Full docs folder: `docs/`
 
+## UI Audio Assets
+- Tiny CC0 UI sounds are in `assets/audio/ui/`.
+- Provenance, licensing, and hashes are documented in `assets/audio/ui/README.md`.
+
 ## Showcase
 ![VOXOV Android Gameplay GIF](docs/media/voxov_android_gameplay.gif)
 

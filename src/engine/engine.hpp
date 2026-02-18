@@ -4,6 +4,7 @@
 #include "engine_gameplay/player/player_components.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_input/input_state.hpp"
+#include "engine_audio/ui_audio.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net/net_client.hpp"
 #include "engine_net/net_server.hpp"
@@ -70,6 +71,7 @@ private:
     InputState input_state_secondary{};
     bool touch_input_mode = false;
     GuiMenu gui_menu;
+    UiAudio ui_audio;
     EngineRuntimeOptions runtime_options{};
 
     double fps_accumulator = 0.0;

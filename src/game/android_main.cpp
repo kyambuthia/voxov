@@ -1,8 +1,14 @@
 #include "engine_world/voxel_chunk.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
+#ifndef GLM_ENABLE_EXPERIMENTAL
+#define GLM_ENABLE_EXPERIMENTAL
+#endif
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_ui/gui_menu.hpp"
 #include "engine_input/input_state.hpp"
+#include "engine_audio/ui_audio.hpp"
+#include "engine_net/net_client.hpp"
+#include "engine_net/net_server.hpp"
 
 #include <android/input.h>
 #include <android/log.h>
@@ -11,10 +17,13 @@
 #include <GLES2/gl2.h>
 
 #include <algorithm>
+#include <array>
+#include <cctype>
 #include <cmath>
 #include <cstdint>
 #include <ctime>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -23,6 +32,9 @@
 
 namespace {
 constexpr const char *kLogTag = "VOXOV";
+constexpr uint16_t kLocalPlayPort = 7777;
+constexpr const char *kLocalPlayHost = "127.0.0.1";
+constexpr double kConnectTimeoutSeconds = 5.0;
 
 #ifndef EGL_OPENGL_ES3_BIT
 #ifdef EGL_OPENGL_ES3_BIT_KHR
@@ -126,6 +138,135 @@ GLuint create_program() {
     return program;
 }
 
+using GlyphRows = std::array<uint8_t, 7>;
+
+const std::unordered_map<char, GlyphRows> kGlyphs = {
+    {'A', {0x04, 0x0A, 0x11, 0x11, 0x1F, 0x11, 0x11}},
+    {'B', {0x1E, 0x11, 0x11, 0x1E, 0x11, 0x11, 0x1E}},
+    {'C', {0x0E, 0x11, 0x10, 0x10, 0x10, 0x11, 0x0E}},
+    {'D', {0x1C, 0x12, 0x11, 0x11, 0x11, 0x12, 0x1C}},
+    {'E', {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x1F}},
+    {'F', {0x1F, 0x10, 0x10, 0x1E, 0x10, 0x10, 0x10}},
+    {'G', {0x0E, 0x11, 0x10, 0x10, 0x13, 0x11, 0x0E}},
+    {'H', {0x11, 0x11, 0x11, 0x1F, 0x11, 0x11, 0x11}},
+    {'I', {0x0E, 0x04, 0x04, 0x04, 0x04, 0x04, 0x0E}},
+    {'J', {0x01, 0x01, 0x01, 0x01, 0x11, 0x11, 0x0E}},
+    {'K', {0x11, 0x12, 0x14, 0x18, 0x14, 0x12, 0x11}},
+    {'L', {0x10, 0x10, 0x10, 0x10, 0x10, 0x10, 0x1F}},
+    {'M', {0x11, 0x1B, 0x15, 0x15, 0x11, 0x11, 0x11}},
+    {'N', {0x11, 0x11, 0x19, 0x15, 0x13, 0x11, 0x11}},
+    {'O', {0x0E, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}},
+    {'P', {0x1E, 0x11, 0x11, 0x1E, 0x10, 0x10, 0x10}},
+    {'Q', {0x0E, 0x11, 0x11, 0x11, 0x15, 0x12, 0x0D}},
+    {'R', {0x1E, 0x11, 0x11, 0x1E, 0x14, 0x12, 0x11}},
+    {'S', {0x0F, 0x10, 0x10, 0x0E, 0x01, 0x01, 0x1E}},
+    {'T', {0x1F, 0x04, 0x04, 0x04, 0x04, 0x04, 0x04}},
+    {'U', {0x11, 0x11, 0x11, 0x11, 0x11, 0x11, 0x0E}},
+    {'V', {0x11, 0x11, 0x11, 0x11, 0x11, 0x0A, 0x04}},
+    {'W', {0x11, 0x11, 0x11, 0x15, 0x15, 0x1B, 0x11}},
+    {'X', {0x11, 0x11, 0x0A, 0x04, 0x0A, 0x11, 0x11}},
+    {'Y', {0x11, 0x11, 0x0A, 0x04, 0x04, 0x04, 0x04}},
+    {'Z', {0x1F, 0x01, 0x02, 0x04, 0x08, 0x10, 0x1F}},
+    {'0', {0x0E, 0x11, 0x13, 0x15, 0x19, 0x11, 0x0E}},
+    {'1', {0x04, 0x0C, 0x04, 0x04, 0x04, 0x04, 0x0E}},
+    {'2', {0x0E, 0x11, 0x01, 0x02, 0x04, 0x08, 0x1F}},
+    {'3', {0x1F, 0x02, 0x04, 0x02, 0x01, 0x11, 0x0E}},
+    {'4', {0x02, 0x06, 0x0A, 0x12, 0x1F, 0x02, 0x02}},
+    {'5', {0x1F, 0x10, 0x1E, 0x01, 0x01, 0x11, 0x0E}},
+    {'6', {0x06, 0x08, 0x10, 0x1E, 0x11, 0x11, 0x0E}},
+    {'7', {0x1F, 0x01, 0x02, 0x04, 0x08, 0x08, 0x08}},
+    {'8', {0x0E, 0x11, 0x11, 0x0E, 0x11, 0x11, 0x0E}},
+    {'9', {0x0E, 0x11, 0x11, 0x0F, 0x01, 0x02, 0x0C}},
+    {'-', {0x00, 0x00, 0x00, 0x1F, 0x00, 0x00, 0x00}},
+    {'>', {0x10, 0x08, 0x04, 0x02, 0x04, 0x08, 0x10}},
+    {'/', {0x01, 0x02, 0x02, 0x04, 0x08, 0x08, 0x10}},
+    {'.', {0x00, 0x00, 0x00, 0x00, 0x00, 0x06, 0x06}},
+    {':', {0x00, 0x06, 0x06, 0x00, 0x06, 0x06, 0x00}},
+    {' ', {0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00}}
+};
+
+GlyphRows glyph_for(char c) {
+    const char uc = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
+    auto it = kGlyphs.find(uc);
+    if (it != kGlyphs.end()) {
+        return it->second;
+    }
+    return kGlyphs.at(' ');
+}
+
+void add_overlay_quad(
+    RenderMesh &mesh,
+    int width,
+    int height,
+    float x_px,
+    float y_px,
+    float size_px,
+    const glm::vec3 &color) {
+    const float x0 = (2.0f * x_px / static_cast<float>(width)) - 1.0f;
+    const float y0 = 1.0f - (2.0f * y_px / static_cast<float>(height));
+    const float x1 = (2.0f * (x_px + size_px) / static_cast<float>(width)) - 1.0f;
+    const float y1 = 1.0f - (2.0f * (y_px + size_px) / static_cast<float>(height));
+
+    const glm::vec3 p0(x0, y0, 0.0f);
+    const glm::vec3 p1(x1, y0, 0.0f);
+    const glm::vec3 p2(x1, y1, 0.0f);
+    const glm::vec3 p3(x0, y1, 0.0f);
+
+    const uint32_t start = static_cast<uint32_t>(mesh.vertices.size());
+    mesh.vertices.push_back({p0, color});
+    mesh.vertices.push_back({p1, color});
+    mesh.vertices.push_back({p2, color});
+    mesh.vertices.push_back({p3, color});
+    mesh.indices.insert(mesh.indices.end(), {start, start + 1, start + 2, start, start + 2, start + 3});
+}
+
+RenderMesh build_overlay_text_mesh(
+    const std::string &text,
+    int width,
+    int height,
+    float origin_x_px,
+    float origin_y_px,
+    float cell_size_px,
+    const glm::vec3 &color) {
+    RenderMesh mesh{};
+    if (width <= 0 || height <= 0 || text.empty()) {
+        return mesh;
+    }
+
+    float pen_x = origin_x_px;
+    float pen_y = origin_y_px;
+    const float char_advance = 6.0f * cell_size_px;
+    const float line_advance = 8.0f * cell_size_px;
+
+    for (char c : text) {
+        if (c == '\n') {
+            pen_x = origin_x_px;
+            pen_y += line_advance;
+            continue;
+        }
+
+        const GlyphRows glyph = glyph_for(c);
+        for (int row = 0; row < 7; ++row) {
+            for (int col = 0; col < 5; ++col) {
+                if ((glyph[row] & (1 << (4 - col))) == 0) {
+                    continue;
+                }
+                add_overlay_quad(
+                    mesh,
+                    width,
+                    height,
+                    pen_x + static_cast<float>(col) * cell_size_px,
+                    pen_y + static_cast<float>(row) * cell_size_px,
+                    cell_size_px,
+                    color);
+            }
+        }
+        pen_x += char_advance;
+    }
+
+    return mesh;
+}
+
 struct TouchState {
     int32_t left_pointer = -1;
     int32_t right_pointer = -1;
@@ -157,11 +298,13 @@ struct AndroidRenderer {
     GpuMesh terrain_gpu{};
     GpuMesh grid_gpu{};
     GpuMesh capsule_gpu{};
+    GpuMesh ui_text_gpu{};
 
     VoxelChunk world{};
     RenderMesh terrain_mesh{};
     RenderMesh grid_mesh{};
     RenderMesh capsule_mesh{};
+    RenderMesh ui_text_mesh{};
     VoxelCollisionWorld collision_world{nullptr};
     glm::vec3 player_feet_position = glm::vec3(8.5f, 6.0f, 8.5f);
     float player_vertical_velocity = 0.0f;
@@ -176,6 +319,8 @@ struct AndroidRenderer {
     float cam_pitch = -0.25f;
     TouchState touch{};
     GuiMenu gui_menu{};
+    UiAudio ui_audio{};
+    bool audio_ready = false;
     bool menu_open_prev = false;
     bool devhud = false;
     bool noclip = false;
@@ -184,10 +329,149 @@ struct AndroidRenderer {
     bool pending_menu_up = false;
     bool pending_menu_down = false;
     bool pending_menu_select = false;
+    NetClient net_client{};
+    NetServer local_server{};
+    bool net_initialized = false;
+    bool net_connected = false;
+    bool net_connecting = false;
+    double net_connect_elapsed = 0.0;
+    bool local_server_running = false;
+    bool hosting_local = false;
+    uint32_t net_tick = 0;
+    std::string ui_text_cache;
 
     timespec last_time{};
     bool has_last_time = false;
     uint64_t frame_counter = 0;
+
+    void init_audio_if_needed() {
+        if (audio_ready) {
+            return;
+        }
+        audio_ready = ui_audio.init();
+    }
+
+    void init_network_if_needed() {
+        if (net_initialized) {
+            return;
+        }
+        net_client.init();
+        net_initialized = true;
+        net_connected = false;
+        net_connecting = false;
+        net_connect_elapsed = 0.0;
+        net_tick = 0;
+    }
+
+    void stop_local_server() {
+        if (!local_server_running) {
+            return;
+        }
+        local_server.shutdown();
+        local_server_running = false;
+        hosting_local = false;
+        __android_log_print(ANDROID_LOG_INFO, kLogTag, "Local server stopped");
+    }
+
+    void stop_client() {
+        if (!net_initialized) {
+            return;
+        }
+        net_client.disconnect();
+        net_connected = false;
+        net_connecting = false;
+        net_connect_elapsed = 0.0;
+    }
+
+    void shutdown_network() {
+        stop_client();
+        stop_local_server();
+        if (net_initialized) {
+            net_client.shutdown();
+            net_initialized = false;
+        }
+    }
+
+    void connect_local() {
+        init_network_if_needed();
+        if (net_connected || net_connecting) {
+            return;
+        }
+
+        net_client.connect(kLocalPlayHost, kLocalPlayPort);
+        NetChunkInterest interest{};
+        interest.center_x = 0;
+        interest.center_z = 0;
+        interest.radius = 2;
+        net_client.set_chunk_interest(interest);
+        net_connecting = true;
+        net_connect_elapsed = 0.0;
+        __android_log_print(ANDROID_LOG_INFO, kLogTag, "Connecting to local server %s:%u", kLocalPlayHost, kLocalPlayPort);
+    }
+
+    void host_local_secure() {
+        init_network_if_needed();
+        if (!local_server_running) {
+            local_server.init(kLocalPlayPort, true);
+            local_server_running = true;
+            hosting_local = true;
+            __android_log_print(ANDROID_LOG_INFO, kLogTag, "Loopback-only local server started on %u", kLocalPlayPort);
+        }
+        connect_local();
+    }
+
+    void join_local_secure() {
+        init_network_if_needed();
+        if (hosting_local) {
+            stop_local_server();
+        }
+        connect_local();
+    }
+
+    void pump_network(double dt_seconds) {
+        if (local_server_running) {
+            local_server.pump();
+        }
+        if (!net_initialized) {
+            return;
+        }
+
+        net_client.pump();
+        const bool now_connected = net_client.is_connected();
+        if (now_connected != net_connected) {
+            net_connected = now_connected;
+            net_connecting = !now_connected;
+            net_connect_elapsed = 0.0;
+            __android_log_print(ANDROID_LOG_INFO, kLogTag, "NetClient state changed: connected=%d", net_connected ? 1 : 0);
+        }
+
+        if (!net_connected && net_connecting) {
+            net_connect_elapsed += dt_seconds;
+            if (net_connect_elapsed >= kConnectTimeoutSeconds) {
+                __android_log_print(ANDROID_LOG_WARN, kLogTag, "NetClient connect timeout after %.2fs", net_connect_elapsed);
+                stop_client();
+            }
+        }
+
+        if (!net_connected) {
+            return;
+        }
+
+        NetTickInput input{};
+        input.tick = net_tick++;
+        input.move_x = touch.left_value.x;
+        input.move_y = touch.left_value.y;
+        net_client.send_input(input);
+
+        NetSnapshot snapshot{};
+        if (net_client.poll_snapshot(snapshot)) {
+            if (std::isfinite(snapshot.x) && std::isfinite(snapshot.z) &&
+                std::fabs(snapshot.x) < 100000.0f && std::fabs(snapshot.z) < 100000.0f) {
+                player_feet_position.x = snapshot.x;
+                player_feet_position.z = snapshot.z;
+            }
+        }
+    }
 
     bool can_render() const {
         return display != EGL_NO_DISPLAY && surface != EGL_NO_SURFACE && context != EGL_NO_CONTEXT;
@@ -209,6 +493,7 @@ struct AndroidRenderer {
         destroy_mesh(terrain_gpu);
         destroy_mesh(grid_gpu);
         destroy_mesh(capsule_gpu);
+        destroy_mesh(ui_text_gpu);
         if (program != 0) {
             glDeleteProgram(program);
             program = 0;
@@ -371,6 +656,7 @@ struct AndroidRenderer {
             shutdown();
             return false;
         }
+        init_audio_if_needed();
         u_mvp = glGetUniformLocation(program, "uMVP");
 
         world.generate_heightmap_terrain();
@@ -389,6 +675,8 @@ struct AndroidRenderer {
             player_capsule_radius,
             player_capsule_height,
             glm::vec3(0.95f, 0.5f, 0.2f));
+        ui_text_mesh = RenderMesh{};
+        ui_text_cache.clear();
         terrain_gpu = upload_mesh(terrain_mesh);
         grid_gpu = upload_mesh(grid_mesh);
         capsule_gpu = upload_mesh(capsule_mesh);
@@ -411,6 +699,11 @@ struct AndroidRenderer {
     }
 
     void shutdown() {
+        shutdown_network();
+        if (audio_ready) {
+            ui_audio.shutdown();
+            audio_ready = false;
+        }
         if (can_render()) {
             shutdown_gl_resources();
         }
@@ -452,6 +745,12 @@ struct AndroidRenderer {
 
         GuiMenuActions actions{};
         gui_menu.handle_input(menu_input, devhud, noclip, actions);
+        if (actions.ui_move_sfx && audio_ready) {
+            ui_audio.play_move();
+        }
+        if (actions.ui_select_sfx && audio_ready) {
+            ui_audio.play_click();
+        }
         if (actions.toggle_devhud) {
             devhud = !devhud;
         }
@@ -463,11 +762,11 @@ struct AndroidRenderer {
         }
         if (actions.host_local) {
             gameplay_started = true;
-            __android_log_print(ANDROID_LOG_INFO, kLogTag, "GUI host local requested (network path not yet wired on Android target)");
+            host_local_secure();
         }
         if (actions.join_local) {
             gameplay_started = true;
-            __android_log_print(ANDROID_LOG_INFO, kLogTag, "GUI join localhost requested (network path not yet wired on Android target)");
+            join_local_secure();
         }
         if (actions.reset_camera) {
             cam_yaw = 3.14159f;
@@ -622,7 +921,29 @@ struct AndroidRenderer {
             }
         }
 
+        const std::string menu_text = gui_menu.open() ? gui_menu.build_text(devhud, noclip) : std::string();
+        if (menu_text != ui_text_cache) {
+            destroy_mesh(ui_text_gpu);
+            ui_text_mesh = RenderMesh{};
+            if (!menu_text.empty()) {
+                ui_text_mesh = build_overlay_text_mesh(
+                    menu_text,
+                    width,
+                    height,
+                    40.0f,
+                    120.0f,
+                    2.4f,
+                    glm::vec3(0.93f, 0.95f, 0.99f));
+                ui_text_gpu = upload_mesh(ui_text_mesh);
+            }
+            ui_text_cache = menu_text;
+        }
         glDisable(GL_SCISSOR_TEST);
+
+        if (ui_text_gpu.vbo != 0 && ui_text_gpu.ibo != 0 && ui_text_gpu.index_count > 0) {
+            draw_mesh(ui_text_gpu, glm::mat4(1.0f));
+        }
+
         glEnable(GL_DEPTH_TEST);
     }
 
@@ -643,6 +964,7 @@ struct AndroidRenderer {
         has_last_time = true;
 
         process_gui_actions();
+        pump_network(dt_seconds);
         update_player_and_camera(dt_seconds);
 
         glViewport(0, 0, width, height);

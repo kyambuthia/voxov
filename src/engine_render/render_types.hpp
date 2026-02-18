@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstdint>
+#include <string>
 #include <vector>
 
 #include <glm/glm.hpp>
@@ -28,4 +29,5 @@ struct RenderStats {
     bool net_connected = false;
     uint32_t net_local_player_id = 0;
     uint32_t net_remote_count = 0;
+    std::string menu_text;
 };

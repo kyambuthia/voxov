@@ -303,12 +303,50 @@ add_executable(voxov_asset_cooker
 target_include_directories(voxov_asset_cooker PRIVATE src)
 target_link_libraries(voxov_asset_cooker PRIVATE fmt::fmt)
 
+# MinGW builds require GCC runtime DLLs next to the executable for startup.
+if(MINGW)
+    set(VOXOV_MINGW_RUNTIME_DLLS "")
+    set(VOXOV_MINGW_RUNTIME_DLL_NAMES
+        libgcc_s_seh-1.dll
+        libstdc++-6.dll
+        libwinpthread-1.dll
+    )
+
+    foreach(runtime_dll_name IN LISTS VOXOV_MINGW_RUNTIME_DLL_NAMES)
+        execute_process(
+            COMMAND "${CMAKE_CXX_COMPILER}" -print-file-name=${runtime_dll_name}
+            OUTPUT_VARIABLE runtime_dll_path
+            OUTPUT_STRIP_TRAILING_WHITESPACE
+        )
+
+        if(runtime_dll_path AND NOT runtime_dll_path STREQUAL runtime_dll_name)
+            list(APPEND VOXOV_MINGW_RUNTIME_DLLS "${runtime_dll_path}")
+        else()
+            message(WARNING "Could not locate MinGW runtime DLL: ${runtime_dll_name}")
+        endif()
+    endforeach()
+
+    if(VOXOV_MINGW_RUNTIME_DLLS)
+        add_custom_command(TARGET voxov POST_BUILD
+            COMMAND ${CMAKE_COMMAND} -E copy_if_different
+                ${VOXOV_MINGW_RUNTIME_DLLS}
+                $<TARGET_FILE_DIR:voxov>
+        )
+    endif()
+endif()
+
 # Installation
 install(TARGETS voxov
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib
 )
+
+if(MINGW AND VOXOV_MINGW_RUNTIME_DLLS)
+    install(FILES ${VOXOV_MINGW_RUNTIME_DLLS}
+        DESTINATION bin
+    )
+endif()
 
 if(VOXOV_BUILD_TESTS)
     enable_testing()

@@ -101,7 +101,7 @@ jobs:
             exit 1
           fi
           set +e
-          timeout 10s xvfb-run -a "smoke-linux/${ASSET_DIR}/run.sh" >/tmp/voxov-linux-smoke.log 2>&1
+          timeout 10s xvfb-run -a "smoke-linux/${ASSET_DIR}/run.sh" --renderer gl >/tmp/voxov-linux-smoke.log 2>&1
           smoke_rc=$?
           set -e
           if [ "$smoke_rc" -ne 0 ] && [ "$smoke_rc" -ne 124 ]; then

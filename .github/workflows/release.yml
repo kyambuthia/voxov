@@ -181,14 +181,14 @@ jobs:
           profile: pixel_6
           script: |
             adb wait-for-device
-            adb shell cmd package list packages >/dev/null 2>&1 || sleep 2
-            adb shell cmd package list packages >/dev/null 2>&1 || sleep 2
-            adb shell cmd package list packages >/dev/null 2>&1 || sleep 2
-            adb install --no-streaming -r android/app/build/outputs/apk/release/app-release.apk || (sleep 3 && adb reconnect && adb wait-for-device && adb install --no-streaming -r android/app/build/outputs/apk/release/app-release.apk) || (sleep 3 && adb reconnect && adb wait-for-device && adb install --no-streaming -r android/app/build/outputs/apk/release/app-release.apk)
+            timeout 20s adb shell cmd package list packages >/dev/null 2>&1 || sleep 2
+            timeout 20s adb shell cmd package list packages >/dev/null 2>&1 || sleep 2
+            timeout 20s adb shell cmd package list packages >/dev/null 2>&1 || sleep 2
+            timeout 90s adb install --no-streaming -r android/app/build/outputs/apk/release/app-release.apk || (sleep 3 && timeout 90s adb install --no-streaming -r android/app/build/outputs/apk/release/app-release.apk) || (sleep 3 && timeout 90s adb install --no-streaming -r android/app/build/outputs/apk/release/app-release.apk)
             adb logcat -c
-            adb shell am start -n com.voxov.game/android.app.NativeActivity
+            timeout 20s adb shell am start -n com.voxov.game/android.app.NativeActivity
             sleep 10
-            adb logcat -d | tee /tmp/voxov-logcat.txt
+            timeout 30s adb logcat -d | tee /tmp/voxov-logcat.txt
             grep -q "APP_CMD_INIT_WINDOW" /tmp/voxov-logcat.txt
             grep -q "EGL ready" /tmp/voxov-logcat.txt
             grep -q "frame=1" /tmp/voxov-logcat.txt

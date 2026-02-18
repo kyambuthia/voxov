@@ -180,7 +180,25 @@ jobs:
           arch: x86_64
           profile: pixel_6
           script: |
-            adb install -r android/app/build/outputs/apk/release/app-release.apk
+            adb wait-for-device
+            for _ in 1 2 3 4 5; do
+              if adb shell cmd package list packages >/dev/null 2>&1; then
+                break
+              fi
+              sleep 2
+            done
+            for attempt in 1 2 3; do
+              if adb install --no-streaming -r android/app/build/outputs/apk/release/app-release.apk; then
+                break
+              fi
+              if [ "$attempt" -eq 3 ]; then
+                echo "APK install failed after 3 attempts"
+                exit 1
+              fi
+              sleep 3
+              adb reconnect || true
+              adb wait-for-device
+            done
             adb logcat -c
             adb shell am start -n com.voxov.game/android.app.NativeActivity
             sleep 10

@@ -20,10 +20,19 @@ struct GuiMenuActions {
 
 class GuiMenu {
 public:
+    enum class Page {
+        Main = 0,
+        Multiplayer = 1,
+        Settings = 2,
+        MultiplayerGuide = 3
+    };
+
     void handle_input(const InputState &input, bool devhud_enabled, bool noclip_enabled, GuiMenuActions &out_actions);
+    void activate_index(int index, bool devhud_enabled, bool noclip_enabled, GuiMenuActions &out_actions);
     bool open() const;
     int selected() const;
     int count() const;
+    Page page_id() const;
     void set_selected(int index);
     std::string build_text(bool devhud_enabled, bool noclip_enabled, const std::string &multiplayer_hint = std::string()) const;
 

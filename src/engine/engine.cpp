@@ -493,7 +493,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
         local_player.transform.position,
         local_player.controller.capsuleRadius,
         local_player.controller.capsuleHeight,
-        glm::vec3(0.95f, 0.5f, 0.2f));
+        player_color_from_id(local_player.network_id));
 
     RenderMesh target_marker = build_debug_sphere_mesh(
         local_player.transform.position + glm::vec3(0.0f, local_player.camera_rig.pivotHeight, 0.0f),
@@ -510,7 +510,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
             local_player_secondary.transform.position,
             local_player_secondary.controller.capsuleRadius,
             local_player_secondary.controller.capsuleHeight,
-            glm::vec3(0.35f, 0.55f, 0.95f));
+            player_color_from_id(local_player_secondary.network_id));
         RenderMesh p2_target = build_debug_sphere_mesh(
             local_player_secondary.transform.position + glm::vec3(0.0f, local_player_secondary.camera_rig.pivotHeight, 0.0f),
             0.10f,
@@ -549,8 +549,13 @@ void Engine::rebuild_dynamic_debug_mesh() {
         if (runtime_options.debug_collision_only) {
             continue;
         }
+        const float grounded_y = collision_world.find_spawn_height(
+            glm::vec2(state.x, state.z),
+            local_player.controller.capsuleRadius,
+            local_player.controller.capsuleHeight) +
+            0.05f;
         RenderMesh remote_capsule = build_debug_capsule_mesh(
-            glm::vec3(state.x, state.y, state.z),
+            glm::vec3(state.x, grounded_y, state.z),
             local_player.controller.capsuleRadius,
             local_player.controller.capsuleHeight,
             player_color_from_id(player_id));

@@ -926,7 +926,81 @@ struct AndroidRenderer {
         if (width <= 0 || height <= 0) {
             return;
         }
+        auto draw_rect = [&](int x, int y_top, int w, int h, float r, float g, float b) {
+            if (w <= 0 || h <= 0) {
+                return;
+            }
+            const int sx = std::clamp(x, 0, width - 1);
+            const int ex = std::clamp(x + w, 0, width);
+            const int y_bottom = height - (y_top + h);
+            const int sy = std::clamp(y_bottom, 0, height - 1);
+            const int ey = std::clamp(y_bottom + h, 0, height);
+            const int sw = ex - sx;
+            const int sh = ey - sy;
+            if (sw <= 0 || sh <= 0) {
+                return;
+            }
+            glScissor(sx, sy, sw, sh);
+            glClearColor(r, g, b, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+        };
+
         glDisable(GL_DEPTH_TEST);
+        glEnable(GL_SCISSOR_TEST);
+
+        draw_rect(18, 18, 120, 64, 0.18f, 0.24f, 0.32f);
+        draw_rect(22, 22, 112, 56, 0.12f, 0.17f, 0.24f);
+
+        if (gui_menu.open()) {
+            const int panel_x = 20;
+            const int panel_y = 88;
+            const int panel_w = std::min(560, width - 40);
+            const int panel_h = std::min(640, height - 120);
+            draw_rect(panel_x, panel_y, panel_w, panel_h, 0.06f, 0.08f, 0.12f);
+            draw_rect(panel_x + 4, panel_y + 4, panel_w - 8, panel_h - 8, 0.09f, 0.11f, 0.16f);
+
+            if (gui_menu.page_id() == GuiMenu::Page::Main) {
+                const int cards = 3;
+                const int gap = 12;
+                const int card_w = (panel_w - 36 - (cards - 1) * gap) / cards;
+                const int card_h = std::min(170, panel_h / 3);
+                for (int i = 0; i < cards; ++i) {
+                    const int x = panel_x + 18 + i * (card_w + gap);
+                    const int y = panel_y + 24;
+                    const bool selected = (i == gui_menu.selected());
+                    if (selected) {
+                        draw_rect(x, y, card_w, card_h, 0.22f, 0.32f, 0.46f);
+                        draw_rect(x + 3, y + 3, card_w - 6, card_h - 6, 0.16f, 0.24f, 0.36f);
+                    } else {
+                        draw_rect(x, y, card_w, card_h, 0.12f, 0.17f, 0.26f);
+                        draw_rect(x + 3, y + 3, card_w - 6, card_h - 6, 0.10f, 0.14f, 0.21f);
+                    }
+                }
+                const int close_y = panel_y + card_h + 52;
+                const bool close_selected = (gui_menu.selected() == 3);
+                if (close_selected) {
+                    draw_rect(panel_x + 18, close_y, panel_w - 36, 64, 0.20f, 0.28f, 0.40f);
+                    draw_rect(panel_x + 22, close_y + 4, panel_w - 44, 56, 0.15f, 0.22f, 0.32f);
+                } else {
+                    draw_rect(panel_x + 22, close_y + 6, panel_w - 44, 52, 0.11f, 0.15f, 0.22f);
+                }
+            } else {
+                const int row_count = gui_menu.count();
+                const int row_h = 64;
+                for (int i = 0; i < row_count; ++i) {
+                    const int row_y = panel_y + 24 + i * (row_h + 10);
+                    const bool selected = (i == gui_menu.selected());
+                    if (selected) {
+                        draw_rect(panel_x + 18, row_y, panel_w - 36, row_h, 0.20f, 0.28f, 0.40f);
+                        draw_rect(panel_x + 22, row_y + 4, panel_w - 44, row_h - 8, 0.15f, 0.22f, 0.32f);
+                    } else {
+                        draw_rect(panel_x + 22, row_y + 6, panel_w - 44, row_h - 12, 0.11f, 0.15f, 0.22f);
+                    }
+                }
+            }
+        }
+
+        glDisable(GL_SCISSOR_TEST);
 
         const std::string menu_text = gui_menu.open() ? gui_menu.build_text(devhud, noclip, multiplayer_hint) : std::string();
         if (menu_text != ui_text_cache) {
@@ -938,10 +1012,10 @@ struct AndroidRenderer {
                     width,
                     height,
                     36.0f,
-                    96.0f,
-                    3.8f,
+                    100.0f,
+                    3.6f,
                     glm::vec3(0.93f, 0.95f, 0.99f),
-                    1.35f);
+                    1.25f);
                 ui_text_gpu = upload_mesh(ui_text_mesh);
             }
             ui_text_cache = menu_text;
@@ -1057,28 +1131,51 @@ struct AndroidRenderer {
                 return 1;
             }
             if (gui_menu.open()) {
-                const int panel_x = 24;
-                const int panel_y = 96;
-                const int panel_w = std::min(420, width - 48);
-                const int panel_h = std::min(440, height - 120);
-                const int row_h = 56;
-                const int row_gap = 8;
-                const int row_start_y = panel_y + 24;
-                const int row_count = gui_menu.count();
+                const int panel_x = 20;
+                const int panel_y = 88;
+                const int panel_w = std::min(560, width - 40);
+                const int panel_h = std::min(640, height - 120);
                 const bool inside_panel =
                     (x >= static_cast<float>(panel_x) && x <= static_cast<float>(panel_x + panel_w) &&
                      y >= static_cast<float>(panel_y) && y <= static_cast<float>(panel_y + panel_h));
                 if (inside_panel) {
-                    const float local_y = y - static_cast<float>(row_start_y);
-                    if (local_y >= 0.0f) {
-                        const float row_span = static_cast<float>(row_h + row_gap);
-                        const int tapped_row = static_cast<int>(local_y / row_span);
-                        if (tapped_row >= 0 && tapped_row < row_count) {
-                            const float in_row_y = local_y - static_cast<float>(tapped_row) * row_span;
-                            if (in_row_y <= static_cast<float>(row_h)) {
-                                gui_menu.set_selected(tapped_row);
+                    if (gui_menu.page_id() == GuiMenu::Page::Main) {
+                        const int cards = 3;
+                        const int gap = 12;
+                        const int card_w = (panel_w - 36 - (cards - 1) * gap) / cards;
+                        const int card_h = std::min(170, panel_h / 3);
+                        for (int i = 0; i < cards; ++i) {
+                            const int cx = panel_x + 18 + i * (card_w + gap);
+                            const int cy = panel_y + 24;
+                            if (x >= cx && x <= cx + card_w && y >= cy && y <= cy + card_h) {
+                                gui_menu.set_selected(i);
                                 pending_menu_select = true;
                                 return 1;
+                            }
+                        }
+                        const int close_y = panel_y + card_h + 52;
+                        if (x >= panel_x + 18 && x <= panel_x + panel_w - 18 &&
+                            y >= close_y && y <= close_y + 64) {
+                            gui_menu.set_selected(3);
+                            pending_menu_select = true;
+                            return 1;
+                        }
+                    } else {
+                        const int row_h = 64;
+                        const int row_gap = 10;
+                        const int row_start_y = panel_y + 24;
+                        const int row_count = gui_menu.count();
+                        const float local_y = y - static_cast<float>(row_start_y);
+                        if (local_y >= 0.0f) {
+                            const float row_span = static_cast<float>(row_h + row_gap);
+                            const int tapped_row = static_cast<int>(local_y / row_span);
+                            if (tapped_row >= 0 && tapped_row < row_count) {
+                                const float in_row_y = local_y - static_cast<float>(tapped_row) * row_span;
+                                if (in_row_y <= static_cast<float>(row_h)) {
+                                    gui_menu.set_selected(tapped_row);
+                                    pending_menu_select = true;
+                                    return 1;
+                                }
                             }
                         }
                     }

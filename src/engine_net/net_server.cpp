@@ -128,7 +128,7 @@ void NetServer::pump() {
             state.player_id = next_player_id++;
             state.state.player_id = state.player_id;
             state.state.x = 8.0f + static_cast<float>((state.player_id % 3) * 2);
-            state.state.y = 8.0f;
+            state.state.y = 6.05f;
             state.state.z = 8.0f;
             if (local_only) {
                 char ip_buffer[64]{};

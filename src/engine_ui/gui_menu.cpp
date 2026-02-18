@@ -52,10 +52,16 @@ void GuiMenu::handle_input(const InputState &input, bool devhud_enabled, bool no
         }
     }
 
-    if (!input.menu_select_pressed) {
-        return;
+    if (input.menu_select_pressed) {
+        out_actions.ui_select_sfx = true;
+        activate_index(selected_item, devhud_enabled, noclip_enabled, out_actions);
     }
-    out_actions.ui_select_sfx = true;
+}
+
+void GuiMenu::activate_index(int index, bool devhud_enabled, bool noclip_enabled, GuiMenuActions &out_actions) {
+    (void)devhud_enabled;
+    (void)noclip_enabled;
+    set_selected(index);
 
     if (page == MenuPage::Main) {
         switch (selected_item) {
@@ -145,6 +151,16 @@ void GuiMenu::handle_input(const InputState &input, bool devhud_enabled, bool no
 
 bool GuiMenu::open() const {
     return is_open;
+}
+
+GuiMenu::Page GuiMenu::page_id() const {
+    switch (page) {
+    case MenuPage::Main: return Page::Main;
+    case MenuPage::Multiplayer: return Page::Multiplayer;
+    case MenuPage::Settings: return Page::Settings;
+    case MenuPage::MultiplayerGuide: return Page::MultiplayerGuide;
+    default: return Page::Main;
+    }
 }
 
 int GuiMenu::selected() const {

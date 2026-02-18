@@ -1,4 +1,5 @@
 #include "engine_world/voxel_chunk.hpp"
+#include "engine_world/physics/voxel_collision.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 
 #include <android/input.h>
@@ -159,7 +160,12 @@ struct AndroidRenderer {
     RenderMesh terrain_mesh{};
     RenderMesh grid_mesh{};
     RenderMesh capsule_mesh{};
-    glm::vec3 player_feet_position = glm::vec3(4.5f, 6.0f, 5.5f);
+    VoxelCollisionWorld collision_world{nullptr};
+    glm::vec3 player_feet_position = glm::vec3(8.5f, 6.0f, 8.5f);
+    float player_vertical_velocity = 0.0f;
+    bool player_grounded = false;
+    float player_capsule_radius = 0.45f;
+    float player_capsule_height = 1.8f;
 
     glm::vec3 cam_pos = glm::vec3(8.0f, 8.0f, 22.0f);
     float camera_distance = 5.0f;
@@ -357,12 +363,20 @@ struct AndroidRenderer {
         u_mvp = glGetUniformLocation(program, "uMVP");
 
         world.generate_heightmap_terrain();
+        collision_world = VoxelCollisionWorld(&world);
+        player_feet_position.y = collision_world.find_spawn_height(
+            glm::vec2(player_feet_position.x, player_feet_position.z),
+            player_capsule_radius,
+            player_capsule_height) +
+            0.05f;
+        player_vertical_velocity = 0.0f;
+        player_grounded = false;
         terrain_mesh = world.build_naive_mesh();
         grid_mesh = world.build_debug_grid(64.0f, 1.0f);
         capsule_mesh = build_debug_capsule_mesh(
             player_feet_position,
-            0.45f,
-            1.8f,
+            player_capsule_radius,
+            player_capsule_height,
             glm::vec3(0.95f, 0.5f, 0.2f));
         terrain_gpu = upload_mesh(terrain_mesh);
         grid_gpu = upload_mesh(grid_mesh);
@@ -424,7 +438,28 @@ struct AndroidRenderer {
         const glm::vec3 forward_flat = glm::normalize(glm::vec3(std::sin(cam_yaw), 0.0f, -std::cos(cam_yaw)));
         const glm::vec3 right_flat = glm::normalize(glm::cross(forward_flat, glm::vec3(0.0f, 1.0f, 0.0f)));
         const float speed = 8.0f;
-        player_feet_position += (forward_flat * touch.left_value.y + right_flat * touch.left_value.x) * speed * static_cast<float>(dt_seconds);
+        const glm::vec3 move_delta = (forward_flat * touch.left_value.y + right_flat * touch.left_value.x) * speed * static_cast<float>(dt_seconds);
+
+        if (!player_grounded) {
+            player_vertical_velocity += -24.0f * static_cast<float>(dt_seconds);
+        }
+
+        glm::vec3 next_position = player_feet_position;
+        next_position += move_delta;
+        next_position.y += player_vertical_velocity * static_cast<float>(dt_seconds);
+
+        const CapsuleResolveResult resolve = collision_world.resolve_capsule(
+            next_position,
+            player_capsule_radius,
+            player_capsule_height,
+            0.02f,
+            8,
+            1.2f);
+        player_feet_position = resolve.position;
+        player_grounded = resolve.grounded;
+        if (player_grounded && player_vertical_velocity < 0.0f) {
+            player_vertical_velocity = 0.0f;
+        }
 
         const glm::vec3 pivot = player_feet_position + glm::vec3(0.0f, camera_pivot_height, 0.0f);
         const glm::vec3 orbit_forward = glm::normalize(glm::vec3(
@@ -435,8 +470,8 @@ struct AndroidRenderer {
 
         capsule_mesh = build_debug_capsule_mesh(
             player_feet_position,
-            0.45f,
-            1.8f,
+            player_capsule_radius,
+            player_capsule_height,
             glm::vec3(0.95f, 0.5f, 0.2f));
         destroy_mesh(capsule_gpu);
         capsule_gpu = upload_mesh(capsule_mesh);

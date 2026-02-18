@@ -1,6 +1,8 @@
 #include "engine_world/voxel_chunk.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
+#include "engine_ui/gui_menu.hpp"
+#include "engine_input/input_state.hpp"
 
 #include <android/input.h>
 #include <android/log.h>
@@ -173,6 +175,15 @@ struct AndroidRenderer {
     float cam_yaw = 3.14159f;
     float cam_pitch = -0.25f;
     TouchState touch{};
+    GuiMenu gui_menu{};
+    bool menu_open_prev = false;
+    bool devhud = false;
+    bool noclip = false;
+    bool gameplay_started = false;
+    bool pending_menu_toggle = false;
+    bool pending_menu_up = false;
+    bool pending_menu_down = false;
+    bool pending_menu_select = false;
 
     timespec last_time{};
     bool has_last_time = false;
@@ -428,8 +439,73 @@ struct AndroidRenderer {
         frame_counter = 0;
     }
 
+    void process_gui_actions() {
+        InputState menu_input{};
+        menu_input.menu_toggle_pressed = pending_menu_toggle;
+        menu_input.menu_up_pressed = pending_menu_up;
+        menu_input.menu_down_pressed = pending_menu_down;
+        menu_input.menu_select_pressed = pending_menu_select;
+        pending_menu_toggle = false;
+        pending_menu_up = false;
+        pending_menu_down = false;
+        pending_menu_select = false;
+
+        GuiMenuActions actions{};
+        gui_menu.handle_input(menu_input, devhud, noclip, actions);
+        if (actions.toggle_devhud) {
+            devhud = !devhud;
+        }
+        if (actions.toggle_noclip) {
+            noclip = !noclip;
+        }
+        if (actions.start_game) {
+            gameplay_started = true;
+        }
+        if (actions.host_local) {
+            gameplay_started = true;
+            __android_log_print(ANDROID_LOG_INFO, kLogTag, "GUI host local requested (network path not yet wired on Android target)");
+        }
+        if (actions.join_local) {
+            gameplay_started = true;
+            __android_log_print(ANDROID_LOG_INFO, kLogTag, "GUI join localhost requested (network path not yet wired on Android target)");
+        }
+        if (actions.reset_camera) {
+            cam_yaw = 3.14159f;
+            cam_pitch = -0.25f;
+            camera_distance = 5.0f;
+        }
+
+        const bool menu_open = gui_menu.open();
+        const bool menu_changed = (menu_open != menu_open_prev) ||
+                                  menu_input.menu_toggle_pressed ||
+                                  menu_input.menu_up_pressed ||
+                                  menu_input.menu_down_pressed ||
+                                  menu_input.menu_select_pressed;
+        if (menu_changed) {
+            const std::string menu_text = gui_menu.build_text(devhud, noclip);
+            __android_log_print(
+                ANDROID_LOG_INFO,
+                kLogTag,
+                "GUI state: open=%d devhud=%d noclip=%d menu=\"%s\"",
+                menu_open ? 1 : 0,
+                devhud ? 1 : 0,
+                noclip ? 1 : 0,
+                menu_text.c_str());
+        }
+        menu_open_prev = menu_open;
+    }
+
     void update_player_and_camera(double dt_seconds) {
+        if (!gameplay_started) {
+            touch.left_value = glm::vec2(0.0f);
+            touch.look_delta = glm::vec2(0.0f);
+            return;
+        }
         const float look_scale = 0.0035f;
+        if (gui_menu.open()) {
+            touch.left_value = glm::vec2(0.0f);
+            touch.look_delta = glm::vec2(0.0f);
+        }
         cam_yaw += touch.look_delta.x * look_scale;
         cam_pitch += touch.look_delta.y * look_scale;
         cam_pitch = std::clamp(cam_pitch, -1.2f, 1.2f);
@@ -440,25 +516,31 @@ struct AndroidRenderer {
         const float speed = 8.0f;
         const glm::vec3 move_delta = (forward_flat * touch.left_value.y + right_flat * touch.left_value.x) * speed * static_cast<float>(dt_seconds);
 
-        if (!player_grounded) {
-            player_vertical_velocity += -24.0f * static_cast<float>(dt_seconds);
-        }
-
-        glm::vec3 next_position = player_feet_position;
-        next_position += move_delta;
-        next_position.y += player_vertical_velocity * static_cast<float>(dt_seconds);
-
-        const CapsuleResolveResult resolve = collision_world.resolve_capsule(
-            next_position,
-            player_capsule_radius,
-            player_capsule_height,
-            0.02f,
-            8,
-            1.2f);
-        player_feet_position = resolve.position;
-        player_grounded = resolve.grounded;
-        if (player_grounded && player_vertical_velocity < 0.0f) {
+        if (noclip) {
+            player_feet_position += move_delta;
             player_vertical_velocity = 0.0f;
+            player_grounded = false;
+        } else {
+            if (!player_grounded) {
+                player_vertical_velocity += -24.0f * static_cast<float>(dt_seconds);
+            }
+
+            glm::vec3 next_position = player_feet_position;
+            next_position += move_delta;
+            next_position.y += player_vertical_velocity * static_cast<float>(dt_seconds);
+
+            const CapsuleResolveResult resolve = collision_world.resolve_capsule(
+                next_position,
+                player_capsule_radius,
+                player_capsule_height,
+                0.02f,
+                8,
+                1.2f);
+            player_feet_position = resolve.position;
+            player_grounded = resolve.grounded;
+            if (player_grounded && player_vertical_velocity < 0.0f) {
+                player_vertical_velocity = 0.0f;
+            }
         }
 
         const glm::vec3 pivot = player_feet_position + glm::vec3(0.0f, camera_pivot_height, 0.0f);
@@ -488,6 +570,62 @@ struct AndroidRenderer {
         glDisableVertexAttribArray(1);
     }
 
+    void draw_ui_overlay() {
+        if (width <= 0 || height <= 0) {
+            return;
+        }
+
+        auto draw_rect = [&](int x, int y_top, int w, int h, float r, float g, float b) {
+            if (w <= 0 || h <= 0) {
+                return;
+            }
+            const int sx = std::clamp(x, 0, width - 1);
+            const int ex = std::clamp(x + w, 0, width);
+            const int y_bottom = height - (y_top + h);
+            const int sy = std::clamp(y_bottom, 0, height - 1);
+            const int ey = std::clamp(y_bottom + h, 0, height);
+            const int sw = ex - sx;
+            const int sh = ey - sy;
+            if (sw <= 0 || sh <= 0) {
+                return;
+            }
+            glScissor(sx, sy, sw, sh);
+            glClearColor(r, g, b, 1.0f);
+            glClear(GL_COLOR_BUFFER_BIT);
+        };
+
+        glDisable(GL_DEPTH_TEST);
+        glEnable(GL_SCISSOR_TEST);
+
+        draw_rect(18, 18, 120, 64, 0.18f, 0.24f, 0.32f);
+        draw_rect(22, 22, 112, 56, 0.12f, 0.17f, 0.24f);
+
+        if (gui_menu.open()) {
+            const int panel_x = 24;
+            const int panel_y = 96;
+            const int panel_w = std::min(420, width - 48);
+            const int panel_h = std::min(440, height - 120);
+            draw_rect(panel_x, panel_y, panel_w, panel_h, 0.06f, 0.08f, 0.12f);
+            draw_rect(panel_x + 4, panel_y + 4, panel_w - 8, panel_h - 8, 0.09f, 0.11f, 0.16f);
+
+            const int row_count = gui_menu.count();
+            const int row_h = 56;
+            for (int i = 0; i < row_count; ++i) {
+                const int row_y = panel_y + 24 + i * (row_h + 8);
+                const bool selected = (i == gui_menu.selected());
+                if (selected) {
+                    draw_rect(panel_x + 16, row_y, panel_w - 32, row_h, 0.20f, 0.28f, 0.40f);
+                    draw_rect(panel_x + 20, row_y + 4, panel_w - 40, row_h - 8, 0.15f, 0.22f, 0.32f);
+                } else {
+                    draw_rect(panel_x + 20, row_y + 6, panel_w - 40, row_h - 12, 0.11f, 0.15f, 0.22f);
+                }
+            }
+        }
+
+        glDisable(GL_SCISSOR_TEST);
+        glEnable(GL_DEPTH_TEST);
+    }
+
     void render_frame() {
         if (!can_render()) {
             return;
@@ -504,10 +642,15 @@ struct AndroidRenderer {
         last_time = now;
         has_last_time = true;
 
+        process_gui_actions();
         update_player_and_camera(dt_seconds);
 
         glViewport(0, 0, width, height);
-        glClearColor(0.08f, 0.1f, 0.14f, 1.0f);
+        if (gui_menu.open()) {
+            glClearColor(0.06f, 0.07f, 0.1f, 1.0f);
+        } else {
+            glClearColor(0.08f, 0.1f, 0.14f, 1.0f);
+        }
         glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
         const float aspect = (height > 0) ? static_cast<float>(width) / static_cast<float>(height) : 1.0f;
@@ -520,6 +663,7 @@ struct AndroidRenderer {
         draw_mesh(grid_gpu, mvp);
         const glm::mat4 capsule_model = glm::translate(glm::mat4(1.0f), player_feet_position);
         draw_mesh(capsule_gpu, mvp * capsule_model);
+        draw_ui_overlay();
 
         if (eglSwapBuffers(display, surface) == EGL_FALSE) {
             __android_log_print(ANDROID_LOG_ERROR, kLogTag, "eglSwapBuffers failed: %s", egl_error_to_string(eglGetError()));
@@ -579,6 +723,22 @@ struct AndroidRenderer {
             const int32_t pointer_id = AMotionEvent_getPointerId(event, action_index);
             const float x = AMotionEvent_getX(event, action_index);
             const float y = AMotionEvent_getY(event, action_index);
+            if (x <= 140.0f && y <= 140.0f) {
+                pending_menu_toggle = true;
+                return 1;
+            }
+            if (gui_menu.open()) {
+                if (x < static_cast<float>(width) * 0.5f) {
+                    if (y < static_cast<float>(height) * 0.5f) {
+                        pending_menu_up = true;
+                    } else {
+                        pending_menu_down = true;
+                    }
+                } else {
+                    pending_menu_select = true;
+                }
+                return 1;
+            }
             assign_pointer(pointer_id, x, y);
         }
 

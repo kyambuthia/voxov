@@ -36,6 +36,7 @@ if(ANDROID)
         src/game/android_main.cpp
         src/platform/android_platform.cpp
         src/platform/android/input_android.cpp
+        src/engine_ui/gui_menu.cpp
         src/engine_render/debug_draw/debug_draw.cpp
         src/engine_world/voxel_chunk.cpp
         src/engine_world/physics/voxel_collision.cpp
@@ -72,6 +73,7 @@ if(EMSCRIPTEN)
     add_executable(voxov_web
         src/game/web_main.cpp
         src/platform/web_platform.cpp
+        src/engine_ui/gui_menu.cpp
     )
     target_include_directories(voxov_web PRIVATE src)
     target_compile_definitions(voxov_web PRIVATE VOXOV_PLATFORM_WEB=1)

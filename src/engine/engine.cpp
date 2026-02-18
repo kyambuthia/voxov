@@ -75,6 +75,14 @@ void Engine::connect(const char *host, uint16_t port) {
     net_client.set_chunk_interest(interest);
 }
 
+void Engine::start_local_server(uint16_t port) {
+    if (!local_server_running) {
+        local_server.init(port);
+        local_server_running = true;
+        spdlog::info("Started local server on {}", port);
+    }
+}
+
 void Engine::set_input(const InputState &input_primary, const InputState &input_secondary, bool touch_mode) {
     input_state = input_primary;
     input_state_secondary = input_secondary;
@@ -82,6 +90,10 @@ void Engine::set_input(const InputState &input_primary, const InputState &input_
 }
 
 void Engine::shutdown() {
+    if (local_server_running) {
+        local_server.shutdown();
+        local_server_running = false;
+    }
     renderer.shutdown();
     net_client.disconnect();
     net_client.shutdown();
@@ -138,6 +150,18 @@ void Engine::tick(double frame_dt) {
 
     GuiMenuActions menu_actions{};
     gui_menu.handle_input(input_state, runtime_options.devhud, runtime_options.noclip, menu_actions);
+    if (menu_actions.start_game) {
+        gameplay_started = true;
+    }
+    if (menu_actions.host_local) {
+        gameplay_started = true;
+        start_local_server(7777);
+        connect("127.0.0.1", 7777);
+    }
+    if (menu_actions.join_local) {
+        gameplay_started = true;
+        connect("127.0.0.1", 7777);
+    }
     if (menu_actions.toggle_devhud) {
         runtime_options.devhud = !runtime_options.devhud;
     }
@@ -158,7 +182,6 @@ void Engine::tick(double frame_dt) {
         gameplay_input.jump_held = false;
         gameplay_input.sprint_held = false;
     }
-
     InputState gameplay_input_secondary = input_state_secondary;
     if (gui_menu.open()) {
         gameplay_input_secondary.move = glm::vec2(0.0f);
@@ -166,6 +189,14 @@ void Engine::tick(double frame_dt) {
         gameplay_input_secondary.jump_pressed = false;
         gameplay_input_secondary.jump_held = false;
         gameplay_input_secondary.sprint_held = false;
+    }
+    if (!gameplay_started) {
+        gameplay_input.move = glm::vec2(0.0f);
+        gameplay_input.look_delta = glm::vec2(0.0f);
+        gameplay_input.jump_pressed = false;
+        gameplay_input.jump_held = false;
+        gameplay_input.sprint_held = false;
+        gameplay_input_secondary = gameplay_input;
     }
 
     PlayerControllerSystem::update_camera_rig(local_player, gameplay_input, touch_input_mode, static_cast<float>(frame_dt));
@@ -177,6 +208,9 @@ void Engine::tick(double frame_dt) {
     bool jump_consumed = false;
 
     while (fixed.accumulator >= fixed.fixed_dt) {
+        if (local_server_running) {
+            local_server.pump();
+        }
         local_player_prev_position = local_player.transform.position;
         InputState step_input = gameplay_input;
         if (jump_consumed) {

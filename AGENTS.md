@@ -186,6 +186,17 @@ endif()
 3. **Performance**: Profile with Release builds, use Debug for development
 4. **Dependencies**: Update submodules when SDL3 or other dependencies change
 
+## Release Artifact Runtime Tenet (Strict)
+
+Agents must never ship release artifacts that are not runnable on a clean target machine.
+
+1. **Bundle, don't bare-binary**: Do not publish only `voxov` or `voxov.exe`. Publish a runnable bundle (directory/tar/zip) containing executable + required runtime files.
+2. **Windows runtime completeness**: Windows artifacts must include required runtime DLLs (at minimum toolchain/runtime DLLs and any engine-loaded files like shaders).
+3. **Linux runtime completeness**: Linux artifacts must include non-system runtime `.so` dependencies and engine-loaded runtime files (for example shader `.spv` files) or provide an explicit launcher with correct library path setup.
+4. **No release without runtime validation**: Before tagging/publishing, validate startup from the packaged artifact form (not from build tree). If startup validation fails, release is blocked.
+5. **CI policy**: Release workflows must package runnable artifacts and must not mark a release successful if platform artifacts are known non-runnable.
+6. **Scope discipline**: If asked to fix one platform (for example Windows packaging), do not alter unrelated platform release flows unless explicitly requested.
+
 ## Vulkan and SDL3 Guidelines
 
 - Always check VkResult return values

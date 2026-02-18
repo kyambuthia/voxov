@@ -374,7 +374,7 @@ struct AndroidRenderer {
         terrain_mesh = world.build_naive_mesh();
         grid_mesh = world.build_debug_grid(64.0f, 1.0f);
         capsule_mesh = build_debug_capsule_mesh(
-            player_feet_position,
+            glm::vec3(0.0f),
             player_capsule_radius,
             player_capsule_height,
             glm::vec3(0.95f, 0.5f, 0.2f));
@@ -467,14 +467,6 @@ struct AndroidRenderer {
             std::sin(cam_pitch),
             -std::cos(cam_pitch) * std::cos(cam_yaw)));
         cam_pos = pivot - orbit_forward * camera_distance;
-
-        capsule_mesh = build_debug_capsule_mesh(
-            player_feet_position,
-            player_capsule_radius,
-            player_capsule_height,
-            glm::vec3(0.95f, 0.5f, 0.2f));
-        destroy_mesh(capsule_gpu);
-        capsule_gpu = upload_mesh(capsule_mesh);
     }
 
     void draw_mesh(const GpuMesh &mesh, const glm::mat4 &mvp) {
@@ -526,7 +518,8 @@ struct AndroidRenderer {
 
         draw_mesh(terrain_gpu, mvp);
         draw_mesh(grid_gpu, mvp);
-        draw_mesh(capsule_gpu, mvp);
+        const glm::mat4 capsule_model = glm::translate(glm::mat4(1.0f), player_feet_position);
+        draw_mesh(capsule_gpu, mvp * capsule_model);
 
         if (eglSwapBuffers(display, surface) == EGL_FALSE) {
             __android_log_print(ANDROID_LOG_ERROR, kLogTag, "eglSwapBuffers failed: %s", egl_error_to_string(eglGetError()));

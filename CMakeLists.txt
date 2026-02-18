@@ -256,6 +256,13 @@ endif()
 
 # Shader compilation for game
 if(VOXOV_ENABLE_VULKAN)
+    set(VOXOV_GAME_SHADER_OUTPUTS
+        ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
+        ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv
+        ${CMAKE_CURRENT_BINARY_DIR}/stylized_lighting.frag.spv
+        ${CMAKE_CURRENT_BINARY_DIR}/palette_dither.frag.spv
+        ${CMAKE_CURRENT_BINARY_DIR}/fullscreen.vert.spv
+    )
     add_custom_command(
         OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
         COMMAND ${VOXOV_SHADER_COMPILER} ${VOXOV_SHADER_COMPILER_ARGS} ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.vert -o ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
@@ -288,11 +295,7 @@ if(VOXOV_ENABLE_VULKAN)
     )
     add_custom_target(game_shaders ALL
         DEPENDS
-        ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
-        ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv
-        ${CMAKE_CURRENT_BINARY_DIR}/stylized_lighting.frag.spv
-        ${CMAKE_CURRENT_BINARY_DIR}/palette_dither.frag.spv
-        ${CMAKE_CURRENT_BINARY_DIR}/fullscreen.vert.spv
+        ${VOXOV_GAME_SHADER_OUTPUTS}
     )
     add_dependencies(voxov game_shaders)
 endif()
@@ -345,6 +348,12 @@ install(TARGETS voxov
 
 if(MINGW AND VOXOV_MINGW_RUNTIME_DLLS)
     install(FILES ${VOXOV_MINGW_RUNTIME_DLLS}
+        DESTINATION bin
+    )
+endif()
+
+if(VOXOV_ENABLE_VULKAN)
+    install(FILES ${VOXOV_GAME_SHADER_OUTPUTS}
         DESTINATION bin
     )
 endif()

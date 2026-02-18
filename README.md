@@ -1,25 +1,26 @@
 ## Install (Start Here)
 
 ### Windows
-## 👉 Download: https://github.com/kyambuthia/voxov/releases/tag/0.0.20
-- From release assets, download: `VOXOV-0.0.20-windows-x86_64.zip`
+## 👉 Download: https://github.com/kyambuthia/voxov/releases/tag/0.0.26
+- From release assets, download: `VOXOV-0.0.26-windows-x86_64.zip`
 - Extract the archive.
 - Launch `voxov.exe`.
 
 ### Android
-## 👉 Download: https://github.com/kyambuthia/voxov/releases/tag/0.0.20
-- From release assets, download: `VOXOV-0.0.20-android-arm64-v8a.apk`
+## 👉 Download: https://github.com/kyambuthia/voxov/releases/tag/0.0.26
+- From release assets, download: `VOXOV-0.0.26-android-arm64-v8a.apk`
 - Open the APK on your device and allow installation from unknown sources if prompted.
 - Launch `VOXOV`.
 
 ### Linux
-## 👉 Download: https://github.com/kyambuthia/voxov/releases/tag/0.0.20
-- From release assets, download: `VOXOV-0.0.20-linux-x86_64`
+## 👉 Download: https://github.com/kyambuthia/voxov/releases/tag/0.0.26
+- From release assets, download: `VOXOV-0.0.26-linux-x86_64.tar.gz`
 - Run:
 
 ```bash
-chmod +x VOXOV-0.0.20-linux-x86_64
-./VOXOV-0.0.20-linux-x86_64
+tar -xzf VOXOV-0.0.26-linux-x86_64.tar.gz
+cd VOXOV-0.0.26-linux-x86_64
+./run.sh
 ```
 
 ## About VOXOV

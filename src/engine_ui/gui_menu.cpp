@@ -159,12 +159,18 @@ void GuiMenu::activate_index(int index, bool devhud_enabled, bool noclip_enabled
         switch (selected_item) {
         case 0:
             selected_character = Character::Fox;
+            page = MenuPage::Main;
+            selected_item = 0;
             break;
         case 1:
             selected_character = Character::Humanoid;
+            page = MenuPage::Main;
+            selected_item = 0;
             break;
         case 2:
             selected_character = Character::Capsule;
+            page = MenuPage::Main;
+            selected_item = 0;
             break;
         case 3:
             page = MenuPage::Main;

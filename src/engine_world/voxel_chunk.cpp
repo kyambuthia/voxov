@@ -47,12 +47,24 @@ size_t VoxelChunk::index(int x, int y, int z) const {
 
 void VoxelChunk::generate_heightmap_terrain() {
     voxels.fill(0);
+    constexpr float flat_height = 6.0f;
+    constexpr float inner = 3.8f;
+    constexpr float outer = 6.2f;
+    const float cx = static_cast<float>(CHUNK_X - 1) * 0.5f;
+    const float cz = static_cast<float>(CHUNK_Z - 1) * 0.5f;
 
     for (int z = 0; z < CHUNK_Z; ++z) {
         for (int x = 0; x < CHUNK_X; ++x) {
             float sx = static_cast<float>(x) / static_cast<float>(CHUNK_X);
             float sz = static_cast<float>(z) / static_cast<float>(CHUNK_Z);
             float h = 5.0f + std::sin(sx * 6.28f) * 2.0f + std::cos(sz * 9.42f) * 1.5f;
+            const float dx = static_cast<float>(x) - cx;
+            const float dz = static_cast<float>(z) - cz;
+            const float ring_d = std::max(std::fabs(dx), std::fabs(dz));
+            if (ring_d <= outer) {
+                const float t = std::clamp((ring_d - inner) / std::max(0.001f, outer - inner), 0.0f, 1.0f);
+                h = flat_height + (h - flat_height) * t;
+            }
             int max_y = static_cast<int>(h);
             if (max_y < 1) {
                 max_y = 1;

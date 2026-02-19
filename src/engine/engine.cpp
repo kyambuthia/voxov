@@ -24,14 +24,14 @@ constexpr float k_vehicle_body_height = 0.65f;
 constexpr float k_vehicle_wheel_radius = 0.32f;
 constexpr float k_vehicle_interact_radius = 2.1f;
 
-std::vector<std::string> candidate_model_paths(const char *model_filename) {
+std::vector<std::string> candidate_model_paths(const char *subdir, const char *model_filename) {
     namespace fs = std::filesystem;
     std::vector<std::string> out;
     out.reserve(8);
-    if (!model_filename || *model_filename == '\0') {
+    if (!subdir || *subdir == '\0' || !model_filename || *model_filename == '\0') {
         return out;
     }
-    const std::string rel = std::string("assets/models/player/") + model_filename;
+    const std::string rel = std::string("assets/models/") + subdir + "/" + model_filename;
 
     // Search from current working directory and a few parent levels so
     // desktop launches from build trees can still resolve repo assets.
@@ -95,6 +95,38 @@ glm::quat facing_from_velocity(glm::vec3 velocity, const glm::quat &fallback) {
     }
     const float yaw = std::atan2(velocity.x, velocity.z);
     return glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+}
+
+RenderMesh build_wireframe_from_mesh(const RenderMesh &mesh, float thickness, const glm::vec3 &color) {
+    RenderMesh out{};
+    if (mesh.indices.size() < 3 || mesh.vertices.empty()) {
+        return out;
+    }
+
+    std::unordered_set<uint64_t> edges;
+    edges.reserve(mesh.indices.size());
+    auto add_edge = [&](uint32_t a, uint32_t b) {
+        const uint32_t lo = std::min(a, b);
+        const uint32_t hi = std::max(a, b);
+        const uint64_t key = (static_cast<uint64_t>(lo) << 32u) | static_cast<uint64_t>(hi);
+        if (!edges.insert(key).second) {
+            return;
+        }
+        if (lo >= mesh.vertices.size() || hi >= mesh.vertices.size()) {
+            return;
+        }
+        append_mesh(out, build_debug_line_mesh(mesh.vertices[lo].position, mesh.vertices[hi].position, thickness, color));
+    };
+
+    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
+        const uint32_t a = mesh.indices[i + 0];
+        const uint32_t b = mesh.indices[i + 1];
+        const uint32_t c = mesh.indices[i + 2];
+        add_edge(a, b);
+        add_edge(b, c);
+        add_edge(c, a);
+    }
+    return out;
 }
 
 AnimatedCapsuleShape animated_shape(
@@ -181,7 +213,7 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
 
     {
         std::string fox_error;
-        for (const std::string &path : candidate_model_paths("Fox.glb")) {
+        for (const std::string &path : candidate_model_paths("player", "Fox.glb")) {
             if (fox_player_model.load_from_glb(path, fox_error)) {
                 has_fox_player_model = true;
                 spdlog::info("Loaded fox player model from {}", path);
@@ -193,7 +225,7 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
         }
 
         std::string humanoid_error;
-        for (const std::string &path : candidate_model_paths("CesiumMan.glb")) {
+        for (const std::string &path : candidate_model_paths("player", "CesiumMan.glb")) {
             if (humanoid_player_model.load_from_glb(path, humanoid_error)) {
                 has_humanoid_player_model = true;
                 spdlog::info("Loaded humanoid player model from {}", path);
@@ -356,6 +388,9 @@ void Engine::tick(double frame_dt) {
     if (menu_actions.start_game) {
         gameplay_started = true;
     }
+    if (menu_actions.close_menu && !gameplay_started) {
+        gameplay_started = true;
+    }
     if (menu_actions.host_local) {
         gameplay_started = true;
         start_local_server(7777, true);
@@ -423,7 +458,6 @@ void Engine::tick(double frame_dt) {
     }
     if (!gameplay_started) {
         gameplay_input.move = glm::vec2(0.0f);
-        gameplay_input.look_delta = glm::vec2(0.0f);
         gameplay_input.jump_pressed = false;
         gameplay_input.jump_held = false;
         gameplay_input.sprint_held = false;
@@ -811,6 +845,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
         selected_player_model = &humanoid_player_model;
     }
     const bool render_skinned_avatar = selected_player_model != nullptr;
+    const bool render_fox_wireframe = gui_menu.character() == GuiMenu::Character::Fox;
 
     const AnimatedCapsuleShape local_shape = animated_shape(
         static_cast<uint8_t>(local_player.anim_state),
@@ -919,7 +954,11 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
                 local_player.transform.rotation,
                 player_color_from_id(local_player.network_id));
-            append_mesh(scene.debug_world, local_model);
+            if (render_fox_wireframe) {
+                append_mesh(scene.debug_world, build_wireframe_from_mesh(local_model, 0.01f, glm::vec3(0.9f, 0.95f, 1.0f)));
+            } else {
+                append_mesh(scene.debug_world, local_model);
+            }
         }
         if (render_skinned_avatar && (collision_debug_enabled || runtime_options.devhud)) {
             const SkeletonPose local_pose = SkeletalAnimator::sample_pose(
@@ -966,7 +1005,11 @@ void Engine::rebuild_dynamic_debug_mesh() {
                     local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
                     local_player_secondary.transform.rotation,
                     player_color_from_id(local_player_secondary.network_id));
-                append_mesh(scene.debug_world, p2_model);
+                if (render_fox_wireframe) {
+                    append_mesh(scene.debug_world, build_wireframe_from_mesh(p2_model, 0.009f, glm::vec3(0.86f, 0.92f, 1.0f)));
+                } else {
+                    append_mesh(scene.debug_world, p2_model);
+                }
             }
         }
     }
@@ -1030,7 +1073,11 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
                 render_player.orientation,
                 player_color_from_id(player_id) * glm::vec3(1.08f, 1.08f, 1.08f));
-            append_mesh(scene.debug_world, remote_model);
+            if (render_fox_wireframe) {
+                append_mesh(scene.debug_world, build_wireframe_from_mesh(remote_model, 0.008f, glm::vec3(0.82f, 0.9f, 1.0f)));
+            } else {
+                append_mesh(scene.debug_world, remote_model);
+            }
         }
     }
 }

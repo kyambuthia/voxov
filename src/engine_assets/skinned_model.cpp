@@ -172,9 +172,9 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
     if (force_z_up) {
         source_height = extent.z;
         model_axis_correction = glm::angleAxis(-1.57079632679f, glm::vec3(1.0f, 0.0f, 0.0f));
-        model_ground_lift = -bounds_min.z + 0.02f;
+        model_ground_lift = -bounds_min.z + 0.08f;
     } else {
-        model_ground_lift = -bounds_min.y + 0.02f;
+        model_ground_lift = -bounds_min.y + 0.08f;
     }
     constexpr float k_target_height = 1.7f;
     model_scale = k_target_height / source_height;

@@ -25,6 +25,7 @@
 #include <cctype>
 #include <cmath>
 #include <cstdint>
+#include <cstring>
 #include <ctime>
 #include <string>
 #include <unordered_map>
@@ -464,7 +465,9 @@ struct AndroidRenderer {
             return false;
         }
 
-        out_path = std::string(app->activity->internalDataPath) + "/Fox.glb";
+        const char *leaf = std::strrchr(asset_path, '/');
+        leaf = (leaf && *(leaf + 1) != '\0') ? (leaf + 1) : asset_path;
+        out_path = std::string(app->activity->internalDataPath) + "/" + leaf;
         std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
         if (!out.is_open()) {
             return false;
@@ -1016,6 +1019,9 @@ struct AndroidRenderer {
         if (actions.start_game) {
             gameplay_started = true;
         }
+        if (actions.close_menu && !gameplay_started) {
+            gameplay_started = true;
+        }
         if (actions.host_local) {
             gameplay_started = true;
             host_local_secure();
@@ -1061,7 +1067,6 @@ struct AndroidRenderer {
     void update_player_and_camera(double dt_seconds) {
         if (!gameplay_started) {
             touch.left_value = glm::vec2(0.0f);
-            touch.look_delta = glm::vec2(0.0f);
             touch.jump_pointer = -1;
             touch.sprint_pointer = -1;
             touch.crouch_pointer = -1;
@@ -1069,7 +1074,6 @@ struct AndroidRenderer {
             touch.jump_pressed = false;
             touch.sprint_held = false;
             touch.crouch_held = false;
-            return;
         }
         const float look_scale = 0.0035f;
         if (gui_menu.open()) {

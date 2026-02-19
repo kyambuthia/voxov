@@ -627,11 +627,13 @@ void Engine::rebuild_dynamic_debug_mesh() {
         if (runtime_options.debug_collision_only) {
             continue;
         }
-        const float grounded_y = collision_world.find_spawn_height(
-            glm::vec2(state.x, state.z),
-            local_player.controller.capsuleRadius,
-            local_player.controller.capsuleHeight) +
-            0.05f;
+        const float remote_y = std::isfinite(state.y)
+            ? state.y
+            : collision_world.find_spawn_height(
+                  glm::vec2(state.x, state.z),
+                  local_player.controller.capsuleRadius,
+                  local_player.controller.capsuleHeight) +
+                  0.05f;
         const AnimatedCapsuleShape remote_shape = animated_shape(
             state.anim_state,
             state.anim_phase,
@@ -640,7 +642,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
             local_player.controller.capsuleHeight,
             local_player.camera_rig.pivotHeight);
         RenderMesh remote_capsule = build_debug_capsule_mesh(
-            glm::vec3(state.x, grounded_y, state.z) + glm::vec3(0.0f, remote_shape.bob, 0.0f),
+            glm::vec3(state.x, remote_y, state.z) + glm::vec3(0.0f, remote_shape.bob, 0.0f),
             remote_shape.radius,
             remote_shape.height,
             player_color_from_id(player_id));

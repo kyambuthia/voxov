@@ -272,10 +272,17 @@ RenderMesh build_overlay_text_mesh(
 struct TouchState {
     int32_t left_pointer = -1;
     int32_t right_pointer = -1;
+    int32_t jump_pointer = -1;
+    int32_t sprint_pointer = -1;
+    int32_t crouch_pointer = -1;
     glm::vec2 left_origin = glm::vec2(0.0f);
     glm::vec2 left_value = glm::vec2(0.0f);
     glm::vec2 right_prev = glm::vec2(0.0f);
     glm::vec2 look_delta = glm::vec2(0.0f);
+    bool jump_held = false;
+    bool jump_pressed = false;
+    bool sprint_held = false;
+    bool crouch_held = false;
 };
 
 struct GpuMesh {
@@ -349,6 +356,36 @@ struct AndroidRenderer {
     timespec last_time{};
     bool has_last_time = false;
     uint64_t frame_counter = 0;
+
+    struct UiRect {
+        int x = 0;
+        int y = 0;
+        int w = 0;
+        int h = 0;
+    };
+
+    UiRect jump_button_rect() const {
+        const int w = std::max(84, std::min(136, width / 6));
+        const int h = std::max(54, std::min(88, height / 9));
+        return UiRect{width - w - 22, height - h - 26, w, h};
+    }
+
+    UiRect sprint_button_rect() const {
+        const UiRect jump = jump_button_rect();
+        return UiRect{jump.x - jump.w - 14, jump.y + 4, jump.w, jump.h};
+    }
+
+    UiRect crouch_button_rect() const {
+        const UiRect sprint = sprint_button_rect();
+        return UiRect{sprint.x, sprint.y - sprint.h - 12, sprint.w, sprint.h};
+    }
+
+    static bool rect_contains(const UiRect &r, float px, float py) {
+        return px >= static_cast<float>(r.x) &&
+               px <= static_cast<float>(r.x + r.w) &&
+               py >= static_cast<float>(r.y) &&
+               py <= static_cast<float>(r.y + r.h);
+    }
 
     void init_audio_if_needed() {
         if (audio_ready) {
@@ -507,13 +544,26 @@ struct AndroidRenderer {
         input.move_x = touch.left_value.x;
         input.move_y = touch.left_value.y;
         input.action_flags = 0;
+        if (touch.jump_held) {
+            input.action_flags |= net_flag(NetInputFlags::JumpHeld);
+        }
+        if (touch.jump_pressed) {
+            input.action_flags |= net_flag(NetInputFlags::JumpPressed);
+        }
+        if (touch.sprint_held) {
+            input.action_flags |= net_flag(NetInputFlags::SprintHeld);
+        }
+        if (touch.crouch_held) {
+            input.action_flags |= net_flag(NetInputFlags::CrouchHeld);
+        }
         net_client.send_input(input);
 
         NetSnapshot snapshot{};
         if (net_client.poll_snapshot(snapshot)) {
-            if (std::isfinite(snapshot.x) && std::isfinite(snapshot.z) &&
-                std::fabs(snapshot.x) < 100000.0f && std::fabs(snapshot.z) < 100000.0f) {
+            if (std::isfinite(snapshot.x) && std::isfinite(snapshot.y) && std::isfinite(snapshot.z) &&
+                std::fabs(snapshot.x) < 100000.0f && std::fabs(snapshot.y) < 100000.0f && std::fabs(snapshot.z) < 100000.0f) {
                 player_feet_position.x = snapshot.x;
+                player_feet_position.y = snapshot.y;
                 player_feet_position.z = snapshot.z;
             }
         }
@@ -852,12 +902,26 @@ struct AndroidRenderer {
         if (!gameplay_started) {
             touch.left_value = glm::vec2(0.0f);
             touch.look_delta = glm::vec2(0.0f);
+            touch.jump_pointer = -1;
+            touch.sprint_pointer = -1;
+            touch.crouch_pointer = -1;
+            touch.jump_held = false;
+            touch.jump_pressed = false;
+            touch.sprint_held = false;
+            touch.crouch_held = false;
             return;
         }
         const float look_scale = 0.0035f;
         if (gui_menu.open()) {
             touch.left_value = glm::vec2(0.0f);
             touch.look_delta = glm::vec2(0.0f);
+            touch.jump_pointer = -1;
+            touch.sprint_pointer = -1;
+            touch.crouch_pointer = -1;
+            touch.jump_held = false;
+            touch.jump_pressed = false;
+            touch.sprint_held = false;
+            touch.crouch_held = false;
         }
         cam_yaw += touch.look_delta.x * look_scale;
         cam_pitch += touch.look_delta.y * look_scale;
@@ -866,14 +930,26 @@ struct AndroidRenderer {
 
         const glm::vec3 forward_flat = glm::normalize(glm::vec3(std::sin(cam_yaw), 0.0f, -std::cos(cam_yaw)));
         const glm::vec3 right_flat = glm::normalize(glm::cross(forward_flat, glm::vec3(0.0f, 1.0f, 0.0f)));
-        const float speed = 8.0f;
+        float speed = 6.8f;
+        if (touch.crouch_held) {
+            speed = 2.2f;
+        } else if (touch.sprint_held) {
+            speed = 8.8f;
+        }
         const glm::vec3 move_delta = (forward_flat * touch.left_value.y + right_flat * touch.left_value.x) * speed * static_cast<float>(dt_seconds);
 
         if (noclip) {
             player_feet_position += move_delta;
+            if (touch.jump_held) {
+                player_feet_position.y += speed * static_cast<float>(dt_seconds);
+            }
             player_vertical_velocity = 0.0f;
             player_grounded = false;
         } else {
+            if (player_grounded && touch.jump_pressed) {
+                player_vertical_velocity = 6.3f;
+                player_grounded = false;
+            }
             if (!player_grounded) {
                 player_vertical_velocity += -24.0f * static_cast<float>(dt_seconds);
             }
@@ -902,6 +978,7 @@ struct AndroidRenderer {
             std::sin(cam_pitch),
             -std::cos(cam_pitch) * std::cos(cam_yaw)));
         cam_pos = pivot - orbit_forward * camera_distance;
+        touch.jump_pressed = false;
     }
 
     void draw_mesh(const GpuMesh &mesh, const glm::mat4 &mvp) {
@@ -951,6 +1028,36 @@ struct AndroidRenderer {
 
         draw_rect(18, 18, 120, 64, 0.18f, 0.24f, 0.32f);
         draw_rect(22, 22, 112, 56, 0.12f, 0.17f, 0.24f);
+
+        if (!gui_menu.open() && gameplay_started) {
+            const UiRect jump = jump_button_rect();
+            const UiRect sprint = sprint_button_rect();
+            const UiRect crouch = crouch_button_rect();
+
+            if (touch.jump_held) {
+                draw_rect(jump.x, jump.y, jump.w, jump.h, 0.28f, 0.36f, 0.24f);
+                draw_rect(jump.x + 4, jump.y + 4, jump.w - 8, jump.h - 8, 0.18f, 0.30f, 0.14f);
+            } else {
+                draw_rect(jump.x, jump.y, jump.w, jump.h, 0.16f, 0.22f, 0.15f);
+                draw_rect(jump.x + 4, jump.y + 4, jump.w - 8, jump.h - 8, 0.10f, 0.15f, 0.10f);
+            }
+
+            if (touch.sprint_held) {
+                draw_rect(sprint.x, sprint.y, sprint.w, sprint.h, 0.27f, 0.25f, 0.13f);
+                draw_rect(sprint.x + 4, sprint.y + 4, sprint.w - 8, sprint.h - 8, 0.21f, 0.17f, 0.07f);
+            } else {
+                draw_rect(sprint.x, sprint.y, sprint.w, sprint.h, 0.18f, 0.14f, 0.08f);
+                draw_rect(sprint.x + 4, sprint.y + 4, sprint.w - 8, sprint.h - 8, 0.12f, 0.09f, 0.05f);
+            }
+
+            if (touch.crouch_held) {
+                draw_rect(crouch.x, crouch.y, crouch.w, crouch.h, 0.16f, 0.28f, 0.33f);
+                draw_rect(crouch.x + 4, crouch.y + 4, crouch.w - 8, crouch.h - 8, 0.10f, 0.22f, 0.26f);
+            } else {
+                draw_rect(crouch.x, crouch.y, crouch.w, crouch.h, 0.09f, 0.18f, 0.20f);
+                draw_rect(crouch.x + 4, crouch.y + 4, crouch.w - 8, crouch.h - 8, 0.06f, 0.12f, 0.14f);
+            }
+        }
 
         if (gui_menu.open()) {
             const int panel_x = 20;
@@ -1003,23 +1110,40 @@ struct AndroidRenderer {
 
         glDisable(GL_SCISSOR_TEST);
 
-        const std::string menu_text = gui_menu.open() ? gui_menu.build_text(devhud, noclip, multiplayer_hint) : std::string();
-        if (menu_text != ui_text_cache) {
+        std::string overlay_text;
+        if (gui_menu.open()) {
+            overlay_text = gui_menu.build_text(devhud, noclip, multiplayer_hint);
+        } else if (gameplay_started) {
+            overlay_text = "CRAWL   JUMP\nSPRINT  MENU";
+        }
+
+        if (overlay_text != ui_text_cache) {
             destroy_mesh(ui_text_gpu);
             ui_text_mesh = RenderMesh{};
-            if (!menu_text.empty()) {
+            if (!overlay_text.empty()) {
+                float text_x = 36.0f;
+                float text_y = 100.0f;
+                float text_size = 3.6f;
+                float line_spacing = 1.25f;
+                if (!gui_menu.open() && gameplay_started) {
+                    const UiRect crouch = crouch_button_rect();
+                    text_x = static_cast<float>(crouch.x + 10);
+                    text_y = static_cast<float>(crouch.y + 16);
+                    text_size = 2.5f;
+                    line_spacing = 1.05f;
+                }
                 ui_text_mesh = build_overlay_text_mesh(
-                    menu_text,
+                    overlay_text,
                     width,
                     height,
-                    36.0f,
-                    100.0f,
-                    3.6f,
+                    text_x,
+                    text_y,
+                    text_size,
                     glm::vec3(0.93f, 0.95f, 0.99f),
-                    1.25f);
+                    line_spacing);
                 ui_text_gpu = upload_mesh(ui_text_mesh);
             }
-            ui_text_cache = menu_text;
+            ui_text_cache = overlay_text;
         }
 
         if (ui_text_gpu.vbo != 0 && ui_text_gpu.ibo != 0 && ui_text_gpu.index_count > 0) {
@@ -1131,6 +1255,27 @@ struct AndroidRenderer {
                 pending_menu_toggle = true;
                 return 1;
             }
+            if (!gui_menu.open() && gameplay_started) {
+                const UiRect jump = jump_button_rect();
+                const UiRect sprint = sprint_button_rect();
+                const UiRect crouch = crouch_button_rect();
+                if (rect_contains(jump, x, y) && touch.jump_pointer == -1) {
+                    touch.jump_pointer = pointer_id;
+                    touch.jump_held = true;
+                    touch.jump_pressed = true;
+                    return 1;
+                }
+                if (rect_contains(sprint, x, y) && touch.sprint_pointer == -1) {
+                    touch.sprint_pointer = pointer_id;
+                    touch.sprint_held = true;
+                    return 1;
+                }
+                if (rect_contains(crouch, x, y) && touch.crouch_pointer == -1) {
+                    touch.crouch_pointer = pointer_id;
+                    touch.crouch_held = true;
+                    return 1;
+                }
+            }
             if (gui_menu.open()) {
                 const int panel_x = 20;
                 const int panel_y = 88;
@@ -1203,6 +1348,18 @@ struct AndroidRenderer {
             }
             if (touch.right_pointer == pointer_id) {
                 touch.right_pointer = -1;
+            }
+            if (touch.jump_pointer == pointer_id) {
+                touch.jump_pointer = -1;
+                touch.jump_held = false;
+            }
+            if (touch.sprint_pointer == pointer_id) {
+                touch.sprint_pointer = -1;
+                touch.sprint_held = false;
+            }
+            if (touch.crouch_pointer == pointer_id) {
+                touch.crouch_pointer = -1;
+                touch.crouch_held = false;
             }
         }
 

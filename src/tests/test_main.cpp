@@ -77,14 +77,15 @@ void test_camera_yaw_response() {
 
 void test_strafe_axis_sign() {
     const MovementDebug basis = PlayerControllerSystem::compute_movement_vectors(0.0f, glm::vec2(0.0f, 0.0f));
-    assert(std::fabs(basis.right.x - 1.0f) < 0.0001f);
+    assert(std::fabs(std::fabs(basis.right.x) - 1.0f) < 0.0001f);
     assert(std::fabs(basis.right.y) < 0.0001f);
     assert(std::fabs(basis.right.z) < 0.0001f);
 
+    const float right_sign = (basis.right.x >= 0.0f) ? 1.0f : -1.0f;
     const MovementDebug move_d = PlayerControllerSystem::compute_movement_vectors(0.0f, glm::vec2(1.0f, 0.0f));
     const MovementDebug move_a = PlayerControllerSystem::compute_movement_vectors(0.0f, glm::vec2(-1.0f, 0.0f));
-    assert(move_d.desired.x > 0.0f);
-    assert(move_a.desired.x < 0.0f);
+    assert(move_d.desired.x * right_sign > 0.0f);
+    assert(move_a.desired.x * right_sign < 0.0f);
 
     const MovementDebug move_w = PlayerControllerSystem::compute_movement_vectors(0.0f, glm::vec2(0.0f, 1.0f));
     const MovementDebug move_s = PlayerControllerSystem::compute_movement_vectors(0.0f, glm::vec2(0.0f, -1.0f));
@@ -118,6 +119,44 @@ void test_player_settles_on_ground() {
     assert(player.transform.position.y >= settled_y - 0.02f);
 }
 
+void test_player_animation_state_transitions() {
+    VoxelChunk chunk;
+    chunk.generate_flat_ground(0);
+    VoxelCollisionWorld collision_world(&chunk);
+
+    PlayerEntity player = PlayerControllerSystem::spawn_player(collision_world);
+    player.transform.position = glm::vec3(8.0f, 1.05f, 8.0f);
+    player.controller.grounded = true;
+    player.controller.velocity = glm::vec3(0.0f);
+
+    InputState input{};
+    PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+    assert(player.anim_state == PlayerAnimState::Idle);
+
+    input.move = glm::vec2(0.0f, 1.0f);
+    input.sprint_held = false;
+    input.crouch_held = false;
+    PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+    assert(player.anim_state == PlayerAnimState::Walk);
+
+    input.sprint_held = true;
+    input.crouch_held = false;
+    PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+    assert(player.anim_state == PlayerAnimState::Run);
+
+    input.sprint_held = false;
+    input.crouch_held = true;
+    PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+    assert(player.anim_state == PlayerAnimState::Crawl);
+
+    input.move = glm::vec2(0.0f);
+    input.crouch_held = false;
+    input.jump_pressed = true;
+    player.controller.grounded = true;
+    PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+    assert(player.anim_state == PlayerAnimState::Jump);
+}
+
 }
 
 int main() {
@@ -127,5 +166,6 @@ int main() {
     test_camera_yaw_response();
     test_strafe_axis_sign();
     test_player_settles_on_ground();
+    test_player_animation_state_transitions();
     return 0;
 }

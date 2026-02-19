@@ -21,6 +21,23 @@ glm::vec3 player_color_from_id(uint32_t player_id) {
     return glm::vec3(r, g, b);
 }
 
+const char *anim_state_name(PlayerAnimState state) {
+    switch (state) {
+    case PlayerAnimState::Idle:
+        return "IDLE";
+    case PlayerAnimState::Walk:
+        return "WALK";
+    case PlayerAnimState::Run:
+        return "RUN";
+    case PlayerAnimState::Jump:
+        return "JUMP";
+    case PlayerAnimState::Crawl:
+        return "CRAWL";
+    default:
+        return "UNK";
+    }
+}
+
 struct AnimatedCapsuleShape {
     float radius = 0.35f;
     float height = 1.8f;
@@ -513,7 +530,7 @@ void Engine::refresh_overlay_text() {
         std::snprintf(
             text,
             sizeof(text),
-            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u",
+            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nANIM %s BL %.2f PH %.2f",
             render_stats.fps,
             last_frame_dt,
             fixed.fixed_dt,
@@ -537,7 +554,10 @@ void Engine::refresh_overlay_text() {
             input_state.look_enabled ? 1 : 0,
             static_cast<int>(remote_players.size()),
             render_stats.net_connected ? 1 : 0,
-            render_stats.net_local_player_id);
+            render_stats.net_local_player_id,
+            anim_state_name(local_player.anim_state),
+            local_player.anim_blend,
+            local_player.anim_phase);
         scene.debug_screen = build_camera_text_mesh(camera, text);
     }
 

@@ -29,5 +29,11 @@ struct RenderStats {
     bool net_connected = false;
     uint32_t net_local_player_id = 0;
     uint32_t net_remote_count = 0;
+    bool menu_open = false;
+    int menu_selected = 0;
+    std::string menu_title;
+    std::vector<std::string> menu_items;
+    std::vector<std::string> menu_guide;
+    std::string menu_status;
     std::string menu_text;
 };

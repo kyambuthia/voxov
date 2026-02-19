@@ -219,16 +219,44 @@ void VulkanRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStat
             ImGui::BulletText("F4 Freeze Debug");
         }
         ImGui::End();
-        if (!stats.menu_text.empty()) {
+        if (stats.menu_open || !stats.menu_text.empty()) {
             ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(440.0f, 0.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
             ImGui::SetNextWindowBgAlpha(0.92f);
             const ImGuiWindowFlags menu_flags =
                 ImGuiWindowFlags_NoCollapse |
                 ImGuiWindowFlags_NoResize |
                 ImGuiWindowFlags_NoSavedSettings;
             if (ImGui::Begin("VOXOV Menu", nullptr, menu_flags)) {
-                ImGui::TextUnformatted(stats.menu_text.c_str());
+                if (stats.menu_open) {
+                    if (!stats.menu_title.empty()) {
+                        ImGui::TextUnformatted(stats.menu_title.c_str());
+                        ImGui::Separator();
+                    }
+                    for (size_t i = 0; i < stats.menu_items.size(); ++i) {
+                        const bool selected = static_cast<int>(i) == stats.menu_selected;
+                        if (selected) {
+                            ImGui::PushStyleColor(ImGuiCol_Button, ImVec4(0.20f, 0.34f, 0.52f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered, ImVec4(0.24f, 0.40f, 0.60f, 1.0f));
+                        }
+                        ImGui::Button(stats.menu_items[i].c_str(), ImVec2(-1.0f, 0.0f));
+                        if (selected) {
+                            ImGui::PopStyleColor(2);
+                        }
+                    }
+                    if (!stats.menu_guide.empty()) {
+                        ImGui::Separator();
+                        for (const std::string &line : stats.menu_guide) {
+                            ImGui::TextUnformatted(line.c_str());
+                        }
+                    }
+                    if (!stats.menu_status.empty()) {
+                        ImGui::Separator();
+                        ImGui::Text("Status: %s", stats.menu_status.c_str());
+                    }
+                } else {
+                    ImGui::TextUnformatted(stats.menu_text.c_str());
+                }
             }
             ImGui::End();
         }

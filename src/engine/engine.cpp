@@ -623,6 +623,18 @@ void Engine::refresh_overlay_text() {
     if (net_client.is_connected()) {
         multiplayer_hint = "Connected to game server.";
     }
+    render_stats.menu_open = gui_menu.open();
+    render_stats.menu_selected = gui_menu.selected();
+    render_stats.menu_title = gui_menu.page_title();
+    render_stats.menu_items.clear();
+    for (int i = 0; i < gui_menu.count(); ++i) {
+        const std::string label = gui_menu.item_label(i, runtime_options.devhud, runtime_options.noclip);
+        if (!label.empty()) {
+            render_stats.menu_items.push_back(label);
+        }
+    }
+    render_stats.menu_guide = gui_menu.guide_lines();
+    render_stats.menu_status = multiplayer_hint;
     const std::string menu_text = gui_menu.build_text(runtime_options.devhud, runtime_options.noclip, multiplayer_hint);
     render_stats.menu_text = menu_text;
 }

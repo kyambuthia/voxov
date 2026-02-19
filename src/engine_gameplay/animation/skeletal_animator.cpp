@@ -99,6 +99,10 @@ void apply_crawl(SkeletonPose &pose, float phase) {
 void append_bone(RenderMesh &dst, const glm::vec3 &a, const glm::vec3 &b, const glm::vec3 &color, float thickness) {
     append_mesh(dst, build_debug_line_mesh(a, b, thickness, color));
 }
+
+void append_joint(RenderMesh &dst, const glm::vec3 &p, float r, const glm::vec3 &color) {
+    append_mesh(dst, build_debug_sphere_mesh(p, r, color));
+}
 }
 
 SkeletonPose SkeletalAnimator::sample_pose(PlayerAnimState state, float phase, float blend) {
@@ -161,3 +165,43 @@ void SkeletalAnimator::append_debug_skeleton(
     append_bone(dst, world[J(SkeletonJoint::KneeR)], world[J(SkeletonJoint::FootR)], color, line_thickness);
 }
 
+void SkeletalAnimator::append_debug_rig_mesh(
+    RenderMesh &dst,
+    const SkeletonPose &pose,
+    const glm::vec3 &feet_position,
+    const glm::quat &orientation,
+    const glm::vec3 &color) {
+    std::array<glm::vec3, static_cast<size_t>(SkeletonJoint::Count)> world{};
+    for (size_t i = 0; i < world.size(); ++i) {
+        world[i] = feet_position + orientation * pose.local_joints[i];
+    }
+
+    const glm::vec3 limb = color * glm::vec3(0.92f, 0.92f, 0.92f);
+    const glm::vec3 core = color * glm::vec3(1.06f, 1.06f, 1.06f);
+
+    append_bone(dst, world[J(SkeletonJoint::Pelvis)], world[J(SkeletonJoint::Spine)], core, 0.045f);
+    append_bone(dst, world[J(SkeletonJoint::Spine)], world[J(SkeletonJoint::Chest)], core, 0.045f);
+    append_bone(dst, world[J(SkeletonJoint::Chest)], world[J(SkeletonJoint::Head)], core, 0.04f);
+
+    append_bone(dst, world[J(SkeletonJoint::Chest)], world[J(SkeletonJoint::ShoulderL)], limb, 0.035f);
+    append_bone(dst, world[J(SkeletonJoint::ShoulderL)], world[J(SkeletonJoint::ElbowL)], limb, 0.032f);
+    append_bone(dst, world[J(SkeletonJoint::ElbowL)], world[J(SkeletonJoint::HandL)], limb, 0.028f);
+    append_bone(dst, world[J(SkeletonJoint::Chest)], world[J(SkeletonJoint::ShoulderR)], limb, 0.035f);
+    append_bone(dst, world[J(SkeletonJoint::ShoulderR)], world[J(SkeletonJoint::ElbowR)], limb, 0.032f);
+    append_bone(dst, world[J(SkeletonJoint::ElbowR)], world[J(SkeletonJoint::HandR)], limb, 0.028f);
+
+    append_bone(dst, world[J(SkeletonJoint::Pelvis)], world[J(SkeletonJoint::HipL)], limb, 0.04f);
+    append_bone(dst, world[J(SkeletonJoint::HipL)], world[J(SkeletonJoint::KneeL)], limb, 0.038f);
+    append_bone(dst, world[J(SkeletonJoint::KneeL)], world[J(SkeletonJoint::FootL)], limb, 0.032f);
+    append_bone(dst, world[J(SkeletonJoint::Pelvis)], world[J(SkeletonJoint::HipR)], limb, 0.04f);
+    append_bone(dst, world[J(SkeletonJoint::HipR)], world[J(SkeletonJoint::KneeR)], limb, 0.038f);
+    append_bone(dst, world[J(SkeletonJoint::KneeR)], world[J(SkeletonJoint::FootR)], limb, 0.032f);
+
+    append_joint(dst, world[J(SkeletonJoint::Head)], 0.085f, core);
+    append_joint(dst, world[J(SkeletonJoint::Chest)], 0.05f, core);
+    append_joint(dst, world[J(SkeletonJoint::Pelvis)], 0.055f, core);
+    append_joint(dst, world[J(SkeletonJoint::HandL)], 0.03f, core);
+    append_joint(dst, world[J(SkeletonJoint::HandR)], 0.03f, core);
+    append_joint(dst, world[J(SkeletonJoint::FootL)], 0.034f, core);
+    append_joint(dst, world[J(SkeletonJoint::FootR)], 0.034f, core);
+}

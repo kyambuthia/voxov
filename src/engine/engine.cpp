@@ -651,19 +651,29 @@ void Engine::rebuild_dynamic_debug_mesh() {
         glm::vec3(0.2f, 0.85f, 1.0f));
 
     if (!runtime_options.debug_collision_only) {
-        append_mesh(scene.debug_world, player_capsule);
-        append_mesh(scene.debug_world, target_marker);
+        if (collision_debug_enabled || runtime_options.devhud) {
+            append_mesh(scene.debug_world, player_capsule);
+            append_mesh(scene.debug_world, target_marker);
+        }
         const SkeletonPose local_pose = SkeletalAnimator::sample_pose(
             local_player.anim_state,
             local_player.anim_phase,
             local_player.anim_blend);
-        SkeletalAnimator::append_debug_skeleton(
+        SkeletalAnimator::append_debug_rig_mesh(
             scene.debug_world,
             local_pose,
             local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
             local_player.transform.rotation,
-            glm::vec3(0.95f, 0.97f, 1.0f),
-            0.018f);
+            player_color_from_id(local_player.network_id));
+        if (collision_debug_enabled || runtime_options.devhud) {
+            SkeletalAnimator::append_debug_skeleton(
+                scene.debug_world,
+                local_pose,
+                local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
+                local_player.transform.rotation,
+                glm::vec3(0.95f, 0.97f, 1.0f),
+                0.012f);
+        }
     }
 
     if (runtime_options.splitscreen) {
@@ -684,19 +694,29 @@ void Engine::rebuild_dynamic_debug_mesh() {
             0.10f,
             glm::vec3(0.6f, 0.85f, 1.0f));
         if (!runtime_options.debug_collision_only) {
-            append_mesh(scene.debug_world, p2_capsule);
-            append_mesh(scene.debug_world, p2_target);
+            if (collision_debug_enabled || runtime_options.devhud) {
+                append_mesh(scene.debug_world, p2_capsule);
+                append_mesh(scene.debug_world, p2_target);
+            }
             const SkeletonPose p2_pose = SkeletalAnimator::sample_pose(
                 local_player_secondary.anim_state,
                 local_player_secondary.anim_phase,
                 local_player_secondary.anim_blend);
-            SkeletalAnimator::append_debug_skeleton(
+            SkeletalAnimator::append_debug_rig_mesh(
                 scene.debug_world,
                 p2_pose,
                 local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
                 local_player_secondary.transform.rotation,
-                glm::vec3(0.9f, 0.95f, 1.0f),
-                0.016f);
+                player_color_from_id(local_player_secondary.network_id));
+            if (collision_debug_enabled || runtime_options.devhud) {
+                SkeletalAnimator::append_debug_skeleton(
+                    scene.debug_world,
+                    p2_pose,
+                    local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
+                    local_player_secondary.transform.rotation,
+                    glm::vec3(0.9f, 0.95f, 1.0f),
+                    0.01f);
+            }
         }
     }
 
@@ -743,22 +763,32 @@ void Engine::rebuild_dynamic_debug_mesh() {
             local_player.controller.capsuleHeight,
             local_player.camera_rig.pivotHeight);
         const glm::vec3 remote_base = glm::vec3(render_player.position.x, remote_y, render_player.position.z);
-        RenderMesh remote_capsule = build_debug_capsule_mesh(
-            remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
-            remote_shape.radius,
-            remote_shape.height,
-            player_color_from_id(player_id));
-        append_mesh(scene.debug_world, remote_capsule);
         const SkeletonPose remote_pose = SkeletalAnimator::sample_pose(
             static_cast<PlayerAnimState>(render_player.anim_state),
             render_player.anim_phase,
             render_player.anim_blend);
-        SkeletalAnimator::append_debug_skeleton(
+        if (collision_debug_enabled || runtime_options.devhud) {
+            RenderMesh remote_capsule = build_debug_capsule_mesh(
+                remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
+                remote_shape.radius,
+                remote_shape.height,
+                player_color_from_id(player_id));
+            append_mesh(scene.debug_world, remote_capsule);
+        }
+        SkeletalAnimator::append_debug_rig_mesh(
             scene.debug_world,
             remote_pose,
             remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
             render_player.orientation,
-            player_color_from_id(player_id) * glm::vec3(1.08f, 1.08f, 1.08f),
-            0.014f);
+            player_color_from_id(player_id) * glm::vec3(1.08f, 1.08f, 1.08f));
+        if (collision_debug_enabled || runtime_options.devhud) {
+            SkeletalAnimator::append_debug_skeleton(
+                scene.debug_world,
+                remote_pose,
+                remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
+                render_player.orientation,
+                player_color_from_id(player_id) * glm::vec3(1.08f, 1.08f, 1.08f),
+                0.009f);
+        }
     }
 }

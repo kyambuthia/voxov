@@ -43,6 +43,7 @@ if(ANDROID)
         src/game/android_main.cpp
         src/platform/android_platform.cpp
         src/platform/android/input_android.cpp
+        src/engine_gameplay/animation/skeletal_animator.cpp
         src/engine_ui/gui_menu.cpp
         src/engine_audio/ui_audio.cpp
         src/engine_math/camera.cpp

@@ -1,5 +1,6 @@
 #include "engine_world/voxel_chunk.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
+#include "engine_gameplay/animation/skeletal_animator.hpp"
 #ifndef GLM_ENABLE_EXPERIMENTAL
 #define GLM_ENABLE_EXPERIMENTAL
 #endif
@@ -30,6 +31,7 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/gtx/quaternion.hpp>
 
 namespace {
 constexpr const char *kLogTag = "VOXOV";
@@ -63,6 +65,38 @@ const char *egl_error_to_string(EGLint err) {
     case EGL_BAD_SURFACE: return "EGL_BAD_SURFACE";
     case EGL_CONTEXT_LOST: return "EGL_CONTEXT_LOST";
     default: return "EGL_UNKNOWN";
+    }
+}
+
+float mobile_anim_cycle_rate(PlayerAnimState state) {
+    switch (state) {
+    case PlayerAnimState::Walk:
+        return 5.0f;
+    case PlayerAnimState::Run:
+        return 8.0f;
+    case PlayerAnimState::Crawl:
+        return 2.8f;
+    case PlayerAnimState::Jump:
+        return 3.0f;
+    case PlayerAnimState::Idle:
+    default:
+        return 1.0f;
+    }
+}
+
+float mobile_anim_blend_target(PlayerAnimState state) {
+    switch (state) {
+    case PlayerAnimState::Walk:
+        return 0.5f;
+    case PlayerAnimState::Run:
+        return 1.0f;
+    case PlayerAnimState::Crawl:
+        return 0.35f;
+    case PlayerAnimState::Jump:
+        return 0.75f;
+    case PlayerAnimState::Idle:
+    default:
+        return 0.0f;
     }
 }
 
@@ -320,6 +354,10 @@ struct AndroidRenderer {
     bool player_grounded = false;
     float player_capsule_radius = 0.45f;
     float player_capsule_height = 1.8f;
+    PlayerAnimState player_anim_state = PlayerAnimState::Idle;
+    float player_anim_phase = 0.0f;
+    float player_anim_blend = 0.0f;
+    glm::quat player_anim_orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
 
     glm::vec3 cam_pos = glm::vec3(8.0f, 8.0f, 22.0f);
     float camera_distance = 5.0f;
@@ -613,6 +651,30 @@ struct AndroidRenderer {
         u_mvp = -1;
     }
 
+    void rebuild_player_visual_mesh() {
+        destroy_mesh(capsule_gpu);
+        capsule_mesh = RenderMesh{};
+
+        const SkeletonPose pose = SkeletalAnimator::sample_pose(player_anim_state, player_anim_phase, player_anim_blend);
+        SkeletalAnimator::append_debug_rig_mesh(
+            capsule_mesh,
+            pose,
+            glm::vec3(0.0f),
+            player_anim_orientation,
+            glm::vec3(0.95f, 0.5f, 0.2f));
+
+        if (devhud) {
+            RenderMesh debug_capsule = build_debug_capsule_mesh(
+                glm::vec3(0.0f),
+                player_capsule_radius,
+                player_capsule_height,
+                glm::vec3(0.95f, 0.6f, 0.3f));
+            append_mesh(capsule_mesh, debug_capsule);
+        }
+
+        capsule_gpu = upload_mesh(capsule_mesh);
+    }
+
     GpuMesh upload_mesh(const RenderMesh &mesh) {
         GpuMesh out{};
         if (mesh.vertices.empty() || mesh.indices.empty()) {
@@ -782,16 +844,16 @@ struct AndroidRenderer {
         player_grounded = false;
         terrain_mesh = world.build_naive_mesh();
         grid_mesh = world.build_debug_grid(64.0f, 1.0f);
-        capsule_mesh = build_debug_capsule_mesh(
-            glm::vec3(0.0f),
-            player_capsule_radius,
-            player_capsule_height,
-            glm::vec3(0.95f, 0.5f, 0.2f));
+        player_anim_state = PlayerAnimState::Idle;
+        player_anim_phase = 0.0f;
+        player_anim_blend = 0.0f;
+        player_anim_orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        capsule_mesh = RenderMesh{};
         ui_text_mesh = RenderMesh{};
         ui_text_cache.clear();
         terrain_gpu = upload_mesh(terrain_mesh);
         grid_gpu = upload_mesh(grid_mesh);
-        capsule_gpu = upload_mesh(capsule_mesh);
+        rebuild_player_visual_mesh();
 
         clock_gettime(CLOCK_MONOTONIC, &last_time);
         has_last_time = true;
@@ -953,6 +1015,11 @@ struct AndroidRenderer {
             speed = 8.8f;
         }
         const glm::vec3 move_delta = (forward_flat * touch.left_value.y + right_flat * touch.left_value.x) * speed * static_cast<float>(dt_seconds);
+        const glm::vec3 move_dir = forward_flat * touch.left_value.y + right_flat * touch.left_value.x;
+        if (glm::length(glm::vec2(move_dir.x, move_dir.z)) > 0.06f) {
+            const float yaw = std::atan2(move_dir.x, move_dir.z);
+            player_anim_orientation = glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+        }
         if (net_connected && net_target_valid) {
             const float follow = std::clamp(static_cast<float>(dt_seconds) * 14.0f, 0.0f, 1.0f);
             player_feet_position = glm::mix(player_feet_position, net_target_position, follow);
@@ -996,6 +1063,28 @@ struct AndroidRenderer {
             std::sin(cam_pitch),
             -std::cos(cam_pitch) * std::cos(cam_yaw)));
         cam_pos = pivot - orbit_forward * camera_distance;
+
+        const bool moving = glm::length(touch.left_value) > 0.12f;
+        PlayerAnimState next_state = PlayerAnimState::Idle;
+        if (!noclip && !player_grounded) {
+            next_state = PlayerAnimState::Jump;
+        } else if (moving) {
+            if (touch.crouch_held) {
+                next_state = PlayerAnimState::Crawl;
+            } else if (touch.sprint_held) {
+                next_state = PlayerAnimState::Run;
+            } else {
+                next_state = PlayerAnimState::Walk;
+            }
+        }
+        player_anim_state = next_state;
+        player_anim_phase += mobile_anim_cycle_rate(player_anim_state) * static_cast<float>(dt_seconds);
+        if (player_anim_phase > 6.28318530718f) {
+            player_anim_phase = std::fmod(player_anim_phase, 6.28318530718f);
+        }
+        const float blend_target = mobile_anim_blend_target(player_anim_state);
+        const float blend_lerp = std::clamp(static_cast<float>(dt_seconds) * 10.0f, 0.0f, 1.0f);
+        player_anim_blend += (blend_target - player_anim_blend) * blend_lerp;
         touch.jump_pressed = false;
     }
 
@@ -1185,6 +1274,7 @@ struct AndroidRenderer {
         const glm::mat4 proj = glm::perspective(glm::radians(70.0f), aspect, 0.1f, 2000.0f);
         const glm::mat4 mvp = proj * view;
 
+        rebuild_player_visual_mesh();
         draw_mesh(terrain_gpu, mvp);
         draw_mesh(grid_gpu, mvp);
         const glm::mat4 capsule_model = glm::translate(glm::mat4(1.0f), player_feet_position);

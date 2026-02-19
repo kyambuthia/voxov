@@ -35,6 +35,12 @@ struct SkeletonPose {
 class SkeletalAnimator {
 public:
     static SkeletonPose sample_pose(PlayerAnimState state, float phase, float blend);
+    static void append_debug_rig_mesh(
+        RenderMesh &dst,
+        const SkeletonPose &pose,
+        const glm::vec3 &feet_position,
+        const glm::quat &orientation,
+        const glm::vec3 &color);
     static void append_debug_skeleton(
         RenderMesh &dst,
         const SkeletonPose &pose,
@@ -43,4 +49,3 @@ public:
         const glm::vec3 &color,
         float line_thickness);
 };
-

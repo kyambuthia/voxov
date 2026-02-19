@@ -100,7 +100,7 @@ if(EMSCRIPTEN)
         src/platform/web_platform.cpp
         src/engine_ui/gui_menu.cpp
     )
-    target_include_directories(voxov_web PRIVATE src)
+    target_include_directories(voxov_web PRIVATE src dependencies/glm)
     target_compile_definitions(voxov_web PRIVATE VOXOV_PLATFORM_WEB=1)
     target_link_options(voxov_web PRIVATE
         "-sUSE_WEBGL2=1"

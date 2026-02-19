@@ -484,6 +484,20 @@ struct AndroidRenderer {
         audio_ready = ui_audio.init();
     }
 
+    void clear_touch_actions(bool clear_look_delta) {
+        touch.left_value = glm::vec2(0.0f);
+        if (clear_look_delta) {
+            touch.look_delta = glm::vec2(0.0f);
+        }
+        touch.jump_pointer = -1;
+        touch.sprint_pointer = -1;
+        touch.crouch_pointer = -1;
+        touch.jump_held = false;
+        touch.jump_pressed = false;
+        touch.sprint_held = false;
+        touch.crouch_held = false;
+    }
+
     void init_network_if_needed() {
         if (net_initialized) {
             return;
@@ -1066,26 +1080,11 @@ struct AndroidRenderer {
 
     void update_player_and_camera(double dt_seconds) {
         if (!gameplay_started) {
-            touch.left_value = glm::vec2(0.0f);
-            touch.jump_pointer = -1;
-            touch.sprint_pointer = -1;
-            touch.crouch_pointer = -1;
-            touch.jump_held = false;
-            touch.jump_pressed = false;
-            touch.sprint_held = false;
-            touch.crouch_held = false;
+            clear_touch_actions(false);
         }
         const float look_scale = 0.0035f;
         if (gui_menu.open()) {
-            touch.left_value = glm::vec2(0.0f);
-            touch.look_delta = glm::vec2(0.0f);
-            touch.jump_pointer = -1;
-            touch.sprint_pointer = -1;
-            touch.crouch_pointer = -1;
-            touch.jump_held = false;
-            touch.jump_pressed = false;
-            touch.sprint_held = false;
-            touch.crouch_held = false;
+            clear_touch_actions(true);
         }
         cam_yaw += touch.look_delta.x * look_scale;
         cam_pitch += touch.look_delta.y * look_scale;

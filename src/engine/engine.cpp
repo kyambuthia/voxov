@@ -165,6 +165,32 @@ AnimatedCapsuleShape animated_shape(
 
     return out;
 }
+
+bool try_load_character_model(
+    SkinnedModel &model,
+    const char *label,
+    const char *filename,
+    bool &out_loaded) {
+    std::string load_error;
+    for (const std::string &path : candidate_model_paths("player", filename)) {
+        if (model.load_from_glb(path, load_error)) {
+            out_loaded = true;
+            spdlog::info("Loaded {} player model from {}", label, path);
+            return true;
+        }
+    }
+    spdlog::warn("{} player model not loaded: {}", label, load_error);
+    return false;
+}
+
+void disable_gameplay_actions(InputState &input) {
+    input.move = glm::vec2(0.0f);
+    input.jump_pressed = false;
+    input.jump_held = false;
+    input.interact_pressed = false;
+    input.sprint_held = false;
+    input.crouch_held = false;
+}
 }
 
 void Engine::init(void *window_handle, RenderBackendType backend_type, const EngineRuntimeOptions &options) {
@@ -211,31 +237,8 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
         local_player.transform.position.y,
         local_player.transform.position.z);
 
-    {
-        std::string fox_error;
-        for (const std::string &path : candidate_model_paths("player", "Fox.glb")) {
-            if (fox_player_model.load_from_glb(path, fox_error)) {
-                has_fox_player_model = true;
-                spdlog::info("Loaded fox player model from {}", path);
-                break;
-            }
-        }
-        if (!has_fox_player_model) {
-            spdlog::warn("Fox player model not loaded: {}", fox_error);
-        }
-
-        std::string humanoid_error;
-        for (const std::string &path : candidate_model_paths("player", "CesiumMan.glb")) {
-            if (humanoid_player_model.load_from_glb(path, humanoid_error)) {
-                has_humanoid_player_model = true;
-                spdlog::info("Loaded humanoid player model from {}", path);
-                break;
-            }
-        }
-        if (!has_humanoid_player_model) {
-            spdlog::warn("Humanoid player model not loaded: {}", humanoid_error);
-        }
-    }
+    try_load_character_model(fox_player_model, "fox", "Fox.glb", has_fox_player_model);
+    try_load_character_model(humanoid_player_model, "humanoid", "CesiumMan.glb", has_humanoid_player_model);
 
     try {
         renderer.init(window_handle, backend_type);
@@ -440,28 +443,16 @@ void Engine::tick(double frame_dt) {
 
     InputState gameplay_input = input_state;
     if (gui_menu.open()) {
-        gameplay_input.move = glm::vec2(0.0f);
+        disable_gameplay_actions(gameplay_input);
         gameplay_input.look_delta = glm::vec2(0.0f);
-        gameplay_input.jump_pressed = false;
-        gameplay_input.jump_held = false;
-        gameplay_input.sprint_held = false;
-        gameplay_input.crouch_held = false;
     }
     InputState gameplay_input_secondary = input_state_secondary;
     if (gui_menu.open()) {
-        gameplay_input_secondary.move = glm::vec2(0.0f);
+        disable_gameplay_actions(gameplay_input_secondary);
         gameplay_input_secondary.look_delta = glm::vec2(0.0f);
-        gameplay_input_secondary.jump_pressed = false;
-        gameplay_input_secondary.jump_held = false;
-        gameplay_input_secondary.sprint_held = false;
-        gameplay_input_secondary.crouch_held = false;
     }
     if (!gameplay_started) {
-        gameplay_input.move = glm::vec2(0.0f);
-        gameplay_input.jump_pressed = false;
-        gameplay_input.jump_held = false;
-        gameplay_input.sprint_held = false;
-        gameplay_input.crouch_held = false;
+        disable_gameplay_actions(gameplay_input);
         gameplay_input_secondary = gameplay_input;
     }
 

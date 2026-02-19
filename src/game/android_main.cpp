@@ -1191,46 +1191,147 @@ struct AndroidRenderer {
 
         glDisable(GL_SCISSOR_TEST);
 
-        std::string overlay_text;
+        std::string ui_key;
+        ui_key.reserve(256);
         if (gui_menu.open()) {
-            overlay_text = gui_menu.build_text(devhud, noclip, multiplayer_hint);
+            ui_key += "menu:";
+            ui_key += std::to_string(static_cast<int>(gui_menu.page_id()));
+            ui_key += ":";
+            ui_key += std::to_string(gui_menu.selected());
+            ui_key += ":";
+            ui_key += multiplayer_hint;
+            ui_key += ":";
+            ui_key += std::to_string(width);
+            ui_key += "x";
+            ui_key += std::to_string(height);
         } else if (gameplay_started) {
-            const UiRect crouch = crouch_button_rect();
-            const UiRect jump = jump_button_rect();
-            const int jump_pad = std::max(2, (jump.x - crouch.x) / 7);
-            overlay_text =
-                "CRAWL\n" +
-                std::string(static_cast<size_t>(jump_pad), ' ') + "JUMP\n" +
-                "SPRINT";
+            ui_key = "hud_controls";
+            ui_key += std::to_string(width);
+            ui_key += "x";
+            ui_key += std::to_string(height);
         }
 
-        if (overlay_text != ui_text_cache) {
+        if (ui_key != ui_text_cache) {
             destroy_mesh(ui_text_gpu);
             ui_text_mesh = RenderMesh{};
-            if (!overlay_text.empty()) {
-                float text_x = 36.0f;
-                float text_y = 100.0f;
-                float text_size = 3.6f;
-                float line_spacing = 1.25f;
-                if (!gui_menu.open() && gameplay_started) {
-                    const UiRect crouch = crouch_button_rect();
-                    text_x = static_cast<float>(crouch.x + 10);
-                    text_y = static_cast<float>(crouch.y + 16);
-                    text_size = 3.2f;
-                    line_spacing = 1.05f;
+            auto text_dims = [](const std::string &text, float px) -> glm::vec2 {
+                return glm::vec2(
+                    static_cast<float>(text.size()) * 6.0f * px,
+                    7.0f * px);
+            };
+            auto append_text = [&](const std::string &text, float x, float y, float px, const glm::vec3 &color) {
+                if (text.empty()) {
+                    return;
                 }
-                ui_text_mesh = build_overlay_text_mesh(
-                    overlay_text,
-                    width,
-                    height,
-                    text_x,
-                    text_y,
-                    text_size,
-                    glm::vec3(0.93f, 0.95f, 0.99f),
-                    line_spacing);
+                RenderMesh part = build_overlay_text_mesh(text, width, height, x, y, px, color, 1.0f);
+                append_mesh(ui_text_mesh, part);
+            };
+            auto append_centered = [&](const UiRect &rect, const std::string &text, float px, const glm::vec3 &color) {
+                const glm::vec2 size = text_dims(text, px);
+                const float x = static_cast<float>(rect.x) + (static_cast<float>(rect.w) - size.x) * 0.5f;
+                const float y = static_cast<float>(rect.y) + (static_cast<float>(rect.h) - size.y) * 0.5f;
+                append_text(text, x, y, px, color);
+            };
+
+            if (gui_menu.open()) {
+                const int panel_x = 20;
+                const int panel_y = 88;
+                const int panel_w = std::min(560, width - 40);
+                const int row_h = (gui_menu.page_id() == GuiMenu::Page::Main) ? 84 : 70;
+                const int row_gap = 12;
+                const int row_count = gui_menu.count();
+
+                std::string title;
+                if (gui_menu.page_id() == GuiMenu::Page::Main) {
+                    title = "MAIN MENU";
+                } else if (gui_menu.page_id() == GuiMenu::Page::Multiplayer) {
+                    title = "MULTIPLAYER";
+                } else if (gui_menu.page_id() == GuiMenu::Page::Settings) {
+                    title = "SETTINGS";
+                } else {
+                    title = "HOST / JOIN GUIDE";
+                }
+                append_text(title, static_cast<float>(panel_x + 22), static_cast<float>(panel_y + 6), 3.2f, glm::vec3(0.96f, 0.98f, 1.0f));
+
+                auto row_label = [&](int idx) -> std::string {
+                    switch (gui_menu.page_id()) {
+                    case GuiMenu::Page::Main:
+                        switch (idx) {
+                        case 0: return "START GAME";
+                        case 1: return "MULTIPLAYER";
+                        case 2: return "SETTINGS";
+                        case 3: return "CLOSE MENU";
+                        default: return "";
+                        }
+                    case GuiMenu::Page::Multiplayer:
+                        switch (idx) {
+                        case 0: return "HOST THIS DEVICE";
+                        case 1: return "HOST WI-FI GAME";
+                        case 2: return "JOIN NEARBY WI-FI";
+                        case 3: return "HOW HOST/JOIN WORKS";
+                        case 4: return "BACK";
+                        default: return "";
+                        }
+                    case GuiMenu::Page::Settings:
+                        switch (idx) {
+                        case 0: return std::string("DEVHUD: ") + (devhud ? "ON" : "OFF");
+                        case 1: return std::string("NOCLIP: ") + (noclip ? "ON" : "OFF");
+                        case 2: return "RESET CAMERA";
+                        case 3: return "BACK";
+                        default: return "";
+                        }
+                    case GuiMenu::Page::MultiplayerGuide:
+                    default:
+                        if (idx == 0) {
+                            return "BACK";
+                        }
+                        return "";
+                    }
+                };
+
+                if (gui_menu.page_id() == GuiMenu::Page::MultiplayerGuide) {
+                    append_text("1 HOST WI-FI GAME", static_cast<float>(panel_x + 22), static_cast<float>(panel_y + 58), 2.6f, glm::vec3(0.92f, 0.95f, 0.99f));
+                    append_text("2 FRIEND TAPS JOIN NEARBY", static_cast<float>(panel_x + 22), static_cast<float>(panel_y + 84), 2.6f, glm::vec3(0.92f, 0.95f, 0.99f));
+                    append_text("3 SAME WI-FI REQUIRED", static_cast<float>(panel_x + 22), static_cast<float>(panel_y + 110), 2.6f, glm::vec3(0.92f, 0.95f, 0.99f));
+                    append_text("4 RETRY IF HOST NOT LISTED", static_cast<float>(panel_x + 22), static_cast<float>(panel_y + 136), 2.6f, glm::vec3(0.92f, 0.95f, 0.99f));
+                }
+
+                for (int i = 0; i < row_count; ++i) {
+                    const UiRect row_rect{
+                        panel_x + 18,
+                        panel_y + 24 + i * (row_h + row_gap),
+                        panel_w - 36,
+                        row_h - 8};
+                    std::string label = row_label(i);
+                    if (label.empty()) {
+                        continue;
+                    }
+                    if (i == gui_menu.selected()) {
+                        label = "> " + label;
+                    }
+                    append_centered(row_rect, label, 2.9f, glm::vec3(0.95f, 0.98f, 1.0f));
+                }
+
+                if (!multiplayer_hint.empty()) {
+                    append_text(
+                        "STATUS: " + multiplayer_hint,
+                        static_cast<float>(panel_x + 22),
+                        static_cast<float>(panel_y + 24 + row_count * (row_h + row_gap) + 10),
+                        2.2f,
+                        glm::vec3(0.85f, 0.9f, 0.98f));
+                }
+            } else if (gameplay_started) {
+                const UiRect menu_btn{22, 22, 112, 56};
+                append_centered(menu_btn, "MENU", 2.8f, glm::vec3(0.93f, 0.95f, 0.99f));
+                append_centered(crouch_button_rect(), "CRAWL", 3.2f, glm::vec3(0.93f, 0.95f, 0.99f));
+                append_centered(jump_button_rect(), "JUMP", 3.2f, glm::vec3(0.93f, 0.95f, 0.99f));
+                append_centered(sprint_button_rect(), "SPRINT", 3.0f, glm::vec3(0.93f, 0.95f, 0.99f));
+            }
+
+            if (!ui_text_mesh.vertices.empty()) {
                 ui_text_gpu = upload_mesh(ui_text_mesh);
             }
-            ui_text_cache = overlay_text;
+            ui_text_cache = ui_key;
         }
 
         if (ui_text_gpu.vbo != 0 && ui_text_gpu.ibo != 0 && ui_text_gpu.index_count > 0) {

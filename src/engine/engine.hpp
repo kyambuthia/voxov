@@ -5,6 +5,7 @@
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_input/input_state.hpp"
 #include "engine_audio/ui_audio.hpp"
+#include "engine_assets/skinned_model.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net/net_client.hpp"
 #include "engine_net/lan_discovery.hpp"
@@ -90,6 +91,8 @@ private:
     bool touch_input_mode = false;
     GuiMenu gui_menu;
     UiAudio ui_audio;
+    SkinnedModel skinned_player_model;
+    bool use_skinned_player_model = false;
     EngineRuntimeOptions runtime_options{};
 
     double fps_accumulator = 0.0;

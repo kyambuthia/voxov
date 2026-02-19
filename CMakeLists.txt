@@ -263,12 +263,14 @@ endif()
 
 add_library(engine STATIC
     src/engine/engine.cpp
+    src/engine_assets/cgltf_impl.cpp
+    src/engine_assets/skinned_model.cpp
     src/engine_audio/ui_audio.cpp
     src/engine_gameplay/animation/skeletal_animator.cpp
     src/engine_gameplay/player/player_controller.cpp
     src/engine_ui/gui_menu.cpp
 )
-target_include_directories(engine PUBLIC src dependencies/miniaudio)
+target_include_directories(engine PUBLIC src dependencies/miniaudio dependencies/cgltf)
 target_link_libraries(engine PUBLIC engine_core engine_render engine_physics engine_net engine_math engine_world platform_desktop)
 
 add_executable(voxov

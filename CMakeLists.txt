@@ -43,6 +43,8 @@ if(ANDROID)
         src/game/android_main.cpp
         src/platform/android_platform.cpp
         src/platform/android/input_android.cpp
+        src/engine_assets/cgltf_impl.cpp
+        src/engine_assets/skinned_model.cpp
         src/engine_gameplay/animation/skeletal_animator.cpp
         src/engine_ui/gui_menu.cpp
         src/engine_audio/ui_audio.cpp
@@ -59,6 +61,7 @@ if(ANDROID)
     target_include_directories(voxov_android PRIVATE
         src
         dependencies/glm
+        dependencies/cgltf
         dependencies/miniaudio
         dependencies/enet/include
         ${VOXOV_ANDROID_GLUE_DIR}

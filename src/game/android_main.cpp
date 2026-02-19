@@ -1,5 +1,6 @@
 #include "engine_world/voxel_chunk.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
+#include "engine_assets/skinned_model.hpp"
 #include "engine_gameplay/animation/skeletal_animator.hpp"
 #ifndef GLM_ENABLE_EXPERIMENTAL
 #define GLM_ENABLE_EXPERIMENTAL
@@ -14,6 +15,7 @@
 
 #include <android/input.h>
 #include <android/log.h>
+#include <android/asset_manager.h>
 #include <android_native_app_glue.h>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
@@ -27,6 +29,7 @@
 #include <string>
 #include <unordered_map>
 #include <vector>
+#include <fstream>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -335,6 +338,7 @@ struct AndroidRenderer {
     bool focused = false;
     int gles_version = 0;
     bool can_draw_uint_indices = false;
+    android_app *app = nullptr;
 
     GLuint program = 0;
     GLint u_mvp = -1;
@@ -358,6 +362,10 @@ struct AndroidRenderer {
     float player_anim_phase = 0.0f;
     float player_anim_blend = 0.0f;
     glm::quat player_anim_orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    SkinnedModel fox_player_model{};
+    bool has_fox_player_model = false;
+    SkinnedModel humanoid_player_model{};
+    bool has_humanoid_player_model = false;
 
     glm::vec3 cam_pos = glm::vec3(8.0f, 8.0f, 22.0f);
     float camera_distance = 5.0f;
@@ -432,6 +440,38 @@ struct AndroidRenderer {
                px <= static_cast<float>(r.x + r.w) + margin &&
                py >= static_cast<float>(r.y) - margin &&
                py <= static_cast<float>(r.y + r.h) + margin;
+    }
+
+    bool extract_asset_to_file(const char *asset_path, std::string &out_path) {
+        if (!app || !app->activity || !app->activity->assetManager || !app->activity->internalDataPath || !asset_path) {
+            return false;
+        }
+        AAssetManager *mgr = app->activity->assetManager;
+        AAsset *asset = AAssetManager_open(mgr, asset_path, AASSET_MODE_STREAMING);
+        if (!asset) {
+            return false;
+        }
+        const off_t len = AAsset_getLength(asset);
+        if (len <= 0) {
+            AAsset_close(asset);
+            return false;
+        }
+
+        std::vector<uint8_t> data(static_cast<size_t>(len));
+        const int read_bytes = AAsset_read(asset, data.data(), static_cast<size_t>(len));
+        AAsset_close(asset);
+        if (read_bytes != len) {
+            return false;
+        }
+
+        out_path = std::string(app->activity->internalDataPath) + "/Fox.glb";
+        std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
+        if (!out.is_open()) {
+            return false;
+        }
+        out.write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(data.size()));
+        out.close();
+        return out.good();
     }
 
     void init_audio_if_needed() {
@@ -654,16 +694,30 @@ struct AndroidRenderer {
     void rebuild_player_visual_mesh() {
         destroy_mesh(capsule_gpu);
         capsule_mesh = RenderMesh{};
+        const SkinnedModel *selected_player_model = nullptr;
+        if (gui_menu.character() == GuiMenu::Character::Fox && has_fox_player_model) {
+            selected_player_model = &fox_player_model;
+        } else if (gui_menu.character() == GuiMenu::Character::Humanoid && has_humanoid_player_model) {
+            selected_player_model = &humanoid_player_model;
+        }
+        const bool render_skinned_avatar = selected_player_model != nullptr;
+        if (render_skinned_avatar) {
+            capsule_mesh = selected_player_model->build_render_mesh(
+                player_anim_state,
+                player_anim_phase,
+                player_anim_blend,
+                glm::vec3(0.0f),
+                player_anim_orientation,
+                glm::vec3(0.95f, 0.5f, 0.2f));
+        } else {
+            capsule_mesh = build_debug_capsule_mesh(
+                glm::vec3(0.0f),
+                player_capsule_radius,
+                player_capsule_height,
+                glm::vec3(0.95f, 0.5f, 0.2f));
+        }
 
-        const SkeletonPose pose = SkeletalAnimator::sample_pose(player_anim_state, player_anim_phase, player_anim_blend);
-        SkeletalAnimator::append_debug_rig_mesh(
-            capsule_mesh,
-            pose,
-            glm::vec3(0.0f),
-            player_anim_orientation,
-            glm::vec3(0.95f, 0.5f, 0.2f));
-
-        if (devhud) {
+        if (devhud && render_skinned_avatar) {
             RenderMesh debug_capsule = build_debug_capsule_mesh(
                 glm::vec3(0.0f),
                 player_capsule_radius,
@@ -734,6 +788,7 @@ struct AndroidRenderer {
         if (app == nullptr || app->window == nullptr || can_render()) {
             return false;
         }
+        this->app = app;
 
         display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
         if (display == EGL_NO_DISPLAY) {
@@ -848,6 +903,33 @@ struct AndroidRenderer {
         player_anim_phase = 0.0f;
         player_anim_blend = 0.0f;
         player_anim_orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        has_fox_player_model = false;
+        has_humanoid_player_model = false;
+        {
+            auto load_android_model = [&](const char *asset_name, SkinnedModel &out_model, bool &out_loaded, const char *label) {
+                std::string load_error;
+                std::vector<std::string> model_paths;
+                std::string extracted_path;
+                const std::string asset_path = std::string("models/player/") + asset_name;
+                if (extract_asset_to_file(asset_path.c_str(), extracted_path)) {
+                    model_paths.push_back(extracted_path);
+                }
+                model_paths.push_back(std::string("assets/models/player/") + asset_name);
+                model_paths.push_back(std::string("../assets/models/player/") + asset_name);
+                model_paths.push_back(std::string("/data/local/tmp/voxov/assets/models/player/") + asset_name);
+                for (const std::string &path : model_paths) {
+                    if (out_model.load_from_glb(path, load_error)) {
+                        out_loaded = true;
+                        __android_log_print(ANDROID_LOG_INFO, kLogTag, "Loaded %s model from %s", label, path.c_str());
+                        return;
+                    }
+                }
+                __android_log_print(ANDROID_LOG_WARN, kLogTag, "%s model load failed on Android: %s", label, load_error.c_str());
+            };
+
+            load_android_model("Fox.glb", fox_player_model, has_fox_player_model, "fox");
+            load_android_model("CesiumMan.glb", humanoid_player_model, has_humanoid_player_model, "humanoid");
+        }
         capsule_mesh = RenderMesh{};
         ui_text_mesh = RenderMesh{};
         ui_text_cache.clear();

@@ -13,10 +13,32 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <filesystem>
 #include <string>
 #include <unordered_set>
 
 namespace {
+std::vector<std::string> candidate_model_paths(const char *model_filename) {
+    namespace fs = std::filesystem;
+    std::vector<std::string> out;
+    out.reserve(8);
+    if (!model_filename || *model_filename == '\0') {
+        return out;
+    }
+    const std::string rel = std::string("assets/models/player/") + model_filename;
+
+    // Search from current working directory and a few parent levels so
+    // desktop launches from build trees can still resolve repo assets.
+    fs::path prefix(".");
+    for (int i = 0; i < 6; ++i) {
+        fs::path candidate = prefix / rel;
+        out.push_back(candidate.generic_string());
+        prefix /= "..";
+    }
+
+    return out;
+}
+
 glm::vec3 player_color_from_id(uint32_t player_id) {
     const uint32_t h = (player_id * 2654435761u) ^ 0x9e3779b9u;
     const float r = 0.25f + 0.65f * static_cast<float>((h >> 0) & 0xFF) / 255.0f;
@@ -137,21 +159,28 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
         local_player.transform.position.z);
 
     {
-        std::string load_error;
-        const std::vector<std::string> model_paths = {
-            "assets/models/player/Fox.glb",
-            "../assets/models/player/Fox.glb",
-            "assets/models/player/CesiumMan.glb",
-            "../assets/models/player/CesiumMan.glb"};
-        for (const std::string &path : model_paths) {
-            if (skinned_player_model.load_from_glb(path, load_error)) {
-                use_skinned_player_model = true;
-                spdlog::info("Loaded skinned player model from {}", path);
+        std::string fox_error;
+        for (const std::string &path : candidate_model_paths("Fox.glb")) {
+            if (fox_player_model.load_from_glb(path, fox_error)) {
+                has_fox_player_model = true;
+                spdlog::info("Loaded fox player model from {}", path);
                 break;
             }
         }
-        if (!use_skinned_player_model) {
-            spdlog::warn("Skinned player model not loaded: {}", load_error);
+        if (!has_fox_player_model) {
+            spdlog::warn("Fox player model not loaded: {}", fox_error);
+        }
+
+        std::string humanoid_error;
+        for (const std::string &path : candidate_model_paths("CesiumMan.glb")) {
+            if (humanoid_player_model.load_from_glb(path, humanoid_error)) {
+                has_humanoid_player_model = true;
+                spdlog::info("Loaded humanoid player model from {}", path);
+                break;
+            }
+        }
+        if (!has_humanoid_player_model) {
+            spdlog::warn("Humanoid player model not loaded: {}", humanoid_error);
         }
     }
 
@@ -656,6 +685,13 @@ void Engine::refresh_overlay_text() {
 void Engine::rebuild_dynamic_debug_mesh() {
     scene.debug_world = RenderMesh{};
     const bool collision_debug_enabled = runtime_options.debug_collision;
+    const SkinnedModel *selected_player_model = nullptr;
+    if (gui_menu.character() == GuiMenu::Character::Fox && has_fox_player_model) {
+        selected_player_model = &fox_player_model;
+    } else if (gui_menu.character() == GuiMenu::Character::Humanoid && has_humanoid_player_model) {
+        selected_player_model = &humanoid_player_model;
+    }
+    const bool render_skinned_avatar = selected_player_model != nullptr;
 
     const AnimatedCapsuleShape local_shape = animated_shape(
         static_cast<uint8_t>(local_player.anim_state),
@@ -677,12 +713,12 @@ void Engine::rebuild_dynamic_debug_mesh() {
         glm::vec3(0.2f, 0.85f, 1.0f));
 
     if (!runtime_options.debug_collision_only) {
-        if (collision_debug_enabled || runtime_options.devhud) {
+        if (!render_skinned_avatar || collision_debug_enabled || runtime_options.devhud) {
             append_mesh(scene.debug_world, player_capsule);
             append_mesh(scene.debug_world, target_marker);
         }
-        if (use_skinned_player_model) {
-            const RenderMesh local_model = skinned_player_model.build_render_mesh(
+        if (render_skinned_avatar) {
+            const RenderMesh local_model = selected_player_model->build_render_mesh(
                 local_player.anim_state,
                 local_player.anim_phase,
                 local_player.anim_blend,
@@ -690,19 +726,8 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 local_player.transform.rotation,
                 player_color_from_id(local_player.network_id));
             append_mesh(scene.debug_world, local_model);
-        } else {
-            const SkeletonPose local_pose = SkeletalAnimator::sample_pose(
-                local_player.anim_state,
-                local_player.anim_phase,
-                local_player.anim_blend);
-            SkeletalAnimator::append_debug_rig_mesh(
-                scene.debug_world,
-                local_pose,
-                local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
-                local_player.transform.rotation,
-                player_color_from_id(local_player.network_id));
         }
-        if (!use_skinned_player_model && (collision_debug_enabled || runtime_options.devhud)) {
+        if (render_skinned_avatar && (collision_debug_enabled || runtime_options.devhud)) {
             const SkeletonPose local_pose = SkeletalAnimator::sample_pose(
                 local_player.anim_state,
                 local_player.anim_phase,
@@ -735,12 +760,12 @@ void Engine::rebuild_dynamic_debug_mesh() {
             0.10f,
             glm::vec3(0.6f, 0.85f, 1.0f));
         if (!runtime_options.debug_collision_only) {
-            if (collision_debug_enabled || runtime_options.devhud) {
+            if (!render_skinned_avatar || collision_debug_enabled || runtime_options.devhud) {
                 append_mesh(scene.debug_world, p2_capsule);
                 append_mesh(scene.debug_world, p2_target);
             }
-            if (use_skinned_player_model) {
-                const RenderMesh p2_model = skinned_player_model.build_render_mesh(
+            if (render_skinned_avatar) {
+                const RenderMesh p2_model = selected_player_model->build_render_mesh(
                     local_player_secondary.anim_state,
                     local_player_secondary.anim_phase,
                     local_player_secondary.anim_blend,
@@ -748,30 +773,6 @@ void Engine::rebuild_dynamic_debug_mesh() {
                     local_player_secondary.transform.rotation,
                     player_color_from_id(local_player_secondary.network_id));
                 append_mesh(scene.debug_world, p2_model);
-            } else {
-                const SkeletonPose p2_pose = SkeletalAnimator::sample_pose(
-                    local_player_secondary.anim_state,
-                    local_player_secondary.anim_phase,
-                    local_player_secondary.anim_blend);
-                SkeletalAnimator::append_debug_rig_mesh(
-                    scene.debug_world,
-                    p2_pose,
-                    local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
-                    local_player_secondary.transform.rotation,
-                    player_color_from_id(local_player_secondary.network_id));
-            }
-            if (!use_skinned_player_model && (collision_debug_enabled || runtime_options.devhud)) {
-                const SkeletonPose p2_pose = SkeletalAnimator::sample_pose(
-                    local_player_secondary.anim_state,
-                    local_player_secondary.anim_phase,
-                    local_player_secondary.anim_blend);
-                SkeletalAnimator::append_debug_skeleton(
-                    scene.debug_world,
-                    p2_pose,
-                    local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
-                    local_player_secondary.transform.rotation,
-                    glm::vec3(0.9f, 0.95f, 1.0f),
-                    0.01f);
             }
         }
     }
@@ -819,7 +820,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
             local_player.controller.capsuleHeight,
             local_player.camera_rig.pivotHeight);
         const glm::vec3 remote_base = glm::vec3(render_player.position.x, remote_y, render_player.position.z);
-        if (collision_debug_enabled || runtime_options.devhud) {
+        if (!render_skinned_avatar || collision_debug_enabled || runtime_options.devhud) {
             RenderMesh remote_capsule = build_debug_capsule_mesh(
                 remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
                 remote_shape.radius,
@@ -827,8 +828,8 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 player_color_from_id(player_id));
             append_mesh(scene.debug_world, remote_capsule);
         }
-        if (use_skinned_player_model) {
-            const RenderMesh remote_model = skinned_player_model.build_render_mesh(
+        if (render_skinned_avatar) {
+            const RenderMesh remote_model = selected_player_model->build_render_mesh(
                 static_cast<PlayerAnimState>(render_player.anim_state),
                 render_player.anim_phase,
                 render_player.anim_blend,
@@ -836,30 +837,6 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 render_player.orientation,
                 player_color_from_id(player_id) * glm::vec3(1.08f, 1.08f, 1.08f));
             append_mesh(scene.debug_world, remote_model);
-        } else {
-            const SkeletonPose remote_pose = SkeletalAnimator::sample_pose(
-                static_cast<PlayerAnimState>(render_player.anim_state),
-                render_player.anim_phase,
-                render_player.anim_blend);
-            SkeletalAnimator::append_debug_rig_mesh(
-                scene.debug_world,
-                remote_pose,
-                remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
-                render_player.orientation,
-                player_color_from_id(player_id) * glm::vec3(1.08f, 1.08f, 1.08f));
-        }
-        if (!use_skinned_player_model && (collision_debug_enabled || runtime_options.devhud)) {
-            const SkeletonPose remote_pose = SkeletalAnimator::sample_pose(
-                static_cast<PlayerAnimState>(render_player.anim_state),
-                render_player.anim_phase,
-                render_player.anim_blend);
-            SkeletalAnimator::append_debug_skeleton(
-                scene.debug_world,
-                remote_pose,
-                remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
-                render_player.orientation,
-                player_color_from_id(player_id) * glm::vec3(1.08f, 1.08f, 1.08f),
-                0.009f);
         }
     }
 }

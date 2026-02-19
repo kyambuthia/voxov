@@ -91,8 +91,10 @@ private:
     bool touch_input_mode = false;
     GuiMenu gui_menu;
     UiAudio ui_audio;
-    SkinnedModel skinned_player_model;
-    bool use_skinned_player_model = false;
+    SkinnedModel fox_player_model;
+    bool has_fox_player_model = false;
+    SkinnedModel humanoid_player_model;
+    bool has_humanoid_player_model = false;
     EngineRuntimeOptions runtime_options{};
 
     double fps_accumulator = 0.0;

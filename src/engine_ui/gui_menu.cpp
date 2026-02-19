@@ -6,13 +6,15 @@
 int GuiMenu::item_count() const {
     switch (page) {
     case MenuPage::Main:
-        return 4;
+        return 5;
     case MenuPage::Multiplayer:
         return 5;
     case MenuPage::Settings:
         return 4;
     case MenuPage::MultiplayerGuide:
         return 1;
+    case MenuPage::CharacterSelect:
+        return 4;
     default:
         return 0;
     }
@@ -71,14 +73,18 @@ void GuiMenu::activate_index(int index, bool devhud_enabled, bool noclip_enabled
             out_actions.close_menu = true;
             break;
         case 1:
-            page = MenuPage::Multiplayer;
+            page = MenuPage::CharacterSelect;
             selected_item = 0;
             break;
         case 2:
-            page = MenuPage::Settings;
+            page = MenuPage::Multiplayer;
             selected_item = 0;
             break;
         case 3:
+            page = MenuPage::Settings;
+            selected_item = 0;
+            break;
+        case 4:
             is_open = false;
             out_actions.close_menu = true;
             break;
@@ -146,11 +152,36 @@ void GuiMenu::activate_index(int index, bool devhud_enabled, bool noclip_enabled
     if (page == MenuPage::MultiplayerGuide) {
         page = MenuPage::Multiplayer;
         selected_item = 0;
+        return;
+    }
+
+    if (page == MenuPage::CharacterSelect) {
+        switch (selected_item) {
+        case 0:
+            selected_character = Character::Fox;
+            break;
+        case 1:
+            selected_character = Character::Humanoid;
+            break;
+        case 2:
+            selected_character = Character::Capsule;
+            break;
+        case 3:
+            page = MenuPage::Main;
+            selected_item = 0;
+            break;
+        default:
+            break;
+        }
     }
 }
 
 bool GuiMenu::open() const {
     return is_open;
+}
+
+GuiMenu::Character GuiMenu::character() const {
+    return selected_character;
 }
 
 GuiMenu::Page GuiMenu::page_id() const {
@@ -159,6 +190,7 @@ GuiMenu::Page GuiMenu::page_id() const {
     case MenuPage::Multiplayer: return Page::Multiplayer;
     case MenuPage::Settings: return Page::Settings;
     case MenuPage::MultiplayerGuide: return Page::MultiplayerGuide;
+    case MenuPage::CharacterSelect: return Page::CharacterSelect;
     default: return Page::Main;
     }
 }
@@ -190,11 +222,12 @@ std::string GuiMenu::build_text(bool devhud_enabled, bool noclip_enabled, const 
         std::snprintf(
             buffer,
             sizeof(buffer),
-            "VOXOV\n\n%s START GAME\n%s MULTIPLAYER\n%s SETTINGS\n%s CLOSE MENU\n\nUP/DOWN + ENTER | ESC",
+            "VOXOV\n\n%s START GAME\n%s CHARACTER SELECT\n%s MULTIPLAYER\n%s SETTINGS\n%s CLOSE MENU\n\nUP/DOWN + ENTER | ESC",
             selected_item == 0 ? ">" : " ",
             selected_item == 1 ? ">" : " ",
             selected_item == 2 ? ">" : " ",
-            selected_item == 3 ? ">" : " ");
+            selected_item == 3 ? ">" : " ",
+            selected_item == 4 ? ">" : " ");
         return std::string(buffer);
     }
 
@@ -229,6 +262,21 @@ std::string GuiMenu::build_text(bool devhud_enabled, bool noclip_enabled, const 
         return out;
     }
 
+    if (page == MenuPage::CharacterSelect) {
+        std::snprintf(
+            buffer,
+            sizeof(buffer),
+            "CHARACTER SELECT\n\n%s FOX %s\n%s HUMANOID %s\n%s CAPSULE %s\n%s BACK\n\nUP/DOWN + ENTER | ESC",
+            selected_item == 0 ? ">" : " ",
+            selected_character == Character::Fox ? "[SELECTED]" : "",
+            selected_item == 1 ? ">" : " ",
+            selected_character == Character::Humanoid ? "[SELECTED]" : "",
+            selected_item == 2 ? ">" : " ",
+            selected_character == Character::Capsule ? "[SELECTED]" : "",
+            selected_item == 3 ? ">" : " ");
+        return std::string(buffer);
+    }
+
     std::snprintf(
         buffer,
         sizeof(buffer),
@@ -252,6 +300,8 @@ std::string GuiMenu::page_title() const {
         return "SETTINGS";
     case MenuPage::MultiplayerGuide:
         return "HOST / JOIN GUIDE";
+    case MenuPage::CharacterSelect:
+        return "CHARACTER SELECT";
     default:
         return "MENU";
     }
@@ -262,9 +312,10 @@ std::string GuiMenu::item_label(int index, bool devhud_enabled, bool noclip_enab
     case MenuPage::Main:
         switch (index) {
         case 0: return "START GAME";
-        case 1: return "MULTIPLAYER";
-        case 2: return "SETTINGS";
-        case 3: return "CLOSE MENU";
+        case 1: return "CHARACTER SELECT";
+        case 2: return "MULTIPLAYER";
+        case 3: return "SETTINGS";
+        case 4: return "CLOSE MENU";
         default: return std::string();
         }
     case MenuPage::Multiplayer:
@@ -289,6 +340,14 @@ std::string GuiMenu::item_label(int index, bool devhud_enabled, bool noclip_enab
             return "BACK";
         }
         return std::string();
+    case MenuPage::CharacterSelect:
+        switch (index) {
+        case 0: return std::string("FOX ") + (selected_character == Character::Fox ? "[SELECTED]" : "");
+        case 1: return std::string("HUMANOID ") + (selected_character == Character::Humanoid ? "[SELECTED]" : "");
+        case 2: return std::string("CAPSULE ") + (selected_character == Character::Capsule ? "[SELECTED]" : "");
+        case 3: return "BACK";
+        default: return std::string();
+        }
     default:
         return std::string();
     }

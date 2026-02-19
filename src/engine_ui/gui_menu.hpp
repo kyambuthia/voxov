@@ -30,11 +30,18 @@ struct GuiMenuView {
 
 class GuiMenu {
 public:
+    enum class Character {
+        Fox = 0,
+        Humanoid = 1,
+        Capsule = 2
+    };
+
     enum class Page {
         Main = 0,
         Multiplayer = 1,
         Settings = 2,
-        MultiplayerGuide = 3
+        MultiplayerGuide = 3,
+        CharacterSelect = 4
     };
 
     void handle_input(const InputState &input, bool devhud_enabled, bool noclip_enabled, GuiMenuActions &out_actions);
@@ -43,6 +50,7 @@ public:
     int selected() const;
     int count() const;
     Page page_id() const;
+    Character character() const;
     void set_selected(int index);
     std::string build_text(bool devhud_enabled, bool noclip_enabled, const std::string &multiplayer_hint = std::string()) const;
     std::string page_title() const;
@@ -55,7 +63,8 @@ private:
         Main,
         Multiplayer,
         Settings,
-        MultiplayerGuide
+        MultiplayerGuide,
+        CharacterSelect
     };
 
     int item_count() const;
@@ -63,4 +72,5 @@ private:
     bool is_open = true;
     int selected_item = 0;
     MenuPage page = MenuPage::Main;
+    Character selected_character = Character::Fox;
 };

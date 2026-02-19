@@ -362,6 +362,7 @@ RenderMesh SkinnedModel::build_render_mesh(
     const glm::quat &world_rotation,
     const glm::vec3 &color) const {
     (void)anim_blend;
+    constexpr float k_player_model_scale = 0.01f;
     RenderMesh out{};
     if (!ready) {
         return out;
@@ -402,7 +403,8 @@ RenderMesh SkinnedModel::build_render_mesh(
         }
     }
 
-    const glm::mat4 world = glm::translate(glm::mat4(1.0f), world_position) * glm::mat4_cast(world_rotation);
+    const glm::mat4 world = glm::translate(glm::mat4(1.0f), world_position) * glm::mat4_cast(world_rotation) *
+        glm::scale(glm::mat4(1.0f), glm::vec3(k_player_model_scale));
     out.vertices.resize(bind_vertices.size());
     out.indices = mesh_indices;
 
@@ -425,4 +427,3 @@ RenderMesh SkinnedModel::build_render_mesh(
 
     return out;
 }
-

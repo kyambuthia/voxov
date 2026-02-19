@@ -38,6 +38,16 @@ public:
     const RenderStats &stats() const;
 
 private:
+    struct RemoteRenderPlayer {
+        glm::vec3 position = glm::vec3(0.0f);
+        glm::vec3 target_position = glm::vec3(0.0f);
+        glm::vec3 velocity = glm::vec3(0.0f);
+        uint8_t anim_state = 0;
+        float anim_phase = 0.0f;
+        float anim_blend = 0.0f;
+        bool initialized = false;
+    };
+
     void build_static_scene();
     void rebuild_dynamic_debug_mesh();
     void refresh_overlay_text();
@@ -69,6 +79,7 @@ private:
     glm::vec3 local_player_secondary_prev_position = glm::vec3(0.0f);
     ReplicatedPlayerMotion local_replication{};
     std::unordered_map<uint32_t, NetPlayerState> remote_players;
+    std::unordered_map<uint32_t, RemoteRenderPlayer> remote_render_players;
 
     RenderScene scene;
     RenderStats render_stats;

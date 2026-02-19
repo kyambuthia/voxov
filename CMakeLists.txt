@@ -263,6 +263,7 @@ endif()
 add_library(engine STATIC
     src/engine/engine.cpp
     src/engine_audio/ui_audio.cpp
+    src/engine_gameplay/animation/skeletal_animator.cpp
     src/engine_gameplay/player/player_controller.cpp
     src/engine_ui/gui_menu.cpp
 )

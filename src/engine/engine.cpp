@@ -1,5 +1,6 @@
 #include "engine/engine.hpp"
 
+#include "engine_gameplay/animation/skeletal_animator.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
@@ -11,6 +12,7 @@
 #include <cstdio>
 #include <cstdint>
 #include <string>
+#include <unordered_set>
 
 namespace {
 glm::vec3 player_color_from_id(uint32_t player_id) {
@@ -207,11 +209,36 @@ void Engine::sync_network_state(uint32_t sim_tick, const InputState &net_input) 
     }
 
     remote_players.clear();
+    std::unordered_set<uint32_t> seen_remote_ids;
     for (const auto &[player_id, state] : net_client.player_states()) {
         if (player_id == local_player.network_id) {
             continue;
         }
         remote_players[player_id] = state;
+
+        RemoteRenderPlayer &render_player = remote_render_players[player_id];
+        glm::vec3 target = glm::vec3(state.x, state.y, state.z);
+        if (!std::isfinite(target.x) || !std::isfinite(target.y) || !std::isfinite(target.z)) {
+            target = glm::vec3(state.x, local_player.transform.position.y, state.z);
+        }
+        if (!render_player.initialized) {
+            render_player.position = target;
+            render_player.initialized = true;
+        }
+        render_player.target_position = target;
+        render_player.velocity = glm::vec3(state.vx, state.vy, state.vz);
+        render_player.anim_state = state.anim_state;
+        render_player.anim_phase = state.anim_phase;
+        render_player.anim_blend = state.anim_blend;
+        seen_remote_ids.insert(player_id);
+    }
+
+    for (auto it = remote_render_players.begin(); it != remote_render_players.end();) {
+        if (seen_remote_ids.find(it->first) == seen_remote_ids.end()) {
+            it = remote_render_players.erase(it);
+        } else {
+            ++it;
+        }
     }
 }
 
@@ -446,9 +473,21 @@ void Engine::tick(double frame_dt) {
         }
     }
 
+    const float remote_lerp = std::clamp(static_cast<float>(frame_dt) * 12.0f, 0.0f, 1.0f);
+    for (auto &[player_id, render_player] : remote_render_players) {
+        (void)player_id;
+        const glm::vec3 predicted_target = render_player.target_position + render_player.velocity * 0.035f;
+        const float err = glm::length(render_player.position - predicted_target);
+        if (err > 4.0f) {
+            render_player.position = predicted_target;
+        } else {
+            render_player.position = glm::mix(render_player.position, predicted_target, remote_lerp);
+        }
+    }
+
     render_stats.net_connected = net_client.is_connected();
     render_stats.net_local_player_id = local_player.network_id;
-    render_stats.net_remote_count = static_cast<uint32_t>(remote_players.size());
+    render_stats.net_remote_count = static_cast<uint32_t>(remote_render_players.size());
 
     refresh_overlay_text();
     if (!runtime_options.debug_freeze || frozen_debug_world.vertices.empty()) {
@@ -552,7 +591,7 @@ void Engine::refresh_overlay_text() {
             input_state.rmb_down ? 1 : 0,
             input_state.pointer_locked ? 1 : 0,
             input_state.look_enabled ? 1 : 0,
-            static_cast<int>(remote_players.size()),
+            static_cast<int>(remote_render_players.size()),
             render_stats.net_connected ? 1 : 0,
             render_stats.net_local_player_id,
             anim_state_name(local_player.anim_state),
@@ -594,6 +633,17 @@ void Engine::rebuild_dynamic_debug_mesh() {
     if (!runtime_options.debug_collision_only) {
         append_mesh(scene.debug_world, player_capsule);
         append_mesh(scene.debug_world, target_marker);
+        const SkeletonPose local_pose = SkeletalAnimator::sample_pose(
+            local_player.anim_state,
+            local_player.anim_phase,
+            local_player.anim_blend);
+        SkeletalAnimator::append_debug_skeleton(
+            scene.debug_world,
+            local_pose,
+            local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
+            local_player.transform.rotation,
+            glm::vec3(0.95f, 0.97f, 1.0f),
+            0.018f);
     }
 
     if (runtime_options.splitscreen) {
@@ -616,6 +666,17 @@ void Engine::rebuild_dynamic_debug_mesh() {
         if (!runtime_options.debug_collision_only) {
             append_mesh(scene.debug_world, p2_capsule);
             append_mesh(scene.debug_world, p2_target);
+            const SkeletonPose p2_pose = SkeletalAnimator::sample_pose(
+                local_player_secondary.anim_state,
+                local_player_secondary.anim_phase,
+                local_player_secondary.anim_blend);
+            SkeletalAnimator::append_debug_skeleton(
+                scene.debug_world,
+                p2_pose,
+                local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
+                local_player_secondary.transform.rotation,
+                glm::vec3(0.9f, 0.95f, 1.0f),
+                0.016f);
         }
     }
 
@@ -642,30 +703,42 @@ void Engine::rebuild_dynamic_debug_mesh() {
         append_mesh(scene.debug_world, normal_line);
     }
 
-    for (const auto &[player_id, state] : remote_players) {
+    for (const auto &[player_id, render_player] : remote_render_players) {
         (void)player_id;
         if (runtime_options.debug_collision_only) {
             continue;
         }
-        const float remote_y = std::isfinite(state.y)
-            ? state.y
+        const float remote_y = std::isfinite(render_player.position.y)
+            ? render_player.position.y
             : collision_world.find_spawn_height(
-                  glm::vec2(state.x, state.z),
+                  glm::vec2(render_player.position.x, render_player.position.z),
                   local_player.controller.capsuleRadius,
                   local_player.controller.capsuleHeight) +
                   0.05f;
         const AnimatedCapsuleShape remote_shape = animated_shape(
-            state.anim_state,
-            state.anim_phase,
-            state.anim_blend,
+            render_player.anim_state,
+            render_player.anim_phase,
+            render_player.anim_blend,
             local_player.controller.capsuleRadius,
             local_player.controller.capsuleHeight,
             local_player.camera_rig.pivotHeight);
+        const glm::vec3 remote_base = glm::vec3(render_player.position.x, remote_y, render_player.position.z);
         RenderMesh remote_capsule = build_debug_capsule_mesh(
-            glm::vec3(state.x, remote_y, state.z) + glm::vec3(0.0f, remote_shape.bob, 0.0f),
+            remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
             remote_shape.radius,
             remote_shape.height,
             player_color_from_id(player_id));
         append_mesh(scene.debug_world, remote_capsule);
+        const SkeletonPose remote_pose = SkeletalAnimator::sample_pose(
+            static_cast<PlayerAnimState>(render_player.anim_state),
+            render_player.anim_phase,
+            render_player.anim_blend);
+        SkeletalAnimator::append_debug_skeleton(
+            scene.debug_world,
+            remote_pose,
+            remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
+            glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+            player_color_from_id(player_id) * glm::vec3(1.08f, 1.08f, 1.08f),
+            0.014f);
     }
 }

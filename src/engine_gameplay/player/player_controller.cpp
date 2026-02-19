@@ -79,6 +79,38 @@ glm::vec2 find_flat_spawn_xz(const VoxelCollisionWorld &collision_world, glm::ve
 
     return best;
 }
+
+float anim_cycle_rate(PlayerAnimState state) {
+    switch (state) {
+    case PlayerAnimState::Walk:
+        return 5.0f;
+    case PlayerAnimState::Run:
+        return 8.0f;
+    case PlayerAnimState::Crawl:
+        return 2.8f;
+    case PlayerAnimState::Jump:
+        return 3.0f;
+    case PlayerAnimState::Idle:
+    default:
+        return 1.0f;
+    }
+}
+
+float anim_blend_target(PlayerAnimState state) {
+    switch (state) {
+    case PlayerAnimState::Walk:
+        return 0.5f;
+    case PlayerAnimState::Run:
+        return 1.0f;
+    case PlayerAnimState::Crawl:
+        return 0.35f;
+    case PlayerAnimState::Jump:
+        return 0.75f;
+    case PlayerAnimState::Idle:
+    default:
+        return 0.0f;
+    }
+}
 }
 
 PlayerEntity PlayerControllerSystem::spawn_player(const VoxelCollisionWorld &collision_world) {
@@ -140,7 +172,12 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
         move = glm::normalize(move);
     }
 
-    const float speed = input.sprint_held ? player.controller.sprintSpeed : player.controller.walkSpeed;
+    float speed = player.controller.walkSpeed;
+    if (input.crouch_held) {
+        speed = player.controller.crawlSpeed;
+    } else if (input.sprint_held) {
+        speed = player.controller.sprintSpeed;
+    }
 
     if (noclip) {
         player.transform.position += move * speed * dt;
@@ -149,6 +186,7 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
         }
         player.controller.grounded = false;
         player.controller.velocity = glm::vec3(0.0f);
+        update_animation_state(player, input, dt, noclip);
         return debug;
     }
 
@@ -236,5 +274,35 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
         player.transform.rotation = glm::angleAxis(facing, glm::vec3(0.0f, 1.0f, 0.0f));
     }
 
+    update_animation_state(player, input, dt, noclip);
+
     return debug;
+}
+
+void PlayerControllerSystem::update_animation_state(PlayerEntity &player, const InputState &input, float dt, bool noclip) {
+    const float horizontal_speed = glm::length(glm::vec2(player.controller.velocity.x, player.controller.velocity.z));
+    const bool moving = glm::length(input.move) > 0.12f || horizontal_speed > 0.18f;
+
+    PlayerAnimState next_state = PlayerAnimState::Idle;
+    if (!noclip && (!player.controller.grounded || std::fabs(player.controller.velocity.y) > 0.15f)) {
+        next_state = PlayerAnimState::Jump;
+    } else if (moving) {
+        if (input.crouch_held) {
+            next_state = PlayerAnimState::Crawl;
+        } else if (input.sprint_held) {
+            next_state = PlayerAnimState::Run;
+        } else {
+            next_state = PlayerAnimState::Walk;
+        }
+    }
+
+    player.anim_state = next_state;
+    player.anim_phase += anim_cycle_rate(player.anim_state) * dt;
+    if (player.anim_phase > 6.28318530718f) {
+        player.anim_phase = std::fmod(player.anim_phase, 6.28318530718f);
+    }
+
+    const float target_blend = anim_blend_target(player.anim_state);
+    const float blend_step = std::clamp(10.0f * dt, 0.0f, 1.0f);
+    player.anim_blend += (target_blend - player.anim_blend) * blend_step;
 }

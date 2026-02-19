@@ -12,7 +12,23 @@ struct NetTickInput {
     uint32_t tick = 0;
     float move_x = 0.0f;
     float move_y = 0.0f;
+    uint8_t action_flags = 0;
 };
+
+enum class NetInputFlags : uint8_t {
+    JumpHeld = 1u << 0u,
+    JumpPressed = 1u << 1u,
+    SprintHeld = 1u << 2u,
+    CrouchHeld = 1u << 3u
+};
+
+inline uint8_t net_flag(NetInputFlags flag) {
+    return static_cast<uint8_t>(flag);
+}
+
+inline bool net_flag_set(uint8_t flags, NetInputFlags flag) {
+    return (flags & net_flag(flag)) != 0;
+}
 
 struct NetSnapshot {
     uint32_t player_id = 0;
@@ -46,6 +62,9 @@ struct NetPlayerState {
     float vx = 0.0f;
     float vy = 0.0f;
     float vz = 0.0f;
+    uint8_t anim_state = 0;
+    float anim_phase = 0.0f;
+    float anim_blend = 0.0f;
 };
 
 struct NetChunkCoord {

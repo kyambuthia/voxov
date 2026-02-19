@@ -37,4 +37,6 @@ public:
         const VoxelCollisionWorld &collision_world,
         float dt,
         bool noclip);
+
+    static void update_animation_state(PlayerEntity &player, const InputState &input, float dt, bool noclip);
 };

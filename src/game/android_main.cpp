@@ -506,6 +506,7 @@ struct AndroidRenderer {
         input.tick = net_tick++;
         input.move_x = touch.left_value.x;
         input.move_y = touch.left_value.y;
+        input.action_flags = 0;
         net_client.send_input(input);
 
         NetSnapshot snapshot{};

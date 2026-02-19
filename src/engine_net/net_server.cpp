@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <cmath>
 
 namespace {
 #pragma pack(push, 1)
@@ -38,6 +39,39 @@ struct PlayerStatePacket {
     NetPlayerState state{};
 };
 #pragma pack(pop)
+
+constexpr float kServerTickDt = 1.0f / 60.0f;
+constexpr float kServerSpawnY = 6.05f;
+
+float server_anim_cycle_rate(uint8_t anim_state) {
+    switch (anim_state) {
+    case 1: // walk
+        return 5.0f;
+    case 2: // run
+        return 8.0f;
+    case 3: // jump
+        return 3.0f;
+    case 4: // crawl
+        return 2.8f;
+    default:
+        return 1.0f;
+    }
+}
+
+float server_anim_blend_target(uint8_t anim_state) {
+    switch (anim_state) {
+    case 1:
+        return 0.5f;
+    case 2:
+        return 1.0f;
+    case 3:
+        return 0.75f;
+    case 4:
+        return 0.35f;
+    default:
+        return 0.0f;
+    }
+}
 }
 
 int32_t NetServer::chunk_key(NetChunkCoord coord) const {
@@ -128,8 +162,9 @@ void NetServer::pump() {
             state.player_id = next_player_id++;
             state.state.player_id = state.player_id;
             state.state.x = 8.0f + static_cast<float>((state.player_id % 3) * 2);
-            state.state.y = 6.05f;
+            state.state.y = kServerSpawnY;
             state.state.z = 8.0f;
+            state.state.anim_state = 0;
             if (local_only) {
                 char ip_buffer[64]{};
                 if (enet_address_get_host_ip(&event.peer->address, ip_buffer, sizeof(ip_buffer)) != 0) {
@@ -170,11 +205,62 @@ void NetServer::pump() {
                 if (packet.type == NetMsgType::Input) {
                     state.last_input = packet.input;
 
-                    const float speed = 4.5f;
-                    state.state.x += packet.input.move_x * speed * (1.0f / 60.0f);
-                    state.state.z += packet.input.move_y * speed * (1.0f / 60.0f);
-                    state.state.vx = packet.input.move_x * speed;
-                    state.state.vz = packet.input.move_y * speed;
+                    float move_x = packet.input.move_x;
+                    float move_y = packet.input.move_y;
+                    const float len = std::sqrt(move_x * move_x + move_y * move_y);
+                    if (len > 1.0f) {
+                        move_x /= len;
+                        move_y /= len;
+                    }
+
+                    const bool jump_pressed = net_flag_set(packet.input.action_flags, NetInputFlags::JumpPressed);
+                    const bool sprint_held = net_flag_set(packet.input.action_flags, NetInputFlags::SprintHeld);
+                    const bool crouch_held = net_flag_set(packet.input.action_flags, NetInputFlags::CrouchHeld);
+
+                    float speed = 4.0f;
+                    if (crouch_held) {
+                        speed = 2.2f;
+                    } else if (sprint_held) {
+                        speed = 7.2f;
+                    }
+
+                    state.state.x += move_x * speed * kServerTickDt;
+                    state.state.z += move_y * speed * kServerTickDt;
+                    state.state.vx = move_x * speed;
+                    state.state.vz = move_y * speed;
+
+                    const bool grounded = state.state.y <= (kServerSpawnY + 0.001f) && std::fabs(state.state.vy) < 0.001f;
+                    if (jump_pressed && grounded) {
+                        state.state.vy = 5.5f;
+                    }
+                    state.state.vy += -19.62f * kServerTickDt;
+                    state.state.y += state.state.vy * kServerTickDt;
+                    if (state.state.y < kServerSpawnY) {
+                        state.state.y = kServerSpawnY;
+                        state.state.vy = 0.0f;
+                    }
+
+                    const float planar_speed = std::sqrt(state.state.vx * state.state.vx + state.state.vz * state.state.vz);
+                    if (state.state.y > (kServerSpawnY + 0.02f) || std::fabs(state.state.vy) > 0.08f) {
+                        state.state.anim_state = 3;
+                    } else if (planar_speed > 0.2f) {
+                        if (crouch_held) {
+                            state.state.anim_state = 4;
+                        } else if (sprint_held) {
+                            state.state.anim_state = 2;
+                        } else {
+                            state.state.anim_state = 1;
+                        }
+                    } else {
+                        state.state.anim_state = 0;
+                    }
+
+                    state.state.anim_phase += server_anim_cycle_rate(state.state.anim_state) * kServerTickDt;
+                    if (state.state.anim_phase > 6.28318530718f) {
+                        state.state.anim_phase = std::fmod(state.state.anim_phase, 6.28318530718f);
+                    }
+                    const float target_blend = server_anim_blend_target(state.state.anim_state);
+                    state.state.anim_blend += (target_blend - state.state.anim_blend) * 0.18f;
 
                     SnapshotPacket snap{};
                     snap.snapshot.player_id = state.player_id;

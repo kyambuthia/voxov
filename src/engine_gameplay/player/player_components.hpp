@@ -16,11 +16,20 @@ struct CharacterController {
     float capsuleHeight = 1.8f;
     float walkSpeed = 4.0f;
     float sprintSpeed = 7.2f;
+    float crawlSpeed = 2.2f;
     float jumpVelocity = 5.5f;
     float gravity = -19.62f;
     float maxSlopeDeg = 50.0f;
     bool grounded = false;
     glm::vec3 velocity = glm::vec3(0.0f);
+};
+
+enum class PlayerAnimState : uint8_t {
+    Idle = 0,
+    Walk = 1,
+    Run = 2,
+    Jump = 3,
+    Crawl = 4
 };
 
 struct CameraRig {
@@ -41,6 +50,9 @@ struct PlayerEntity {
     TransformComponent transform{};
     CharacterController controller{};
     CameraRig camera_rig{};
+    PlayerAnimState anim_state = PlayerAnimState::Idle;
+    float anim_phase = 0.0f;
+    float anim_blend = 0.0f;
 };
 
 struct ReplicatedPlayerMotion {

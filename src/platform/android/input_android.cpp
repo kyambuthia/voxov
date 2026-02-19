@@ -7,6 +7,7 @@ InputState AndroidInputBackend::poll() {
     out.jump_held = jump;
     out.jump_pressed = jump && !prev_jump;
     out.sprint_held = sprint;
+    out.crouch_held = false;
     out.look_mode = true;
     out.menu_toggle_pressed = menu_toggle && !prev_menu_toggle;
     out.menu_up_pressed = menu_up && !prev_menu_up;

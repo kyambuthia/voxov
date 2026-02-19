@@ -68,6 +68,8 @@ InputState poll_secondary_split_input(GLFWwindow *window) {
     out.sprint_held =
         glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS ||
         glfwGetKey(window, GLFW_KEY_SLASH) == GLFW_PRESS;
+    out.crouch_held =
+        glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
 
     return out;
 }

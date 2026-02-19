@@ -107,6 +107,8 @@ InputState DesktopInputBackend::poll() {
 
     out.sprint_held = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
                       glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
+    out.crouch_held = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS ||
+                      glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS;
 
     double x = 0.0;
     double y = 0.0;

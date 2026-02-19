@@ -20,6 +20,54 @@ glm::vec3 player_color_from_id(uint32_t player_id) {
     const float b = 0.25f + 0.65f * static_cast<float>((h >> 16) & 0xFF) / 255.0f;
     return glm::vec3(r, g, b);
 }
+
+struct AnimatedCapsuleShape {
+    float radius = 0.35f;
+    float height = 1.8f;
+    float bob = 0.0f;
+    float pivot_height = 1.5f;
+};
+
+float anim_pulse(float phase) {
+    return std::fabs(std::sin(phase));
+}
+
+AnimatedCapsuleShape animated_shape(
+    uint8_t anim_state,
+    float anim_phase,
+    float anim_blend,
+    float base_radius,
+    float base_height,
+    float base_pivot_height) {
+    AnimatedCapsuleShape out{};
+    out.radius = base_radius;
+    out.height = base_height;
+    out.pivot_height = base_pivot_height;
+    out.bob = 0.01f * std::sin(anim_phase);
+
+    switch (anim_state) {
+    case static_cast<uint8_t>(PlayerAnimState::Walk):
+        out.bob = 0.06f * std::max(0.35f, anim_blend) * anim_pulse(anim_phase);
+        break;
+    case static_cast<uint8_t>(PlayerAnimState::Run):
+        out.bob = 0.11f * std::max(0.55f, anim_blend) * anim_pulse(anim_phase);
+        break;
+    case static_cast<uint8_t>(PlayerAnimState::Jump):
+        out.bob = 0.08f * std::sin(anim_phase * 0.65f);
+        break;
+    case static_cast<uint8_t>(PlayerAnimState::Crawl):
+        out.height = base_height * 0.55f;
+        out.radius = base_radius * 1.08f;
+        out.pivot_height = base_pivot_height * 0.62f;
+        out.bob = 0.02f * anim_pulse(anim_phase * 0.8f);
+        break;
+    case static_cast<uint8_t>(PlayerAnimState::Idle):
+    default:
+        break;
+    }
+
+    return out;
+}
 }
 
 void Engine::init(void *window_handle, RenderBackendType backend_type, const EngineRuntimeOptions &options) {
@@ -109,11 +157,23 @@ void Engine::shutdown() {
     physics.shutdown();
 }
 
-void Engine::sync_network_state(uint32_t sim_tick) {
+void Engine::sync_network_state(uint32_t sim_tick, const InputState &net_input) {
     NetTickInput input{};
     input.tick = sim_tick;
-    input.move_x = input_state.move.x;
-    input.move_y = input_state.move.y;
+    input.move_x = net_input.move.x;
+    input.move_y = net_input.move.y;
+    if (net_input.jump_held) {
+        input.action_flags |= net_flag(NetInputFlags::JumpHeld);
+    }
+    if (net_input.jump_pressed) {
+        input.action_flags |= net_flag(NetInputFlags::JumpPressed);
+    }
+    if (net_input.sprint_held) {
+        input.action_flags |= net_flag(NetInputFlags::SprintHeld);
+    }
+    if (net_input.crouch_held) {
+        input.action_flags |= net_flag(NetInputFlags::CrouchHeld);
+    }
     net_client.send_input(input);
 
     net_client.pump();
@@ -222,6 +282,7 @@ void Engine::tick(double frame_dt) {
         gameplay_input.jump_pressed = false;
         gameplay_input.jump_held = false;
         gameplay_input.sprint_held = false;
+        gameplay_input.crouch_held = false;
     }
     InputState gameplay_input_secondary = input_state_secondary;
     if (gui_menu.open()) {
@@ -230,6 +291,7 @@ void Engine::tick(double frame_dt) {
         gameplay_input_secondary.jump_pressed = false;
         gameplay_input_secondary.jump_held = false;
         gameplay_input_secondary.sprint_held = false;
+        gameplay_input_secondary.crouch_held = false;
     }
     if (!gameplay_started) {
         gameplay_input.move = glm::vec2(0.0f);
@@ -237,6 +299,7 @@ void Engine::tick(double frame_dt) {
         gameplay_input.jump_pressed = false;
         gameplay_input.jump_held = false;
         gameplay_input.sprint_held = false;
+        gameplay_input.crouch_held = false;
         gameplay_input_secondary = gameplay_input;
     }
 
@@ -277,10 +340,10 @@ void Engine::tick(double frame_dt) {
         }
         jump_consumed = jump_consumed || input_state.jump_pressed;
 
-        sync_network_state(static_cast<uint32_t>(fixed.tick));
+        sync_network_state(static_cast<uint32_t>(fixed.tick), step_input);
 
-        local_replication.position = local_player.transform.position;
-        local_replication.velocity = local_player.controller.velocity;
+    local_replication.position = local_player.transform.position;
+    local_replication.velocity = local_player.controller.velocity;
 
         physics.step(static_cast<float>(fixed.fixed_dt));
         fixed.accumulator -= fixed.fixed_dt;
@@ -489,14 +552,22 @@ void Engine::rebuild_dynamic_debug_mesh() {
     scene.debug_world = RenderMesh{};
     const bool collision_debug_enabled = runtime_options.debug_collision;
 
-    RenderMesh player_capsule = build_debug_capsule_mesh(
-        local_player.transform.position,
+    const AnimatedCapsuleShape local_shape = animated_shape(
+        static_cast<uint8_t>(local_player.anim_state),
+        local_player.anim_phase,
+        local_player.anim_blend,
         local_player.controller.capsuleRadius,
         local_player.controller.capsuleHeight,
+        local_player.camera_rig.pivotHeight);
+
+    RenderMesh player_capsule = build_debug_capsule_mesh(
+        local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
+        local_shape.radius,
+        local_shape.height,
         player_color_from_id(local_player.network_id));
 
     RenderMesh target_marker = build_debug_sphere_mesh(
-        local_player.transform.position + glm::vec3(0.0f, local_player.camera_rig.pivotHeight, 0.0f),
+        local_player.transform.position + glm::vec3(0.0f, local_shape.pivot_height + local_shape.bob, 0.0f),
         0.12f,
         glm::vec3(0.2f, 0.85f, 1.0f));
 
@@ -506,13 +577,20 @@ void Engine::rebuild_dynamic_debug_mesh() {
     }
 
     if (runtime_options.splitscreen) {
-        RenderMesh p2_capsule = build_debug_capsule_mesh(
-            local_player_secondary.transform.position,
+        const AnimatedCapsuleShape p2_shape = animated_shape(
+            static_cast<uint8_t>(local_player_secondary.anim_state),
+            local_player_secondary.anim_phase,
+            local_player_secondary.anim_blend,
             local_player_secondary.controller.capsuleRadius,
             local_player_secondary.controller.capsuleHeight,
+            local_player_secondary.camera_rig.pivotHeight);
+        RenderMesh p2_capsule = build_debug_capsule_mesh(
+            local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
+            p2_shape.radius,
+            p2_shape.height,
             player_color_from_id(local_player_secondary.network_id));
         RenderMesh p2_target = build_debug_sphere_mesh(
-            local_player_secondary.transform.position + glm::vec3(0.0f, local_player_secondary.camera_rig.pivotHeight, 0.0f),
+            local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.pivot_height + p2_shape.bob, 0.0f),
             0.10f,
             glm::vec3(0.6f, 0.85f, 1.0f));
         if (!runtime_options.debug_collision_only) {
@@ -554,10 +632,17 @@ void Engine::rebuild_dynamic_debug_mesh() {
             local_player.controller.capsuleRadius,
             local_player.controller.capsuleHeight) +
             0.05f;
-        RenderMesh remote_capsule = build_debug_capsule_mesh(
-            glm::vec3(state.x, grounded_y, state.z),
+        const AnimatedCapsuleShape remote_shape = animated_shape(
+            state.anim_state,
+            state.anim_phase,
+            state.anim_blend,
             local_player.controller.capsuleRadius,
             local_player.controller.capsuleHeight,
+            local_player.camera_rig.pivotHeight);
+        RenderMesh remote_capsule = build_debug_capsule_mesh(
+            glm::vec3(state.x, grounded_y, state.z) + glm::vec3(0.0f, remote_shape.bob, 0.0f),
+            remote_shape.radius,
+            remote_shape.height,
             player_color_from_id(player_id));
         append_mesh(scene.debug_world, remote_capsule);
     }

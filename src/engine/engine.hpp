@@ -43,7 +43,7 @@ private:
     void refresh_overlay_text();
     void update_third_person_camera(PlayerEntity &player, Camera &out_camera);
     void update_third_person_camera(PlayerEntity &player, const glm::vec3 &render_position, Camera &out_camera);
-    void sync_network_state(uint32_t sim_tick);
+    void sync_network_state(uint32_t sim_tick, const InputState &net_input);
     void start_local_server(uint16_t port, bool loopback_only);
 
     FixedStep fixed;

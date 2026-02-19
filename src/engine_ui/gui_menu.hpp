@@ -2,6 +2,7 @@
 
 #include "engine_input/input_state.hpp"
 
+#include <vector>
 #include <string>
 
 struct GuiMenuActions {
@@ -35,6 +36,9 @@ public:
     Page page_id() const;
     void set_selected(int index);
     std::string build_text(bool devhud_enabled, bool noclip_enabled, const std::string &multiplayer_hint = std::string()) const;
+    std::string page_title() const;
+    std::string item_label(int index, bool devhud_enabled, bool noclip_enabled) const;
+    std::vector<std::string> guide_lines() const;
 
 private:
     enum class MenuPage {

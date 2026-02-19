@@ -1240,60 +1240,21 @@ struct AndroidRenderer {
                 const int row_h = (gui_menu.page_id() == GuiMenu::Page::Main) ? 84 : 70;
                 const int row_gap = 12;
                 const int row_count = gui_menu.count();
+                append_text(
+                    gui_menu.page_title(),
+                    static_cast<float>(panel_x + 22),
+                    static_cast<float>(panel_y + 6),
+                    3.2f,
+                    glm::vec3(0.96f, 0.98f, 1.0f));
 
-                std::string title;
-                if (gui_menu.page_id() == GuiMenu::Page::Main) {
-                    title = "MAIN MENU";
-                } else if (gui_menu.page_id() == GuiMenu::Page::Multiplayer) {
-                    title = "MULTIPLAYER";
-                } else if (gui_menu.page_id() == GuiMenu::Page::Settings) {
-                    title = "SETTINGS";
-                } else {
-                    title = "HOST / JOIN GUIDE";
-                }
-                append_text(title, static_cast<float>(panel_x + 22), static_cast<float>(panel_y + 6), 3.2f, glm::vec3(0.96f, 0.98f, 1.0f));
-
-                auto row_label = [&](int idx) -> std::string {
-                    switch (gui_menu.page_id()) {
-                    case GuiMenu::Page::Main:
-                        switch (idx) {
-                        case 0: return "START GAME";
-                        case 1: return "MULTIPLAYER";
-                        case 2: return "SETTINGS";
-                        case 3: return "CLOSE MENU";
-                        default: return "";
-                        }
-                    case GuiMenu::Page::Multiplayer:
-                        switch (idx) {
-                        case 0: return "HOST THIS DEVICE";
-                        case 1: return "HOST WI-FI GAME";
-                        case 2: return "JOIN NEARBY WI-FI";
-                        case 3: return "HOW HOST/JOIN WORKS";
-                        case 4: return "BACK";
-                        default: return "";
-                        }
-                    case GuiMenu::Page::Settings:
-                        switch (idx) {
-                        case 0: return std::string("DEVHUD: ") + (devhud ? "ON" : "OFF");
-                        case 1: return std::string("NOCLIP: ") + (noclip ? "ON" : "OFF");
-                        case 2: return "RESET CAMERA";
-                        case 3: return "BACK";
-                        default: return "";
-                        }
-                    case GuiMenu::Page::MultiplayerGuide:
-                    default:
-                        if (idx == 0) {
-                            return "BACK";
-                        }
-                        return "";
-                    }
-                };
-
-                if (gui_menu.page_id() == GuiMenu::Page::MultiplayerGuide) {
-                    append_text("1 HOST WI-FI GAME", static_cast<float>(panel_x + 22), static_cast<float>(panel_y + 58), 2.6f, glm::vec3(0.92f, 0.95f, 0.99f));
-                    append_text("2 FRIEND TAPS JOIN NEARBY", static_cast<float>(panel_x + 22), static_cast<float>(panel_y + 84), 2.6f, glm::vec3(0.92f, 0.95f, 0.99f));
-                    append_text("3 SAME WI-FI REQUIRED", static_cast<float>(panel_x + 22), static_cast<float>(panel_y + 110), 2.6f, glm::vec3(0.92f, 0.95f, 0.99f));
-                    append_text("4 RETRY IF HOST NOT LISTED", static_cast<float>(panel_x + 22), static_cast<float>(panel_y + 136), 2.6f, glm::vec3(0.92f, 0.95f, 0.99f));
+                const std::vector<std::string> guide_lines = gui_menu.guide_lines();
+                for (size_t i = 0; i < guide_lines.size(); ++i) {
+                    append_text(
+                        guide_lines[i],
+                        static_cast<float>(panel_x + 22),
+                        static_cast<float>(panel_y + 58 + static_cast<int>(i) * 26),
+                        2.6f,
+                        glm::vec3(0.92f, 0.95f, 0.99f));
                 }
 
                 for (int i = 0; i < row_count; ++i) {
@@ -1302,7 +1263,7 @@ struct AndroidRenderer {
                         panel_y + 24 + i * (row_h + row_gap),
                         panel_w - 36,
                         row_h - 8};
-                    std::string label = row_label(i);
+                    std::string label = gui_menu.item_label(i, devhud, noclip);
                     if (label.empty()) {
                         continue;
                     }

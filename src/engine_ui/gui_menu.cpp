@@ -241,3 +241,67 @@ std::string GuiMenu::build_text(bool devhud_enabled, bool noclip_enabled, const 
         selected_item == 3 ? ">" : " ");
     return std::string(buffer);
 }
+
+std::string GuiMenu::page_title() const {
+    switch (page) {
+    case MenuPage::Main:
+        return "MAIN MENU";
+    case MenuPage::Multiplayer:
+        return "MULTIPLAYER";
+    case MenuPage::Settings:
+        return "SETTINGS";
+    case MenuPage::MultiplayerGuide:
+        return "HOST / JOIN GUIDE";
+    default:
+        return "MENU";
+    }
+}
+
+std::string GuiMenu::item_label(int index, bool devhud_enabled, bool noclip_enabled) const {
+    switch (page) {
+    case MenuPage::Main:
+        switch (index) {
+        case 0: return "START GAME";
+        case 1: return "MULTIPLAYER";
+        case 2: return "SETTINGS";
+        case 3: return "CLOSE MENU";
+        default: return std::string();
+        }
+    case MenuPage::Multiplayer:
+        switch (index) {
+        case 0: return "HOST THIS DEVICE";
+        case 1: return "HOST WI-FI GAME";
+        case 2: return "JOIN NEARBY WI-FI";
+        case 3: return "HOW HOST/JOIN WORKS";
+        case 4: return "BACK";
+        default: return std::string();
+        }
+    case MenuPage::Settings:
+        switch (index) {
+        case 0: return std::string("DEVHUD: ") + (devhud_enabled ? "ON" : "OFF");
+        case 1: return std::string("NOCLIP: ") + (noclip_enabled ? "ON" : "OFF");
+        case 2: return "RESET CAMERA";
+        case 3: return "BACK";
+        default: return std::string();
+        }
+    case MenuPage::MultiplayerGuide:
+        if (index == 0) {
+            return "BACK";
+        }
+        return std::string();
+    default:
+        return std::string();
+    }
+}
+
+std::vector<std::string> GuiMenu::guide_lines() const {
+    if (page != MenuPage::MultiplayerGuide) {
+        return {};
+    }
+
+    return {
+        "1 HOST WI-FI GAME",
+        "2 FRIEND TAPS JOIN NEARBY",
+        "3 SAME WI-FI REQUIRED",
+        "4 RETRY IF HOST NOT LISTED"};
+}

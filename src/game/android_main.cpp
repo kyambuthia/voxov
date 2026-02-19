@@ -1193,13 +1193,14 @@ struct AndroidRenderer {
 
         std::string ui_key;
         ui_key.reserve(256);
+        const GuiMenuView menu_view = gui_menu.build_view(devhud, noclip, multiplayer_hint);
         if (gui_menu.open()) {
             ui_key += "menu:";
             ui_key += std::to_string(static_cast<int>(gui_menu.page_id()));
             ui_key += ":";
-            ui_key += std::to_string(gui_menu.selected());
+            ui_key += std::to_string(menu_view.selected);
             ui_key += ":";
-            ui_key += multiplayer_hint;
+            ui_key += menu_view.status;
             ui_key += ":";
             ui_key += std::to_string(width);
             ui_key += "x";
@@ -1239,18 +1240,17 @@ struct AndroidRenderer {
                 const int panel_w = std::min(560, width - 40);
                 const int row_h = (gui_menu.page_id() == GuiMenu::Page::Main) ? 84 : 70;
                 const int row_gap = 12;
-                const int row_count = gui_menu.count();
+                const int row_count = static_cast<int>(menu_view.items.size());
                 append_text(
-                    gui_menu.page_title(),
+                    menu_view.title,
                     static_cast<float>(panel_x + 22),
                     static_cast<float>(panel_y + 6),
                     3.2f,
                     glm::vec3(0.96f, 0.98f, 1.0f));
 
-                const std::vector<std::string> guide_lines = gui_menu.guide_lines();
-                for (size_t i = 0; i < guide_lines.size(); ++i) {
+                for (size_t i = 0; i < menu_view.guide_lines.size(); ++i) {
                     append_text(
-                        guide_lines[i],
+                        menu_view.guide_lines[i],
                         static_cast<float>(panel_x + 22),
                         static_cast<float>(panel_y + 58 + static_cast<int>(i) * 26),
                         2.6f,
@@ -1263,19 +1263,19 @@ struct AndroidRenderer {
                         panel_y + 24 + i * (row_h + row_gap),
                         panel_w - 36,
                         row_h - 8};
-                    std::string label = gui_menu.item_label(i, devhud, noclip);
+                    std::string label = menu_view.items[static_cast<size_t>(i)];
                     if (label.empty()) {
                         continue;
                     }
-                    if (i == gui_menu.selected()) {
+                    if (i == menu_view.selected) {
                         label = "> " + label;
                     }
                     append_centered(row_rect, label, 2.9f, glm::vec3(0.95f, 0.98f, 1.0f));
                 }
 
-                if (!multiplayer_hint.empty()) {
+                if (!menu_view.status.empty()) {
                     append_text(
-                        "STATUS: " + multiplayer_hint,
+                        "STATUS: " + menu_view.status,
                         static_cast<float>(panel_x + 22),
                         static_cast<float>(panel_y + 24 + row_count * (row_h + row_gap) + 10),
                         2.2f,

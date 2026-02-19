@@ -19,6 +19,15 @@ struct GuiMenuActions {
     bool ui_select_sfx = false;
 };
 
+struct GuiMenuView {
+    bool open = false;
+    int selected = 0;
+    std::string title;
+    std::vector<std::string> items;
+    std::vector<std::string> guide_lines;
+    std::string status;
+};
+
 class GuiMenu {
 public:
     enum class Page {
@@ -39,6 +48,7 @@ public:
     std::string page_title() const;
     std::string item_label(int index, bool devhud_enabled, bool noclip_enabled) const;
     std::vector<std::string> guide_lines() const;
+    GuiMenuView build_view(bool devhud_enabled, bool noclip_enabled, const std::string &multiplayer_hint = std::string()) const;
 
 private:
     enum class MenuPage {

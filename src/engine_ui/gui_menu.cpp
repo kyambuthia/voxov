@@ -305,3 +305,24 @@ std::vector<std::string> GuiMenu::guide_lines() const {
         "3 SAME WI-FI REQUIRED",
         "4 RETRY IF HOST NOT LISTED"};
 }
+
+GuiMenuView GuiMenu::build_view(bool devhud_enabled, bool noclip_enabled, const std::string &multiplayer_hint) const {
+    GuiMenuView view{};
+    view.open = open();
+    if (!view.open) {
+        return view;
+    }
+
+    view.selected = selected();
+    view.title = page_title();
+    view.status = multiplayer_hint;
+    view.guide_lines = guide_lines();
+    view.items.reserve(static_cast<size_t>(count()));
+    for (int i = 0; i < count(); ++i) {
+        const std::string label = item_label(i, devhud_enabled, noclip_enabled);
+        if (!label.empty()) {
+            view.items.push_back(label);
+        }
+    }
+    return view;
+}

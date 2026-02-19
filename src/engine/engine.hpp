@@ -42,6 +42,8 @@ private:
         glm::vec3 position = glm::vec3(0.0f);
         glm::vec3 target_position = glm::vec3(0.0f);
         glm::vec3 velocity = glm::vec3(0.0f);
+        glm::quat orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        glm::quat target_orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
         uint8_t anim_state = 0;
         float anim_phase = 0.0f;
         float anim_blend = 0.0f;

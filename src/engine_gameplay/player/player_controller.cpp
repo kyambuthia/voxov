@@ -282,6 +282,7 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
 void PlayerControllerSystem::update_animation_state(PlayerEntity &player, const InputState &input, float dt, bool noclip) {
     const float horizontal_speed = glm::length(glm::vec2(player.controller.velocity.x, player.controller.velocity.z));
     const bool moving = glm::length(input.move) > 0.12f || horizontal_speed > 0.18f;
+    const float speed_ratio = std::clamp(horizontal_speed / std::max(0.001f, player.controller.sprintSpeed), 0.0f, 1.0f);
 
     PlayerAnimState next_state = PlayerAnimState::Idle;
     if (!noclip && (!player.controller.grounded || std::fabs(player.controller.velocity.y) > 0.15f)) {
@@ -296,13 +297,21 @@ void PlayerControllerSystem::update_animation_state(PlayerEntity &player, const 
         }
     }
 
+    const PlayerAnimState prev_state = player.anim_state;
     player.anim_state = next_state;
+    if (prev_state != player.anim_state) {
+        // Keep leg cycle continuous but avoid sudden offset on state transitions.
+        player.anim_phase = std::fmod(player.anim_phase * 0.6f, 6.28318530718f);
+    }
     player.anim_phase += anim_cycle_rate(player.anim_state) * dt;
     if (player.anim_phase > 6.28318530718f) {
         player.anim_phase = std::fmod(player.anim_phase, 6.28318530718f);
     }
 
-    const float target_blend = anim_blend_target(player.anim_state);
+    float target_blend = anim_blend_target(player.anim_state);
+    if (player.anim_state == PlayerAnimState::Walk || player.anim_state == PlayerAnimState::Run) {
+        target_blend = std::clamp(target_blend * (0.55f + speed_ratio * 0.9f), 0.0f, 1.0f);
+    }
     const float blend_step = std::clamp(10.0f * dt, 0.0f, 1.0f);
     player.anim_blend += (target_blend - player.anim_blend) * blend_step;
 }

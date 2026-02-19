@@ -7,6 +7,8 @@
 
 #include <spdlog/spdlog.h>
 
+#include <glm/gtx/quaternion.hpp>
+
 #include <algorithm>
 #include <cmath>
 #include <cstdio>
@@ -49,6 +51,16 @@ struct AnimatedCapsuleShape {
 
 float anim_pulse(float phase) {
     return std::fabs(std::sin(phase));
+}
+
+glm::quat facing_from_velocity(glm::vec3 velocity, const glm::quat &fallback) {
+    const glm::vec2 flat(velocity.x, velocity.z);
+    const float speed = glm::length(flat);
+    if (speed < 0.08f) {
+        return fallback;
+    }
+    const float yaw = std::atan2(velocity.x, velocity.z);
+    return glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
 }
 
 AnimatedCapsuleShape animated_shape(
@@ -223,10 +235,13 @@ void Engine::sync_network_state(uint32_t sim_tick, const InputState &net_input) 
         }
         if (!render_player.initialized) {
             render_player.position = target;
+            render_player.orientation = local_player.transform.rotation;
+            render_player.target_orientation = render_player.orientation;
             render_player.initialized = true;
         }
         render_player.target_position = target;
         render_player.velocity = glm::vec3(state.vx, state.vy, state.vz);
+        render_player.target_orientation = facing_from_velocity(render_player.velocity, render_player.target_orientation);
         render_player.anim_state = state.anim_state;
         render_player.anim_phase = state.anim_phase;
         render_player.anim_blend = state.anim_blend;
@@ -474,6 +489,7 @@ void Engine::tick(double frame_dt) {
     }
 
     const float remote_lerp = std::clamp(static_cast<float>(frame_dt) * 12.0f, 0.0f, 1.0f);
+    const float remote_rot_lerp = std::clamp(static_cast<float>(frame_dt) * 9.0f, 0.0f, 1.0f);
     for (auto &[player_id, render_player] : remote_render_players) {
         (void)player_id;
         const glm::vec3 predicted_target = render_player.target_position + render_player.velocity * 0.035f;
@@ -483,6 +499,10 @@ void Engine::tick(double frame_dt) {
         } else {
             render_player.position = glm::mix(render_player.position, predicted_target, remote_lerp);
         }
+        render_player.orientation = glm::normalize(glm::slerp(
+            render_player.orientation,
+            render_player.target_orientation,
+            remote_rot_lerp));
     }
 
     render_stats.net_connected = net_client.is_connected();
@@ -737,7 +757,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
             scene.debug_world,
             remote_pose,
             remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
-            glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+            render_player.orientation,
             player_color_from_id(player_id) * glm::vec3(1.08f, 1.08f, 1.08f),
             0.014f);
     }

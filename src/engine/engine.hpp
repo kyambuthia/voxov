@@ -50,8 +50,17 @@ private:
         float anim_blend = 0.0f;
         bool initialized = false;
     };
+    struct VehicleState {
+        glm::vec3 position = glm::vec3(10.0f, 0.0f, 10.0f);
+        float yaw = 0.0f;
+        float speed = 0.0f;
+        bool occupied = false;
+    };
 
     void build_static_scene();
+    void handle_vehicle_interaction(const InputState &input);
+    void update_vehicle_sim(const InputState &input, float dt);
+    glm::vec3 vehicle_seat_world_position() const;
     void rebuild_dynamic_debug_mesh();
     void refresh_overlay_text();
     void update_third_person_camera(PlayerEntity &player, Camera &out_camera);
@@ -108,4 +117,5 @@ private:
     PlayerCollisionDebug last_collision_debug{};
     PlayerCollisionDebug last_collision_debug_secondary{};
     RenderMesh frozen_debug_world{};
+    VehicleState vehicle{};
 };

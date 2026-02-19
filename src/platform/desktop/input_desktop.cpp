@@ -89,6 +89,10 @@ InputState DesktopInputBackend::poll() {
     out.menu_select_pressed = enter_down && !prev_enter_down;
     prev_enter_down = enter_down;
 
+    const bool f_down = glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS;
+    out.interact_pressed = f_down && !prev_f_down;
+    prev_f_down = f_down;
+
     const bool f1_down = glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS;
     out.debug_toggle_pressed = f1_down && !prev_f1_down;
     prev_f1_down = f1_down;

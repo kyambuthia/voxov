@@ -19,6 +19,7 @@ private:
     bool prev_up_down = false;
     bool prev_down_down = false;
     bool prev_enter_down = false;
+    bool prev_f_down = false;
     bool prev_f1_down = false;
     bool prev_f2_down = false;
     bool prev_f3_down = false;

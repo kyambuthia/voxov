@@ -9,15 +9,9 @@
 
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/transform.hpp>
+#include <glm/gtx/transform.hpp>
 
 namespace {
-int node_index_from_ptr(const cgltf_data *data, const cgltf_node *node) {
-    if (!data || !node) {
-        return -1;
-    }
-    return static_cast<int>(node - data->nodes);
-}
-
 bool str_contains_ci(const std::string &haystack, const char *needle) {
     if (!needle || *needle == '\0') {
         return false;
@@ -27,6 +21,13 @@ bool str_contains_ci(const std::string &haystack, const char *needle) {
     std::transform(h.begin(), h.end(), h.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     std::transform(n.begin(), n.end(), n.begin(), [](unsigned char c) { return static_cast<char>(std::tolower(c)); });
     return h.find(n) != std::string::npos;
+}
+
+int node_index_from_ptr(const cgltf_data *data, const cgltf_node *node) {
+    if (!data || !node) {
+        return -1;
+    }
+    return static_cast<int>(node - data->nodes);
 }
 
 glm::mat4 read_mat4_from_accessor(const cgltf_accessor *accessor, size_t index) {
@@ -44,6 +45,9 @@ glm::mat4 read_mat4_from_accessor(const cgltf_accessor *accessor, size_t index) 
 
 bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error) {
     ready = false;
+    model_scale = 1.0f;
+    model_ground_lift = 0.0f;
+    model_axis_correction = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     bind_vertices.clear();
     mesh_indices.clear();
     nodes.clear();
@@ -138,6 +142,8 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
 
     const size_t vcount = pos_acc->count;
     bind_vertices.resize(vcount);
+    glm::vec3 bounds_min(1.0e30f);
+    glm::vec3 bounds_max(-1.0e30f);
     for (size_t i = 0; i < vcount; ++i) {
         std::array<float, 3> p{};
         std::array<float, 4> w{};
@@ -154,10 +160,25 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
 
         VertexBind v{};
         v.position = glm::vec3(p[0], p[1], p[2]);
+        bounds_min = glm::min(bounds_min, v.position);
+        bounds_max = glm::max(bounds_max, v.position);
         v.joints = glm::uvec4(j[0], j[1], j[2], j[3]);
         v.weights = glm::vec4(w[0], w[1], w[2], w[3]) / wsum;
         bind_vertices[i] = v;
     }
+    const glm::vec3 extent = glm::max(bounds_max - bounds_min, glm::vec3(1.0e-4f));
+    float source_height = extent.y;
+    const bool force_z_up = str_contains_ci(path, "cesiumman") || str_contains_ci(path, "humanoid");
+    if (force_z_up) {
+        source_height = extent.z;
+        model_axis_correction = glm::angleAxis(-1.57079632679f, glm::vec3(1.0f, 0.0f, 0.0f));
+        model_ground_lift = -bounds_min.z + 0.02f;
+    } else {
+        model_ground_lift = -bounds_min.y + 0.02f;
+    }
+    constexpr float k_target_height = 1.7f;
+    model_scale = k_target_height / source_height;
+    model_scale = std::clamp(model_scale, 0.001f, 4.0f);
 
     if (prim.indices) {
         mesh_indices.resize(prim.indices->count);
@@ -362,7 +383,6 @@ RenderMesh SkinnedModel::build_render_mesh(
     const glm::quat &world_rotation,
     const glm::vec3 &color) const {
     (void)anim_blend;
-    constexpr float k_player_model_scale = 0.01f;
     RenderMesh out{};
     if (!ready) {
         return out;
@@ -403,8 +423,10 @@ RenderMesh SkinnedModel::build_render_mesh(
         }
     }
 
+    const glm::mat4 local_adjust =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, model_ground_lift, 0.0f)) * glm::mat4_cast(model_axis_correction);
     const glm::mat4 world = glm::translate(glm::mat4(1.0f), world_position) * glm::mat4_cast(world_rotation) *
-        glm::scale(glm::mat4(1.0f), glm::vec3(k_player_model_scale));
+        glm::scale(glm::mat4(1.0f), glm::vec3(model_scale)) * local_adjust;
     out.vertices.resize(bind_vertices.size());
     out.indices = mesh_indices;
 

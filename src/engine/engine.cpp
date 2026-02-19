@@ -18,6 +18,12 @@
 #include <unordered_set>
 
 namespace {
+constexpr float k_vehicle_body_half_length = 1.35f;
+constexpr float k_vehicle_body_half_width = 0.8f;
+constexpr float k_vehicle_body_height = 0.65f;
+constexpr float k_vehicle_wheel_radius = 0.32f;
+constexpr float k_vehicle_interact_radius = 2.1f;
+
 std::vector<std::string> candidate_model_paths(const char *model_filename) {
     namespace fs = std::filesystem;
     std::vector<std::string> out;
@@ -37,6 +43,12 @@ std::vector<std::string> candidate_model_paths(const char *model_filename) {
     }
 
     return out;
+}
+
+glm::vec3 rotate_y(const glm::vec3 &v, float yaw_radians) {
+    const float c = std::cos(yaw_radians);
+    const float s = std::sin(yaw_radians);
+    return glm::vec3(v.x * c - v.z * s, v.y, v.x * s + v.z * c);
 }
 
 glm::vec3 player_color_from_id(uint32_t player_id) {
@@ -134,6 +146,15 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
     build_static_scene();
     local_player = PlayerControllerSystem::spawn_player(collision_world);
     local_player_prev_position = local_player.transform.position;
+    vehicle.position = local_player.transform.position + glm::vec3(3.5f, 0.0f, 1.5f);
+    vehicle.yaw = 0.3f;
+    vehicle.speed = 0.0f;
+    vehicle.occupied = false;
+    vehicle.position.y = collision_world.find_spawn_height(
+        glm::vec2(vehicle.position.x, vehicle.position.z),
+        0.8f,
+        1.2f) +
+        k_vehicle_wheel_radius;
     if (runtime_options.splitscreen) {
         local_player_secondary = PlayerControllerSystem::spawn_player(collision_world);
         local_player_secondary.network_id = 2;
@@ -410,6 +431,8 @@ void Engine::tick(double frame_dt) {
         gameplay_input_secondary = gameplay_input;
     }
 
+    handle_vehicle_interaction(gameplay_input);
+
     PlayerControllerSystem::update_camera_rig(local_player, gameplay_input, touch_input_mode, static_cast<float>(frame_dt));
     if (runtime_options.splitscreen) {
         PlayerControllerSystem::update_camera_rig(local_player_secondary, gameplay_input_secondary, false, static_cast<float>(frame_dt));
@@ -427,13 +450,17 @@ void Engine::tick(double frame_dt) {
         if (jump_consumed) {
             step_input.jump_pressed = false;
         }
-
-        last_collision_debug = PlayerControllerSystem::simulate_fixed(
-            local_player,
-            step_input,
-            collision_world,
-            static_cast<float>(fixed.fixed_dt),
-            runtime_options.noclip);
+        update_vehicle_sim(step_input, static_cast<float>(fixed.fixed_dt));
+        if (vehicle.occupied) {
+            last_collision_debug = PlayerCollisionDebug{};
+        } else {
+            last_collision_debug = PlayerControllerSystem::simulate_fixed(
+                local_player,
+                step_input,
+                collision_world,
+                static_cast<float>(fixed.fixed_dt),
+                runtime_options.noclip);
+        }
 
         if (runtime_options.splitscreen) {
             local_player_secondary_prev_position = local_player_secondary.transform.position;
@@ -458,6 +485,7 @@ void Engine::tick(double frame_dt) {
     }
 
     input_state.jump_pressed = false;
+    input_state.interact_pressed = false;
 
     const float alpha = static_cast<float>(std::clamp(fixed.accumulator / fixed.fixed_dt, 0.0, 1.0));
     const glm::vec3 local_player_render_position = glm::mix(local_player_prev_position, local_player.transform.position, alpha);
@@ -600,6 +628,16 @@ void Engine::build_static_scene() {
     scene.opaque_meshes.push_back(world_chunk.build_sky_placeholder(240.0f));
     scene.opaque_meshes.push_back(world_chunk.build_naive_mesh());
     scene.debug_grid = world_chunk.build_debug_grid(96.0f, 1.0f);
+
+    vehicle.position = glm::vec3(12.0f, 0.0f, 12.0f);
+    vehicle.yaw = 0.0f;
+    vehicle.speed = 0.0f;
+    vehicle.occupied = false;
+    const float ground_y = collision_world.find_spawn_height(
+        glm::vec2(vehicle.position.x, vehicle.position.z),
+        0.8f,
+        1.2f);
+    vehicle.position.y = ground_y + k_vehicle_wheel_radius;
 }
 
 void Engine::update_third_person_camera(PlayerEntity &player, Camera &out_camera) {
@@ -629,15 +667,94 @@ void Engine::update_third_person_camera(PlayerEntity &player, const glm::vec3 &r
     out_camera.transform.euler_radians.z = 0.0f;
 }
 
+glm::vec3 Engine::vehicle_seat_world_position() const {
+    return vehicle.position + rotate_y(glm::vec3(0.0f, k_vehicle_body_height + 0.5f, 0.0f), vehicle.yaw);
+}
+
+void Engine::handle_vehicle_interaction(const InputState &input) {
+    if (!input.interact_pressed || gui_menu.open() || !gameplay_started) {
+        return;
+    }
+
+    if (vehicle.occupied) {
+        vehicle.occupied = false;
+        const glm::vec3 exit_candidate = vehicle.position + rotate_y(glm::vec3(-1.8f, 0.0f, 0.0f), vehicle.yaw);
+        local_player.transform.position = exit_candidate;
+        local_player.transform.position.y = collision_world.find_spawn_height(
+            glm::vec2(local_player.transform.position.x, local_player.transform.position.z),
+            local_player.controller.capsuleRadius,
+            local_player.controller.capsuleHeight) +
+            0.05f;
+        local_player.controller.velocity = glm::vec3(0.0f);
+        local_player.controller.grounded = true;
+        return;
+    }
+
+    const float d = glm::length(local_player.transform.position - vehicle.position);
+    if (d <= k_vehicle_interact_radius) {
+        vehicle.occupied = true;
+        local_player.transform.position = vehicle_seat_world_position();
+        local_player.controller.velocity = glm::vec3(0.0f);
+        local_player.controller.grounded = true;
+    }
+}
+
+void Engine::update_vehicle_sim(const InputState &input, float dt) {
+    if (!vehicle.occupied) {
+        vehicle.speed *= std::exp(-dt * 3.5f);
+        if (std::fabs(vehicle.speed) < 0.02f) {
+            vehicle.speed = 0.0f;
+        }
+        return;
+    }
+
+    const float throttle = input.move.y;
+    const float steer = input.move.x;
+    constexpr float k_accel = 14.0f;
+    constexpr float k_brake = 12.0f;
+    constexpr float k_max_speed = 17.0f;
+    constexpr float k_reverse_speed = 6.0f;
+    constexpr float k_steer_rate = 1.7f;
+
+    if (std::fabs(throttle) > 0.05f) {
+        vehicle.speed += throttle * k_accel * dt;
+    } else {
+        vehicle.speed -= vehicle.speed * std::min(1.0f, k_brake * dt);
+    }
+    vehicle.speed = std::clamp(vehicle.speed, -k_reverse_speed, k_max_speed);
+
+    const float steer_amount = steer * std::clamp(std::fabs(vehicle.speed) / k_max_speed, 0.2f, 1.0f);
+    vehicle.yaw += steer_amount * k_steer_rate * dt * (vehicle.speed >= 0.0f ? 1.0f : -1.0f);
+
+    const glm::vec3 fwd = rotate_y(glm::vec3(0.0f, 0.0f, 1.0f), vehicle.yaw);
+    vehicle.position += fwd * (vehicle.speed * dt);
+
+    const glm::vec2 drive_center(12.0f, 12.0f);
+    constexpr float k_drive_half_extent = 22.0f;
+    vehicle.position.x = std::clamp(vehicle.position.x, drive_center.x - k_drive_half_extent, drive_center.x + k_drive_half_extent);
+    vehicle.position.z = std::clamp(vehicle.position.z, drive_center.y - k_drive_half_extent, drive_center.y + k_drive_half_extent);
+
+    const float ground_y = collision_world.find_spawn_height(glm::vec2(vehicle.position.x, vehicle.position.z), 0.9f, 1.4f);
+    vehicle.position.y = ground_y + k_vehicle_wheel_radius;
+
+    local_player.transform.position = vehicle_seat_world_position();
+    local_player.transform.rotation = glm::angleAxis(vehicle.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+    local_player.controller.velocity = glm::vec3(0.0f);
+    local_player.controller.grounded = true;
+    local_player.anim_state = PlayerAnimState::Idle;
+    local_player.anim_blend = 0.0f;
+}
+
 void Engine::refresh_overlay_text() {
     scene.debug_screen = RenderMesh{};
 
     if (runtime_options.devhud) {
         char text[320]{};
+        const float vehicle_distance = glm::length(local_player.transform.position - vehicle.position);
         std::snprintf(
             text,
             sizeof(text),
-            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nANIM %s BL %.2f PH %.2f",
+            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f (F TO ENTER/EXIT)",
             render_stats.fps,
             last_frame_dt,
             fixed.fixed_dt,
@@ -664,7 +781,9 @@ void Engine::refresh_overlay_text() {
             render_stats.net_local_player_id,
             anim_state_name(local_player.anim_state),
             local_player.anim_blend,
-            local_player.anim_phase);
+            local_player.anim_phase,
+            vehicle.occupied ? "ONBOARD" : "ON FOOT",
+            vehicle_distance);
         scene.debug_screen = build_camera_text_mesh(camera, text);
     }
 
@@ -711,6 +830,81 @@ void Engine::rebuild_dynamic_debug_mesh() {
         local_player.transform.position + glm::vec3(0.0f, local_shape.pivot_height + local_shape.bob, 0.0f),
         0.12f,
         glm::vec3(0.2f, 0.85f, 1.0f));
+
+    auto append_vehicle_tri = [&](const glm::vec3 &a, const glm::vec3 &b, const glm::vec3 &c, const glm::vec3 &color) {
+        const uint32_t base = static_cast<uint32_t>(scene.debug_world.vertices.size());
+        scene.debug_world.vertices.push_back({a, color});
+        scene.debug_world.vertices.push_back({b, color});
+        scene.debug_world.vertices.push_back({c, color});
+        scene.debug_world.indices.push_back(base + 0);
+        scene.debug_world.indices.push_back(base + 1);
+        scene.debug_world.indices.push_back(base + 2);
+    };
+    auto append_vehicle_quad =
+        [&](const glm::vec3 &a, const glm::vec3 &b, const glm::vec3 &c, const glm::vec3 &d, const glm::vec3 &color) {
+            append_vehicle_tri(a, b, c, color);
+            append_vehicle_tri(a, c, d, color);
+        };
+    auto append_vehicle_box = [&](const glm::vec3 &local_center, const glm::vec3 &half_extent, const glm::vec3 &color) {
+        const glm::vec3 lc[8] = {
+            {-half_extent.x, -half_extent.y, -half_extent.z},
+            {half_extent.x, -half_extent.y, -half_extent.z},
+            {-half_extent.x, half_extent.y, -half_extent.z},
+            {half_extent.x, half_extent.y, -half_extent.z},
+            {-half_extent.x, -half_extent.y, half_extent.z},
+            {half_extent.x, -half_extent.y, half_extent.z},
+            {-half_extent.x, half_extent.y, half_extent.z},
+            {half_extent.x, half_extent.y, half_extent.z},
+        };
+        glm::vec3 p[8]{};
+        for (int i = 0; i < 8; ++i) {
+            p[i] = vehicle.position + rotate_y(local_center + lc[i], vehicle.yaw);
+        }
+        append_vehicle_quad(p[0], p[1], p[3], p[2], color);
+        append_vehicle_quad(p[4], p[6], p[7], p[5], color);
+        append_vehicle_quad(p[0], p[2], p[6], p[4], color);
+        append_vehicle_quad(p[1], p[5], p[7], p[3], color);
+        append_vehicle_quad(p[2], p[3], p[7], p[6], color);
+        append_vehicle_quad(p[0], p[4], p[5], p[1], color);
+    };
+
+    if (!runtime_options.debug_collision_only) {
+        append_vehicle_box(
+            glm::vec3(0.0f, k_vehicle_wheel_radius + k_vehicle_body_height * 0.5f, 0.0f),
+            glm::vec3(k_vehicle_body_half_width, k_vehicle_body_height * 0.5f, k_vehicle_body_half_length),
+            vehicle.occupied ? glm::vec3(0.15f, 0.78f, 0.35f) : glm::vec3(0.85f, 0.62f, 0.22f));
+        append_vehicle_box(
+            glm::vec3(0.0f, k_vehicle_wheel_radius + k_vehicle_body_height + 0.28f, -0.1f),
+            glm::vec3(0.58f, 0.28f, 0.68f),
+            glm::vec3(0.2f, 0.35f, 0.42f));
+        append_vehicle_box(
+            glm::vec3(0.0f, k_vehicle_wheel_radius + 0.58f, k_vehicle_body_half_length - 0.22f),
+            glm::vec3(0.55f, 0.12f, 0.14f),
+            glm::vec3(0.08f, 0.08f, 0.08f));
+
+        const glm::vec3 wheel_offsets[4] = {
+            {-k_vehicle_body_half_width - 0.1f, k_vehicle_wheel_radius, -k_vehicle_body_half_length + 0.28f},
+            {k_vehicle_body_half_width + 0.1f, k_vehicle_wheel_radius, -k_vehicle_body_half_length + 0.28f},
+            {-k_vehicle_body_half_width - 0.1f, k_vehicle_wheel_radius, k_vehicle_body_half_length - 0.28f},
+            {k_vehicle_body_half_width + 0.1f, k_vehicle_wheel_radius, k_vehicle_body_half_length - 0.28f},
+        };
+        for (const glm::vec3 &off : wheel_offsets) {
+            append_mesh(
+                scene.debug_world,
+                build_debug_sphere_mesh(vehicle.position + rotate_y(off, vehicle.yaw), k_vehicle_wheel_radius, glm::vec3(0.12f, 0.12f, 0.12f)));
+        }
+
+        append_mesh(
+            scene.debug_world,
+            build_debug_line_mesh(
+                vehicle.position + glm::vec3(0.0f, 0.2f, 0.0f),
+                vehicle.position + glm::vec3(0.0f, 4.2f, 0.0f),
+                0.06f,
+                glm::vec3(1.0f, 0.25f, 0.9f)));
+        append_mesh(
+            scene.debug_world,
+            build_debug_sphere_mesh(vehicle.position + glm::vec3(0.0f, 4.35f, 0.0f), 0.22f, glm::vec3(1.0f, 0.25f, 0.9f)));
+    }
 
     if (!runtime_options.debug_collision_only) {
         if (!render_skinned_avatar || collision_debug_enabled || runtime_options.devhud) {

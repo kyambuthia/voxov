@@ -11,6 +11,7 @@ struct InputState {
     bool key_d = false;
     bool jump_pressed = false;
     bool jump_held = false;
+    bool interact_pressed = false;
     bool sprint_held = false;
     bool crouch_held = false;
     bool look_mode = false;

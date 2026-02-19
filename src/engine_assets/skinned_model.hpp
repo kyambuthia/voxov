@@ -74,10 +74,12 @@ private:
         std::vector<glm::mat4> &out_global) const;
 
     bool ready = false;
+    float model_scale = 1.0f;
+    float model_ground_lift = 0.0f;
+    glm::quat model_axis_correction = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     std::vector<VertexBind> bind_vertices;
     std::vector<uint32_t> mesh_indices;
     std::vector<NodeTransform> nodes;
     std::vector<Joint> joints;
     std::vector<AnimationClip> clips;
 };
-

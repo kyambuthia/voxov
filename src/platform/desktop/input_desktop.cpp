@@ -109,6 +109,10 @@ InputState DesktopInputBackend::poll() {
     out.debug_freeze_toggle_pressed = f4_down && !prev_f4_down;
     prev_f4_down = f4_down;
 
+    const bool f5_down = glfwGetKey(window, GLFW_KEY_F5) == GLFW_PRESS;
+    out.debug_reconcile_toggle_pressed = f5_down && !prev_f5_down;
+    prev_f5_down = f5_down;
+
     out.sprint_held = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
                       glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
     out.crouch_held = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS ||

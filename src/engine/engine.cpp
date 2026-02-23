@@ -495,7 +495,7 @@ void Engine::tick(double frame_dt) {
             frozen_debug_world = RenderMesh{};
         }
     }
-    if (input_state.debug_xray_toggle_pressed && input_state.debug_collision_only_toggle_pressed) {
+    if (input_state.debug_reconcile_toggle_pressed) {
         const uint8_t next = (static_cast<uint8_t>(reconcile_mode) + 1u) % 3u;
         reconcile_mode = static_cast<ReconcileMode>(next);
         spdlog::info("Reconciliation mode -> {}", reconcile_mode_name(static_cast<uint8_t>(reconcile_mode)));

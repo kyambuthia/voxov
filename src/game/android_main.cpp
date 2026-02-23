@@ -421,6 +421,9 @@ struct AndroidRenderer {
     uint32_t net_local_player_id = 0;
     glm::vec3 net_target_position = glm::vec3(8.5f, 6.0f, 8.5f);
     bool net_target_valid = false;
+    float net_reconcile_error = 0.0f;
+    uint32_t net_last_snapshot_tick = 0;
+    uint64_t net_reconcile_corrections = 0;
     std::unordered_map<uint32_t, RemoteRenderPlayer> remote_render_players;
     std::string ui_text_cache;
     std::string multiplayer_hint;
@@ -733,6 +736,8 @@ struct AndroidRenderer {
             if (std::isfinite(snapshot.x) && std::isfinite(snapshot.y) && std::isfinite(snapshot.z) &&
                 std::fabs(snapshot.x) < 100000.0f && std::fabs(snapshot.y) < 100000.0f && std::fabs(snapshot.z) < 100000.0f) {
                 net_target_position = glm::vec3(snapshot.x, snapshot.y, snapshot.z);
+                net_reconcile_error = glm::length(player_feet_position - net_target_position);
+                net_last_snapshot_tick = snapshot.tick;
                 if (!net_target_valid) {
                     player_feet_position = net_target_position;
                 }
@@ -1248,6 +1253,12 @@ struct AndroidRenderer {
             player_anim_orientation = glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
         }
         if (net_connected && net_target_valid) {
+            const float net_err = glm::length(player_feet_position - net_target_position);
+            net_reconcile_error = net_err;
+            if (std::isfinite(net_err) && net_err > 2.5f) {
+                player_feet_position = net_target_position;
+                ++net_reconcile_corrections;
+            }
             const float follow = std::clamp(static_cast<float>(dt_seconds) * 14.0f, 0.0f, 1.0f);
             player_feet_position = glm::mix(player_feet_position, net_target_position, follow);
         } else if (noclip) {
@@ -1548,6 +1559,7 @@ struct AndroidRenderer {
                     const NetDebugStats server_stats = local_server_running ? local_server.debug_stats() : NetDebugStats{};
                     char line1[160]{};
                     char line2[200]{};
+                    char line3[200]{};
                     std::snprintf(
                         line1,
                         sizeof(line1),
@@ -1565,8 +1577,16 @@ struct AndroidRenderer {
                         client_stats.rx_bytes_per_sec,
                         server_stats.snapshots_sent_per_sec,
                         server_stats.player_state_broadcasts_per_sec);
+                    std::snprintf(
+                        line3,
+                        sizeof(line3),
+                        "REC err %.2f tick %u corr %llu",
+                        net_reconcile_error,
+                        net_last_snapshot_tick,
+                        static_cast<unsigned long long>(net_reconcile_corrections));
                     append_text(line1, 20.0f, 88.0f, 2.0f, glm::vec3(0.88f, 0.94f, 1.0f));
                     append_text(line2, 20.0f, 112.0f, 1.9f, glm::vec3(0.78f, 0.86f, 0.98f));
+                    append_text(line3, 20.0f, 135.0f, 1.9f, glm::vec3(0.78f, 0.92f, 0.86f));
                 }
             }
 

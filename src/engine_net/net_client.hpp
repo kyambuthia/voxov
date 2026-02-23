@@ -51,6 +51,8 @@ private:
     _ENetPeer *peer = nullptr;
     bool has_snapshot = false;
     NetSnapshot latest_snapshot{};
+    uint32_t last_snapshot_sequence = 0;
+    bool has_last_snapshot_sequence = false;
     std::vector<NetChunkState> chunk_updates;
     uint32_t assigned_player_id = 0;
     std::unordered_map<uint32_t, NetPlayerState> replicated_players;

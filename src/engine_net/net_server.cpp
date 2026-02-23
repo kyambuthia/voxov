@@ -193,6 +193,7 @@ void NetServer::send_snapshots() {
         snap.header = net_make_header(NetMsgType::Snapshot, static_cast<uint8_t>(sizeof(snap.snapshot)));
         snap.snapshot.player_id = state.player_id;
         snap.snapshot.tick = state.last_input.tick;
+        snap.snapshot.sequence = state.next_snapshot_sequence++;
         snap.snapshot.x = state.state.x;
         snap.snapshot.y = state.state.y;
         snap.snapshot.z = state.state.z;

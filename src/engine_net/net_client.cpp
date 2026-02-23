@@ -157,6 +157,9 @@ void NetClient::shutdown() {
     assigned_player_id = 0;
     connected = false;
     has_pending_interest = false;
+    has_snapshot = false;
+    has_last_snapshot_sequence = false;
+    last_snapshot_sequence = 0;
     if (client) {
         enet_host_destroy(client);
         client = nullptr;
@@ -206,6 +209,8 @@ void NetClient::pump() {
             replicated_players.clear();
             replicated_player_sequences.clear();
             has_snapshot = false;
+            has_last_snapshot_sequence = false;
+            last_snapshot_sequence = 0;
             continue;
         }
 
@@ -223,8 +228,13 @@ void NetClient::pump() {
                             event.packet->dataLength == sizeof(SnapshotPacket)) {
                             SnapshotPacket packet{};
                             std::memcpy(&packet, event.packet->data, sizeof(packet));
-                            latest_snapshot = packet.snapshot;
-                            has_snapshot = true;
+                            if (!has_last_snapshot_sequence ||
+                                net_seq_newer(packet.snapshot.sequence, last_snapshot_sequence)) {
+                                latest_snapshot = packet.snapshot;
+                                has_snapshot = true;
+                                last_snapshot_sequence = packet.snapshot.sequence;
+                                has_last_snapshot_sequence = true;
+                            }
                             recognized_message = true;
                         }
                         break;

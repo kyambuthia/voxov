@@ -33,6 +33,7 @@ inline bool net_flag_set(uint8_t flags, NetInputFlags flag) {
 struct NetSnapshot {
     uint32_t player_id = 0;
     uint32_t tick = 0;
+    uint32_t sequence = 0;
     float x = 0.0f;
     float y = 0.0f;
     float z = 0.0f;

@@ -20,6 +20,7 @@ private:
     struct ClientState {
         uint32_t player_id = 0;
         uint32_t next_player_state_sequence = 1;
+        uint32_t next_snapshot_sequence = 1;
         NetPlayerState state{};
         NetTickInput last_input{};
         bool jump_pressed_latched = false;

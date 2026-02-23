@@ -693,7 +693,7 @@ struct AndroidRenderer {
                     if (!net_client.connect(host.ip.c_str(), host.port)) {
                         multiplayer_hint = "Join failed. Retrying discovery...";
                         __android_log_print(ANDROID_LOG_ERROR, kLogTag, "NetClient connect failed to discovered host %s:%u", host.ip.c_str(), host.port);
-                        continue;
+                        return;
                     }
                     NetChunkInterest interest{};
                     interest.center_x = 0;

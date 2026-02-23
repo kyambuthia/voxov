@@ -18,6 +18,7 @@
 #include "platform/platform.hpp"
 
 #include <unordered_map>
+#include <array>
 
 struct EngineRuntimeOptions {
     bool devhud = false;
@@ -67,6 +68,8 @@ private:
     void update_third_person_camera(PlayerEntity &player, const glm::vec3 &render_position, Camera &out_camera);
     void sync_network_state(uint32_t sim_tick, const InputState &net_input);
     void start_local_server(uint16_t port, bool loopback_only);
+    void record_prediction_history(uint32_t sim_tick, const InputState &step_input);
+    void reconcile_local_player_from_snapshot(uint32_t current_sim_tick);
 
     FixedStep fixed;
     Renderer renderer;
@@ -114,6 +117,19 @@ private:
 
     NetSnapshot latest_snapshot{};
     bool has_snapshot = false;
+    struct PredictionHistoryEntry {
+        bool valid = false;
+        uint32_t tick = 0;
+        InputState input{};
+        glm::vec3 position = glm::vec3(0.0f);
+        glm::vec3 velocity = glm::vec3(0.0f);
+    };
+    static constexpr size_t k_prediction_history_size = 512;
+    std::array<PredictionHistoryEntry, k_prediction_history_size> prediction_history{};
+    float last_reconcile_pos_error = 0.0f;
+    uint32_t last_reconcile_snapshot_tick = 0;
+    uint32_t reconcile_replay_ticks = 0;
+    uint64_t reconcile_corrections = 0;
     PlayerCollisionDebug last_collision_debug{};
     PlayerCollisionDebug last_collision_debug_secondary{};
     RenderMesh frozen_debug_world{};

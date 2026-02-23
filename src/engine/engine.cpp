@@ -309,7 +309,76 @@ void Engine::shutdown() {
     physics.shutdown();
 }
 
+void Engine::record_prediction_history(uint32_t sim_tick, const InputState &step_input) {
+    PredictionHistoryEntry &entry = prediction_history[sim_tick % k_prediction_history_size];
+    entry.valid = true;
+    entry.tick = sim_tick;
+    entry.input = step_input;
+    entry.position = local_player.transform.position;
+    entry.velocity = local_player.controller.velocity;
+}
+
+void Engine::reconcile_local_player_from_snapshot(uint32_t current_sim_tick) {
+    if (!has_snapshot || latest_snapshot.player_id == 0 || local_player.network_id == 0) {
+        return;
+    }
+    if (latest_snapshot.player_id != local_player.network_id) {
+        return;
+    }
+    if (vehicle.occupied || runtime_options.noclip) {
+        return;
+    }
+
+    const uint32_t snapshot_tick = latest_snapshot.tick;
+    if (snapshot_tick > current_sim_tick) {
+        return;
+    }
+    if ((current_sim_tick - snapshot_tick) >= k_prediction_history_size) {
+        return;
+    }
+
+    PredictionHistoryEntry &at_snapshot = prediction_history[snapshot_tick % k_prediction_history_size];
+    if (!at_snapshot.valid || at_snapshot.tick != snapshot_tick) {
+        return;
+    }
+
+    const glm::vec3 authoritative_pos(latest_snapshot.x, latest_snapshot.y, latest_snapshot.z);
+    const glm::vec3 authoritative_vel(latest_snapshot.vx, latest_snapshot.vy, latest_snapshot.vz);
+    const float pos_error = glm::length(at_snapshot.position - authoritative_pos);
+    last_reconcile_pos_error = pos_error;
+    last_reconcile_snapshot_tick = snapshot_tick;
+
+    constexpr float kReconcilePosThreshold = 0.35f;
+    if (!std::isfinite(pos_error) || pos_error <= kReconcilePosThreshold) {
+        return;
+    }
+
+    local_player.transform.position = authoritative_pos;
+    local_player.controller.velocity = authoritative_vel;
+    local_player.controller.grounded = std::fabs(authoritative_vel.y) < 0.05f;
+
+    reconcile_replay_ticks = 0;
+    for (uint32_t tick = snapshot_tick + 1; tick <= current_sim_tick; ++tick) {
+        PredictionHistoryEntry &entry = prediction_history[tick % k_prediction_history_size];
+        if (!entry.valid || entry.tick != tick) {
+            break;
+        }
+        (void)PlayerControllerSystem::simulate_fixed(
+            local_player,
+            entry.input,
+            collision_world,
+            static_cast<float>(fixed.fixed_dt),
+            runtime_options.noclip);
+        entry.position = local_player.transform.position;
+        entry.velocity = local_player.controller.velocity;
+        ++reconcile_replay_ticks;
+    }
+    reconcile_corrections += 1;
+}
+
 void Engine::sync_network_state(uint32_t sim_tick, const InputState &net_input) {
+    record_prediction_history(sim_tick, net_input);
+
     NetTickInput input{};
     input.tick = sim_tick;
     input.move_x = net_input.move.x;
@@ -339,6 +408,7 @@ void Engine::sync_network_state(uint32_t sim_tick, const InputState &net_input) 
 
     if (net_client.poll_snapshot(latest_snapshot)) {
         has_snapshot = true;
+        reconcile_local_player_from_snapshot(sim_tick);
     }
 
     remote_players.clear();
@@ -798,7 +868,7 @@ void Engine::refresh_overlay_text() {
         std::snprintf(
             text,
             sizeof(text),
-            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f (F TO ENTER/EXIT)",
+            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nREC err %.2f tick %u replay %u corr %llu\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f (F TO ENTER/EXIT)",
             render_stats.fps,
             last_frame_dt,
             fixed.fixed_dt,
@@ -835,6 +905,10 @@ void Engine::refresh_overlay_text() {
             server_net_stats.rx_bytes_per_sec,
             server_net_stats.snapshots_sent_per_sec,
             server_net_stats.player_state_broadcasts_per_sec,
+            last_reconcile_pos_error,
+            last_reconcile_snapshot_tick,
+            reconcile_replay_ticks,
+            static_cast<unsigned long long>(reconcile_corrections),
             anim_state_name(local_player.anim_state),
             local_player.anim_blend,
             local_player.anim_phase,

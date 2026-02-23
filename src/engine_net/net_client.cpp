@@ -10,37 +10,37 @@
 namespace {
 #pragma pack(push, 1)
 struct InputPacket {
-    NetMsgType type = NetMsgType::Input;
+    NetPacketHeader header{};
     NetTickInput input{};
 };
 
 struct SnapshotPacket {
-    NetMsgType type = NetMsgType::Snapshot;
+    NetPacketHeader header{};
     NetSnapshot snapshot{};
 };
 
 struct ChunkInterestPacket {
-    NetMsgType type = NetMsgType::ChunkInterest;
+    NetPacketHeader header{};
     NetChunkInterest interest{};
 };
 
 struct ChunkStatePacket {
-    NetMsgType type = NetMsgType::ChunkState;
+    NetPacketHeader header{};
     NetChunkState state{};
 };
 
 struct AssignPlayerPacket {
-    NetMsgType type = NetMsgType::AssignPlayer;
+    NetPacketHeader header{};
     NetAssignPlayer payload{};
 };
 
 struct PlayerStatePacket {
-    NetMsgType type = NetMsgType::PlayerState;
+    NetPacketHeader header{};
     NetPlayerState state{};
 };
 
 struct PlayerRemovePacket {
-    NetMsgType type = NetMsgType::PlayerRemove;
+    NetPacketHeader header{};
     NetPlayerRemove payload{};
 };
 #pragma pack(pop)
@@ -188,6 +188,7 @@ void NetClient::pump() {
                 static_cast<int>(addr.port));
             if (has_pending_interest && peer) {
                 ChunkInterestPacket packet{};
+                packet.header = net_make_header(NetMsgType::ChunkInterest, static_cast<uint8_t>(sizeof(packet.interest)));
                 packet.interest = pending_interest;
                 ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE);
                 enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Reliable), net_packet);
@@ -211,58 +212,70 @@ void NetClient::pump() {
         if (event.type == ENET_EVENT_TYPE_RECEIVE) {
             record_rx(event.packet->dataLength);
             bool recognized_message = false;
-            if (event.packet->dataLength >= sizeof(SnapshotPacket)) {
-                SnapshotPacket packet{};
-                std::memcpy(&packet, event.packet->data, sizeof(packet));
-                if (packet.type == NetMsgType::Snapshot) {
-                    latest_snapshot = packet.snapshot;
-                    has_snapshot = true;
-                    recognized_message = true;
-                }
-            }
-
-            if (event.packet->dataLength >= sizeof(ChunkStatePacket)) {
-                ChunkStatePacket packet{};
-                std::memcpy(&packet, event.packet->data, sizeof(packet));
-                if (packet.type == NetMsgType::ChunkState) {
-                    chunk_updates.push_back(packet.state);
-                    recognized_message = true;
-                }
-            }
-
-            if (event.packet->dataLength >= sizeof(AssignPlayerPacket)) {
-                AssignPlayerPacket packet{};
-                std::memcpy(&packet, event.packet->data, sizeof(packet));
-                if (packet.type == NetMsgType::AssignPlayer) {
-                    assigned_player_id = packet.payload.player_id;
-                    recognized_message = true;
-                }
-            }
-
-            if (event.packet->dataLength >= sizeof(PlayerStatePacket)) {
-                PlayerStatePacket packet{};
-                std::memcpy(&packet, event.packet->data, sizeof(packet));
-                if (packet.type == NetMsgType::PlayerState) {
-                    const uint32_t player_id = packet.state.player_id;
-                    if (player_id != 0) {
-                        auto seq_it = replicated_player_sequences.find(player_id);
-                        if (seq_it == replicated_player_sequences.end() ||
-                            net_seq_newer(packet.state.sequence, seq_it->second)) {
-                            replicated_players[player_id] = packet.state;
-                            replicated_player_sequences[player_id] = packet.state.sequence;
+            if (event.packet->dataLength >= sizeof(NetPacketHeader)) {
+                NetPacketHeader header{};
+                std::memcpy(&header, event.packet->data, sizeof(header));
+                if (net_header_basic_valid(header) &&
+                    event.packet->dataLength == (sizeof(NetPacketHeader) + header.payload_size)) {
+                    switch (static_cast<NetMsgType>(header.type)) {
+                    case NetMsgType::Snapshot:
+                        if (header.payload_size == sizeof(NetSnapshot) &&
+                            event.packet->dataLength == sizeof(SnapshotPacket)) {
+                            SnapshotPacket packet{};
+                            std::memcpy(&packet, event.packet->data, sizeof(packet));
+                            latest_snapshot = packet.snapshot;
+                            has_snapshot = true;
+                            recognized_message = true;
                         }
-                        recognized_message = true;
+                        break;
+                    case NetMsgType::ChunkState:
+                        if (header.payload_size == sizeof(NetChunkState) &&
+                            event.packet->dataLength == sizeof(ChunkStatePacket)) {
+                            ChunkStatePacket packet{};
+                            std::memcpy(&packet, event.packet->data, sizeof(packet));
+                            chunk_updates.push_back(packet.state);
+                            recognized_message = true;
+                        }
+                        break;
+                    case NetMsgType::AssignPlayer:
+                        if (header.payload_size == sizeof(NetAssignPlayer) &&
+                            event.packet->dataLength == sizeof(AssignPlayerPacket)) {
+                            AssignPlayerPacket packet{};
+                            std::memcpy(&packet, event.packet->data, sizeof(packet));
+                            assigned_player_id = packet.payload.player_id;
+                            recognized_message = true;
+                        }
+                        break;
+                    case NetMsgType::PlayerState:
+                        if (header.payload_size == sizeof(NetPlayerState) &&
+                            event.packet->dataLength == sizeof(PlayerStatePacket)) {
+                            PlayerStatePacket packet{};
+                            std::memcpy(&packet, event.packet->data, sizeof(packet));
+                            const uint32_t player_id = packet.state.player_id;
+                            if (player_id != 0) {
+                                auto seq_it = replicated_player_sequences.find(player_id);
+                                if (seq_it == replicated_player_sequences.end() ||
+                                    net_seq_newer(packet.state.sequence, seq_it->second)) {
+                                    replicated_players[player_id] = packet.state;
+                                    replicated_player_sequences[player_id] = packet.state.sequence;
+                                }
+                                recognized_message = true;
+                            }
+                        }
+                        break;
+                    case NetMsgType::PlayerRemove:
+                        if (header.payload_size == sizeof(NetPlayerRemove) &&
+                            event.packet->dataLength == sizeof(PlayerRemovePacket)) {
+                            PlayerRemovePacket packet{};
+                            std::memcpy(&packet, event.packet->data, sizeof(packet));
+                            replicated_players.erase(packet.payload.player_id);
+                            replicated_player_sequences.erase(packet.payload.player_id);
+                            recognized_message = true;
+                        }
+                        break;
+                    default:
+                        break;
                     }
-                }
-            }
-
-            if (event.packet->dataLength >= sizeof(PlayerRemovePacket)) {
-                PlayerRemovePacket packet{};
-                std::memcpy(&packet, event.packet->data, sizeof(packet));
-                if (packet.type == NetMsgType::PlayerRemove) {
-                    replicated_players.erase(packet.payload.player_id);
-                    replicated_player_sequences.erase(packet.payload.player_id);
-                    recognized_message = true;
                 }
             }
             if (!recognized_message) {
@@ -280,6 +293,7 @@ void NetClient::send_input(const NetTickInput &input) {
     }
 
     InputPacket packet{};
+    packet.header = net_make_header(NetMsgType::Input, static_cast<uint8_t>(sizeof(packet.input)));
     packet.input = input;
     ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), 0);
     enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Unreliable), net_packet);
@@ -295,6 +309,7 @@ void NetClient::set_chunk_interest(const NetChunkInterest &interest) {
     }
 
     ChunkInterestPacket packet{};
+    packet.header = net_make_header(NetMsgType::ChunkInterest, static_cast<uint8_t>(sizeof(packet.interest)));
     packet.interest = interest;
     ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE);
     enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Reliable), net_packet);

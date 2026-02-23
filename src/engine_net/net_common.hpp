@@ -51,6 +51,30 @@ enum class NetMsgType : uint8_t {
     PlayerRemove = 7
 };
 
+constexpr uint32_t k_net_packet_magic = 0x564F5832u; // "VOX2"
+constexpr uint16_t k_net_protocol_version = 1u;
+
+#pragma pack(push, 1)
+struct NetPacketHeader {
+    uint32_t magic = k_net_packet_magic;
+    uint16_t version = k_net_protocol_version;
+    uint8_t type = 0;
+    uint8_t payload_size = 0;
+};
+#pragma pack(pop)
+
+inline NetPacketHeader net_make_header(NetMsgType type, uint8_t payload_size) {
+    NetPacketHeader header{};
+    header.type = static_cast<uint8_t>(type);
+    header.payload_size = payload_size;
+    return header;
+}
+
+inline bool net_header_basic_valid(const NetPacketHeader &header) {
+    return header.magic == k_net_packet_magic &&
+           header.version == k_net_protocol_version;
+}
+
 struct NetAssignPlayer {
     uint32_t player_id = 0;
 };

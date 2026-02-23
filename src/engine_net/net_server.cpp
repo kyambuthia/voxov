@@ -11,37 +11,37 @@
 namespace {
 #pragma pack(push, 1)
 struct InputPacket {
-    NetMsgType type = NetMsgType::Input;
+    NetPacketHeader header{};
     NetTickInput input{};
 };
 
 struct SnapshotPacket {
-    NetMsgType type = NetMsgType::Snapshot;
+    NetPacketHeader header{};
     NetSnapshot snapshot{};
 };
 
 struct ChunkInterestPacket {
-    NetMsgType type = NetMsgType::ChunkInterest;
+    NetPacketHeader header{};
     NetChunkInterest interest{};
 };
 
 struct ChunkStatePacket {
-    NetMsgType type = NetMsgType::ChunkState;
+    NetPacketHeader header{};
     NetChunkState state{};
 };
 
 struct AssignPlayerPacket {
-    NetMsgType type = NetMsgType::AssignPlayer;
+    NetPacketHeader header{};
     NetAssignPlayer payload{};
 };
 
 struct PlayerStatePacket {
-    NetMsgType type = NetMsgType::PlayerState;
+    NetPacketHeader header{};
     NetPlayerState state{};
 };
 
 struct PlayerRemovePacket {
-    NetMsgType type = NetMsgType::PlayerRemove;
+    NetPacketHeader header{};
     NetPlayerRemove payload{};
 };
 #pragma pack(pop)
@@ -101,6 +101,7 @@ void NetServer::send_chunk_state(ENetPeer *peer, ClientState &state, NetChunkCoo
     }
 
     ChunkStatePacket packet{};
+    packet.header = net_make_header(NetMsgType::ChunkState, static_cast<uint8_t>(sizeof(packet.state)));
     packet.state.coord = coord;
     packet.state.version = version;
 
@@ -189,6 +190,7 @@ void NetServer::send_snapshots() {
 
     for (auto &[peer_ptr, state] : clients) {
         SnapshotPacket snap{};
+        snap.header = net_make_header(NetMsgType::Snapshot, static_cast<uint8_t>(sizeof(snap.snapshot)));
         snap.snapshot.player_id = state.player_id;
         snap.snapshot.tick = state.last_input.tick;
         snap.snapshot.x = state.state.x;
@@ -214,6 +216,7 @@ void NetServer::broadcast_player_states() {
     for (auto &[peer_ptr, state] : clients) {
         (void)peer_ptr;
         PlayerStatePacket packet{};
+        packet.header = net_make_header(NetMsgType::PlayerState, static_cast<uint8_t>(sizeof(packet.state)));
         packet.state = state.state;
         packet.state.sequence = state.next_player_state_sequence++;
 
@@ -229,6 +232,7 @@ void NetServer::broadcast_player_remove(uint32_t player_id) {
         return;
     }
     PlayerRemovePacket packet{};
+    packet.header = net_make_header(NetMsgType::PlayerRemove, static_cast<uint8_t>(sizeof(packet.payload)));
     packet.payload.player_id = player_id;
     ENetPacket *out = enet_packet_create(&packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE);
     enet_host_broadcast(server, static_cast<uint8_t>(NetChannel::Reliable), out);
@@ -383,6 +387,7 @@ void NetServer::pump() {
             spdlog::info("NetServer: client connected, assigned player_id={}, clients={}", state.player_id, clients.size());
 
             AssignPlayerPacket assign{};
+            assign.header = net_make_header(NetMsgType::AssignPlayer, static_cast<uint8_t>(sizeof(assign.payload)));
             assign.payload.player_id = state.player_id;
             ENetPacket *out = enet_packet_create(&assign, sizeof(assign), ENET_PACKET_FLAG_RELIABLE);
             enet_peer_send(event.peer, static_cast<uint8_t>(NetChannel::Reliable), out);
@@ -412,31 +417,43 @@ void NetServer::pump() {
 
             ClientState &state = it->second;
 
-            if (event.packet->dataLength >= sizeof(InputPacket)) {
-                InputPacket packet{};
-                std::memcpy(&packet, event.packet->data, sizeof(packet));
-                if (packet.type == NetMsgType::Input) {
-                    recognized_message = true;
-                    state.last_input = packet.input;
-                    if (net_flag_set(packet.input.action_flags, NetInputFlags::JumpPressed)) {
-                        state.jump_pressed_latched = true;
-                    }
-                }
-            }
-
-            if (event.packet->dataLength >= sizeof(ChunkInterestPacket)) {
-                ChunkInterestPacket interest_packet{};
-                std::memcpy(&interest_packet, event.packet->data, sizeof(interest_packet));
-                if (interest_packet.type == NetMsgType::ChunkInterest) {
-                    recognized_message = true;
-                    state.interest = interest_packet.interest;
-                    for (int dz = -state.interest.radius; dz <= state.interest.radius; ++dz) {
-                        for (int dx = -state.interest.radius; dx <= state.interest.radius; ++dx) {
-                            NetChunkCoord coord{};
-                            coord.x = static_cast<int16_t>(state.interest.center_x + dx);
-                            coord.z = static_cast<int16_t>(state.interest.center_z + dz);
-                            send_chunk_state(event.peer, state, coord, 1);
+            if (event.packet->dataLength >= sizeof(NetPacketHeader)) {
+                NetPacketHeader header{};
+                std::memcpy(&header, event.packet->data, sizeof(header));
+                if (net_header_basic_valid(header) &&
+                    event.packet->dataLength == (sizeof(NetPacketHeader) + header.payload_size)) {
+                    switch (static_cast<NetMsgType>(header.type)) {
+                    case NetMsgType::Input:
+                        if (header.payload_size == sizeof(NetTickInput) &&
+                            event.packet->dataLength == sizeof(InputPacket)) {
+                            InputPacket packet{};
+                            std::memcpy(&packet, event.packet->data, sizeof(packet));
+                            recognized_message = true;
+                            state.last_input = packet.input;
+                            if (net_flag_set(packet.input.action_flags, NetInputFlags::JumpPressed)) {
+                                state.jump_pressed_latched = true;
+                            }
                         }
+                        break;
+                    case NetMsgType::ChunkInterest:
+                        if (header.payload_size == sizeof(NetChunkInterest) &&
+                            event.packet->dataLength == sizeof(ChunkInterestPacket)) {
+                            ChunkInterestPacket interest_packet{};
+                            std::memcpy(&interest_packet, event.packet->data, sizeof(interest_packet));
+                            recognized_message = true;
+                            state.interest = interest_packet.interest;
+                            for (int dz = -state.interest.radius; dz <= state.interest.radius; ++dz) {
+                                for (int dx = -state.interest.radius; dx <= state.interest.radius; ++dx) {
+                                    NetChunkCoord coord{};
+                                    coord.x = static_cast<int16_t>(state.interest.center_x + dx);
+                                    coord.z = static_cast<int16_t>(state.interest.center_z + dz);
+                                    send_chunk_state(event.peer, state, coord, 1);
+                                }
+                            }
+                        }
+                        break;
+                    default:
+                        break;
                     }
                 }
             }

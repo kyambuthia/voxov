@@ -27,6 +27,7 @@
 #include <cstdint>
 #include <cstring>
 #include <ctime>
+#include <deque>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
@@ -43,6 +44,8 @@ constexpr const char *kLogTag = "VOXOV";
 constexpr uint16_t kLocalPlayPort = 7777;
 constexpr const char *kLocalPlayHost = "127.0.0.1";
 constexpr double kConnectTimeoutSeconds = 5.0;
+constexpr double kRemoteInterpDelaySeconds = 0.10;
+constexpr size_t kRemoteSampleHistoryMax = 16;
 
 #ifndef EGL_OPENGL_ES3_BIT
 #ifdef EGL_OPENGL_ES3_BIT_KHR
@@ -341,6 +344,14 @@ struct GpuMesh {
 
 struct AndroidRenderer {
     struct RemoteRenderPlayer {
+        struct Sample {
+            double recv_time_seconds = 0.0;
+            glm::vec3 position = glm::vec3(0.0f);
+            glm::vec3 velocity = glm::vec3(0.0f);
+            uint8_t anim_state = 0;
+            float anim_phase = 0.0f;
+            float anim_blend = 0.0f;
+        };
         glm::vec3 position = glm::vec3(0.0f);
         glm::vec3 target_position = glm::vec3(0.0f);
         glm::vec3 velocity = glm::vec3(0.0f);
@@ -348,6 +359,7 @@ struct AndroidRenderer {
         float anim_phase = 0.0f;
         float anim_blend = 0.0f;
         bool initialized = false;
+        std::deque<Sample> samples;
     };
 
     EGLDisplay display = EGL_NO_DISPLAY;
@@ -431,6 +443,7 @@ struct AndroidRenderer {
     timespec last_time{};
     bool has_last_time = false;
     uint64_t frame_counter = 0;
+    double net_time_seconds = 0.0;
 
     struct UiRect {
         int x = 0;
@@ -772,6 +785,27 @@ struct AndroidRenderer {
             remote.anim_state = state.anim_state;
             remote.anim_phase = state.anim_phase;
             remote.anim_blend = state.anim_blend;
+            const glm::vec3 sample_velocity(state.vx, state.vy, state.vz);
+            const bool should_push_sample =
+                remote.samples.empty() ||
+                !(remote.samples.back().position == target &&
+                  remote.samples.back().velocity == sample_velocity &&
+                  remote.samples.back().anim_state == state.anim_state &&
+                  remote.samples.back().anim_phase == state.anim_phase &&
+                  remote.samples.back().anim_blend == state.anim_blend);
+            if (should_push_sample) {
+                RemoteRenderPlayer::Sample sample{};
+                sample.recv_time_seconds = net_time_seconds;
+                sample.position = target;
+                sample.velocity = sample_velocity;
+                sample.anim_state = state.anim_state;
+                sample.anim_phase = state.anim_phase;
+                sample.anim_blend = state.anim_blend;
+                remote.samples.push_back(sample);
+                while (remote.samples.size() > kRemoteSampleHistoryMax) {
+                    remote.samples.pop_front();
+                }
+            }
             seen_remote_ids.insert(player_id);
         }
 
@@ -1325,9 +1359,51 @@ struct AndroidRenderer {
         player_anim_blend += (blend_target - player_anim_blend) * blend_lerp;
 
         const float remote_lerp = std::clamp(static_cast<float>(dt_seconds) * 12.0f, 0.0f, 1.0f);
+        const double remote_render_time = net_time_seconds - kRemoteInterpDelaySeconds;
         for (auto &[player_id, remote] : remote_render_players) {
             (void)player_id;
-            const glm::vec3 predicted_target = remote.target_position + remote.velocity * 0.035f;
+            while (remote.samples.size() >= 3 && remote.samples[1].recv_time_seconds <= remote_render_time) {
+                remote.samples.pop_front();
+            }
+
+            glm::vec3 predicted_target = remote.target_position + remote.velocity * 0.035f;
+            if (!remote.samples.empty()) {
+                if (remote.samples.size() >= 2) {
+                    const auto &a = remote.samples[0];
+                    const auto &b = remote.samples[1];
+                    if (remote_render_time <= a.recv_time_seconds) {
+                        predicted_target = a.position;
+                        remote.velocity = a.velocity;
+                        remote.anim_state = a.anim_state;
+                        remote.anim_phase = a.anim_phase;
+                        remote.anim_blend = a.anim_blend;
+                    } else if (remote_render_time <= b.recv_time_seconds) {
+                        const double dt = std::max(1e-6, b.recv_time_seconds - a.recv_time_seconds);
+                        const float t = static_cast<float>(std::clamp((remote_render_time - a.recv_time_seconds) / dt, 0.0, 1.0));
+                        predicted_target = glm::mix(a.position, b.position, t);
+                        remote.velocity = glm::mix(a.velocity, b.velocity, t);
+                        remote.anim_state = (t < 0.5f) ? a.anim_state : b.anim_state;
+                        remote.anim_phase = glm::mix(a.anim_phase, b.anim_phase, t);
+                        remote.anim_blend = glm::mix(a.anim_blend, b.anim_blend, t);
+                    } else {
+                        const auto &latest = remote.samples.back();
+                        const float extrap = static_cast<float>(std::clamp(remote_render_time - latest.recv_time_seconds, 0.0, 0.10));
+                        predicted_target = latest.position + latest.velocity * extrap;
+                        remote.velocity = latest.velocity;
+                        remote.anim_state = latest.anim_state;
+                        remote.anim_phase = latest.anim_phase;
+                        remote.anim_blend = latest.anim_blend;
+                    }
+                } else {
+                    const auto &latest = remote.samples.back();
+                    predicted_target = latest.position;
+                    remote.velocity = latest.velocity;
+                    remote.anim_state = latest.anim_state;
+                    remote.anim_phase = latest.anim_phase;
+                    remote.anim_blend = latest.anim_blend;
+                }
+                remote.target_position = predicted_target;
+            }
             const float err = glm::length(remote.position - predicted_target);
             if (err > 4.0f) {
                 remote.position = predicted_target;
@@ -1618,6 +1694,7 @@ struct AndroidRenderer {
         }
         last_time = now;
         has_last_time = true;
+        net_time_seconds += dt_seconds;
 
         process_gui_actions();
         pump_network(dt_seconds);

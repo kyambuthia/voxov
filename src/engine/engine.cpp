@@ -23,6 +23,8 @@ constexpr float k_vehicle_body_half_width = 0.8f;
 constexpr float k_vehicle_body_height = 0.65f;
 constexpr float k_vehicle_wheel_radius = 0.32f;
 constexpr float k_vehicle_interact_radius = 2.1f;
+constexpr double k_remote_interp_delay_seconds = 0.10;
+constexpr size_t k_remote_sample_history_max = 16;
 
 std::vector<std::string> candidate_model_paths(const char *subdir, const char *model_filename) {
     namespace fs = std::filesystem;
@@ -465,6 +467,27 @@ void Engine::sync_network_state(uint32_t sim_tick, const InputState &net_input) 
         render_player.anim_state = state.anim_state;
         render_player.anim_phase = state.anim_phase;
         render_player.anim_blend = state.anim_blend;
+        const glm::vec3 sample_velocity(state.vx, state.vy, state.vz);
+        const bool should_push_sample =
+            render_player.samples.empty() ||
+            !(render_player.samples.back().position == target &&
+              render_player.samples.back().velocity == sample_velocity &&
+              render_player.samples.back().anim_state == state.anim_state &&
+              render_player.samples.back().anim_phase == state.anim_phase &&
+              render_player.samples.back().anim_blend == state.anim_blend);
+        if (should_push_sample) {
+            RemoteRenderPlayer::Sample sample{};
+            sample.recv_time_seconds = net_time_seconds;
+            sample.position = target;
+            sample.velocity = sample_velocity;
+            sample.anim_state = state.anim_state;
+            sample.anim_phase = state.anim_phase;
+            sample.anim_blend = state.anim_blend;
+            render_player.samples.push_back(sample);
+            while (render_player.samples.size() > k_remote_sample_history_max) {
+                render_player.samples.pop_front();
+            }
+        }
         seen_remote_ids.insert(player_id);
     }
 
@@ -479,6 +502,7 @@ void Engine::sync_network_state(uint32_t sim_tick, const InputState &net_input) 
 
 void Engine::tick(double frame_dt) {
     last_frame_dt = frame_dt;
+    net_time_seconds += frame_dt;
 
     if (input_state.debug_toggle_pressed) {
         runtime_options.debug_collision = !runtime_options.debug_collision;
@@ -712,9 +736,52 @@ void Engine::tick(double frame_dt) {
 
     const float remote_lerp = std::clamp(static_cast<float>(frame_dt) * 12.0f, 0.0f, 1.0f);
     const float remote_rot_lerp = std::clamp(static_cast<float>(frame_dt) * 9.0f, 0.0f, 1.0f);
+    const double remote_render_time = net_time_seconds - k_remote_interp_delay_seconds;
     for (auto &[player_id, render_player] : remote_render_players) {
         (void)player_id;
-        const glm::vec3 predicted_target = render_player.target_position + render_player.velocity * 0.035f;
+        while (render_player.samples.size() >= 3 && render_player.samples[1].recv_time_seconds <= remote_render_time) {
+            render_player.samples.pop_front();
+        }
+
+        glm::vec3 predicted_target = render_player.target_position + render_player.velocity * 0.035f;
+        if (!render_player.samples.empty()) {
+            if (render_player.samples.size() >= 2) {
+                const auto &a = render_player.samples[0];
+                const auto &b = render_player.samples[1];
+                if (remote_render_time <= a.recv_time_seconds) {
+                    predicted_target = a.position;
+                    render_player.velocity = a.velocity;
+                    render_player.anim_state = a.anim_state;
+                    render_player.anim_phase = a.anim_phase;
+                    render_player.anim_blend = a.anim_blend;
+                } else if (remote_render_time <= b.recv_time_seconds) {
+                    const double dt = std::max(1e-6, b.recv_time_seconds - a.recv_time_seconds);
+                    const float t = static_cast<float>(std::clamp((remote_render_time - a.recv_time_seconds) / dt, 0.0, 1.0));
+                    predicted_target = glm::mix(a.position, b.position, t);
+                    render_player.velocity = glm::mix(a.velocity, b.velocity, t);
+                    render_player.anim_state = (t < 0.5f) ? a.anim_state : b.anim_state;
+                    render_player.anim_phase = glm::mix(a.anim_phase, b.anim_phase, t);
+                    render_player.anim_blend = glm::mix(a.anim_blend, b.anim_blend, t);
+                } else {
+                    const auto &latest = render_player.samples.back();
+                    const float extrap = static_cast<float>(std::clamp(remote_render_time - latest.recv_time_seconds, 0.0, 0.10));
+                    predicted_target = latest.position + latest.velocity * extrap;
+                    render_player.velocity = latest.velocity;
+                    render_player.anim_state = latest.anim_state;
+                    render_player.anim_phase = latest.anim_phase;
+                    render_player.anim_blend = latest.anim_blend;
+                }
+            } else {
+                const auto &latest = render_player.samples.back();
+                predicted_target = latest.position;
+                render_player.velocity = latest.velocity;
+                render_player.anim_state = latest.anim_state;
+                render_player.anim_phase = latest.anim_phase;
+                render_player.anim_blend = latest.anim_blend;
+            }
+            render_player.target_position = predicted_target;
+        }
+
         const float err = glm::length(render_player.position - predicted_target);
         if (err > 4.0f) {
             render_player.position = predicted_target;

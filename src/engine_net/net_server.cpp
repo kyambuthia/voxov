@@ -211,10 +211,11 @@ void NetServer::broadcast_player_states() {
     }
     last_player_broadcast_ms = now;
 
-    for (const auto &[peer_ptr, state] : clients) {
+    for (auto &[peer_ptr, state] : clients) {
         (void)peer_ptr;
         PlayerStatePacket packet{};
         packet.state = state.state;
+        packet.state.sequence = state.next_player_state_sequence++;
 
         ENetPacket *out = enet_packet_create(&packet, sizeof(packet), 0);
         enet_host_broadcast(server, static_cast<uint8_t>(NetChannel::Unreliable), out);

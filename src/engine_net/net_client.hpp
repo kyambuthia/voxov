@@ -54,6 +54,7 @@ private:
     std::vector<NetChunkState> chunk_updates;
     uint32_t assigned_player_id = 0;
     std::unordered_map<uint32_t, NetPlayerState> replicated_players;
+    std::unordered_map<uint32_t, uint32_t> replicated_player_sequences;
     bool has_pending_interest = false;
     NetChunkInterest pending_interest{};
     DebugCounters debug_counters{};

@@ -19,6 +19,7 @@
 
 #include <unordered_map>
 #include <array>
+#include <deque>
 
 struct EngineRuntimeOptions {
     bool devhud = false;
@@ -41,6 +42,14 @@ public:
 
 private:
     struct RemoteRenderPlayer {
+        struct Sample {
+            double recv_time_seconds = 0.0;
+            glm::vec3 position = glm::vec3(0.0f);
+            glm::vec3 velocity = glm::vec3(0.0f);
+            uint8_t anim_state = 0;
+            float anim_phase = 0.0f;
+            float anim_blend = 0.0f;
+        };
         glm::vec3 position = glm::vec3(0.0f);
         glm::vec3 target_position = glm::vec3(0.0f);
         glm::vec3 velocity = glm::vec3(0.0f);
@@ -50,6 +59,7 @@ private:
         float anim_phase = 0.0f;
         float anim_blend = 0.0f;
         bool initialized = false;
+        std::deque<Sample> samples;
     };
     struct VehicleState {
         glm::vec3 position = glm::vec3(10.0f, 0.0f, 10.0f);
@@ -119,6 +129,7 @@ private:
     uint64_t frame_index = 0;
     double log_accumulator = 0.0;
     double last_frame_dt = 0.0;
+    double net_time_seconds = 0.0;
 
     NetSnapshot latest_snapshot{};
     bool has_snapshot = false;

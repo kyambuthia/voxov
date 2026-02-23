@@ -49,6 +49,10 @@ uint64_t now_ms() {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
 }
+
+bool net_seq_newer(uint32_t incoming, uint32_t last_seen) {
+    return incoming != last_seen && static_cast<int32_t>(incoming - last_seen) > 0;
+}
 }
 
 void NetClient::record_tx(size_t bytes) {
@@ -149,6 +153,7 @@ void NetClient::disconnect() {
 void NetClient::shutdown() {
     chunk_updates.clear();
     replicated_players.clear();
+    replicated_player_sequences.clear();
     assigned_player_id = 0;
     connected = false;
     has_pending_interest = false;
@@ -198,6 +203,7 @@ void NetClient::pump() {
             peer = nullptr;
             assigned_player_id = 0;
             replicated_players.clear();
+            replicated_player_sequences.clear();
             has_snapshot = false;
             continue;
         }
@@ -237,8 +243,16 @@ void NetClient::pump() {
                 PlayerStatePacket packet{};
                 std::memcpy(&packet, event.packet->data, sizeof(packet));
                 if (packet.type == NetMsgType::PlayerState) {
-                    replicated_players[packet.state.player_id] = packet.state;
-                    recognized_message = true;
+                    const uint32_t player_id = packet.state.player_id;
+                    if (player_id != 0) {
+                        auto seq_it = replicated_player_sequences.find(player_id);
+                        if (seq_it == replicated_player_sequences.end() ||
+                            net_seq_newer(packet.state.sequence, seq_it->second)) {
+                            replicated_players[player_id] = packet.state;
+                            replicated_player_sequences[player_id] = packet.state.sequence;
+                        }
+                        recognized_message = true;
+                    }
                 }
             }
 
@@ -247,6 +261,7 @@ void NetClient::pump() {
                 std::memcpy(&packet, event.packet->data, sizeof(packet));
                 if (packet.type == NetMsgType::PlayerRemove) {
                     replicated_players.erase(packet.payload.player_id);
+                    replicated_player_sequences.erase(packet.payload.player_id);
                     recognized_message = true;
                 }
             }

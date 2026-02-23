@@ -57,6 +57,11 @@ private:
         float speed = 0.0f;
         bool occupied = false;
     };
+    enum class ReconcileMode : uint8_t {
+        Off = 0,
+        Threshold = 1,
+        Snap = 2
+    };
 
     void build_static_scene();
     void handle_vehicle_interaction(const InputState &input);
@@ -128,8 +133,10 @@ private:
     std::array<PredictionHistoryEntry, k_prediction_history_size> prediction_history{};
     float last_reconcile_pos_error = 0.0f;
     uint32_t last_reconcile_snapshot_tick = 0;
+    uint32_t last_reconcile_processed_snapshot_tick = 0;
     uint32_t reconcile_replay_ticks = 0;
     uint64_t reconcile_corrections = 0;
+    ReconcileMode reconcile_mode = ReconcileMode::Threshold;
     PlayerCollisionDebug last_collision_debug{};
     PlayerCollisionDebug last_collision_debug_secondary{};
     RenderMesh frozen_debug_world{};

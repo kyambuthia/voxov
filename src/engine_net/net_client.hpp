@@ -2,6 +2,7 @@
 
 #include "engine_net/net_common.hpp"
 
+#include <cstddef>
 #include <unordered_map>
 #include <vector>
 
@@ -10,8 +11,8 @@ struct _ENetPeer;
 
 class NetClient {
 public:
-    void init();
-    void connect(const char *host, uint16_t port);
+    bool init();
+    bool connect(const char *host, uint16_t port);
     void disconnect();
     void shutdown();
     void pump();
@@ -21,9 +22,29 @@ public:
     bool poll_chunk_state(NetChunkState &out_state);
     uint32_t local_player_id() const;
     bool is_connected() const;
+    bool is_initialized() const;
+    NetDebugStats debug_stats() const;
     const std::unordered_map<uint32_t, NetPlayerState> &player_states() const;
 
 private:
+    void record_tx(size_t bytes);
+    void record_rx(size_t bytes);
+    void refresh_debug_stats();
+
+    struct DebugCounters {
+        uint64_t tx_packets_total = 0;
+        uint64_t tx_bytes_total = 0;
+        uint64_t rx_packets_total = 0;
+        uint64_t rx_bytes_total = 0;
+        uint64_t invalid_packets_total = 0;
+        uint32_t tx_packets_window = 0;
+        uint32_t tx_bytes_window = 0;
+        uint32_t rx_packets_window = 0;
+        uint32_t rx_bytes_window = 0;
+        uint64_t last_rollup_ms = 0;
+        NetDebugStats snapshot{};
+    };
+
     bool initialized = false;
     bool connected = false;
     _ENetHost *client = nullptr;
@@ -35,4 +56,5 @@ private:
     std::unordered_map<uint32_t, NetPlayerState> replicated_players;
     bool has_pending_interest = false;
     NetChunkInterest pending_interest{};
+    DebugCounters debug_counters{};
 };

@@ -2,6 +2,7 @@
 
 #include "engine_net/net_common.hpp"
 
+#include <cstddef>
 #include <unordered_map>
 #include <cstdint>
 
@@ -10,26 +11,56 @@ struct _ENetPeer;
 
 class NetServer {
 public:
-    void init(uint16_t port, bool loopback_only = false);
+    bool init(uint16_t port, bool loopback_only = false);
     void shutdown();
     void pump();
+    NetDebugStats debug_stats() const;
 
 private:
     struct ClientState {
         uint32_t player_id = 0;
         NetPlayerState state{};
         NetTickInput last_input{};
+        bool jump_pressed_latched = false;
         NetChunkInterest interest{};
         std::unordered_map<int32_t, uint32_t> sent_chunks;
     };
 
     int32_t chunk_key(NetChunkCoord coord) const;
     void send_chunk_state(_ENetPeer *peer, ClientState &state, NetChunkCoord coord, uint32_t version);
+    void simulate_client_tick(ClientState &state);
+    void simulate_fixed_tick();
+    void send_snapshots();
     void broadcast_player_states();
+    void broadcast_player_remove(uint32_t player_id);
+    void record_tx(size_t bytes, uint32_t packet_count = 1);
+    void record_rx(size_t bytes);
+    void refresh_debug_stats();
+
+    struct DebugCounters {
+        uint64_t tx_packets_total = 0;
+        uint64_t tx_bytes_total = 0;
+        uint64_t rx_packets_total = 0;
+        uint64_t rx_bytes_total = 0;
+        uint64_t invalid_packets_total = 0;
+        uint32_t tx_packets_window = 0;
+        uint32_t tx_bytes_window = 0;
+        uint32_t rx_packets_window = 0;
+        uint32_t rx_bytes_window = 0;
+        uint32_t snapshots_sent_window = 0;
+        uint32_t player_state_broadcasts_window = 0;
+        uint64_t last_rollup_ms = 0;
+        NetDebugStats snapshot{};
+    };
 
     bool initialized = false;
     bool local_only = false;
     _ENetHost *server = nullptr;
     std::unordered_map<_ENetPeer *, ClientState> clients;
     uint32_t next_player_id = 1;
+    uint64_t last_pump_ms = 0;
+    double sim_accumulator_ms = 0.0;
+    uint64_t last_snapshot_send_ms = 0;
+    uint64_t last_player_broadcast_ms = 0;
+    DebugCounters debug_counters{};
 };

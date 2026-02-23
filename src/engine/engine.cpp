@@ -198,7 +198,9 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
 
     EnginePhysicsSettings settings{};
     physics.init(settings);
-    net_client.init();
+    if (!net_client.init()) {
+        spdlog::error("NetClient init failed; multiplayer disabled until restart");
+    }
     ui_audio.init();
 
     build_static_scene();
@@ -251,7 +253,18 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
 }
 
 void Engine::connect(const char *host, uint16_t port) {
-    net_client.connect(host, port);
+    if (!net_client.is_initialized()) {
+        if (!net_client.init()) {
+            spdlog::error("NetClient init failed; cannot connect to {}:{}", host ? host : "(null)", port);
+            multiplayer_hint = "Network init failed.";
+            return;
+        }
+    }
+    if (!net_client.connect(host, port)) {
+        spdlog::error("NetClient connect failed to {}:{}", host ? host : "(null)", port);
+        multiplayer_hint = "Connect failed.";
+        return;
+    }
     NetChunkInterest interest{};
     interest.center_x = 0;
     interest.center_z = 0;
@@ -267,7 +280,11 @@ void Engine::start_local_server(uint16_t port, bool loopback_only) {
         local_server.shutdown();
         local_server_running = false;
     }
-    local_server.init(port, loopback_only);
+    if (!local_server.init(port, loopback_only)) {
+        spdlog::error("Failed to start {} server on {}", loopback_only ? "local-only" : "LAN", port);
+        multiplayer_hint = "Failed to start server.";
+        return;
+    }
     local_server_loopback = loopback_only;
     local_server_running = true;
     spdlog::info("Started {} server on {}", loopback_only ? "local-only" : "LAN", port);
@@ -774,12 +791,14 @@ void Engine::refresh_overlay_text() {
     scene.debug_screen = RenderMesh{};
 
     if (runtime_options.devhud) {
-        char text[320]{};
+        char text[768]{};
         const float vehicle_distance = glm::length(local_player.transform.position - vehicle.position);
+        const NetDebugStats client_net_stats = net_client.debug_stats();
+        const NetDebugStats server_net_stats = local_server_running ? local_server.debug_stats() : NetDebugStats{};
         std::snprintf(
             text,
             sizeof(text),
-            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f (F TO ENTER/EXIT)",
+            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f (F TO ENTER/EXIT)",
             render_stats.fps,
             last_frame_dt,
             fixed.fixed_dt,
@@ -804,6 +823,18 @@ void Engine::refresh_overlay_text() {
             static_cast<int>(remote_render_players.size()),
             render_stats.net_connected ? 1 : 0,
             render_stats.net_local_player_id,
+            client_net_stats.tx_packets_per_sec,
+            client_net_stats.rx_packets_per_sec,
+            client_net_stats.tx_bytes_per_sec,
+            client_net_stats.rx_bytes_per_sec,
+            static_cast<unsigned long long>(client_net_stats.invalid_packets_total),
+            local_server_running ? 1 : 0,
+            server_net_stats.tx_packets_per_sec,
+            server_net_stats.rx_packets_per_sec,
+            server_net_stats.tx_bytes_per_sec,
+            server_net_stats.rx_bytes_per_sec,
+            server_net_stats.snapshots_sent_per_sec,
+            server_net_stats.player_state_broadcasts_per_sec,
             anim_state_name(local_player.anim_state),
             local_player.anim_blend,
             local_player.anim_phase,

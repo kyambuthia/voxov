@@ -5,6 +5,7 @@
 
 #include <cstring>
 #include <cstdio>
+#include <chrono>
 
 namespace {
 #pragma pack(push, 1)
@@ -37,47 +38,103 @@ struct PlayerStatePacket {
     NetMsgType type = NetMsgType::PlayerState;
     NetPlayerState state{};
 };
+
+struct PlayerRemovePacket {
+    NetMsgType type = NetMsgType::PlayerRemove;
+    NetPlayerRemove payload{};
+};
 #pragma pack(pop)
+
+uint64_t now_ms() {
+    const auto now = std::chrono::steady_clock::now().time_since_epoch();
+    return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+}
 }
 
-void NetClient::init() {
-    if (initialized) {
+void NetClient::record_tx(size_t bytes) {
+    debug_counters.tx_packets_total += 1;
+    debug_counters.tx_bytes_total += static_cast<uint64_t>(bytes);
+    debug_counters.tx_packets_window += 1;
+    debug_counters.tx_bytes_window += static_cast<uint32_t>(bytes);
+}
+
+void NetClient::record_rx(size_t bytes) {
+    debug_counters.rx_packets_total += 1;
+    debug_counters.rx_bytes_total += static_cast<uint64_t>(bytes);
+    debug_counters.rx_packets_window += 1;
+    debug_counters.rx_bytes_window += static_cast<uint32_t>(bytes);
+}
+
+void NetClient::refresh_debug_stats() {
+    const uint64_t now = now_ms();
+    if (debug_counters.last_rollup_ms == 0) {
+        debug_counters.last_rollup_ms = now;
+    }
+    if ((now - debug_counters.last_rollup_ms) < 1000) {
         return;
+    }
+
+    debug_counters.snapshot.tx_packets_total = debug_counters.tx_packets_total;
+    debug_counters.snapshot.tx_bytes_total = debug_counters.tx_bytes_total;
+    debug_counters.snapshot.rx_packets_total = debug_counters.rx_packets_total;
+    debug_counters.snapshot.rx_bytes_total = debug_counters.rx_bytes_total;
+    debug_counters.snapshot.invalid_packets_total = debug_counters.invalid_packets_total;
+    debug_counters.snapshot.tx_packets_per_sec = debug_counters.tx_packets_window;
+    debug_counters.snapshot.tx_bytes_per_sec = debug_counters.tx_bytes_window;
+    debug_counters.snapshot.rx_packets_per_sec = debug_counters.rx_packets_window;
+    debug_counters.snapshot.rx_bytes_per_sec = debug_counters.rx_bytes_window;
+    debug_counters.snapshot.snapshots_sent_per_sec = 0;
+    debug_counters.snapshot.player_state_broadcasts_per_sec = 0;
+
+    debug_counters.tx_packets_window = 0;
+    debug_counters.tx_bytes_window = 0;
+    debug_counters.rx_packets_window = 0;
+    debug_counters.rx_bytes_window = 0;
+    debug_counters.last_rollup_ms = now;
+}
+
+bool NetClient::init() {
+    if (initialized) {
+        return true;
     }
 
     if (enet_initialize() != 0) {
         std::fprintf(stderr, "NetClient: enet_initialize failed\n");
-        return;
+        return false;
     }
     client = enet_host_create(nullptr, 1, 2, 0, 0);
     if (!client) {
         std::fprintf(stderr, "NetClient: enet_host_create failed\n");
         enet_deinitialize();
-        return;
+        return false;
     }
     initialized = true;
+    debug_counters = DebugCounters{};
+    refresh_debug_stats();
+    return true;
 }
 
-void NetClient::connect(const char *host, uint16_t port) {
+bool NetClient::connect(const char *host, uint16_t port) {
     if (!initialized || !client || !host) {
-        return;
+        return false;
     }
     disconnect();
 
     ENetAddress address{};
     if (enet_address_set_host(&address, host) != 0) {
         std::fprintf(stderr, "NetClient: failed to resolve host '%s'\n", host);
-        return;
+        return false;
     }
     address.port = port;
     peer = enet_host_connect(client, &address, 2, 0);
     if (!peer) {
         std::fprintf(stderr, "NetClient: enet_host_connect failed\n");
-        return;
+        return false;
     }
     connected = false;
     assigned_player_id = 0;
     spdlog::info("NetClient: connecting to {}:{}", host, port);
+    return true;
 }
 
 void NetClient::disconnect() {
@@ -103,12 +160,14 @@ void NetClient::shutdown() {
         enet_deinitialize();
         initialized = false;
     }
+    debug_counters = DebugCounters{};
 }
 
 void NetClient::pump() {
     if (!client) {
         return;
     }
+    refresh_debug_stats();
 
     ENetEvent event{};
     while (enet_host_service(client, &event, 0) > 0) {
@@ -127,6 +186,7 @@ void NetClient::pump() {
                 packet.interest = pending_interest;
                 ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE);
                 enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Reliable), net_packet);
+                record_tx(sizeof(packet));
                 has_pending_interest = false;
             }
             continue;
@@ -143,12 +203,15 @@ void NetClient::pump() {
         }
 
         if (event.type == ENET_EVENT_TYPE_RECEIVE) {
+            record_rx(event.packet->dataLength);
+            bool recognized_message = false;
             if (event.packet->dataLength >= sizeof(SnapshotPacket)) {
                 SnapshotPacket packet{};
                 std::memcpy(&packet, event.packet->data, sizeof(packet));
                 if (packet.type == NetMsgType::Snapshot) {
                     latest_snapshot = packet.snapshot;
                     has_snapshot = true;
+                    recognized_message = true;
                 }
             }
 
@@ -157,6 +220,7 @@ void NetClient::pump() {
                 std::memcpy(&packet, event.packet->data, sizeof(packet));
                 if (packet.type == NetMsgType::ChunkState) {
                     chunk_updates.push_back(packet.state);
+                    recognized_message = true;
                 }
             }
 
@@ -165,6 +229,7 @@ void NetClient::pump() {
                 std::memcpy(&packet, event.packet->data, sizeof(packet));
                 if (packet.type == NetMsgType::AssignPlayer) {
                     assigned_player_id = packet.payload.player_id;
+                    recognized_message = true;
                 }
             }
 
@@ -173,7 +238,20 @@ void NetClient::pump() {
                 std::memcpy(&packet, event.packet->data, sizeof(packet));
                 if (packet.type == NetMsgType::PlayerState) {
                     replicated_players[packet.state.player_id] = packet.state;
+                    recognized_message = true;
                 }
+            }
+
+            if (event.packet->dataLength >= sizeof(PlayerRemovePacket)) {
+                PlayerRemovePacket packet{};
+                std::memcpy(&packet, event.packet->data, sizeof(packet));
+                if (packet.type == NetMsgType::PlayerRemove) {
+                    replicated_players.erase(packet.payload.player_id);
+                    recognized_message = true;
+                }
+            }
+            if (!recognized_message) {
+                debug_counters.invalid_packets_total += 1;
             }
 
             enet_packet_destroy(event.packet);
@@ -190,6 +268,7 @@ void NetClient::send_input(const NetTickInput &input) {
     packet.input = input;
     ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), 0);
     enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Unreliable), net_packet);
+    record_tx(sizeof(packet));
 }
 
 void NetClient::set_chunk_interest(const NetChunkInterest &interest) {
@@ -204,6 +283,7 @@ void NetClient::set_chunk_interest(const NetChunkInterest &interest) {
     packet.interest = interest;
     ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE);
     enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Reliable), net_packet);
+    record_tx(sizeof(packet));
     has_pending_interest = false;
 }
 
@@ -233,6 +313,14 @@ uint32_t NetClient::local_player_id() const {
 
 bool NetClient::is_connected() const {
     return connected;
+}
+
+bool NetClient::is_initialized() const {
+    return initialized && client != nullptr;
+}
+
+NetDebugStats NetClient::debug_stats() const {
+    return debug_counters.snapshot;
 }
 
 const std::unordered_map<uint32_t, NetPlayerState> &NetClient::player_states() const {

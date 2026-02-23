@@ -141,17 +141,28 @@ int main(int argc, char **argv) {
     std::signal(SIGTERM, on_signal);
 
     NetServer server;
+    bool server_started = false;
     if (run_server) {
-        server.init(connect_port);
+        server_started = server.init(connect_port);
+        if (!server_started) {
+            std::fprintf(stderr, "Failed to start server on port %u\n", connect_port);
+            if (headless_server) {
+                return 1;
+            }
+        }
     }
 
     if (headless_server) {
         std::fprintf(stderr, "VOXOV headless server started on port %u\n", connect_port);
         while (keep_running.load()) {
-            server.pump();
+            if (server_started) {
+                server.pump();
+            }
             std::this_thread::sleep_for(std::chrono::milliseconds(1));
         }
-        server.shutdown();
+        if (server_started) {
+            server.shutdown();
+        }
         return 0;
     }
 
@@ -165,7 +176,7 @@ int main(int argc, char **argv) {
 
     if (!platform.init(create_info)) {
         std::fprintf(stderr, "Platform init failed\n");
-        if (run_server) {
+        if (server_started) {
             server.shutdown();
         }
         return 1;
@@ -185,7 +196,7 @@ int main(int argc, char **argv) {
     } catch (const std::exception &e) {
         std::fprintf(stderr, "Engine init failed: %s\n", e.what());
         platform.shutdown();
-        if (run_server) {
+        if (server_started) {
             server.shutdown();
         }
         return 1;
@@ -213,7 +224,7 @@ int main(int argc, char **argv) {
         const InputState input = desktop_input.poll();
         const InputState input_secondary = splitscreen ? poll_secondary_split_input(platform.glfw_window()) : InputState{};
         engine.set_input(input, input_secondary, false);
-        if (run_server) {
+        if (server_started) {
             server.pump();
         }
 
@@ -229,7 +240,7 @@ int main(int argc, char **argv) {
     engine.shutdown();
     platform.shutdown();
 
-    if (run_server) {
+    if (server_started) {
         server.shutdown();
     }
 

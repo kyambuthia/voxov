@@ -29,6 +29,7 @@
 #include <ctime>
 #include <string>
 #include <unordered_map>
+#include <unordered_set>
 #include <vector>
 #include <fstream>
 
@@ -102,6 +103,14 @@ float mobile_anim_blend_target(PlayerAnimState state) {
     default:
         return 0.0f;
     }
+}
+
+glm::vec3 player_color_from_id(uint32_t player_id) {
+    const uint32_t h = (player_id * 2654435761u) ^ 0x9e3779b9u;
+    const float r = 0.25f + 0.65f * static_cast<float>((h >> 0) & 0xFF) / 255.0f;
+    const float g = 0.25f + 0.65f * static_cast<float>((h >> 8) & 0xFF) / 255.0f;
+    const float b = 0.25f + 0.65f * static_cast<float>((h >> 16) & 0xFF) / 255.0f;
+    return glm::vec3(r, g, b);
 }
 
 GLuint compile_shader(GLenum type, const char *src) {
@@ -331,6 +340,16 @@ struct GpuMesh {
 };
 
 struct AndroidRenderer {
+    struct RemoteRenderPlayer {
+        glm::vec3 position = glm::vec3(0.0f);
+        glm::vec3 target_position = glm::vec3(0.0f);
+        glm::vec3 velocity = glm::vec3(0.0f);
+        uint8_t anim_state = 0;
+        float anim_phase = 0.0f;
+        float anim_blend = 0.0f;
+        bool initialized = false;
+    };
+
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLSurface surface = EGL_NO_SURFACE;
     EGLContext context = EGL_NO_CONTEXT;
@@ -346,12 +365,14 @@ struct AndroidRenderer {
     GpuMesh terrain_gpu{};
     GpuMesh grid_gpu{};
     GpuMesh capsule_gpu{};
+    GpuMesh remote_players_gpu{};
     GpuMesh ui_text_gpu{};
 
     VoxelChunk world{};
     RenderMesh terrain_mesh{};
     RenderMesh grid_mesh{};
     RenderMesh capsule_mesh{};
+    RenderMesh remote_players_mesh{};
     RenderMesh ui_text_mesh{};
     VoxelCollisionWorld collision_world{nullptr};
     glm::vec3 player_feet_position = glm::vec3(8.5f, 6.0f, 8.5f);
@@ -397,8 +418,10 @@ struct AndroidRenderer {
     bool hosting_local = false;
     bool searching_nearby = false;
     uint32_t net_tick = 0;
+    uint32_t net_local_player_id = 0;
     glm::vec3 net_target_position = glm::vec3(8.5f, 6.0f, 8.5f);
     bool net_target_valid = false;
+    std::unordered_map<uint32_t, RemoteRenderPlayer> remote_render_players;
     std::string ui_text_cache;
     std::string multiplayer_hint;
 
@@ -502,12 +525,18 @@ struct AndroidRenderer {
         if (net_initialized) {
             return;
         }
-        net_client.init();
+        if (!net_client.init()) {
+            multiplayer_hint = "Network init failed.";
+            __android_log_print(ANDROID_LOG_ERROR, kLogTag, "NetClient init failed");
+            return;
+        }
         net_initialized = true;
         net_connected = false;
         net_connecting = false;
         net_connect_elapsed = 0.0;
         net_tick = 0;
+        net_local_player_id = 0;
+        remote_render_players.clear();
     }
 
     void stop_local_server() {
@@ -530,6 +559,8 @@ struct AndroidRenderer {
         net_connecting = false;
         net_connect_elapsed = 0.0;
         net_target_valid = false;
+        net_local_player_id = 0;
+        remote_render_players.clear();
     }
 
     void shutdown_network() {
@@ -545,11 +576,18 @@ struct AndroidRenderer {
 
     void connect_local() {
         init_network_if_needed();
+        if (!net_initialized) {
+            return;
+        }
         if (net_connected || net_connecting) {
             return;
         }
 
-        net_client.connect(kLocalPlayHost, kLocalPlayPort);
+        if (!net_client.connect(kLocalPlayHost, kLocalPlayPort)) {
+            multiplayer_hint = "Failed to connect local server.";
+            __android_log_print(ANDROID_LOG_ERROR, kLogTag, "NetClient connect failed to local server");
+            return;
+        }
         net_target_valid = false;
         NetChunkInterest interest{};
         interest.center_x = 0;
@@ -563,8 +601,15 @@ struct AndroidRenderer {
 
     void host_local_secure() {
         init_network_if_needed();
+        if (!net_initialized) {
+            return;
+        }
         if (!local_server_running) {
-            local_server.init(kLocalPlayPort, true);
+            if (!local_server.init(kLocalPlayPort, true)) {
+                multiplayer_hint = "Failed to start local server.";
+                __android_log_print(ANDROID_LOG_ERROR, kLogTag, "Local loopback server start failed on %u", kLocalPlayPort);
+                return;
+            }
             local_server_running = true;
             local_server_loopback = true;
             hosting_local = true;
@@ -578,9 +623,16 @@ struct AndroidRenderer {
 
     void host_lan_secure() {
         init_network_if_needed();
+        if (!net_initialized) {
+            return;
+        }
         if (!local_server_running || local_server_loopback) {
             stop_local_server();
-            local_server.init(kLocalPlayPort, false);
+            if (!local_server.init(kLocalPlayPort, false)) {
+                multiplayer_hint = "Failed to start Wi-Fi host.";
+                __android_log_print(ANDROID_LOG_ERROR, kLogTag, "LAN server start failed on %u", kLocalPlayPort);
+                return;
+            }
             local_server_running = true;
             local_server_loopback = false;
         }
@@ -592,6 +644,9 @@ struct AndroidRenderer {
 
     void join_nearby_secure() {
         init_network_if_needed();
+        if (!net_initialized) {
+            return;
+        }
         lan_discovery.start_client();
         searching_nearby = true;
         multiplayer_hint = "Searching nearby Wi-Fi hosts...";
@@ -616,6 +671,8 @@ struct AndroidRenderer {
             net_connect_elapsed = 0.0;
             if (!net_connected) {
                 net_target_valid = false;
+                net_local_player_id = 0;
+                remote_render_players.clear();
             }
             __android_log_print(ANDROID_LOG_INFO, kLogTag, "NetClient state changed: connected=%d", net_connected ? 1 : 0);
         }
@@ -633,7 +690,11 @@ struct AndroidRenderer {
                 lan_discovery.pump();
                 LanHostEntry host{};
                 if (lan_discovery.pop_host(host)) {
-                    net_client.connect(host.ip.c_str(), host.port);
+                    if (!net_client.connect(host.ip.c_str(), host.port)) {
+                        multiplayer_hint = "Join failed. Retrying discovery...";
+                        __android_log_print(ANDROID_LOG_ERROR, kLogTag, "NetClient connect failed to discovered host %s:%u", host.ip.c_str(), host.port);
+                        continue;
+                    }
                     NetChunkInterest interest{};
                     interest.center_x = 0;
                     interest.center_z = 0;
@@ -678,6 +739,44 @@ struct AndroidRenderer {
                 net_target_valid = true;
             }
         }
+
+        const uint32_t assigned_id = net_client.local_player_id();
+        if (assigned_id != 0) {
+            net_local_player_id = assigned_id;
+        }
+
+        std::unordered_set<uint32_t> seen_remote_ids;
+        for (const auto &[player_id, state] : net_client.player_states()) {
+            if (net_local_player_id != 0 && player_id == net_local_player_id) {
+                continue;
+            }
+
+            glm::vec3 target(state.x, state.y, state.z);
+            if (!std::isfinite(target.x) || !std::isfinite(target.y) || !std::isfinite(target.z) ||
+                std::fabs(target.x) > 100000.0f || std::fabs(target.y) > 100000.0f || std::fabs(target.z) > 100000.0f) {
+                continue;
+            }
+
+            RemoteRenderPlayer &remote = remote_render_players[player_id];
+            if (!remote.initialized) {
+                remote.position = target;
+                remote.initialized = true;
+            }
+            remote.target_position = target;
+            remote.velocity = glm::vec3(state.vx, state.vy, state.vz);
+            remote.anim_state = state.anim_state;
+            remote.anim_phase = state.anim_phase;
+            remote.anim_blend = state.anim_blend;
+            seen_remote_ids.insert(player_id);
+        }
+
+        for (auto it = remote_render_players.begin(); it != remote_render_players.end();) {
+            if (seen_remote_ids.find(it->first) == seen_remote_ids.end()) {
+                it = remote_render_players.erase(it);
+            } else {
+                ++it;
+            }
+        }
     }
 
     bool can_render() const {
@@ -700,6 +799,7 @@ struct AndroidRenderer {
         destroy_mesh(terrain_gpu);
         destroy_mesh(grid_gpu);
         destroy_mesh(capsule_gpu);
+        destroy_mesh(remote_players_gpu);
         destroy_mesh(ui_text_gpu);
         if (program != 0) {
             glDeleteProgram(program);
@@ -744,6 +844,48 @@ struct AndroidRenderer {
         }
 
         capsule_gpu = upload_mesh(capsule_mesh);
+    }
+
+    void rebuild_remote_player_visual_mesh() {
+        destroy_mesh(remote_players_gpu);
+        remote_players_mesh = RenderMesh{};
+
+        for (const auto &[player_id, remote] : remote_render_players) {
+            if (!remote.initialized) {
+                continue;
+            }
+
+            float radius = player_capsule_radius;
+            float height = player_capsule_height;
+            float bob = 0.0f;
+            switch (remote.anim_state) {
+            case static_cast<uint8_t>(PlayerAnimState::Walk):
+                bob = 0.05f * std::fabs(std::sin(remote.anim_phase));
+                break;
+            case static_cast<uint8_t>(PlayerAnimState::Run):
+                bob = 0.09f * std::fabs(std::sin(remote.anim_phase));
+                break;
+            case static_cast<uint8_t>(PlayerAnimState::Crawl):
+                height *= 0.55f;
+                radius *= 1.08f;
+                bob = 0.02f * std::fabs(std::sin(remote.anim_phase * 0.8f));
+                break;
+            case static_cast<uint8_t>(PlayerAnimState::Jump):
+                bob = 0.06f * std::sin(remote.anim_phase * 0.65f);
+                break;
+            default:
+                break;
+            }
+
+            const glm::vec3 pos = remote.position + glm::vec3(0.0f, bob, 0.0f);
+            append_mesh(
+                remote_players_mesh,
+                build_debug_capsule_mesh(pos, radius, height, player_color_from_id(player_id)));
+        }
+
+        if (!remote_players_mesh.vertices.empty()) {
+            remote_players_gpu = upload_mesh(remote_players_mesh);
+        }
     }
 
     GpuMesh upload_mesh(const RenderMesh &mesh) {
@@ -1170,6 +1312,19 @@ struct AndroidRenderer {
         const float blend_target = mobile_anim_blend_target(player_anim_state);
         const float blend_lerp = std::clamp(static_cast<float>(dt_seconds) * 10.0f, 0.0f, 1.0f);
         player_anim_blend += (blend_target - player_anim_blend) * blend_lerp;
+
+        const float remote_lerp = std::clamp(static_cast<float>(dt_seconds) * 12.0f, 0.0f, 1.0f);
+        for (auto &[player_id, remote] : remote_render_players) {
+            (void)player_id;
+            const glm::vec3 predicted_target = remote.target_position + remote.velocity * 0.035f;
+            const float err = glm::length(remote.position - predicted_target);
+            if (err > 4.0f) {
+                remote.position = predicted_target;
+            } else {
+                remote.position = glm::mix(remote.position, predicted_target, remote_lerp);
+            }
+        }
+
         touch.jump_pressed = false;
     }
 
@@ -1295,6 +1450,22 @@ struct AndroidRenderer {
             ui_key += std::to_string(width);
             ui_key += "x";
             ui_key += std::to_string(height);
+            if (devhud) {
+                const NetDebugStats client_stats = net_client.debug_stats();
+                const NetDebugStats server_stats = local_server_running ? local_server.debug_stats() : NetDebugStats{};
+                ui_key += ":dev:";
+                ui_key += std::to_string(net_connected ? 1 : 0);
+                ui_key += ":";
+                ui_key += std::to_string(static_cast<unsigned>(remote_render_players.size()));
+                ui_key += ":";
+                ui_key += std::to_string(client_stats.tx_packets_per_sec);
+                ui_key += ":";
+                ui_key += std::to_string(client_stats.rx_packets_per_sec);
+                ui_key += ":";
+                ui_key += std::to_string(server_stats.snapshots_sent_per_sec);
+                ui_key += ":";
+                ui_key += std::to_string(server_stats.player_state_broadcasts_per_sec);
+            }
         }
 
         if (ui_key != ui_text_cache) {
@@ -1372,6 +1543,31 @@ struct AndroidRenderer {
                 append_centered(crouch_button_rect(), "CRAWL", 3.2f, glm::vec3(0.93f, 0.95f, 0.99f));
                 append_centered(jump_button_rect(), "JUMP", 3.2f, glm::vec3(0.93f, 0.95f, 0.99f));
                 append_centered(sprint_button_rect(), "SPRINT", 3.0f, glm::vec3(0.93f, 0.95f, 0.99f));
+                if (devhud) {
+                    const NetDebugStats client_stats = net_client.debug_stats();
+                    const NetDebugStats server_stats = local_server_running ? local_server.debug_stats() : NetDebugStats{};
+                    char line1[160]{};
+                    char line2[200]{};
+                    std::snprintf(
+                        line1,
+                        sizeof(line1),
+                        "NET C%d REM %u LID %u",
+                        net_connected ? 1 : 0,
+                        static_cast<unsigned>(remote_render_players.size()),
+                        net_local_player_id);
+                    std::snprintf(
+                        line2,
+                        sizeof(line2),
+                        "CL pps %u/%u Bps %u/%u | SV snap %u pst %u",
+                        client_stats.tx_packets_per_sec,
+                        client_stats.rx_packets_per_sec,
+                        client_stats.tx_bytes_per_sec,
+                        client_stats.rx_bytes_per_sec,
+                        server_stats.snapshots_sent_per_sec,
+                        server_stats.player_state_broadcasts_per_sec);
+                    append_text(line1, 20.0f, 88.0f, 2.0f, glm::vec3(0.88f, 0.94f, 1.0f));
+                    append_text(line2, 20.0f, 112.0f, 1.9f, glm::vec3(0.78f, 0.86f, 0.98f));
+                }
             }
 
             if (!ui_text_mesh.vertices.empty()) {
@@ -1422,10 +1618,12 @@ struct AndroidRenderer {
         const glm::mat4 mvp = proj * view;
 
         rebuild_player_visual_mesh();
+        rebuild_remote_player_visual_mesh();
         draw_mesh(terrain_gpu, mvp);
         draw_mesh(grid_gpu, mvp);
         const glm::mat4 capsule_model = glm::translate(glm::mat4(1.0f), player_feet_position);
         draw_mesh(capsule_gpu, mvp * capsule_model);
+        draw_mesh(remote_players_gpu, mvp);
         draw_ui_overlay();
 
         if (eglSwapBuffers(display, surface) == EGL_FALSE) {
@@ -1436,10 +1634,12 @@ struct AndroidRenderer {
 
         ++frame_counter;
         if (frame_counter == 1 || frame_counter % 300 == 0) {
+            const NetDebugStats client_stats = net_client.debug_stats();
+            const NetDebugStats server_stats = local_server_running ? local_server.debug_stats() : NetDebugStats{};
             __android_log_print(
                 ANDROID_LOG_INFO,
                 kLogTag,
-                "frame=%llu dt=%.3fms player=(%.2f,%.2f,%.2f) cam=(%.2f,%.2f,%.2f) move=(%.2f,%.2f)",
+                "frame=%llu dt=%.3fms player=(%.2f,%.2f,%.2f) cam=(%.2f,%.2f,%.2f) move=(%.2f,%.2f) rem=%u net=%d cpps=%u/%u cbps=%u/%u spps=%u/%u sbps=%u/%u snap=%u pst=%u",
                 static_cast<unsigned long long>(frame_counter),
                 dt_seconds * 1000.0,
                 player_feet_position.x,
@@ -1449,7 +1649,19 @@ struct AndroidRenderer {
                 cam_pos.y,
                 cam_pos.z,
                 touch.left_value.x,
-                touch.left_value.y);
+                touch.left_value.y,
+                static_cast<unsigned>(remote_render_players.size()),
+                net_connected ? 1 : 0,
+                client_stats.tx_packets_per_sec,
+                client_stats.rx_packets_per_sec,
+                client_stats.tx_bytes_per_sec,
+                client_stats.rx_bytes_per_sec,
+                server_stats.tx_packets_per_sec,
+                server_stats.rx_packets_per_sec,
+                server_stats.tx_bytes_per_sec,
+                server_stats.rx_bytes_per_sec,
+                server_stats.snapshots_sent_per_sec,
+                server_stats.player_state_broadcasts_per_sec);
         }
     }
 

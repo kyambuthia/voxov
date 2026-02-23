@@ -47,7 +47,8 @@ enum class NetMsgType : uint8_t {
     ChunkInterest = 3,
     ChunkState = 4,
     AssignPlayer = 5,
-    PlayerState = 6
+    PlayerState = 6,
+    PlayerRemove = 7
 };
 
 struct NetAssignPlayer {
@@ -67,6 +68,10 @@ struct NetPlayerState {
     float anim_blend = 0.0f;
 };
 
+struct NetPlayerRemove {
+    uint32_t player_id = 0;
+};
+
 struct NetChunkCoord {
     int16_t x = 0;
     int16_t z = 0;
@@ -81,6 +86,20 @@ struct NetChunkInterest {
 struct NetChunkState {
     NetChunkCoord coord{};
     uint32_t version = 0;
+};
+
+struct NetDebugStats {
+    uint64_t tx_packets_total = 0;
+    uint64_t tx_bytes_total = 0;
+    uint64_t rx_packets_total = 0;
+    uint64_t rx_bytes_total = 0;
+    uint64_t invalid_packets_total = 0;
+    uint32_t tx_packets_per_sec = 0;
+    uint32_t tx_bytes_per_sec = 0;
+    uint32_t rx_packets_per_sec = 0;
+    uint32_t rx_bytes_per_sec = 0;
+    uint32_t snapshots_sent_per_sec = 0;
+    uint32_t player_state_broadcasts_per_sec = 0;
 };
 
 template <typename T>

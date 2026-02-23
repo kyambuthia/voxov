@@ -401,4 +401,11 @@ if(VOXOV_BUILD_TESTS)
     target_include_directories(voxov_tests PRIVATE src)
     target_link_libraries(voxov_tests PRIVATE engine engine_math engine_world engine_net)
     add_test(NAME voxov_tests COMMAND voxov_tests)
+
+    add_executable(voxov_net_stress
+        src/tests/net_stress.cpp
+    )
+    target_include_directories(voxov_net_stress PRIVATE src)
+    target_link_libraries(voxov_net_stress PRIVATE engine_net)
+    add_test(NAME voxov_net_stress COMMAND voxov_net_stress)
 endif()

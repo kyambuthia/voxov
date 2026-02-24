@@ -34,8 +34,11 @@ InputState DesktopInputBackend::poll() {
     if (rmb_pressed) {
         look_capture_enabled = true;
     }
+    if (!rmb_down) {
+        look_capture_enabled = false;
+    }
 
-    const bool active_look_mode = window_focused && look_capture_enabled;
+    const bool active_look_mode = window_focused && rmb_down && look_capture_enabled;
     set_pointer_lock(active_look_mode);
     out.look_mode = active_look_mode;
     out.rmb_down = rmb_down;

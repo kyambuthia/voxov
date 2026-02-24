@@ -201,6 +201,7 @@ void VulkanRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStat
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
+        ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_FirstUseEver);
         ImGui::SetNextWindowBgAlpha(0.85f);
         if (ImGui::Begin("VOXOV Debug")) {
             ImGui::Text("Renderer: Vulkan + Dear ImGui");
@@ -221,7 +222,7 @@ void VulkanRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStat
         ImGui::End();
         if (stats.menu_open || !stats.menu_text.empty()) {
             ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
-            ImGui::SetNextWindowSize(ImVec2(460.0f, 0.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(520.0f, 420.0f), ImGuiCond_Always);
             ImGui::SetNextWindowBgAlpha(0.92f);
             const ImGuiWindowFlags menu_flags =
                 ImGuiWindowFlags_NoCollapse |
@@ -255,7 +256,9 @@ void VulkanRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStat
                         ImGui::Text("Status: %s", stats.menu_status.c_str());
                     }
                 } else {
+                    ImGui::PushTextWrapPos();
                     ImGui::TextUnformatted(stats.menu_text.c_str());
+                    ImGui::PopTextWrapPos();
                 }
             }
             ImGui::End();

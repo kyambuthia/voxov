@@ -129,6 +129,8 @@ private:
     uint64_t frame_index = 0;
     double log_accumulator = 0.0;
     double last_frame_dt = 0.0;
+    double remote_interp_tick_cursor = 0.0;
+    bool remote_interp_tick_cursor_initialized = false;
 
     NetSnapshot latest_snapshot{};
     bool has_snapshot = false;

@@ -443,6 +443,8 @@ struct AndroidRenderer {
     timespec last_time{};
     bool has_last_time = false;
     uint64_t frame_counter = 0;
+    double remote_interp_tick_cursor = 0.0;
+    bool remote_interp_tick_cursor_initialized = false;
 
     struct UiRect {
         int x = 0;
@@ -1359,13 +1361,38 @@ struct AndroidRenderer {
         player_anim_blend += (blend_target - player_anim_blend) * blend_lerp;
 
         const float remote_lerp = std::clamp(static_cast<float>(dt_seconds) * 12.0f, 0.0f, 1.0f);
+        uint32_t max_remote_sample_tick = 0;
+        bool have_remote_samples = false;
+        for (const auto &[player_id, remote] : remote_render_players) {
+            (void)player_id;
+            if (!remote.samples.empty()) {
+                max_remote_sample_tick = std::max(max_remote_sample_tick, remote.samples.back().server_tick);
+                have_remote_samples = true;
+            }
+        }
+        if (have_remote_samples) {
+            const double desired_tick = static_cast<double>(
+                max_remote_sample_tick > kRemoteInterpDelayTicks ? (max_remote_sample_tick - kRemoteInterpDelayTicks) : 0u);
+            if (!remote_interp_tick_cursor_initialized) {
+                remote_interp_tick_cursor = desired_tick;
+                remote_interp_tick_cursor_initialized = true;
+            } else {
+                remote_interp_tick_cursor += dt_seconds * 60.0;
+                if (remote_interp_tick_cursor < (desired_tick - 20.0)) {
+                    remote_interp_tick_cursor = desired_tick;
+                }
+                remote_interp_tick_cursor = std::min(remote_interp_tick_cursor, desired_tick + 2.0);
+            }
+        } else {
+            remote_interp_tick_cursor_initialized = false;
+        }
         for (auto &[player_id, remote] : remote_render_players) {
             (void)player_id;
-            const uint32_t latest_tick = remote.samples.empty() ? 0u : remote.samples.back().server_tick;
-            const uint32_t target_tick = (latest_tick > kRemoteInterpDelayTicks)
-                ? (latest_tick - kRemoteInterpDelayTicks)
-                : 0u;
-            while (remote.samples.size() >= 3 && remote.samples[1].server_tick <= target_tick) {
+            const double target_tick_f = remote_interp_tick_cursor_initialized
+                ? remote_interp_tick_cursor
+                : static_cast<double>(remote.samples.empty() ? 0u : remote.samples.back().server_tick);
+            while (remote.samples.size() >= 3 &&
+                   static_cast<double>(remote.samples[1].server_tick) <= target_tick_f) {
                 remote.samples.pop_front();
             }
 
@@ -1374,15 +1401,15 @@ struct AndroidRenderer {
                 if (remote.samples.size() >= 2) {
                     const auto &a = remote.samples[0];
                     const auto &b = remote.samples[1];
-                    if (target_tick <= a.server_tick) {
+                    if (target_tick_f <= static_cast<double>(a.server_tick)) {
                         predicted_target = a.position;
                         remote.velocity = a.velocity;
                         remote.anim_state = a.anim_state;
                         remote.anim_phase = a.anim_phase;
                         remote.anim_blend = a.anim_blend;
-                    } else if (target_tick <= b.server_tick) {
+                    } else if (target_tick_f <= static_cast<double>(b.server_tick)) {
                         const float dt_ticks = static_cast<float>(std::max<uint32_t>(1u, b.server_tick - a.server_tick));
-                        const float t = std::clamp(static_cast<float>(target_tick - a.server_tick) / dt_ticks, 0.0f, 1.0f);
+                        const float t = std::clamp(static_cast<float>(target_tick_f - static_cast<double>(a.server_tick)) / dt_ticks, 0.0f, 1.0f);
                         predicted_target = glm::mix(a.position, b.position, t);
                         remote.velocity = glm::mix(a.velocity, b.velocity, t);
                         remote.anim_state = (t < 0.5f) ? a.anim_state : b.anim_state;
@@ -1390,8 +1417,8 @@ struct AndroidRenderer {
                         remote.anim_blend = glm::mix(a.anim_blend, b.anim_blend, t);
                     } else {
                         const auto &latest = remote.samples.back();
-                        const uint32_t ahead_ticks = target_tick > latest.server_tick ? (target_tick - latest.server_tick) : 0u;
-                        const float extrap = std::clamp(static_cast<float>(ahead_ticks) * (1.0f / 60.0f), 0.0f, 0.10f);
+                        const double ahead_ticks = std::max(0.0, target_tick_f - static_cast<double>(latest.server_tick));
+                        const float extrap = std::clamp(static_cast<float>(ahead_ticks / 60.0), 0.0f, 0.10f);
                         predicted_target = latest.position + latest.velocity * extrap;
                         remote.velocity = latest.velocity;
                         remote.anim_state = latest.anim_state;

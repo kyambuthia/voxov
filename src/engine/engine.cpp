@@ -741,30 +741,56 @@ void Engine::tick(double frame_dt) {
 
     const float remote_lerp = std::clamp(static_cast<float>(frame_dt) * 12.0f, 0.0f, 1.0f);
     const float remote_rot_lerp = std::clamp(static_cast<float>(frame_dt) * 9.0f, 0.0f, 1.0f);
+    uint32_t max_remote_sample_tick = 0;
+    bool have_remote_samples = false;
+    for (const auto &[player_id, render_player] : remote_render_players) {
+        (void)player_id;
+        if (!render_player.samples.empty()) {
+            max_remote_sample_tick = std::max(max_remote_sample_tick, render_player.samples.back().server_tick);
+            have_remote_samples = true;
+        }
+    }
+    if (have_remote_samples) {
+        const double desired_tick = static_cast<double>(
+            max_remote_sample_tick > k_remote_interp_delay_ticks ? (max_remote_sample_tick - k_remote_interp_delay_ticks) : 0u);
+        if (!remote_interp_tick_cursor_initialized) {
+            remote_interp_tick_cursor = desired_tick;
+            remote_interp_tick_cursor_initialized = true;
+        } else {
+            remote_interp_tick_cursor += frame_dt / fixed.fixed_dt;
+            if (remote_interp_tick_cursor < (desired_tick - 20.0)) {
+                remote_interp_tick_cursor = desired_tick;
+            }
+            remote_interp_tick_cursor = std::min(remote_interp_tick_cursor, desired_tick + 2.0);
+        }
+    } else {
+        remote_interp_tick_cursor_initialized = false;
+    }
+
     for (auto &[player_id, render_player] : remote_render_players) {
         (void)player_id;
-        const uint32_t latest_tick = render_player.samples.empty() ? 0u : render_player.samples.back().server_tick;
-        const uint32_t target_tick = (latest_tick > k_remote_interp_delay_ticks)
-            ? (latest_tick - k_remote_interp_delay_ticks)
-            : 0u;
-        while (render_player.samples.size() >= 3 && render_player.samples[1].server_tick <= target_tick) {
+        const double target_tick_f = remote_interp_tick_cursor_initialized
+            ? remote_interp_tick_cursor
+            : static_cast<double>(render_player.samples.empty() ? 0u : render_player.samples.back().server_tick);
+        while (render_player.samples.size() >= 3 &&
+               static_cast<double>(render_player.samples[1].server_tick) <= target_tick_f) {
             render_player.samples.pop_front();
         }
 
         glm::vec3 predicted_target = render_player.target_position + render_player.velocity * 0.035f;
         if (!render_player.samples.empty()) {
-            if (render_player.samples.size() >= 2) {
-                const auto &a = render_player.samples[0];
-                const auto &b = render_player.samples[1];
-                if (target_tick <= a.server_tick) {
+                if (render_player.samples.size() >= 2) {
+                    const auto &a = render_player.samples[0];
+                    const auto &b = render_player.samples[1];
+                if (target_tick_f <= static_cast<double>(a.server_tick)) {
                     predicted_target = a.position;
                     render_player.velocity = a.velocity;
                     render_player.anim_state = a.anim_state;
                     render_player.anim_phase = a.anim_phase;
                     render_player.anim_blend = a.anim_blend;
-                } else if (target_tick <= b.server_tick) {
+                } else if (target_tick_f <= static_cast<double>(b.server_tick)) {
                     const float dt_ticks = static_cast<float>(std::max<uint32_t>(1u, b.server_tick - a.server_tick));
-                    const float t = std::clamp(static_cast<float>(target_tick - a.server_tick) / dt_ticks, 0.0f, 1.0f);
+                    const float t = std::clamp(static_cast<float>(target_tick_f - static_cast<double>(a.server_tick)) / dt_ticks, 0.0f, 1.0f);
                     predicted_target = glm::mix(a.position, b.position, t);
                     render_player.velocity = glm::mix(a.velocity, b.velocity, t);
                     render_player.anim_state = (t < 0.5f) ? a.anim_state : b.anim_state;
@@ -772,8 +798,8 @@ void Engine::tick(double frame_dt) {
                     render_player.anim_blend = glm::mix(a.anim_blend, b.anim_blend, t);
                 } else {
                     const auto &latest = render_player.samples.back();
-                    const uint32_t ahead_ticks = target_tick > latest.server_tick ? (target_tick - latest.server_tick) : 0u;
-                    const float extrap = std::clamp(static_cast<float>(ahead_ticks) * static_cast<float>(fixed.fixed_dt), 0.0f, 0.10f);
+                    const double ahead_ticks = std::max(0.0, target_tick_f - static_cast<double>(latest.server_tick));
+                    const float extrap = std::clamp(static_cast<float>(ahead_ticks * fixed.fixed_dt), 0.0f, 0.10f);
                     predicted_target = latest.position + latest.velocity * extrap;
                     render_player.velocity = latest.velocity;
                     render_player.anim_state = latest.anim_state;

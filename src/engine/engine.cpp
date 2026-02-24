@@ -345,7 +345,11 @@ void Engine::reconcile_local_player_from_snapshot(uint32_t current_sim_tick) {
     }
 
     const uint32_t snapshot_tick = latest_snapshot.tick;
-    if (snapshot_tick == last_reconcile_processed_snapshot_tick) {
+    const uint32_t snapshot_sequence = latest_snapshot.sequence;
+    if (snapshot_sequence == 0) {
+        return;
+    }
+    if (snapshot_sequence == last_reconcile_processed_snapshot_sequence) {
         return;
     }
     if (snapshot_tick > current_sim_tick) {
@@ -365,7 +369,8 @@ void Engine::reconcile_local_player_from_snapshot(uint32_t current_sim_tick) {
     const float pos_error = glm::length(at_snapshot.position - authoritative_pos);
     last_reconcile_pos_error = pos_error;
     last_reconcile_snapshot_tick = snapshot_tick;
-    last_reconcile_processed_snapshot_tick = snapshot_tick;
+    last_reconcile_snapshot_sequence = snapshot_sequence;
+    last_reconcile_processed_snapshot_sequence = snapshot_sequence;
 
     if (reconcile_mode == ReconcileMode::Off) {
         return;
@@ -973,7 +978,7 @@ void Engine::refresh_overlay_text() {
         std::snprintf(
             text,
             sizeof(text),
-            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nREC %s err %.2f tick %u replay %u corr %llu\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f (F TO ENTER/EXIT)",
+            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f (F TO ENTER/EXIT)",
             render_stats.fps,
             last_frame_dt,
             fixed.fixed_dt,
@@ -1013,6 +1018,7 @@ void Engine::refresh_overlay_text() {
             reconcile_mode_name(static_cast<uint8_t>(reconcile_mode)),
             last_reconcile_pos_error,
             last_reconcile_snapshot_tick,
+            last_reconcile_snapshot_sequence,
             reconcile_replay_ticks,
             static_cast<unsigned long long>(reconcile_corrections),
             anim_state_name(local_player.anim_state),

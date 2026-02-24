@@ -44,7 +44,7 @@ constexpr const char *kLogTag = "VOXOV";
 constexpr uint16_t kLocalPlayPort = 7777;
 constexpr const char *kLocalPlayHost = "127.0.0.1";
 constexpr double kConnectTimeoutSeconds = 5.0;
-constexpr double kRemoteInterpDelaySeconds = 0.10;
+constexpr uint32_t kRemoteInterpDelayTicks = 6;
 constexpr size_t kRemoteSampleHistoryMax = 16;
 
 #ifndef EGL_OPENGL_ES3_BIT
@@ -345,7 +345,7 @@ struct GpuMesh {
 struct AndroidRenderer {
     struct RemoteRenderPlayer {
         struct Sample {
-            double recv_time_seconds = 0.0;
+            uint32_t server_tick = 0;
             glm::vec3 position = glm::vec3(0.0f);
             glm::vec3 velocity = glm::vec3(0.0f);
             uint8_t anim_state = 0;
@@ -443,7 +443,6 @@ struct AndroidRenderer {
     timespec last_time{};
     bool has_last_time = false;
     uint64_t frame_counter = 0;
-    double net_time_seconds = 0.0;
 
     struct UiRect {
         int x = 0;
@@ -789,13 +788,14 @@ struct AndroidRenderer {
             const bool should_push_sample =
                 remote.samples.empty() ||
                 !(remote.samples.back().position == target &&
+                  remote.samples.back().server_tick == state.tick &&
                   remote.samples.back().velocity == sample_velocity &&
                   remote.samples.back().anim_state == state.anim_state &&
                   remote.samples.back().anim_phase == state.anim_phase &&
                   remote.samples.back().anim_blend == state.anim_blend);
             if (should_push_sample) {
                 RemoteRenderPlayer::Sample sample{};
-                sample.recv_time_seconds = net_time_seconds;
+                sample.server_tick = state.tick;
                 sample.position = target;
                 sample.velocity = sample_velocity;
                 sample.anim_state = state.anim_state;
@@ -1359,10 +1359,13 @@ struct AndroidRenderer {
         player_anim_blend += (blend_target - player_anim_blend) * blend_lerp;
 
         const float remote_lerp = std::clamp(static_cast<float>(dt_seconds) * 12.0f, 0.0f, 1.0f);
-        const double remote_render_time = net_time_seconds - kRemoteInterpDelaySeconds;
         for (auto &[player_id, remote] : remote_render_players) {
             (void)player_id;
-            while (remote.samples.size() >= 3 && remote.samples[1].recv_time_seconds <= remote_render_time) {
+            const uint32_t latest_tick = remote.samples.empty() ? 0u : remote.samples.back().server_tick;
+            const uint32_t target_tick = (latest_tick > kRemoteInterpDelayTicks)
+                ? (latest_tick - kRemoteInterpDelayTicks)
+                : 0u;
+            while (remote.samples.size() >= 3 && remote.samples[1].server_tick <= target_tick) {
                 remote.samples.pop_front();
             }
 
@@ -1371,15 +1374,15 @@ struct AndroidRenderer {
                 if (remote.samples.size() >= 2) {
                     const auto &a = remote.samples[0];
                     const auto &b = remote.samples[1];
-                    if (remote_render_time <= a.recv_time_seconds) {
+                    if (target_tick <= a.server_tick) {
                         predicted_target = a.position;
                         remote.velocity = a.velocity;
                         remote.anim_state = a.anim_state;
                         remote.anim_phase = a.anim_phase;
                         remote.anim_blend = a.anim_blend;
-                    } else if (remote_render_time <= b.recv_time_seconds) {
-                        const double dt = std::max(1e-6, b.recv_time_seconds - a.recv_time_seconds);
-                        const float t = static_cast<float>(std::clamp((remote_render_time - a.recv_time_seconds) / dt, 0.0, 1.0));
+                    } else if (target_tick <= b.server_tick) {
+                        const float dt_ticks = static_cast<float>(std::max<uint32_t>(1u, b.server_tick - a.server_tick));
+                        const float t = std::clamp(static_cast<float>(target_tick - a.server_tick) / dt_ticks, 0.0f, 1.0f);
                         predicted_target = glm::mix(a.position, b.position, t);
                         remote.velocity = glm::mix(a.velocity, b.velocity, t);
                         remote.anim_state = (t < 0.5f) ? a.anim_state : b.anim_state;
@@ -1387,7 +1390,8 @@ struct AndroidRenderer {
                         remote.anim_blend = glm::mix(a.anim_blend, b.anim_blend, t);
                     } else {
                         const auto &latest = remote.samples.back();
-                        const float extrap = static_cast<float>(std::clamp(remote_render_time - latest.recv_time_seconds, 0.0, 0.10));
+                        const uint32_t ahead_ticks = target_tick > latest.server_tick ? (target_tick - latest.server_tick) : 0u;
+                        const float extrap = std::clamp(static_cast<float>(ahead_ticks) * (1.0f / 60.0f), 0.0f, 0.10f);
                         predicted_target = latest.position + latest.velocity * extrap;
                         remote.velocity = latest.velocity;
                         remote.anim_state = latest.anim_state;
@@ -1694,8 +1698,6 @@ struct AndroidRenderer {
         }
         last_time = now;
         has_last_time = true;
-        net_time_seconds += dt_seconds;
-
         process_gui_actions();
         pump_network(dt_seconds);
         update_player_and_camera(dt_seconds);

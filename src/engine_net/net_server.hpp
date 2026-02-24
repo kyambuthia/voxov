@@ -60,6 +60,7 @@ private:
     _ENetHost *server = nullptr;
     std::unordered_map<_ENetPeer *, ClientState> clients;
     uint32_t next_player_id = 1;
+    uint32_t server_sim_tick = 0;
     uint64_t last_pump_ms = 0;
     double sim_accumulator_ms = 0.0;
     uint64_t last_snapshot_send_ms = 0;

@@ -169,9 +169,11 @@ void NetServer::simulate_client_tick(ClientState &state) {
     }
     const float target_blend = server_anim_blend_target(state.state.anim_state);
     state.state.anim_blend += (target_blend - state.state.anim_blend) * 0.18f;
+    state.state.tick = server_sim_tick;
 }
 
 void NetServer::simulate_fixed_tick() {
+    server_sim_tick += 1;
     for (auto &[peer_ptr, state] : clients) {
         (void)peer_ptr;
         simulate_client_tick(state);
@@ -319,6 +321,7 @@ bool NetServer::init(uint16_t port, bool loopback_only) {
         return false;
     }
     last_player_broadcast_ms = 0;
+    server_sim_tick = 0;
     last_pump_ms = 0;
     sim_accumulator_ms = 0.0;
     last_snapshot_send_ms = 0;
@@ -329,6 +332,7 @@ bool NetServer::init(uint16_t port, bool loopback_only) {
 
 void NetServer::shutdown() {
     clients.clear();
+    server_sim_tick = 0;
     last_pump_ms = 0;
     sim_accumulator_ms = 0.0;
     last_snapshot_send_ms = 0;
@@ -371,6 +375,7 @@ void NetServer::pump() {
             state.state.x = 8.0f + static_cast<float>((state.player_id % 3) * 2);
             state.state.y = kServerSpawnY;
             state.state.z = 8.0f;
+            state.state.tick = server_sim_tick;
             state.state.anim_state = 0;
             if (local_only) {
                 char ip_buffer[64]{};

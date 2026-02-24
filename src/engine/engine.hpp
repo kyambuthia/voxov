@@ -43,7 +43,7 @@ public:
 private:
     struct RemoteRenderPlayer {
         struct Sample {
-            double recv_time_seconds = 0.0;
+            uint32_t server_tick = 0;
             glm::vec3 position = glm::vec3(0.0f);
             glm::vec3 velocity = glm::vec3(0.0f);
             uint8_t anim_state = 0;
@@ -129,7 +129,6 @@ private:
     uint64_t frame_index = 0;
     double log_accumulator = 0.0;
     double last_frame_dt = 0.0;
-    double net_time_seconds = 0.0;
 
     NetSnapshot latest_snapshot{};
     bool has_snapshot = false;

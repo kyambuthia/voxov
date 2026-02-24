@@ -23,6 +23,7 @@ constexpr float k_vehicle_body_half_width = 0.8f;
 constexpr float k_vehicle_body_height = 0.65f;
 constexpr float k_vehicle_wheel_radius = 0.32f;
 constexpr float k_vehicle_interact_radius = 2.1f;
+constexpr bool k_vehicle_feature_enabled = false;
 constexpr uint32_t k_remote_interp_delay_ticks = 6;
 constexpr size_t k_remote_sample_history_max = 16;
 
@@ -225,11 +226,13 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
     vehicle.yaw = 0.3f;
     vehicle.speed = 0.0f;
     vehicle.occupied = false;
-    vehicle.position.y = collision_world.find_spawn_height(
-        glm::vec2(vehicle.position.x, vehicle.position.z),
-        0.8f,
-        1.2f) +
-        k_vehicle_wheel_radius;
+    if (k_vehicle_feature_enabled) {
+        vehicle.position.y = collision_world.find_spawn_height(
+            glm::vec2(vehicle.position.x, vehicle.position.z),
+            0.8f,
+            1.2f) +
+            k_vehicle_wheel_radius;
+    }
     if (runtime_options.splitscreen) {
         local_player_secondary = PlayerControllerSystem::spawn_player(collision_world);
         local_player_secondary.network_id = 2;
@@ -920,6 +923,10 @@ glm::vec3 Engine::vehicle_seat_world_position() const {
 }
 
 void Engine::handle_vehicle_interaction(const InputState &input) {
+    if (!k_vehicle_feature_enabled) {
+        vehicle.occupied = false;
+        return;
+    }
     if (!input.interact_pressed || gui_menu.open() || !gameplay_started) {
         return;
     }
@@ -948,6 +955,11 @@ void Engine::handle_vehicle_interaction(const InputState &input) {
 }
 
 void Engine::update_vehicle_sim(const InputState &input, float dt) {
+    if (!k_vehicle_feature_enabled) {
+        vehicle.occupied = false;
+        vehicle.speed = 0.0f;
+        return;
+    }
     if (!vehicle.occupied) {
         vehicle.speed *= std::exp(-dt * 3.5f);
         if (std::fabs(vehicle.speed) < 0.02f) {
@@ -1057,13 +1069,15 @@ void Engine::refresh_overlay_text() {
         }
     } else if (runtime_options.devhud) {
         char text[768]{};
-        const float vehicle_distance = glm::length(local_player.transform.position - vehicle.position);
+        const float vehicle_distance = k_vehicle_feature_enabled
+            ? glm::length(local_player.transform.position - vehicle.position)
+            : 0.0f;
         const NetDebugStats client_net_stats = net_client.debug_stats();
         const NetDebugStats server_net_stats = local_server_running ? local_server.debug_stats() : NetDebugStats{};
         std::snprintf(
             text,
             sizeof(text),
-            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f (F TO ENTER/EXIT)",
+            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f",
             render_stats.fps,
             last_frame_dt,
             fixed.fixed_dt,
@@ -1109,7 +1123,7 @@ void Engine::refresh_overlay_text() {
             anim_state_name(local_player.anim_state),
             local_player.anim_blend,
             local_player.anim_phase,
-            vehicle.occupied ? "ONBOARD" : "ON FOOT",
+            k_vehicle_feature_enabled ? (vehicle.occupied ? "ONBOARD" : "ON FOOT") : "DISABLED",
             vehicle_distance);
         append_screen_rect(-0.98f, 0.98f, 0.10f, 0.08f, glm::vec3(0.05f, 0.07f, 0.10f));
         append_screen_rect(-0.97f, 0.97f, 0.09f, 0.10f, glm::vec3(0.09f, 0.11f, 0.16f));
@@ -1197,7 +1211,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
         append_vehicle_quad(p[0], p[4], p[5], p[1], color);
     };
 
-    if (!runtime_options.debug_collision_only) {
+    if (k_vehicle_feature_enabled && !runtime_options.debug_collision_only) {
         append_vehicle_box(
             glm::vec3(0.0f, k_vehicle_wheel_radius + k_vehicle_body_height * 0.5f, 0.0f),
             glm::vec3(k_vehicle_body_half_width, k_vehicle_body_height * 0.5f, k_vehicle_body_half_length),

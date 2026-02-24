@@ -80,6 +80,7 @@ private:
     VkPipelineLayout pipeline_layout = VK_NULL_HANDLE;
     VkPipeline pipeline = VK_NULL_HANDLE;
     VkPipeline pipeline_no_depth = VK_NULL_HANDLE;
+    VkPipeline pipeline_no_depth_no_cull = VK_NULL_HANDLE;
     VkCommandPool command_pool = VK_NULL_HANDLE;
     std::vector<VkCommandBuffer> command_buffers;
 

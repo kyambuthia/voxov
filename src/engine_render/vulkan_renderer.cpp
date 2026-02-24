@@ -859,6 +859,13 @@ void VulkanRenderer::create_pipeline() {
         throw std::runtime_error("failed to create debug no-depth pipeline");
     }
 
+    VkPipelineRasterizationStateCreateInfo raster_no_cull = raster;
+    raster_no_cull.cullMode = VK_CULL_MODE_NONE;
+    info.pRasterizationState = &raster_no_cull;
+    if (vkCreateGraphicsPipelines(device, VK_NULL_HANDLE, 1, &info, nullptr, &pipeline_no_depth_no_cull) != VK_SUCCESS) {
+        throw std::runtime_error("failed to create debug no-depth no-cull pipeline");
+    }
+
     vkDestroyShaderModule(device, vert_module, nullptr);
     vkDestroyShaderModule(device, frag_module, nullptr);
 }
@@ -922,6 +929,10 @@ void VulkanRenderer::cleanup_swapchain_resources() {
     if (pipeline_no_depth != VK_NULL_HANDLE) {
         vkDestroyPipeline(device, pipeline_no_depth, nullptr);
         pipeline_no_depth = VK_NULL_HANDLE;
+    }
+    if (pipeline_no_depth_no_cull != VK_NULL_HANDLE) {
+        vkDestroyPipeline(device, pipeline_no_depth_no_cull, nullptr);
+        pipeline_no_depth_no_cull = VK_NULL_HANDLE;
     }
     if (pipeline_layout != VK_NULL_HANDLE) {
         vkDestroyPipelineLayout(device, pipeline_layout, nullptr);
@@ -1332,9 +1343,10 @@ void VulkanRenderer::record_command_buffer(VkCommandBuffer cmd, uint32_t image_i
         }
 
         if (debug_screen_vertex_buffer != VK_NULL_HANDLE && debug_screen_index_buffer != VK_NULL_HANDLE && debug_screen_index_count > 0) {
-            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_no_depth);
+            vkCmdBindPipeline(cmd, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline_no_depth_no_cull);
             PushConstants screen_push{};
-            screen_push.view_proj = glm::mat4(1.0f);
+            // Match the desktop screen-space text orientation across renderers.
+            screen_push.view_proj = glm::scale(glm::mat4(1.0f), glm::vec3(1.0f, -1.0f, 1.0f));
             vkCmdPushConstants(cmd, pipeline_layout, VK_SHADER_STAGE_VERTEX_BIT, 0, sizeof(PushConstants), &screen_push);
             const VkDeviceSize offsets[] = { 0 };
             vkCmdBindVertexBuffers(cmd, 0, 1, &debug_screen_vertex_buffer, offsets);

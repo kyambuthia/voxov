@@ -172,8 +172,11 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
     if (force_z_up) {
         source_height = extent.z;
         model_axis_correction = glm::angleAxis(-1.57079632679f, glm::vec3(1.0f, 0.0f, 0.0f));
+        // CesiumMan faces opposite the engine's expected forward after axis conversion.
+        model_facing_correction = glm::angleAxis(3.14159265359f, glm::vec3(0.0f, 1.0f, 0.0f));
         model_ground_lift = -bounds_min.z + 0.08f;
     } else {
+        model_facing_correction = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
         model_ground_lift = -bounds_min.y + 0.08f;
     }
     constexpr float k_target_height = 1.7f;
@@ -300,10 +303,24 @@ int SkinnedModel::select_clip(PlayerAnimState state) const {
         }
     }
     if (state == PlayerAnimState::Idle) {
-        int i = find_by("survey");
+        int i = find_by("idle");
         if (i >= 0) {
             return i;
         }
+        i = find_by("stand");
+        if (i >= 0) {
+            return i;
+        }
+        i = find_by("breath");
+        if (i >= 0) {
+            return i;
+        }
+        i = find_by("survey");
+        if (i >= 0) {
+            return i;
+        }
+        // Prefer a static bind pose over an arbitrary motion clip when truly idle.
+        return -1;
     }
     int fallback_walk = find_by("walk");
     if (fallback_walk >= 0) {
@@ -424,7 +441,8 @@ RenderMesh SkinnedModel::build_render_mesh(
     }
 
     const glm::mat4 local_adjust =
-        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, model_ground_lift, 0.0f)) * glm::mat4_cast(model_axis_correction);
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, model_ground_lift, 0.0f)) *
+        glm::mat4_cast(model_facing_correction * model_axis_correction);
     const glm::mat4 world = glm::translate(glm::mat4(1.0f), world_position) * glm::mat4_cast(world_rotation) *
         glm::scale(glm::mat4(1.0f), glm::vec3(model_scale)) * local_adjust;
     out.vertices.resize(bind_vertices.size());

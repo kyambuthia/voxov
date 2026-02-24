@@ -1022,8 +1022,6 @@ void Engine::refresh_overlay_text() {
     const bool menu_is_open = gui_menu.open();
     if (menu_is_open) {
         const GuiMenuView menu_view = gui_menu.build_view(runtime_options.devhud, runtime_options.noclip, multiplayer_hint);
-        append_screen_rect(-0.96f, 0.94f, -0.08f, -0.88f, glm::vec3(0.05f, 0.07f, 0.11f));
-        append_screen_rect(-0.94f, 0.92f, -0.10f, -0.86f, glm::vec3(0.09f, 0.12f, 0.17f));
 
         float y = 0.86f;
         if (!menu_view.title.empty()) {
@@ -1033,9 +1031,6 @@ void Engine::refresh_overlay_text() {
 
         for (size_t i = 0; i < menu_view.items.size(); ++i) {
             const bool selected = static_cast<int>(i) == menu_view.selected;
-            if (selected) {
-                append_screen_rect(-0.91f, y + 0.025f, -0.12f, y - 0.055f, glm::vec3(0.16f, 0.24f, 0.34f));
-            }
             std::string line = selected ? ("> " + menu_view.items[i]) : ("  " + menu_view.items[i]);
             append_mesh(
                 scene.debug_screen,
@@ -1057,7 +1052,6 @@ void Engine::refresh_overlay_text() {
         }
 
         if (!menu_view.status.empty()) {
-            append_screen_rect(-0.94f, -0.78f, -0.10f, -0.86f, glm::vec3(0.10f, 0.14f, 0.20f));
             append_mesh(
                 scene.debug_screen,
                 build_screen_text_mesh(
@@ -1146,13 +1140,14 @@ void Engine::refresh_overlay_text() {
 void Engine::rebuild_dynamic_debug_mesh() {
     scene.debug_world = RenderMesh{};
     const bool collision_debug_enabled = runtime_options.debug_collision;
+    const bool render_skeleton_only = gui_menu.character() == GuiMenu::Character::Skeleton;
     const SkinnedModel *selected_player_model = nullptr;
     if (gui_menu.character() == GuiMenu::Character::Fox && has_fox_player_model) {
         selected_player_model = &fox_player_model;
     } else if (gui_menu.character() == GuiMenu::Character::Humanoid && has_humanoid_player_model) {
         selected_player_model = &humanoid_player_model;
     }
-    const bool render_skinned_avatar = selected_player_model != nullptr;
+    const bool render_skinned_avatar = !render_skeleton_only && selected_player_model != nullptr;
     const bool render_fox_wireframe = gui_menu.character() == GuiMenu::Character::Fox;
 
     const AnimatedCapsuleShape local_shape = animated_shape(
@@ -1250,7 +1245,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
     }
 
     if (!runtime_options.debug_collision_only) {
-        if (!render_skinned_avatar || collision_debug_enabled || runtime_options.devhud) {
+        if ((!render_skinned_avatar && !render_skeleton_only) || collision_debug_enabled || runtime_options.devhud) {
             append_mesh(scene.debug_world, player_capsule);
             append_mesh(scene.debug_world, target_marker);
         }
@@ -1268,7 +1263,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 append_mesh(scene.debug_world, local_model);
             }
         }
-        if (render_skinned_avatar && (collision_debug_enabled || runtime_options.devhud)) {
+        if (render_skeleton_only || (render_skinned_avatar && (collision_debug_enabled || runtime_options.devhud))) {
             const SkeletonPose local_pose = SkeletalAnimator::sample_pose(
                 local_player.anim_state,
                 local_player.anim_phase,
@@ -1301,7 +1296,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
             0.10f,
             glm::vec3(0.6f, 0.85f, 1.0f));
         if (!runtime_options.debug_collision_only) {
-            if (!render_skinned_avatar || collision_debug_enabled || runtime_options.devhud) {
+            if ((!render_skinned_avatar && !render_skeleton_only) || collision_debug_enabled || runtime_options.devhud) {
                 append_mesh(scene.debug_world, p2_capsule);
                 append_mesh(scene.debug_world, p2_target);
             }
@@ -1318,6 +1313,19 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 } else {
                     append_mesh(scene.debug_world, p2_model);
                 }
+            }
+            if (render_skeleton_only) {
+                const SkeletonPose p2_pose = SkeletalAnimator::sample_pose(
+                    local_player_secondary.anim_state,
+                    local_player_secondary.anim_phase,
+                    local_player_secondary.anim_blend);
+                SkeletalAnimator::append_debug_skeleton(
+                    scene.debug_world,
+                    p2_pose,
+                    local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
+                    local_player_secondary.transform.rotation,
+                    glm::vec3(0.86f, 0.92f, 1.0f),
+                    0.010f);
             }
         }
     }

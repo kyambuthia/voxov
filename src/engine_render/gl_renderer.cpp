@@ -129,20 +129,7 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStats &s
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowBgAlpha(0.85f);
-        if (ImGui::Begin("VOXOV Debug")) {
-            ImGui::Text("Renderer: OpenGL + Dear ImGui");
-            ImGui::Text("FPS: %.1f", static_cast<float>(stats.fps));
-            ImGui::Text("CPU ms: %.2f", static_cast<float>(stats.cpu_ms));
-            ImGui::Separator();
-            ImGui::Text("Hotkeys");
-            ImGui::BulletText("F1 Debug Collision");
-            ImGui::BulletText("F2 Debug XRay");
-            ImGui::BulletText("F3 Collision Only");
-            ImGui::BulletText("F4 Freeze Debug");
-        }
-        ImGui::End();
+        (void)stats;
 
         if (false && (stats.menu_open || !stats.menu_text.empty())) {
             ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);

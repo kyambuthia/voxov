@@ -201,25 +201,7 @@ void VulkanRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStat
         ImGui_ImplGlfw_NewFrame();
         ImGui::NewFrame();
 
-        ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_FirstUseEver);
-        ImGui::SetNextWindowBgAlpha(0.85f);
-        if (ImGui::Begin("VOXOV Debug")) {
-            ImGui::Text("Renderer: Vulkan + Dear ImGui");
-            ImGui::Text("FPS: %.1f", static_cast<float>(stats.fps));
-            ImGui::Text("CPU ms: %.2f", static_cast<float>(stats.cpu_ms));
-            ImGui::Separator();
-            ImGui::Text("Network");
-            ImGui::Text("Connected: %s", stats.net_connected ? "yes" : "no");
-            ImGui::Text("Local player id: %u", stats.net_local_player_id);
-            ImGui::Text("Remote players: %u", stats.net_remote_count);
-            ImGui::Separator();
-            ImGui::Text("Hotkeys");
-            ImGui::BulletText("F1 Debug Collision");
-            ImGui::BulletText("F2 Debug XRay");
-            ImGui::BulletText("F3 Collision Only");
-            ImGui::BulletText("F4 Freeze Debug");
-        }
-        ImGui::End();
+        (void)stats;
         if (false && (stats.menu_open || !stats.menu_text.empty())) {
             ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(520.0f, 420.0f), ImGuiCond_Always);

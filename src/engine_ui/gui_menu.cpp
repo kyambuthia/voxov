@@ -14,7 +14,7 @@ int GuiMenu::item_count() const {
     case MenuPage::MultiplayerGuide:
         return 1;
     case MenuPage::CharacterSelect:
-        return 4;
+        return 5;
     default:
         return 0;
     }
@@ -173,6 +173,11 @@ void GuiMenu::activate_index(int index, bool devhud_enabled, bool noclip_enabled
             selected_item = 0;
             break;
         case 3:
+            selected_character = Character::Skeleton;
+            page = MenuPage::Main;
+            selected_item = 0;
+            break;
+        case 4:
             page = MenuPage::Main;
             selected_item = 0;
             break;
@@ -272,14 +277,16 @@ std::string GuiMenu::build_text(bool devhud_enabled, bool noclip_enabled, const 
         std::snprintf(
             buffer,
             sizeof(buffer),
-            "CHARACTER SELECT\n\n%s FOX %s\n%s HUMANOID %s\n%s CAPSULE %s\n%s BACK\n\nUP/DOWN + ENTER | ESC",
+            "CHARACTER SELECT\n\n%s FOX %s\n%s HUMANOID %s\n%s CAPSULE %s\n%s SKELETON %s\n%s BACK\n\nUP/DOWN + ENTER | ESC",
             selected_item == 0 ? ">" : " ",
             selected_character == Character::Fox ? "[SELECTED]" : "",
             selected_item == 1 ? ">" : " ",
             selected_character == Character::Humanoid ? "[SELECTED]" : "",
             selected_item == 2 ? ">" : " ",
             selected_character == Character::Capsule ? "[SELECTED]" : "",
-            selected_item == 3 ? ">" : " ");
+            selected_item == 3 ? ">" : " ",
+            selected_character == Character::Skeleton ? "[SELECTED]" : "",
+            selected_item == 4 ? ">" : " ");
         return std::string(buffer);
     }
 
@@ -351,7 +358,8 @@ std::string GuiMenu::item_label(int index, bool devhud_enabled, bool noclip_enab
         case 0: return std::string("FOX ") + (selected_character == Character::Fox ? "[SELECTED]" : "");
         case 1: return std::string("HUMANOID ") + (selected_character == Character::Humanoid ? "[SELECTED]" : "");
         case 2: return std::string("CAPSULE ") + (selected_character == Character::Capsule ? "[SELECTED]" : "");
-        case 3: return "BACK";
+        case 3: return std::string("SKELETON ") + (selected_character == Character::Skeleton ? "[SELECTED]" : "");
+        case 4: return "BACK";
         default: return std::string();
         }
     default:

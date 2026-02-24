@@ -77,6 +77,7 @@ private:
     float model_scale = 1.0f;
     float model_ground_lift = 0.0f;
     glm::quat model_axis_correction = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    glm::quat model_facing_correction = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     std::vector<VertexBind> bind_vertices;
     std::vector<uint32_t> mesh_indices;
     std::vector<NodeTransform> nodes;

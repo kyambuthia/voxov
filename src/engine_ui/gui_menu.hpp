@@ -33,7 +33,8 @@ public:
     enum class Character {
         Fox = 0,
         Humanoid = 1,
-        Capsule = 2
+        Capsule = 2,
+        Skeleton = 3
     };
 
     enum class Page {

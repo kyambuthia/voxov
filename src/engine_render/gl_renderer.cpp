@@ -110,7 +110,17 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStats &s
         }
 
         glDisable(GL_DEPTH_TEST);
+        glMatrixMode(GL_PROJECTION);
+        glPushMatrix();
+        glLoadIdentity();
+        glMatrixMode(GL_MODELVIEW);
+        glPushMatrix();
+        glLoadIdentity();
         draw_mesh(scene.debug_screen);
+        glPopMatrix();
+        glMatrixMode(GL_PROJECTION);
+        glPopMatrix();
+        glMatrixMode(GL_MODELVIEW);
         glEnable(GL_DEPTH_TEST);
     }
 
@@ -134,7 +144,7 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx, const RenderStats &s
         }
         ImGui::End();
 
-        if (stats.menu_open || !stats.menu_text.empty()) {
+        if (false && (stats.menu_open || !stats.menu_text.empty())) {
             ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
             ImGui::SetNextWindowSize(ImVec2(520.0f, 420.0f), ImGuiCond_Always);
             ImGui::SetNextWindowBgAlpha(0.92f);

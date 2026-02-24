@@ -75,6 +75,32 @@ void add_pixel_quad(
     mesh.indices.insert(mesh.indices.end(), {start, start + 1, start + 2, start, start + 2, start + 3});
 }
 
+void add_screen_pixel_quad_ndc(
+    RenderMesh &mesh,
+    float origin_x_ndc,
+    float origin_y_ndc,
+    float x,
+    float y,
+    float cell_size_ndc,
+    const glm::vec3 &color) {
+    const float x0 = origin_x_ndc + x * cell_size_ndc;
+    const float y0 = origin_y_ndc - y * cell_size_ndc;
+    const float x1 = x0 + cell_size_ndc;
+    const float y1 = y0 - cell_size_ndc;
+
+    const glm::vec3 p0(x0, y0, 0.0f);
+    const glm::vec3 p1(x1, y0, 0.0f);
+    const glm::vec3 p2(x1, y1, 0.0f);
+    const glm::vec3 p3(x0, y1, 0.0f);
+
+    uint32_t start = static_cast<uint32_t>(mesh.vertices.size());
+    mesh.vertices.push_back({p0, color});
+    mesh.vertices.push_back({p1, color});
+    mesh.vertices.push_back({p2, color});
+    mesh.vertices.push_back({p3, color});
+    mesh.indices.insert(mesh.indices.end(), {start, start + 1, start + 2, start, start + 2, start + 3});
+}
+
 GlyphRows glyph_for(char c) {
     char uc = static_cast<char>(std::toupper(static_cast<unsigned char>(c)));
     auto it = kGlyphs.find(uc);
@@ -121,6 +147,53 @@ RenderMesh build_camera_text_mesh(const Camera &camera, const std::string &text)
             }
         }
 
+        pen_x += char_width;
+    }
+
+    return mesh;
+}
+
+RenderMesh build_screen_text_mesh(
+    const std::string &text,
+    float origin_x_ndc,
+    float origin_y_ndc,
+    float cell_size_ndc,
+    const glm::vec3 &color,
+    float line_spacing_scale) {
+    RenderMesh mesh;
+    if (text.empty() || cell_size_ndc <= 0.0f) {
+        return mesh;
+    }
+
+    float pen_x = 0.0f;
+    float pen_y = 0.0f;
+    const float char_width = 6.0f;
+    const float line_height = 8.0f * std::max(1.0f, line_spacing_scale);
+
+    for (char c : text) {
+        if (c == '\n') {
+            pen_x = 0.0f;
+            pen_y += line_height;
+            continue;
+        }
+
+        GlyphRows glyph = glyph_for(c);
+        for (int row = 0; row < 7; ++row) {
+            for (int col = 0; col < 5; ++col) {
+                const bool on = (glyph[row] & (1 << (4 - col))) != 0;
+                if (!on) {
+                    continue;
+                }
+                add_screen_pixel_quad_ndc(
+                    mesh,
+                    origin_x_ndc,
+                    origin_y_ndc,
+                    pen_x + static_cast<float>(col),
+                    pen_y + static_cast<float>(row),
+                    cell_size_ndc,
+                    color);
+            }
+        }
         pen_x += char_width;
     }
 

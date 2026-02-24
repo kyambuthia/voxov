@@ -996,7 +996,66 @@ void Engine::update_vehicle_sim(const InputState &input, float dt) {
 void Engine::refresh_overlay_text() {
     scene.debug_screen = RenderMesh{};
 
-    if (runtime_options.devhud) {
+    auto append_screen_rect = [&](float x0, float y0, float x1, float y1, const glm::vec3 &color) {
+        RenderMesh rect{};
+        const uint32_t base = 0;
+        rect.vertices.push_back({glm::vec3(x0, y0, 0.0f), color});
+        rect.vertices.push_back({glm::vec3(x1, y0, 0.0f), color});
+        rect.vertices.push_back({glm::vec3(x1, y1, 0.0f), color});
+        rect.vertices.push_back({glm::vec3(x0, y1, 0.0f), color});
+        rect.indices.insert(rect.indices.end(), {base, base + 1, base + 2, base, base + 2, base + 3});
+        append_mesh(scene.debug_screen, rect);
+    };
+
+    const bool menu_is_open = gui_menu.open();
+    if (menu_is_open) {
+        const GuiMenuView menu_view = gui_menu.build_view(runtime_options.devhud, runtime_options.noclip, multiplayer_hint);
+        append_screen_rect(-0.96f, 0.94f, -0.08f, -0.88f, glm::vec3(0.05f, 0.07f, 0.11f));
+        append_screen_rect(-0.94f, 0.92f, -0.10f, -0.86f, glm::vec3(0.09f, 0.12f, 0.17f));
+
+        float y = 0.86f;
+        if (!menu_view.title.empty()) {
+            append_mesh(scene.debug_screen, build_screen_text_mesh(menu_view.title, -0.90f, y, 0.0082f, glm::vec3(0.96f, 0.98f, 1.0f)));
+            y -= 0.11f;
+        }
+
+        for (size_t i = 0; i < menu_view.items.size(); ++i) {
+            const bool selected = static_cast<int>(i) == menu_view.selected;
+            if (selected) {
+                append_screen_rect(-0.91f, y + 0.025f, -0.12f, y - 0.055f, glm::vec3(0.16f, 0.24f, 0.34f));
+            }
+            std::string line = selected ? ("> " + menu_view.items[i]) : ("  " + menu_view.items[i]);
+            append_mesh(
+                scene.debug_screen,
+                build_screen_text_mesh(
+                    line,
+                    -0.88f,
+                    y,
+                    0.0069f,
+                    selected ? glm::vec3(0.96f, 0.98f, 1.0f) : glm::vec3(0.86f, 0.91f, 0.98f)));
+            y -= 0.095f;
+        }
+
+        if (!menu_view.guide_lines.empty()) {
+            y -= 0.02f;
+            for (const std::string &line : menu_view.guide_lines) {
+                append_mesh(scene.debug_screen, build_screen_text_mesh(line, -0.88f, y, 0.0059f, glm::vec3(0.80f, 0.88f, 0.97f)));
+                y -= 0.072f;
+            }
+        }
+
+        if (!menu_view.status.empty()) {
+            append_screen_rect(-0.94f, -0.78f, -0.10f, -0.86f, glm::vec3(0.10f, 0.14f, 0.20f));
+            append_mesh(
+                scene.debug_screen,
+                build_screen_text_mesh(
+                    "STATUS: " + menu_view.status,
+                    -0.90f,
+                    -0.80f,
+                    0.0056f,
+                    glm::vec3(0.88f, 0.93f, 0.99f)));
+        }
+    } else if (runtime_options.devhud) {
         char text[768]{};
         const float vehicle_distance = glm::length(local_player.transform.position - vehicle.position);
         const NetDebugStats client_net_stats = net_client.debug_stats();
@@ -1052,7 +1111,9 @@ void Engine::refresh_overlay_text() {
             local_player.anim_phase,
             vehicle.occupied ? "ONBOARD" : "ON FOOT",
             vehicle_distance);
-        scene.debug_screen = build_camera_text_mesh(camera, text);
+        append_screen_rect(-0.98f, 0.98f, 0.10f, 0.08f, glm::vec3(0.05f, 0.07f, 0.10f));
+        append_screen_rect(-0.97f, 0.97f, 0.09f, 0.10f, glm::vec3(0.09f, 0.11f, 0.16f));
+        append_mesh(scene.debug_screen, build_screen_text_mesh(text, -0.95f, 0.92f, 0.0049f, glm::vec3(0.95f, 0.95f, 0.82f)));
     }
 
     if (net_client.is_connected()) {
@@ -1065,8 +1126,7 @@ void Engine::refresh_overlay_text() {
     render_stats.menu_items = menu_view.items;
     render_stats.menu_guide = menu_view.guide_lines;
     render_stats.menu_status = menu_view.status;
-    const std::string menu_text = gui_menu.build_text(runtime_options.devhud, runtime_options.noclip, multiplayer_hint);
-    render_stats.menu_text = menu_text;
+    render_stats.menu_text.clear();
 }
 
 void Engine::rebuild_dynamic_debug_mesh() {

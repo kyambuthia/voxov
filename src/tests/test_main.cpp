@@ -3,6 +3,7 @@
 #include "engine_net/net_common.hpp"
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_physics/vehicle/aircraft_controller.hpp"
+#include "engine_physics/vehicle/vehicle_damage_model.hpp"
 #include "engine_physics/vehicle/ground_vehicle_controller.hpp"
 #include "engine_physics/vehicle/vehicle_drivetrain.hpp"
 #include "engine_physics/vehicle/vehicle_foundation.hpp"
@@ -414,6 +415,43 @@ void test_vehicle_drivetrain_shift_behavior() {
     assert(scaled_throttle > 0.1f);
 }
 
+void test_vehicle_damage_model_impact() {
+    std::vector<VoxelMassCell> cells;
+    for (int x = 0; x < 3; ++x) {
+        for (int y = 0; y < 2; ++y) {
+            for (int z = 0; z < 2; ++z) {
+                cells.push_back({glm::ivec3(x, y, z), VoxelMassMaterial{}});
+            }
+        }
+    }
+
+    VehicleDamageModel damage;
+    damage.initialize(cells, 100.0f);
+    const float integrity_before = damage.stats().integrity;
+    damage.apply_impact(glm::vec3(0.5f, 0.5f, 0.5f), 3000.0f, 1.8f);
+    const float integrity_after = damage.stats().integrity;
+    assert(integrity_after <= integrity_before);
+    assert(damage.stats().mass_scale <= 1.0f);
+}
+
+void test_vehicle_damage_model_deterministic() {
+    const std::vector<VoxelMassCell> cells{
+        {glm::ivec3(0, 0, 0), VoxelMassMaterial{}},
+        {glm::ivec3(1, 0, 0), VoxelMassMaterial{}},
+        {glm::ivec3(0, 1, 0), VoxelMassMaterial{}},
+        {glm::ivec3(1, 1, 0), VoxelMassMaterial{}}};
+
+    VehicleDamageModel a;
+    VehicleDamageModel b;
+    a.initialize(cells, 80.0f);
+    b.initialize(cells, 80.0f);
+
+    a.apply_impact(glm::vec3(0.5f, 0.5f, 0.5f), 1000.0f, 1.1f);
+    b.apply_impact(glm::vec3(0.5f, 0.5f, 0.5f), 1000.0f, 1.1f);
+    assert(std::fabs(a.stats().integrity - b.stats().integrity) < 1.0e-6f);
+    assert(a.stats().destroyed_cells == b.stats().destroyed_cells);
+}
+
 }
 
 int main() {
@@ -437,5 +475,7 @@ int main() {
     test_ground_vehicle_controller_accel_and_brake();
     test_aircraft_controller_throttle_and_pitch();
     test_vehicle_drivetrain_shift_behavior();
+    test_vehicle_damage_model_impact();
+    test_vehicle_damage_model_deterministic();
     return 0;
 }

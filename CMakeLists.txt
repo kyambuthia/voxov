@@ -255,6 +255,7 @@ add_library(engine_physics STATIC
     src/engine_physics/avbd_solver.cpp
     src/engine_physics/jolt_solver.cpp
     src/engine_physics/vehicle/aircraft_controller.cpp
+    src/engine_physics/vehicle/vehicle_damage_model.cpp
     src/engine_physics/vehicle/ground_vehicle_controller.cpp
     src/engine_physics/vehicle/vehicle_drivetrain.cpp
     src/engine_physics/vehicle/vehicle_foundation.cpp

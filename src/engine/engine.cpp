@@ -3,6 +3,7 @@
 #include "engine_gameplay/animation/skeletal_animator.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_gameplay/player/player_visuals.hpp"
+#include "engine_physics/avbd_solver.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
 
@@ -259,7 +260,17 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
     runtime_options = options;
 
     EnginePhysicsSettings settings{};
+    settings.solver_backend = runtime_options.physics_backend;
     physics.init(settings);
+    if (settings.solver_backend == PhysicsSolverBackend::AvbdExperimental) {
+        if (AvbdSolver *avbd = physics.avbd()) {
+            avbd->create_minimal_test_scene();
+            spdlog::info(
+                "AVBD physics enabled (bodies={}, vertices={})",
+                avbd->bodies().size(),
+                avbd->vertices().size());
+        }
+    }
     if (!net_client.init()) {
         spdlog::error("NetClient init failed; multiplayer disabled until restart");
     }

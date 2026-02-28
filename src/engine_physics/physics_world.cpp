@@ -36,3 +36,15 @@ void PhysicsWorld::step(float dt_seconds) {
     }
     solver->step(dt_seconds);
 }
+
+bool PhysicsWorld::using_avbd() const {
+    return dynamic_cast<const AvbdSolver *>(solver.get()) != nullptr;
+}
+
+AvbdSolver *PhysicsWorld::avbd() {
+    return dynamic_cast<AvbdSolver *>(solver.get());
+}
+
+const AvbdSolver *PhysicsWorld::avbd() const {
+    return dynamic_cast<const AvbdSolver *>(solver.get());
+}

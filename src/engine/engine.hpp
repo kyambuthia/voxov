@@ -10,6 +10,7 @@
 #include "engine_net/net_client.hpp"
 #include "engine_net/lan_discovery.hpp"
 #include "engine_net/net_server.hpp"
+#include "engine_physics/physics_solver.hpp"
 #include "engine_physics/physics_world.hpp"
 #include "engine_render/renderer.hpp"
 #include "engine_ui/gui_menu.hpp"
@@ -29,6 +30,7 @@ struct EngineRuntimeOptions {
     bool debug_xray = false;
     bool debug_collision_only = false;
     bool debug_freeze = false;
+    PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
 };
 
 class Engine {

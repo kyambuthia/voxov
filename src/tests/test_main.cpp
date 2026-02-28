@@ -164,10 +164,30 @@ void test_avbd_solver_lifecycle() {
     AvbdSolver solver;
     EnginePhysicsSettings settings{};
     settings.gravity = -9.81f;
+    settings.solver_backend = PhysicsSolverBackend::AvbdExperimental;
     solver.init(settings);
-    for (int i = 0; i < 32; ++i) {
+    solver.create_minimal_test_scene();
+    assert(!solver.vertices().empty());
+    assert(!solver.bodies().empty());
+
+    for (int i = 0; i < 180; ++i) {
         solver.step(1.0f / 60.0f);
     }
+
+    bool found_ground_contact = false;
+    for (const AvbdVertexState &v : solver.vertices()) {
+        assert(std::isfinite(v.position.x));
+        assert(std::isfinite(v.position.y));
+        assert(std::isfinite(v.position.z));
+        assert(std::isfinite(v.velocity.x));
+        assert(std::isfinite(v.velocity.y));
+        assert(std::isfinite(v.velocity.z));
+        if (v.position.y < 0.05f) {
+            found_ground_contact = true;
+        }
+    }
+    assert(found_ground_contact);
+
     solver.shutdown();
     solver.step(1.0f / 60.0f);
 }

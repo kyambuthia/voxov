@@ -91,6 +91,7 @@ int main(int argc, char **argv) {
     const char *connect_host = nullptr;
     uint16_t connect_port = 7777;
     RenderBackendType backend = RenderBackendType::Vulkan;
+    PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--server") == 0) {
@@ -108,6 +109,13 @@ int main(int argc, char **argv) {
                 backend = RenderBackendType::OpenGL;
             } else {
                 backend = RenderBackendType::Vulkan;
+            }
+        } else if (std::strcmp(argv[i], "--physics") == 0 && i + 1 < argc) {
+            const char *physics_name = argv[++i];
+            if (std::strcmp(physics_name, "avbd") == 0 || std::strcmp(physics_name, "avbd-experimental") == 0) {
+                physics_backend = PhysicsSolverBackend::AvbdExperimental;
+            } else {
+                physics_backend = PhysicsSolverBackend::Jolt;
             }
         } else if (std::strcmp(argv[i], "--devhud") == 0) {
             devhud = true;
@@ -192,6 +200,7 @@ int main(int argc, char **argv) {
         options.debug_xray = debug_xray;
         options.debug_collision_only = debug_collision_only;
         options.debug_freeze = debug_freeze;
+        options.physics_backend = physics_backend;
         engine.init(platform.native_window(), backend, options);
     } catch (const std::exception &e) {
         std::fprintf(stderr, "Engine init failed: %s\n", e.what());

@@ -3,6 +3,7 @@
 #include "engine_net/net_common.hpp"
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_physics/vehicle/vehicle_foundation.hpp"
+#include "engine_physics/vehicle/voxel_vehicle_builder.hpp"
 #include "engine_physics/voxel/voxel_physics_bridge.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
@@ -309,6 +310,40 @@ void test_voxel_physics_bridge_shape_build() {
     assert(found_chunk_offset);
 }
 
+void test_voxel_vehicle_builder_mass_properties() {
+    std::vector<VoxelMassCell> cells;
+    for (int x = 0; x < 4; ++x) {
+        for (int y = 0; y < 2; ++y) {
+            for (int z = 0; z < 2; ++z) {
+                cells.push_back({glm::ivec3(x, y, z), VoxelMassMaterial{650.0f}});
+            }
+        }
+    }
+
+    const VoxelVehicleBuildResult result = build_voxel_vehicle_properties(cells, 0.5f);
+    assert(result.mass.total_mass_kg > 0.0f);
+    assert(result.mass.center_of_mass.x > 0.5f && result.mass.center_of_mass.x < 1.5f);
+    assert(result.mass.center_of_mass.y > 0.2f && result.mass.center_of_mass.y < 0.8f);
+    assert(result.mass.inertia_diagonal.x > 0.0f);
+    assert(result.mass.inertia_diagonal.y > 0.0f);
+    assert(result.mass.inertia_diagonal.z > 0.0f);
+    assert(result.wheel_mounts.size() == 4);
+}
+
+void test_voxel_vehicle_builder_deterministic() {
+    const std::vector<VoxelMassCell> cells{
+        {glm::ivec3(0, 0, 0), VoxelMassMaterial{500.0f}},
+        {glm::ivec3(1, 0, 0), VoxelMassMaterial{500.0f}},
+        {glm::ivec3(0, 1, 0), VoxelMassMaterial{700.0f}},
+        {glm::ivec3(1, 1, 0), VoxelMassMaterial{700.0f}}};
+
+    const VoxelVehicleBuildResult a = build_voxel_vehicle_properties(cells, 1.0f);
+    const VoxelVehicleBuildResult b = build_voxel_vehicle_properties(cells, 1.0f);
+    assert(std::fabs(a.mass.total_mass_kg - b.mass.total_mass_kg) < 1.0e-5f);
+    assert(glm::length(a.mass.center_of_mass - b.mass.center_of_mass) < 1.0e-6f);
+    assert(glm::length(a.mass.inertia_diagonal - b.mass.inertia_diagonal) < 1.0e-6f);
+}
+
 }
 
 int main() {
@@ -327,5 +362,7 @@ int main() {
     test_aircraft_kinematic_determinism();
     test_voxel_physics_bridge_chunk_tracking();
     test_voxel_physics_bridge_shape_build();
+    test_voxel_vehicle_builder_mass_properties();
+    test_voxel_vehicle_builder_deterministic();
     return 0;
 }

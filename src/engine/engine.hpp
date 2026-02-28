@@ -10,6 +10,7 @@
 #include "engine_net/net_client.hpp"
 #include "engine_net/lan_discovery.hpp"
 #include "engine_net/net_server.hpp"
+#include "engine_physics/vehicle/ground_vehicle_controller.hpp"
 #include "engine_physics/physics_solver.hpp"
 #include "engine_physics/physics_world.hpp"
 #include "engine_render/renderer.hpp"
@@ -64,6 +65,7 @@ private:
         std::deque<Sample> samples;
     };
     struct VehicleState {
+        GroundVehicleController controller{};
         glm::vec3 position = glm::vec3(10.0f, 0.0f, 10.0f);
         float yaw = 0.0f;
         float speed = 0.0f;

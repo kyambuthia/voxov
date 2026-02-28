@@ -2,6 +2,7 @@
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_net/net_common.hpp"
 #include "engine_physics/avbd_solver.hpp"
+#include "engine_physics/vehicle/ground_vehicle_controller.hpp"
 #include "engine_physics/vehicle/vehicle_foundation.hpp"
 #include "engine_physics/vehicle/voxel_vehicle_builder.hpp"
 #include "engine_physics/voxel/voxel_physics_bridge.hpp"
@@ -13,6 +14,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <algorithm>
 #include <vector>
 
 namespace {
@@ -344,6 +346,33 @@ void test_voxel_vehicle_builder_deterministic() {
     assert(glm::length(a.mass.inertia_diagonal - b.mass.inertia_diagonal) < 1.0e-6f);
 }
 
+void test_ground_vehicle_controller_accel_and_brake() {
+    VoxelChunk chunk;
+    chunk.generate_flat_ground(0);
+    VoxelCollisionWorld collision_world(&chunk);
+
+    GroundVehicleController controller;
+    controller.reset(glm::vec3(8.0f, 1.4f, 8.0f), 0.0f);
+
+    VehicleControlInput throttle{};
+    throttle.throttle = 1.0f;
+    uint32_t max_grounded = 0;
+    for (int i = 0; i < 60; ++i) {
+        controller.step(throttle, collision_world, 1.0f / 60.0f);
+        max_grounded = std::max(max_grounded, controller.state().telemetry.grounded_wheels);
+    }
+    const float speed_after_accel = controller.state().telemetry.speed_mps;
+    assert(speed_after_accel > 1.5f);
+    assert(max_grounded > 0);
+
+    VehicleControlInput brake{};
+    brake.brake = 1.0f;
+    for (int i = 0; i < 60; ++i) {
+        controller.step(brake, collision_world, 1.0f / 60.0f);
+    }
+    assert(controller.state().telemetry.speed_mps < speed_after_accel);
+}
+
 }
 
 int main() {
@@ -364,5 +393,6 @@ int main() {
     test_voxel_physics_bridge_shape_build();
     test_voxel_vehicle_builder_mass_properties();
     test_voxel_vehicle_builder_deterministic();
+    test_ground_vehicle_controller_accel_and_brake();
     return 0;
 }

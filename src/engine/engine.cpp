@@ -290,6 +290,7 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
             1.2f) +
             k_vehicle_wheel_radius;
     }
+    vehicle.controller.reset(vehicle.position, vehicle.yaw);
     aircraft.position = local_player.transform.position + glm::vec3(-5.0f, 5.0f, -4.0f);
     aircraft.yaw = 0.25f;
     aircraft.speed = 9.0f;
@@ -963,6 +964,7 @@ void Engine::build_static_scene() {
         0.8f,
         1.2f);
     vehicle.position.y = ground_y + k_vehicle_wheel_radius;
+    vehicle.controller.reset(vehicle.position, vehicle.yaw);
 
     aircraft.position = glm::vec3(18.0f, ground_y + 6.0f, 10.0f);
     aircraft.yaw = -0.2f;
@@ -1082,44 +1084,26 @@ void Engine::update_vehicle_sim(const InputState &input, float dt) {
         return;
     }
     if (!vehicle.occupied) {
-        vehicle.speed *= std::exp(-dt * 3.5f);
-        if (std::fabs(vehicle.speed) < 0.02f) {
-            vehicle.speed = 0.0f;
-        }
+        VehicleControlInput coast{};
+        coast.brake = 0.2f;
+        vehicle.controller.step(coast, collision_world, dt);
+        vehicle.position = vehicle.controller.state().kinematic.position;
+        vehicle.yaw = vehicle.controller.state().kinematic.yaw;
+        vehicle.speed = vehicle.controller.state().telemetry.speed_mps;
         return;
     }
     if (aircraft.occupied) {
         return;
     }
-
-    const float throttle = input.move.y;
-    const float steer = input.move.x;
-    constexpr float k_accel = 14.0f;
-    constexpr float k_brake = 12.0f;
-    constexpr float k_max_speed = 17.0f;
-    constexpr float k_reverse_speed = 6.0f;
-    constexpr float k_steer_rate = 1.7f;
-
-    if (std::fabs(throttle) > 0.05f) {
-        vehicle.speed += throttle * k_accel * dt;
-    } else {
-        vehicle.speed -= vehicle.speed * std::min(1.0f, k_brake * dt);
-    }
-    vehicle.speed = std::clamp(vehicle.speed, -k_reverse_speed, k_max_speed);
-
-    const float steer_amount = steer * std::clamp(std::fabs(vehicle.speed) / k_max_speed, 0.2f, 1.0f);
-    vehicle.yaw += steer_amount * k_steer_rate * dt * (vehicle.speed >= 0.0f ? 1.0f : -1.0f);
-
-    const glm::vec3 fwd = rotate_y(glm::vec3(0.0f, 0.0f, 1.0f), vehicle.yaw);
-    vehicle.position += fwd * (vehicle.speed * dt);
-
-    const glm::vec2 drive_center(12.0f, 12.0f);
-    constexpr float k_drive_half_extent = 22.0f;
-    vehicle.position.x = std::clamp(vehicle.position.x, drive_center.x - k_drive_half_extent, drive_center.x + k_drive_half_extent);
-    vehicle.position.z = std::clamp(vehicle.position.z, drive_center.y - k_drive_half_extent, drive_center.y + k_drive_half_extent);
-
-    const float ground_y = collision_world.find_spawn_height(glm::vec2(vehicle.position.x, vehicle.position.z), 0.9f, 1.4f);
-    vehicle.position.y = ground_y + k_vehicle_wheel_radius;
+    VehicleControlInput control{};
+    control.throttle = input.move.y;
+    control.steer = input.move.x;
+    control.brake = input.move.y < -0.05f ? std::min(1.0f, -input.move.y) : 0.0f;
+    control.handbrake = input.crouch_held ? 1.0f : 0.0f;
+    vehicle.controller.step(control, collision_world, dt);
+    vehicle.position = vehicle.controller.state().kinematic.position;
+    vehicle.yaw = vehicle.controller.state().kinematic.yaw;
+    vehicle.speed = vehicle.controller.state().telemetry.speed_mps;
 
     local_player.transform.position = vehicle_seat_world_position();
     local_player.transform.rotation = glm::angleAxis(vehicle.yaw, glm::vec3(0.0f, 1.0f, 0.0f));

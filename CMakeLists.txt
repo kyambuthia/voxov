@@ -276,6 +276,7 @@ add_library(engine STATIC
     src/engine_assets/skinned_model.cpp
     src/engine_audio/ui_audio.cpp
     src/engine_gameplay/animation/skeletal_animator.cpp
+    src/engine_gameplay/minigames/minigames.cpp
     src/engine_gameplay/player/player_controller.cpp
     src/engine_gameplay/player/player_visuals.cpp
     src/engine_ui/gui_menu.cpp

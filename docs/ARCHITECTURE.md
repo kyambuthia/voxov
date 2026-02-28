@@ -54,6 +54,10 @@ Design implications:
 - `engine/*`: orchestration and fixed-timestep loop
 - `game/main.cpp`: app bootstrap and CLI
 
+Current scaffold note:
+
+- `src/engine_xr/xr_session.*` is present as the baseline XR session scaffold.
+
 ## Frame flow
 
 1. Platform polls input/events.

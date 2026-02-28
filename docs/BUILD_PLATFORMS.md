@@ -65,6 +65,10 @@ Requirements:
 - touch/gamepad input mapping through shared input abstraction
 - budgeted streaming profile using mobile memory caps
 
+Current scaffold status:
+
+- `src/platform/ios_platform.cpp` compiles as a lifecycle/event scaffold.
+
 ## Consoles (planned)
 
 Requirements:
@@ -73,6 +77,10 @@ Requirements:
 - fixed memory/streaming budgets per platform profile
 - renderer backend capability table to enable/disable optional features safely
 - network protocol and save paths remain deterministic and certification-friendly
+
+Current scaffold status:
+
+- `src/platform/console_platform.cpp` compiles as a placeholder backend.
 
 ## Web (foundation)
 

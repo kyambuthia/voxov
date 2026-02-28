@@ -1,4 +1,5 @@
 #include "engine_math/camera.hpp"
+#include "engine_gameplay/minigames/minigames.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_net/net_common.hpp"
 #include "engine_physics/avbd_solver.hpp"
@@ -236,6 +237,96 @@ void test_avbd_solver_lifecycle() {
 
     solver.shutdown();
     solver.step(1.0f / 60.0f);
+}
+
+void test_minigame_snake_runs() {
+    MiniGameState state{};
+    minigame_begin(state, MiniGameType::Snake, 11u);
+    assert(state.active);
+    assert(!state.completed);
+
+    InputState input{};
+    input.move = glm::vec2(1.0f, 0.0f);
+    for (int i = 0; i < 80 && !state.completed; ++i) {
+        minigame_tick(state, input, 1.0f / 30.0f);
+    }
+
+    assert(state.snake.length >= 3);
+}
+
+void test_minigame_golf_shot() {
+    MiniGameState state{};
+    minigame_begin(state, MiniGameType::Golf, 3u);
+    assert(state.active);
+    assert(state.golf.strokes == 0);
+
+    InputState input{};
+    input.interact_pressed = true;
+    minigame_tick(state, input, 1.0f / 60.0f);
+    assert(state.golf.strokes == 1);
+
+    input.interact_pressed = false;
+    for (int i = 0; i < 120; ++i) {
+        minigame_tick(state, input, 1.0f / 60.0f);
+    }
+    assert(std::isfinite(state.golf.ball.x));
+    assert(std::isfinite(state.golf.ball.y));
+}
+
+void test_minigame_tetris_progress() {
+    MiniGameState state{};
+    minigame_begin(state, MiniGameType::Tetris, 17u);
+    assert(state.active);
+    assert(!state.completed);
+
+    InputState input{};
+    for (int i = 0; i < 240 && !state.completed; ++i) {
+        input.move.x = (i % 40 < 20) ? -1.0f : 1.0f;
+        input.jump_pressed = (i % 23) == 0;
+        input.crouch_held = (i % 29) < 4;
+        minigame_tick(state, input, 1.0f / 30.0f);
+        input.jump_pressed = false;
+    }
+
+    assert(state.score >= 0);
+}
+
+void test_minigame_racing_completion() {
+    MiniGameState state{};
+    minigame_begin(state, MiniGameType::Racing, 5u);
+    assert(state.active);
+    assert(!state.completed);
+
+    InputState input{};
+    input.move = glm::vec2(0.0f, 1.0f);
+    for (int i = 0; i < 7200 && !state.completed; ++i) {
+        minigame_tick(state, input, 1.0f / 60.0f);
+    }
+
+    assert(state.racing.lap >= 1);
+}
+
+void test_minigame_tictactoe_places_marks() {
+    MiniGameState state{};
+    minigame_begin(state, MiniGameType::TicTacToe, 9u);
+    assert(state.active);
+
+    InputState input{};
+    for (int i = 0; i < 6 && !state.completed; ++i) {
+        input.interact_pressed = true;
+        minigame_tick(state, input, 1.0f / 30.0f);
+        input.interact_pressed = false;
+        input.move.x = ((i % 2) == 0) ? 1.0f : -1.0f;
+        minigame_tick(state, input, 1.0f / 30.0f);
+    }
+
+    int occupied = 0;
+    for (uint8_t cell : state.tictactoe.board) {
+        if (cell != 0) {
+            occupied++;
+        }
+    }
+    assert(occupied >= 2);
 }
 
 void test_web_platform_state() {
@@ -523,6 +614,11 @@ int main() {
     test_player_settles_on_ground();
     test_player_animation_state_transitions();
     test_avbd_solver_lifecycle();
+    test_minigame_snake_runs();
+    test_minigame_golf_shot();
+    test_minigame_tetris_progress();
+    test_minigame_racing_completion();
+    test_minigame_tictactoe_places_marks();
     test_web_platform_state();
     test_android_platform_state();
     test_vehicle_foundation_fixed_step_counter();

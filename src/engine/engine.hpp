@@ -3,6 +3,7 @@
 #include "engine_core/timing.hpp"
 #include "engine_gameplay/player/player_components.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
+#include "engine_gameplay/minigames/minigames.hpp"
 #include "engine_input/input_state.hpp"
 #include "engine_audio/ui_audio.hpp"
 #include "engine_assets/skinned_model.hpp"
@@ -20,6 +21,7 @@
 #include <unordered_map>
 #include <array>
 #include <deque>
+#include <vector>
 
 struct EngineRuntimeOptions {
     bool devhud = false;
@@ -73,6 +75,11 @@ private:
         float speed = 8.0f;
         bool occupied = false;
     };
+    struct MiniGameHotspot {
+        MiniGameType type = MiniGameType::Snake;
+        glm::vec3 position = glm::vec3(0.0f);
+        float interact_radius = 2.6f;
+    };
     enum class ReconcileMode : uint8_t {
         Off = 0,
         Threshold = 1,
@@ -82,6 +89,8 @@ private:
     void build_static_scene();
     void handle_vehicle_interaction(const InputState &input);
     void handle_aircraft_interaction(const InputState &input);
+    void handle_minigame_interaction(const InputState &input);
+    void update_active_minigame(const InputState &input, float dt);
     void update_vehicle_sim(const InputState &input, float dt);
     void update_aircraft_sim(const InputState &input, float dt);
     glm::vec3 vehicle_seat_world_position() const;
@@ -167,4 +176,9 @@ private:
     RenderMesh frozen_debug_world{};
     VehicleState vehicle{};
     AircraftState aircraft{};
+    std::vector<MiniGameHotspot> minigame_hotspots;
+    int nearby_minigame_hotspot = -1;
+    int active_minigame_hotspot = -1;
+    MiniGameState active_minigame{};
+    std::string minigame_hint;
 };

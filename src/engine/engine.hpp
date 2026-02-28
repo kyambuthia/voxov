@@ -10,6 +10,7 @@
 #include "engine_net/net_client.hpp"
 #include "engine_net/lan_discovery.hpp"
 #include "engine_net/net_server.hpp"
+#include "engine_physics/vehicle/aircraft_controller.hpp"
 #include "engine_physics/vehicle/ground_vehicle_controller.hpp"
 #include "engine_physics/physics_solver.hpp"
 #include "engine_physics/physics_world.hpp"
@@ -72,6 +73,7 @@ private:
         bool occupied = false;
     };
     struct AircraftState {
+        AircraftController controller{};
         glm::vec3 position = glm::vec3(16.0f, 8.0f, 16.0f);
         float yaw = 0.0f;
         float speed = 8.0f;

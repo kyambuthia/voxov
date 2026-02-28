@@ -295,6 +295,10 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
     aircraft.yaw = 0.25f;
     aircraft.speed = 9.0f;
     aircraft.occupied = false;
+    aircraft.controller.reset(
+        aircraft.position,
+        glm::vec3(0.0f, aircraft.yaw, 0.0f),
+        rotate_y(glm::vec3(0.0f, 0.0f, 1.0f), aircraft.yaw) * aircraft.speed);
     if (runtime_options.splitscreen) {
         local_player_secondary = PlayerControllerSystem::spawn_player(collision_world);
         local_player_secondary.network_id = 2;
@@ -970,6 +974,10 @@ void Engine::build_static_scene() {
     aircraft.yaw = -0.2f;
     aircraft.speed = 8.0f;
     aircraft.occupied = false;
+    aircraft.controller.reset(
+        aircraft.position,
+        glm::vec3(0.0f, aircraft.yaw, 0.0f),
+        rotate_y(glm::vec3(0.0f, 0.0f, 1.0f), aircraft.yaw) * aircraft.speed);
 }
 
 void Engine::update_third_person_camera(PlayerEntity &player, Camera &out_camera) {
@@ -1122,40 +1130,22 @@ void Engine::update_aircraft_sim(const InputState &input, float dt) {
         return;
     }
 
-    const float throttle = input.move.y;
-    const float steer = input.move.x;
-    float climb = 0.0f;
-    if (input.jump_held) {
-        climb += 1.0f;
-    }
-    if (input.crouch_held) {
-        climb -= 1.0f;
-    }
+    AircraftControlInput control{};
+    control.throttle = std::clamp(0.5f + input.move.y * 0.5f, 0.0f, 1.0f);
+    control.yaw = input.move.x;
+    control.pitch = (input.jump_held ? 0.45f : 0.0f) + (input.crouch_held ? -0.35f : 0.0f);
+    control.roll = -input.move.x * 0.55f;
+    aircraft.controller.step(control, collision_world, dt);
 
-    constexpr float k_accel = 10.0f;
-    constexpr float k_drag = 1.8f;
-    constexpr float k_min_speed = 5.5f;
-    constexpr float k_max_speed = 24.0f;
-    constexpr float k_turn_rate = 1.2f;
-    constexpr float k_climb_rate = 8.0f;
-
-    aircraft.speed += throttle * k_accel * dt;
-    aircraft.speed -= (aircraft.speed - k_min_speed) * std::min(1.0f, k_drag * dt);
-    aircraft.speed = std::clamp(aircraft.speed, k_min_speed, k_max_speed);
-    aircraft.yaw += steer * k_turn_rate * dt;
-
-    const glm::vec3 fwd = rotate_y(glm::vec3(0.0f, 0.0f, 1.0f), aircraft.yaw);
-    aircraft.position += fwd * (aircraft.speed * dt);
-    aircraft.position.y += climb * k_climb_rate * dt;
-    const float min_alt = collision_world.find_spawn_height(
-        glm::vec2(aircraft.position.x, aircraft.position.z), 1.0f, 1.8f) + 3.5f;
-    aircraft.position.y = std::max(min_alt, aircraft.position.y);
+    aircraft.position = aircraft.controller.state().kinematic.position;
+    aircraft.yaw = aircraft.controller.state().kinematic.euler.y;
+    aircraft.speed = aircraft.controller.state().telemetry.speed_mps;
     aircraft.position.x = std::clamp(aircraft.position.x, -26.0f, 52.0f);
     aircraft.position.z = std::clamp(aircraft.position.z, -26.0f, 52.0f);
 
     local_player.transform.position = aircraft_seat_world_position();
     local_player.transform.rotation = glm::angleAxis(aircraft.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
-    local_player.controller.velocity = fwd * aircraft.speed;
+    local_player.controller.velocity = aircraft.controller.state().kinematic.velocity;
     local_player.controller.grounded = false;
     local_player.anim_state = PlayerAnimState::Idle;
     local_player.anim_blend = 0.0f;

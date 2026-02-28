@@ -254,6 +254,7 @@ endif()
 add_library(engine_physics STATIC
     src/engine_physics/avbd_solver.cpp
     src/engine_physics/jolt_solver.cpp
+    src/engine_physics/vehicle/aircraft_controller.cpp
     src/engine_physics/vehicle/ground_vehicle_controller.cpp
     src/engine_physics/vehicle/vehicle_foundation.cpp
     src/engine_physics/vehicle/voxel_vehicle_builder.cpp

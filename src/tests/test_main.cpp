@@ -2,6 +2,7 @@
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_net/net_common.hpp"
 #include "engine_physics/avbd_solver.hpp"
+#include "engine_physics/vehicle/aircraft_controller.hpp"
 #include "engine_physics/vehicle/ground_vehicle_controller.hpp"
 #include "engine_physics/vehicle/vehicle_foundation.hpp"
 #include "engine_physics/vehicle/voxel_vehicle_builder.hpp"
@@ -373,6 +374,32 @@ void test_ground_vehicle_controller_accel_and_brake() {
     assert(controller.state().telemetry.speed_mps < speed_after_accel);
 }
 
+void test_aircraft_controller_throttle_and_pitch() {
+    VoxelChunk chunk;
+    chunk.generate_flat_ground(0);
+    VoxelCollisionWorld collision_world(&chunk);
+
+    AircraftController controller;
+    controller.reset(glm::vec3(8.0f, 7.0f, 8.0f), glm::vec3(0.0f), glm::vec3(0.0f, 0.0f, 6.0f));
+
+    AircraftControlInput throttle{};
+    throttle.throttle = 1.0f;
+    for (int i = 0; i < 120; ++i) {
+        controller.step(throttle, collision_world, 1.0f / 60.0f);
+    }
+    const float boosted_speed = controller.state().telemetry.speed_mps;
+    assert(boosted_speed > 8.0f);
+
+    AircraftControlInput pitch{};
+    pitch.throttle = 0.7f;
+    pitch.pitch = 0.4f;
+    for (int i = 0; i < 90; ++i) {
+        controller.step(pitch, collision_world, 1.0f / 60.0f);
+    }
+    assert(std::fabs(controller.state().kinematic.euler.x) > 0.01f);
+    assert(controller.state().kinematic.position.y > 2.0f);
+}
+
 }
 
 int main() {
@@ -394,5 +421,6 @@ int main() {
     test_voxel_vehicle_builder_mass_properties();
     test_voxel_vehicle_builder_deterministic();
     test_ground_vehicle_controller_accel_and_brake();
+    test_aircraft_controller_throttle_and_pitch();
     return 0;
 }

@@ -2,6 +2,7 @@
 
 #include "engine_gameplay/animation/skeletal_animator.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
+#include "engine_gameplay/player/player_visuals.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
 
@@ -10,12 +11,20 @@
 #include <glm/gtx/quaternion.hpp>
 
 #include <algorithm>
+#include <array>
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
 #include <filesystem>
 #include <string>
 #include <unordered_set>
+#if defined(_WIN32)
+#include <windows.h>
+#elif defined(__linux__)
+#include <unistd.h>
+#elif defined(__APPLE__)
+#include <mach-o/dyld.h>
+#endif
 
 namespace {
 constexpr float k_vehicle_body_half_length = 1.35f;
@@ -23,14 +32,47 @@ constexpr float k_vehicle_body_half_width = 0.8f;
 constexpr float k_vehicle_body_height = 0.65f;
 constexpr float k_vehicle_wheel_radius = 0.32f;
 constexpr float k_vehicle_interact_radius = 2.1f;
-constexpr bool k_vehicle_feature_enabled = false;
+constexpr bool k_vehicle_feature_enabled = true;
+constexpr float k_aircraft_interact_radius = 2.8f;
+constexpr float k_aircraft_body_length = 2.7f;
+constexpr float k_aircraft_body_width = 1.1f;
+constexpr float k_aircraft_body_height = 0.55f;
 constexpr uint32_t k_remote_interp_delay_ticks = 6;
 constexpr size_t k_remote_sample_history_max = 16;
+
+std::filesystem::path executable_directory() {
+    namespace fs = std::filesystem;
+#if defined(_WIN32)
+    std::array<char, 4096> path{};
+    const unsigned long len = GetModuleFileNameA(nullptr, path.data(), static_cast<unsigned long>(path.size()));
+    if (len > 0 && len < path.size()) {
+        return fs::path(std::string(path.data(), len)).parent_path();
+    }
+    return fs::path(".");
+#elif defined(__linux__)
+    std::array<char, 4096> path{};
+    const ssize_t len = readlink("/proc/self/exe", path.data(), path.size() - 1);
+    if (len > 0) {
+        path[static_cast<size_t>(len)] = '\0';
+        return fs::path(path.data()).parent_path();
+    }
+    return fs::path(".");
+#elif defined(__APPLE__)
+    std::array<char, 4096> path{};
+    uint32_t size = static_cast<uint32_t>(path.size());
+    if (_NSGetExecutablePath(path.data(), &size) == 0) {
+        return fs::path(path.data()).parent_path();
+    }
+    return fs::path(".");
+#else
+    return fs::path(".");
+#endif
+}
 
 std::vector<std::string> candidate_model_paths(const char *subdir, const char *model_filename) {
     namespace fs = std::filesystem;
     std::vector<std::string> out;
-    out.reserve(8);
+    out.reserve(20);
     if (!subdir || *subdir == '\0' || !model_filename || *model_filename == '\0') {
         return out;
     }
@@ -45,6 +87,14 @@ std::vector<std::string> candidate_model_paths(const char *subdir, const char *m
         prefix /= "..";
     }
 
+    // Also resolve relative to executable dir for packaged installs.
+    fs::path exe_prefix = executable_directory();
+    for (int i = 0; i < 6; ++i) {
+        fs::path candidate = exe_prefix / rel;
+        out.push_back(candidate.generic_string());
+        exe_prefix /= "..";
+    }
+
     return out;
 }
 
@@ -55,11 +105,7 @@ glm::vec3 rotate_y(const glm::vec3 &v, float yaw_radians) {
 }
 
 glm::vec3 player_color_from_id(uint32_t player_id) {
-    const uint32_t h = (player_id * 2654435761u) ^ 0x9e3779b9u;
-    const float r = 0.25f + 0.65f * static_cast<float>((h >> 0) & 0xFF) / 255.0f;
-    const float g = 0.25f + 0.65f * static_cast<float>((h >> 8) & 0xFF) / 255.0f;
-    const float b = 0.25f + 0.65f * static_cast<float>((h >> 16) & 0xFF) / 255.0f;
-    return glm::vec3(r, g, b);
+    return player_color_from_network_id(player_id);
 }
 
 const char *anim_state_name(PlayerAnimState state) {
@@ -233,6 +279,10 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
             1.2f) +
             k_vehicle_wheel_radius;
     }
+    aircraft.position = local_player.transform.position + glm::vec3(-5.0f, 5.0f, -4.0f);
+    aircraft.yaw = 0.25f;
+    aircraft.speed = 9.0f;
+    aircraft.occupied = false;
     if (runtime_options.splitscreen) {
         local_player_secondary = PlayerControllerSystem::spawn_player(collision_world);
         local_player_secondary.network_id = 2;
@@ -248,8 +298,8 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
     rebuild_dynamic_debug_mesh();
 
     local_replication.network_id = local_player.network_id;
-    local_replication.position = local_player.transform.position;
-    local_replication.velocity = local_player.controller.velocity;
+        local_replication.position = local_player.transform.position;
+        local_replication.velocity = local_player.controller.velocity;
 
     spdlog::info("Spawned player id={} at ({:.2f}, {:.2f}, {:.2f})",
         local_player.network_id,
@@ -343,7 +393,7 @@ void Engine::reconcile_local_player_from_snapshot(uint32_t current_sim_tick) {
     if (latest_snapshot.player_id != local_player.network_id) {
         return;
     }
-    if (vehicle.occupied || runtime_options.noclip) {
+    if (vehicle.occupied || aircraft.occupied || runtime_options.noclip) {
         return;
     }
 
@@ -509,9 +559,7 @@ void Engine::sync_network_state(uint32_t sim_tick, const InputState &net_input) 
     }
 }
 
-void Engine::tick(double frame_dt) {
-    last_frame_dt = frame_dt;
-
+void Engine::apply_runtime_toggles() {
     if (input_state.debug_toggle_pressed) {
         runtime_options.debug_collision = !runtime_options.debug_collision;
     }
@@ -532,9 +580,11 @@ void Engine::tick(double frame_dt) {
         reconcile_mode = static_cast<ReconcileMode>(next);
         spdlog::info("Reconciliation mode -> {}", reconcile_mode_name(static_cast<uint8_t>(reconcile_mode)));
     }
+}
 
+void Engine::process_menu_actions(const InputState &primary_input) {
     GuiMenuActions menu_actions{};
-    gui_menu.handle_input(input_state, runtime_options.devhud, runtime_options.noclip, menu_actions);
+    gui_menu.handle_input(primary_input, runtime_options.devhud, runtime_options.noclip, menu_actions);
     if (menu_actions.ui_move_sfx) {
         ui_audio.play_move();
     }
@@ -593,6 +643,105 @@ void Engine::tick(double frame_dt) {
         local_player.camera_rig.pitch = -12.0f;
         local_player.camera_rig.distance = 5.0f;
     }
+}
+
+void Engine::update_remote_interpolation(double frame_dt) {
+    const float remote_lerp = std::clamp(static_cast<float>(frame_dt) * 12.0f, 0.0f, 1.0f);
+    const float remote_rot_lerp = std::clamp(static_cast<float>(frame_dt) * 9.0f, 0.0f, 1.0f);
+    uint32_t max_remote_sample_tick = 0;
+    bool have_remote_samples = false;
+    for (const auto &[player_id, render_player] : remote_render_players) {
+        (void)player_id;
+        if (!render_player.samples.empty()) {
+            max_remote_sample_tick = std::max(max_remote_sample_tick, render_player.samples.back().server_tick);
+            have_remote_samples = true;
+        }
+    }
+    if (have_remote_samples) {
+        const double desired_tick = static_cast<double>(
+            max_remote_sample_tick > k_remote_interp_delay_ticks ? (max_remote_sample_tick - k_remote_interp_delay_ticks) : 0u);
+        if (!remote_interp_tick_cursor_initialized) {
+            remote_interp_tick_cursor = desired_tick;
+            remote_interp_tick_cursor_initialized = true;
+        } else {
+            remote_interp_tick_cursor += frame_dt / fixed.fixed_dt;
+            if (remote_interp_tick_cursor < (desired_tick - 20.0)) {
+                remote_interp_tick_cursor = desired_tick;
+            }
+            remote_interp_tick_cursor = std::min(remote_interp_tick_cursor, desired_tick + 2.0);
+        }
+    } else {
+        remote_interp_tick_cursor_initialized = false;
+    }
+
+    for (auto &[player_id, render_player] : remote_render_players) {
+        (void)player_id;
+        const double target_tick_f = remote_interp_tick_cursor_initialized
+            ? remote_interp_tick_cursor
+            : static_cast<double>(render_player.samples.empty() ? 0u : render_player.samples.back().server_tick);
+        while (render_player.samples.size() >= 3 &&
+               static_cast<double>(render_player.samples[1].server_tick) <= target_tick_f) {
+            render_player.samples.pop_front();
+        }
+
+        glm::vec3 predicted_target = render_player.target_position + render_player.velocity * 0.035f;
+        if (!render_player.samples.empty()) {
+            if (render_player.samples.size() >= 2) {
+                const auto &a = render_player.samples[0];
+                const auto &b = render_player.samples[1];
+                if (target_tick_f <= static_cast<double>(a.server_tick)) {
+                    predicted_target = a.position;
+                    render_player.velocity = a.velocity;
+                    render_player.anim_state = a.anim_state;
+                    render_player.anim_phase = a.anim_phase;
+                    render_player.anim_blend = a.anim_blend;
+                } else if (target_tick_f <= static_cast<double>(b.server_tick)) {
+                    const float dt_ticks = static_cast<float>(std::max<uint32_t>(1u, b.server_tick - a.server_tick));
+                    const float t = std::clamp(static_cast<float>(target_tick_f - static_cast<double>(a.server_tick)) / dt_ticks, 0.0f, 1.0f);
+                    predicted_target = glm::mix(a.position, b.position, t);
+                    render_player.velocity = glm::mix(a.velocity, b.velocity, t);
+                    render_player.anim_state = (t < 0.5f) ? a.anim_state : b.anim_state;
+                    render_player.anim_phase = glm::mix(a.anim_phase, b.anim_phase, t);
+                    render_player.anim_blend = glm::mix(a.anim_blend, b.anim_blend, t);
+                } else {
+                    const auto &latest = render_player.samples.back();
+                    const double ahead_ticks = std::max(0.0, target_tick_f - static_cast<double>(latest.server_tick));
+                    const float extrap = std::clamp(static_cast<float>(ahead_ticks * fixed.fixed_dt), 0.0f, 0.10f);
+                    predicted_target = latest.position + latest.velocity * extrap;
+                    render_player.velocity = latest.velocity;
+                    render_player.anim_state = latest.anim_state;
+                    render_player.anim_phase = latest.anim_phase;
+                    render_player.anim_blend = latest.anim_blend;
+                }
+            } else {
+                const auto &latest = render_player.samples.back();
+                predicted_target = latest.position;
+                render_player.velocity = latest.velocity;
+                render_player.anim_state = latest.anim_state;
+                render_player.anim_phase = latest.anim_phase;
+                render_player.anim_blend = latest.anim_blend;
+            }
+            render_player.target_position = predicted_target;
+        }
+
+        const float err = glm::length(render_player.position - predicted_target);
+        if (err > 4.0f) {
+            render_player.position = predicted_target;
+        } else {
+            render_player.position = glm::mix(render_player.position, predicted_target, remote_lerp);
+        }
+        render_player.orientation = glm::normalize(glm::slerp(
+            render_player.orientation,
+            render_player.target_orientation,
+            remote_rot_lerp));
+    }
+}
+
+void Engine::tick(double frame_dt) {
+    last_frame_dt = frame_dt;
+
+    apply_runtime_toggles();
+    process_menu_actions(input_state);
 
     InputState gameplay_input = input_state;
     if (gui_menu.open()) {
@@ -610,6 +759,7 @@ void Engine::tick(double frame_dt) {
     }
 
     handle_vehicle_interaction(gameplay_input);
+    handle_aircraft_interaction(gameplay_input);
 
     PlayerControllerSystem::update_camera_rig(local_player, gameplay_input, touch_input_mode, static_cast<float>(frame_dt));
     if (runtime_options.splitscreen) {
@@ -629,7 +779,8 @@ void Engine::tick(double frame_dt) {
             step_input.jump_pressed = false;
         }
         update_vehicle_sim(step_input, static_cast<float>(fixed.fixed_dt));
-        if (vehicle.occupied) {
+        update_aircraft_sim(step_input, static_cast<float>(fixed.fixed_dt));
+        if (vehicle.occupied || aircraft.occupied) {
             last_collision_debug = PlayerCollisionDebug{};
         } else {
             last_collision_debug = PlayerControllerSystem::simulate_fixed(
@@ -742,95 +893,7 @@ void Engine::tick(double frame_dt) {
         }
     }
 
-    const float remote_lerp = std::clamp(static_cast<float>(frame_dt) * 12.0f, 0.0f, 1.0f);
-    const float remote_rot_lerp = std::clamp(static_cast<float>(frame_dt) * 9.0f, 0.0f, 1.0f);
-    uint32_t max_remote_sample_tick = 0;
-    bool have_remote_samples = false;
-    for (const auto &[player_id, render_player] : remote_render_players) {
-        (void)player_id;
-        if (!render_player.samples.empty()) {
-            max_remote_sample_tick = std::max(max_remote_sample_tick, render_player.samples.back().server_tick);
-            have_remote_samples = true;
-        }
-    }
-    if (have_remote_samples) {
-        const double desired_tick = static_cast<double>(
-            max_remote_sample_tick > k_remote_interp_delay_ticks ? (max_remote_sample_tick - k_remote_interp_delay_ticks) : 0u);
-        if (!remote_interp_tick_cursor_initialized) {
-            remote_interp_tick_cursor = desired_tick;
-            remote_interp_tick_cursor_initialized = true;
-        } else {
-            remote_interp_tick_cursor += frame_dt / fixed.fixed_dt;
-            if (remote_interp_tick_cursor < (desired_tick - 20.0)) {
-                remote_interp_tick_cursor = desired_tick;
-            }
-            remote_interp_tick_cursor = std::min(remote_interp_tick_cursor, desired_tick + 2.0);
-        }
-    } else {
-        remote_interp_tick_cursor_initialized = false;
-    }
-
-    for (auto &[player_id, render_player] : remote_render_players) {
-        (void)player_id;
-        const double target_tick_f = remote_interp_tick_cursor_initialized
-            ? remote_interp_tick_cursor
-            : static_cast<double>(render_player.samples.empty() ? 0u : render_player.samples.back().server_tick);
-        while (render_player.samples.size() >= 3 &&
-               static_cast<double>(render_player.samples[1].server_tick) <= target_tick_f) {
-            render_player.samples.pop_front();
-        }
-
-        glm::vec3 predicted_target = render_player.target_position + render_player.velocity * 0.035f;
-        if (!render_player.samples.empty()) {
-                if (render_player.samples.size() >= 2) {
-                    const auto &a = render_player.samples[0];
-                    const auto &b = render_player.samples[1];
-                if (target_tick_f <= static_cast<double>(a.server_tick)) {
-                    predicted_target = a.position;
-                    render_player.velocity = a.velocity;
-                    render_player.anim_state = a.anim_state;
-                    render_player.anim_phase = a.anim_phase;
-                    render_player.anim_blend = a.anim_blend;
-                } else if (target_tick_f <= static_cast<double>(b.server_tick)) {
-                    const float dt_ticks = static_cast<float>(std::max<uint32_t>(1u, b.server_tick - a.server_tick));
-                    const float t = std::clamp(static_cast<float>(target_tick_f - static_cast<double>(a.server_tick)) / dt_ticks, 0.0f, 1.0f);
-                    predicted_target = glm::mix(a.position, b.position, t);
-                    render_player.velocity = glm::mix(a.velocity, b.velocity, t);
-                    render_player.anim_state = (t < 0.5f) ? a.anim_state : b.anim_state;
-                    render_player.anim_phase = glm::mix(a.anim_phase, b.anim_phase, t);
-                    render_player.anim_blend = glm::mix(a.anim_blend, b.anim_blend, t);
-                } else {
-                    const auto &latest = render_player.samples.back();
-                    const double ahead_ticks = std::max(0.0, target_tick_f - static_cast<double>(latest.server_tick));
-                    const float extrap = std::clamp(static_cast<float>(ahead_ticks * fixed.fixed_dt), 0.0f, 0.10f);
-                    predicted_target = latest.position + latest.velocity * extrap;
-                    render_player.velocity = latest.velocity;
-                    render_player.anim_state = latest.anim_state;
-                    render_player.anim_phase = latest.anim_phase;
-                    render_player.anim_blend = latest.anim_blend;
-                }
-            } else {
-                const auto &latest = render_player.samples.back();
-                predicted_target = latest.position;
-                render_player.velocity = latest.velocity;
-                render_player.anim_state = latest.anim_state;
-                render_player.anim_phase = latest.anim_phase;
-                render_player.anim_blend = latest.anim_blend;
-            }
-            render_player.target_position = predicted_target;
-        }
-
-        const float err = glm::length(render_player.position - predicted_target);
-        if (err > 4.0f) {
-            render_player.position = predicted_target;
-        } else {
-            render_player.position = glm::mix(render_player.position, predicted_target, remote_lerp);
-        }
-        render_player.orientation = glm::normalize(glm::slerp(
-            render_player.orientation,
-            render_player.target_orientation,
-            remote_rot_lerp));
-    }
+    update_remote_interpolation(frame_dt);
 
     render_stats.net_connected = net_client.is_connected();
     render_stats.net_local_player_id = local_player.network_id;
@@ -889,6 +952,11 @@ void Engine::build_static_scene() {
         0.8f,
         1.2f);
     vehicle.position.y = ground_y + k_vehicle_wheel_radius;
+
+    aircraft.position = glm::vec3(18.0f, ground_y + 6.0f, 10.0f);
+    aircraft.yaw = -0.2f;
+    aircraft.speed = 8.0f;
+    aircraft.occupied = false;
 }
 
 void Engine::update_third_person_camera(PlayerEntity &player, Camera &out_camera) {
@@ -922,12 +990,19 @@ glm::vec3 Engine::vehicle_seat_world_position() const {
     return vehicle.position + rotate_y(glm::vec3(0.0f, k_vehicle_body_height + 0.5f, 0.0f), vehicle.yaw);
 }
 
+glm::vec3 Engine::aircraft_seat_world_position() const {
+    return aircraft.position + rotate_y(glm::vec3(0.0f, 0.8f, 0.0f), aircraft.yaw);
+}
+
 void Engine::handle_vehicle_interaction(const InputState &input) {
     if (!k_vehicle_feature_enabled) {
         vehicle.occupied = false;
         return;
     }
     if (!input.interact_pressed || gui_menu.open() || !gameplay_started) {
+        return;
+    }
+    if (aircraft.occupied) {
         return;
     }
 
@@ -954,6 +1029,41 @@ void Engine::handle_vehicle_interaction(const InputState &input) {
     }
 }
 
+void Engine::handle_aircraft_interaction(const InputState &input) {
+    if (!k_vehicle_feature_enabled) {
+        aircraft.occupied = false;
+        return;
+    }
+    if (!input.interact_pressed || gui_menu.open() || !gameplay_started) {
+        return;
+    }
+    if (vehicle.occupied) {
+        return;
+    }
+
+    if (aircraft.occupied) {
+        aircraft.occupied = false;
+        const glm::vec3 exit_candidate = aircraft.position + rotate_y(glm::vec3(-2.5f, -1.0f, -1.2f), aircraft.yaw);
+        local_player.transform.position = exit_candidate;
+        local_player.transform.position.y = collision_world.find_spawn_height(
+            glm::vec2(local_player.transform.position.x, local_player.transform.position.z),
+            local_player.controller.capsuleRadius,
+            local_player.controller.capsuleHeight) +
+            0.05f;
+        local_player.controller.velocity = glm::vec3(0.0f);
+        local_player.controller.grounded = true;
+        return;
+    }
+
+    const float d = glm::length(local_player.transform.position - aircraft.position);
+    if (d <= k_aircraft_interact_radius) {
+        aircraft.occupied = true;
+        local_player.transform.position = aircraft_seat_world_position();
+        local_player.controller.velocity = glm::vec3(0.0f);
+        local_player.controller.grounded = false;
+    }
+}
+
 void Engine::update_vehicle_sim(const InputState &input, float dt) {
     if (!k_vehicle_feature_enabled) {
         vehicle.occupied = false;
@@ -965,6 +1075,9 @@ void Engine::update_vehicle_sim(const InputState &input, float dt) {
         if (std::fabs(vehicle.speed) < 0.02f) {
             vehicle.speed = 0.0f;
         }
+        return;
+    }
+    if (aircraft.occupied) {
         return;
     }
 
@@ -1001,6 +1114,54 @@ void Engine::update_vehicle_sim(const InputState &input, float dt) {
     local_player.transform.rotation = glm::angleAxis(vehicle.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
     local_player.controller.velocity = glm::vec3(0.0f);
     local_player.controller.grounded = true;
+    local_player.anim_state = PlayerAnimState::Idle;
+    local_player.anim_blend = 0.0f;
+}
+
+void Engine::update_aircraft_sim(const InputState &input, float dt) {
+    if (!k_vehicle_feature_enabled) {
+        aircraft.occupied = false;
+        return;
+    }
+    if (!aircraft.occupied) {
+        return;
+    }
+
+    const float throttle = input.move.y;
+    const float steer = input.move.x;
+    float climb = 0.0f;
+    if (input.jump_held) {
+        climb += 1.0f;
+    }
+    if (input.crouch_held) {
+        climb -= 1.0f;
+    }
+
+    constexpr float k_accel = 10.0f;
+    constexpr float k_drag = 1.8f;
+    constexpr float k_min_speed = 5.5f;
+    constexpr float k_max_speed = 24.0f;
+    constexpr float k_turn_rate = 1.2f;
+    constexpr float k_climb_rate = 8.0f;
+
+    aircraft.speed += throttle * k_accel * dt;
+    aircraft.speed -= (aircraft.speed - k_min_speed) * std::min(1.0f, k_drag * dt);
+    aircraft.speed = std::clamp(aircraft.speed, k_min_speed, k_max_speed);
+    aircraft.yaw += steer * k_turn_rate * dt;
+
+    const glm::vec3 fwd = rotate_y(glm::vec3(0.0f, 0.0f, 1.0f), aircraft.yaw);
+    aircraft.position += fwd * (aircraft.speed * dt);
+    aircraft.position.y += climb * k_climb_rate * dt;
+    const float min_alt = collision_world.find_spawn_height(
+        glm::vec2(aircraft.position.x, aircraft.position.z), 1.0f, 1.8f) + 3.5f;
+    aircraft.position.y = std::max(min_alt, aircraft.position.y);
+    aircraft.position.x = std::clamp(aircraft.position.x, -26.0f, 52.0f);
+    aircraft.position.z = std::clamp(aircraft.position.z, -26.0f, 52.0f);
+
+    local_player.transform.position = aircraft_seat_world_position();
+    local_player.transform.rotation = glm::angleAxis(aircraft.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+    local_player.controller.velocity = fwd * aircraft.speed;
+    local_player.controller.grounded = false;
     local_player.anim_state = PlayerAnimState::Idle;
     local_player.anim_blend = 0.0f;
 }
@@ -1066,12 +1227,15 @@ void Engine::refresh_overlay_text() {
         const float vehicle_distance = k_vehicle_feature_enabled
             ? glm::length(local_player.transform.position - vehicle.position)
             : 0.0f;
+        const float aircraft_distance = k_vehicle_feature_enabled
+            ? glm::length(local_player.transform.position - aircraft.position)
+            : 0.0f;
         const NetDebugStats client_net_stats = net_client.debug_stats();
         const NetDebugStats server_net_stats = local_server_running ? local_server.debug_stats() : NetDebugStats{};
         std::snprintf(
             text,
             sizeof(text),
-            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f",
+            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f\nAIR %s SPD %.1f DIST %.1f",
             render_stats.fps,
             last_frame_dt,
             fixed.fixed_dt,
@@ -1118,7 +1282,10 @@ void Engine::refresh_overlay_text() {
             local_player.anim_blend,
             local_player.anim_phase,
             k_vehicle_feature_enabled ? (vehicle.occupied ? "ONBOARD" : "ON FOOT") : "DISABLED",
-            vehicle_distance);
+            vehicle_distance,
+            k_vehicle_feature_enabled ? (aircraft.occupied ? "ONBOARD" : "ON FOOT") : "DISABLED",
+            aircraft.speed,
+            aircraft_distance);
         append_screen_rect(-0.98f, 0.98f, 0.10f, 0.08f, glm::vec3(0.05f, 0.07f, 0.10f));
         append_screen_rect(-0.97f, 0.97f, 0.09f, 0.10f, glm::vec3(0.09f, 0.11f, 0.16f));
         append_mesh(scene.debug_screen, build_screen_text_mesh(text, -0.95f, 0.92f, 0.0049f, glm::vec3(0.95f, 0.95f, 0.82f)));
@@ -1242,6 +1409,48 @@ void Engine::rebuild_dynamic_debug_mesh() {
         append_mesh(
             scene.debug_world,
             build_debug_sphere_mesh(vehicle.position + glm::vec3(0.0f, 4.35f, 0.0f), 0.22f, glm::vec3(1.0f, 0.25f, 0.9f)));
+
+        const glm::vec3 aircraft_color = aircraft.occupied ? glm::vec3(0.12f, 0.84f, 0.95f) : glm::vec3(0.42f, 0.70f, 0.95f);
+        auto append_aircraft_box = [&](const glm::vec3 &local_center, const glm::vec3 &half_extent) {
+            const glm::vec3 lc[8] = {
+                {-half_extent.x, -half_extent.y, -half_extent.z},
+                {half_extent.x, -half_extent.y, -half_extent.z},
+                {-half_extent.x, half_extent.y, -half_extent.z},
+                {half_extent.x, half_extent.y, -half_extent.z},
+                {-half_extent.x, -half_extent.y, half_extent.z},
+                {half_extent.x, -half_extent.y, half_extent.z},
+                {-half_extent.x, half_extent.y, half_extent.z},
+                {half_extent.x, half_extent.y, half_extent.z},
+            };
+            glm::vec3 p[8]{};
+            for (int i = 0; i < 8; ++i) {
+                p[i] = aircraft.position + rotate_y(local_center + lc[i], aircraft.yaw);
+            }
+            append_vehicle_quad(p[0], p[1], p[3], p[2], aircraft_color);
+            append_vehicle_quad(p[4], p[6], p[7], p[5], aircraft_color);
+            append_vehicle_quad(p[0], p[2], p[6], p[4], aircraft_color);
+            append_vehicle_quad(p[1], p[5], p[7], p[3], aircraft_color);
+            append_vehicle_quad(p[2], p[3], p[7], p[6], aircraft_color);
+            append_vehicle_quad(p[0], p[4], p[5], p[1], aircraft_color);
+        };
+
+        append_aircraft_box(
+            glm::vec3(0.0f, k_aircraft_body_height, 0.0f),
+            glm::vec3(k_aircraft_body_width * 0.5f, k_aircraft_body_height, k_aircraft_body_length * 0.5f));
+        append_aircraft_box(
+            glm::vec3(0.0f, k_aircraft_body_height + 0.1f, -0.2f),
+            glm::vec3(2.1f, 0.08f, 0.36f));
+        append_aircraft_box(
+            glm::vec3(0.0f, k_aircraft_body_height + 0.5f, -1.0f),
+            glm::vec3(0.16f, 0.44f, 0.16f));
+
+        append_mesh(
+            scene.debug_world,
+            build_debug_line_mesh(
+                aircraft.position,
+                aircraft.position + rotate_y(glm::vec3(0.0f, 0.0f, 4.0f), aircraft.yaw),
+                0.05f,
+                glm::vec3(0.2f, 0.9f, 1.0f)));
     }
 
     if (!runtime_options.debug_collision_only) {

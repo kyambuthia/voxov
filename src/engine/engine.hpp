@@ -67,6 +67,12 @@ private:
         float speed = 0.0f;
         bool occupied = false;
     };
+    struct AircraftState {
+        glm::vec3 position = glm::vec3(16.0f, 8.0f, 16.0f);
+        float yaw = 0.0f;
+        float speed = 8.0f;
+        bool occupied = false;
+    };
     enum class ReconcileMode : uint8_t {
         Off = 0,
         Threshold = 1,
@@ -75,8 +81,11 @@ private:
 
     void build_static_scene();
     void handle_vehicle_interaction(const InputState &input);
+    void handle_aircraft_interaction(const InputState &input);
     void update_vehicle_sim(const InputState &input, float dt);
+    void update_aircraft_sim(const InputState &input, float dt);
     glm::vec3 vehicle_seat_world_position() const;
+    glm::vec3 aircraft_seat_world_position() const;
     void rebuild_dynamic_debug_mesh();
     void refresh_overlay_text();
     void update_third_person_camera(PlayerEntity &player, Camera &out_camera);
@@ -85,6 +94,9 @@ private:
     void start_local_server(uint16_t port, bool loopback_only);
     void record_prediction_history(uint32_t sim_tick, const InputState &step_input);
     void reconcile_local_player_from_snapshot(uint32_t current_sim_tick);
+    void apply_runtime_toggles();
+    void process_menu_actions(const InputState &primary_input);
+    void update_remote_interpolation(double frame_dt);
 
     FixedStep fixed;
     Renderer renderer;
@@ -154,4 +166,5 @@ private:
     PlayerCollisionDebug last_collision_debug_secondary{};
     RenderMesh frozen_debug_world{};
     VehicleState vehicle{};
+    AircraftState aircraft{};
 };

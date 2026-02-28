@@ -7,6 +7,7 @@
 #include <cstdio>
 #include <cmath>
 #include <chrono>
+#include <algorithm>
 
 namespace {
 #pragma pack(push, 1)
@@ -33,6 +34,11 @@ struct ChunkStatePacket {
 struct AssignPlayerPacket {
     NetPacketHeader header{};
     NetAssignPlayer payload{};
+};
+
+struct ProtocolInfoPacket {
+    NetPacketHeader header{};
+    NetProtocolInfo payload{};
 };
 
 struct PlayerStatePacket {
@@ -91,6 +97,34 @@ uint64_t now_ms() {
 
 int32_t NetServer::chunk_key(NetChunkCoord coord) const {
     return (static_cast<int32_t>(coord.x) << 16) ^ static_cast<uint16_t>(coord.z);
+}
+
+bool NetServer::should_replicate_player_state(const ClientState &observer, const ClientState &subject) const {
+    if (observer.player_id == 0 || subject.player_id == 0) {
+        return false;
+    }
+    if (observer.player_id == subject.player_id) {
+        return false;
+    }
+
+    // Keep replication aligned with chunk-interest requests so distant players
+    // don't consume bandwidth in large sessions.
+    constexpr float k_chunk_world_size = 16.0f;
+    const int32_t subject_chunk_x = static_cast<int32_t>(std::floor(subject.state.x / k_chunk_world_size));
+    const int32_t subject_chunk_z = static_cast<int32_t>(std::floor(subject.state.z / k_chunk_world_size));
+    const int32_t dx_chunks = std::abs(subject_chunk_x - observer.interest.center_x);
+    const int32_t dz_chunks = std::abs(subject_chunk_z - observer.interest.center_z);
+    const int32_t allowed_chunk_delta = static_cast<int32_t>(observer.interest.radius) + 1;
+    if (dx_chunks <= allowed_chunk_delta && dz_chunks <= allowed_chunk_delta) {
+        return true;
+    }
+
+    const float dx = subject.state.x - observer.state.x;
+    const float dz = subject.state.z - observer.state.z;
+    const float max_distance = std::max(
+        48.0f,
+        (static_cast<float>(observer.interest.radius) + 1.0f) * k_chunk_world_size * 1.5f);
+    return ((dx * dx) + (dz * dz)) <= (max_distance * max_distance);
 }
 
 void NetServer::send_chunk_state(ENetPeer *peer, ClientState &state, NetChunkCoord coord, uint32_t version) {
@@ -216,17 +250,23 @@ void NetServer::broadcast_player_states() {
     }
     last_player_broadcast_ms = now;
 
-    for (auto &[peer_ptr, state] : clients) {
-        (void)peer_ptr;
-        PlayerStatePacket packet{};
-        packet.header = net_make_header(NetMsgType::PlayerState, static_cast<uint8_t>(sizeof(packet.state)));
-        packet.state = state.state;
-        packet.state.sequence = state.next_player_state_sequence++;
+    for (auto &[subject_peer, subject] : clients) {
+        (void)subject_peer;
+        const uint32_t state_sequence = subject.next_player_state_sequence++;
+        for (auto &[observer_peer, observer] : clients) {
+            if (!should_replicate_player_state(observer, subject)) {
+                continue;
+            }
+            PlayerStatePacket packet{};
+            packet.header = net_make_header(NetMsgType::PlayerState, static_cast<uint8_t>(sizeof(packet.state)));
+            packet.state = subject.state;
+            packet.state.sequence = state_sequence;
 
-        ENetPacket *out = enet_packet_create(&packet, sizeof(packet), 0);
-        enet_host_broadcast(server, static_cast<uint8_t>(NetChannel::Unreliable), out);
-        record_tx(sizeof(packet), static_cast<uint32_t>(clients.size()));
-        debug_counters.player_state_broadcasts_window += static_cast<uint32_t>(clients.size());
+            ENetPacket *out = enet_packet_create(&packet, sizeof(packet), 0);
+            enet_peer_send(observer_peer, static_cast<uint8_t>(NetChannel::Unreliable), out);
+            record_tx(sizeof(packet));
+            debug_counters.player_state_broadcasts_window += 1;
+        }
     }
 }
 
@@ -398,6 +438,17 @@ void NetServer::pump() {
             ENetPacket *out = enet_packet_create(&assign, sizeof(assign), ENET_PACKET_FLAG_RELIABLE);
             enet_peer_send(event.peer, static_cast<uint8_t>(NetChannel::Reliable), out);
             record_tx(sizeof(assign));
+
+            ProtocolInfoPacket proto{};
+            proto.header = net_make_header(NetMsgType::ProtocolInfo, static_cast<uint8_t>(sizeof(proto.payload)));
+            proto.payload.protocol_version = k_net_protocol_version;
+            proto.payload.feature_flags =
+                net_feature(NetFeatureFlags::InterestFilteredReplication) |
+                net_feature(NetFeatureFlags::ChunkStreaming);
+            proto.payload.server_tick_hz = 60;
+            ENetPacket *proto_packet = enet_packet_create(&proto, sizeof(proto), ENET_PACKET_FLAG_RELIABLE);
+            enet_peer_send(event.peer, static_cast<uint8_t>(NetChannel::Reliable), proto_packet);
+            record_tx(sizeof(proto));
             break;
         }
         case ENET_EVENT_TYPE_DISCONNECT:

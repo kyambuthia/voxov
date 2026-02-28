@@ -49,11 +49,26 @@ enum class NetMsgType : uint8_t {
     ChunkState = 4,
     AssignPlayer = 5,
     PlayerState = 6,
-    PlayerRemove = 7
+    PlayerRemove = 7,
+    ProtocolInfo = 8
 };
 
 constexpr uint32_t k_net_packet_magic = 0x564F5832u; // "VOX2"
 constexpr uint16_t k_net_protocol_version = 1u;
+
+enum class NetFeatureFlags : uint16_t {
+    None = 0,
+    InterestFilteredReplication = 1u << 0u,
+    ChunkStreaming = 1u << 1u
+};
+
+inline uint16_t net_feature(NetFeatureFlags feature) {
+    return static_cast<uint16_t>(feature);
+}
+
+inline bool net_feature_set(uint16_t flags, NetFeatureFlags feature) {
+    return (flags & net_feature(feature)) != 0;
+}
 
 #pragma pack(push, 1)
 struct NetPacketHeader {
@@ -78,6 +93,13 @@ inline bool net_header_basic_valid(const NetPacketHeader &header) {
 
 struct NetAssignPlayer {
     uint32_t player_id = 0;
+};
+
+struct NetProtocolInfo {
+    uint16_t protocol_version = k_net_protocol_version;
+    uint16_t feature_flags = 0;
+    uint16_t server_tick_hz = 60;
+    uint16_t reserved = 0;
 };
 
 struct NetPlayerState {

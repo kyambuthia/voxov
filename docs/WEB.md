@@ -2,7 +2,12 @@
 
 ## Status
 
-Web support is currently an MVP target with a minimal runtime loop and WebGL2 bring-up path.
+Web support is an active preview target with:
+
+- a playable local movement loop
+- menu/devhud flow parity with desktop controls
+- WebGL2 runtime bring-up
+- optional JS transport hooks for host/join state exchange
 
 ## Prerequisites
 
@@ -49,5 +54,9 @@ Then open:
 
 ## Notes
 
-1. This MVP validates platform/bootstrap/render loop on web.
-2. Full gameplay/render parity with desktop/mobile is future work.
+1. Attach optional transport hooks in JS:
+   - `Module.__voxovNetHost()`
+   - `Module.__voxovNetJoin()`
+   - `Module.__voxovNetSendLocal(x,y,z,yaw)`
+   - `Module.__voxovNetRemoteCount()`
+2. Full renderer parity with desktop Vulkan/OpenGL remains future work.

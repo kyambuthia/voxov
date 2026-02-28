@@ -21,6 +21,7 @@ public:
     bool poll_snapshot(NetSnapshot &out_snapshot);
     bool poll_chunk_state(NetChunkState &out_state);
     uint32_t local_player_id() const;
+    NetProtocolInfo protocol_info() const;
     bool is_connected() const;
     bool is_initialized() const;
     NetDebugStats debug_stats() const;
@@ -57,6 +58,7 @@ private:
     uint32_t assigned_player_id = 0;
     std::unordered_map<uint32_t, NetPlayerState> replicated_players;
     std::unordered_map<uint32_t, uint32_t> replicated_player_sequences;
+    NetProtocolInfo server_protocol_info{};
     bool has_pending_interest = false;
     NetChunkInterest pending_interest{};
     DebugCounters debug_counters{};

@@ -34,6 +34,11 @@ struct AssignPlayerPacket {
     NetAssignPlayer payload{};
 };
 
+struct ProtocolInfoPacket {
+    NetPacketHeader header{};
+    NetProtocolInfo payload{};
+};
+
 struct PlayerStatePacket {
     NetPacketHeader header{};
     NetPlayerState state{};
@@ -158,6 +163,7 @@ void NetClient::shutdown() {
     connected = false;
     has_pending_interest = false;
     has_snapshot = false;
+    server_protocol_info = NetProtocolInfo{};
     has_last_snapshot_sequence = false;
     last_snapshot_sequence = 0;
     if (client) {
@@ -209,6 +215,7 @@ void NetClient::pump() {
             replicated_players.clear();
             replicated_player_sequences.clear();
             has_snapshot = false;
+            server_protocol_info = NetProtocolInfo{};
             has_last_snapshot_sequence = false;
             last_snapshot_sequence = 0;
             continue;
@@ -271,6 +278,15 @@ void NetClient::pump() {
                                 }
                                 recognized_message = true;
                             }
+                        }
+                        break;
+                    case NetMsgType::ProtocolInfo:
+                        if (header.payload_size == sizeof(NetProtocolInfo) &&
+                            event.packet->dataLength == sizeof(ProtocolInfoPacket)) {
+                            ProtocolInfoPacket packet{};
+                            std::memcpy(&packet, event.packet->data, sizeof(packet));
+                            server_protocol_info = packet.payload;
+                            recognized_message = true;
                         }
                         break;
                     case NetMsgType::PlayerRemove:
@@ -349,6 +365,10 @@ bool NetClient::poll_chunk_state(NetChunkState &out_state) {
 
 uint32_t NetClient::local_player_id() const {
     return assigned_player_id;
+}
+
+NetProtocolInfo NetClient::protocol_info() const {
+    return server_protocol_info;
 }
 
 bool NetClient::is_connected() const {

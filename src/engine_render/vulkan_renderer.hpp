@@ -52,6 +52,7 @@ private:
     void destroy_scene_buffers();
     void create_depth_resources();
     void record_command_buffer(VkCommandBuffer cmd, uint32_t image_index);
+    uint64_t mesh_content_hash(const RenderMesh &mesh) const;
 
     GLFWwindow *window = nullptr;
     VkInstance instance = VK_NULL_HANDLE;
@@ -118,4 +119,7 @@ private:
     uint32_t current_image_index = 0;
     uint32_t frame_index = 0;
     bool current_debug_xray = false;
+    uint64_t last_debug_world_hash = 0;
+    uint64_t last_debug_screen_hash = 0;
+    bool has_dynamic_mesh_hash = false;
 };

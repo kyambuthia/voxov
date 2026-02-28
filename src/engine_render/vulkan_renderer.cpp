@@ -3,6 +3,7 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
+#include <cstdint>
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
@@ -77,6 +78,38 @@ std::vector<char> read_file_with_fallback(const std::vector<std::string> &candid
 
     throw std::runtime_error("failed to open shader from known paths");
 }
+}
+
+uint64_t VulkanRenderer::mesh_content_hash(const RenderMesh &mesh) const {
+    constexpr uint64_t k_fnv_offset = 1469598103934665603ull;
+    constexpr uint64_t k_fnv_prime = 1099511628211ull;
+    auto hash_bytes = [](const uint8_t *data, size_t len, uint64_t seed) {
+        uint64_t h = seed;
+        for (size_t i = 0; i < len; ++i) {
+            h ^= static_cast<uint64_t>(data[i]);
+            h *= k_fnv_prime;
+        }
+        return h;
+    };
+
+    uint64_t h = k_fnv_offset;
+    const size_t vertex_count = mesh.vertices.size();
+    const size_t index_count = mesh.indices.size();
+    h = hash_bytes(reinterpret_cast<const uint8_t *>(&vertex_count), sizeof(size_t), h);
+    h = hash_bytes(reinterpret_cast<const uint8_t *>(&index_count), sizeof(size_t), h);
+    if (!mesh.vertices.empty()) {
+        h = hash_bytes(
+            reinterpret_cast<const uint8_t *>(mesh.vertices.data()),
+            mesh.vertices.size() * sizeof(RenderVertex),
+            h);
+    }
+    if (!mesh.indices.empty()) {
+        h = hash_bytes(
+            reinterpret_cast<const uint8_t *>(mesh.indices.data()),
+            mesh.indices.size() * sizeof(uint32_t),
+            h);
+    }
+    return h;
 }
 
 void VulkanRenderer::init(void *window_handle) {
@@ -168,10 +201,21 @@ void VulkanRenderer::upload_scene(const RenderScene &scene) {
     static_index_count = static_cast<uint32_t>(static_indices.size());
     debug_world_index_count = static_cast<uint32_t>(debug_world_indices.size());
     debug_screen_index_count = static_cast<uint32_t>(debug_screen_indices.size());
+    last_debug_world_hash = mesh_content_hash(scene.debug_world);
+    last_debug_screen_hash = mesh_content_hash(scene.debug_screen);
+    has_dynamic_mesh_hash = true;
     create_scene_buffers();
 }
 
 void VulkanRenderer::update_dynamic_meshes(const RenderMesh &debug_world, const RenderMesh &debug_screen) {
+    const uint64_t world_hash = mesh_content_hash(debug_world);
+    const uint64_t screen_hash = mesh_content_hash(debug_screen);
+    if (has_dynamic_mesh_hash &&
+        world_hash == last_debug_world_hash &&
+        screen_hash == last_debug_screen_hash) {
+        return;
+    }
+
     debug_world_vertices = debug_world.vertices;
     debug_world_indices = debug_world.indices;
     debug_world_index_count = static_cast<uint32_t>(debug_world_indices.size());
@@ -181,6 +225,9 @@ void VulkanRenderer::update_dynamic_meshes(const RenderMesh &debug_world, const 
 
     scene_data.debug_world = debug_world;
     scene_data.debug_screen = debug_screen;
+    last_debug_world_hash = world_hash;
+    last_debug_screen_hash = screen_hash;
+    has_dynamic_mesh_hash = true;
     if (device == VK_NULL_HANDLE) {
         return;
     }

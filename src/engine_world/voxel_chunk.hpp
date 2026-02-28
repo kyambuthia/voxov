@@ -12,6 +12,7 @@ public:
     static constexpr int CHUNK_Z = 16;
 
     void generate_heightmap_terrain();
+    void generate_heightmap_terrain_seeded(uint64_t world_seed, int32_t chunk_x, int32_t chunk_z);
     void generate_flat_ground(int ground_y);
     bool solid(int x, int y, int z) const;
     void set_solid(int x, int y, int z, bool value);

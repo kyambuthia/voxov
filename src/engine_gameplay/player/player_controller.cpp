@@ -80,7 +80,9 @@ glm::vec2 find_flat_spawn_xz(const VoxelCollisionWorld &collision_world, glm::ve
     return best;
 }
 
-float anim_cycle_rate(PlayerAnimState state) {
+}
+
+float player_anim_cycle_rate(PlayerAnimState state) {
     switch (state) {
     case PlayerAnimState::Walk:
         return 5.0f;
@@ -96,7 +98,7 @@ float anim_cycle_rate(PlayerAnimState state) {
     }
 }
 
-float anim_blend_target(PlayerAnimState state) {
+float player_anim_blend_target(PlayerAnimState state) {
     switch (state) {
     case PlayerAnimState::Walk:
         return 0.5f;
@@ -110,7 +112,6 @@ float anim_blend_target(PlayerAnimState state) {
     default:
         return 0.0f;
     }
-}
 }
 
 PlayerEntity PlayerControllerSystem::spawn_player(const VoxelCollisionWorld &collision_world) {
@@ -303,12 +304,12 @@ void PlayerControllerSystem::update_animation_state(PlayerEntity &player, const 
         // Keep leg cycle continuous but avoid sudden offset on state transitions.
         player.anim_phase = std::fmod(player.anim_phase * 0.6f, 6.28318530718f);
     }
-    player.anim_phase += anim_cycle_rate(player.anim_state) * dt;
+    player.anim_phase += player_anim_cycle_rate(player.anim_state) * dt;
     if (player.anim_phase > 6.28318530718f) {
         player.anim_phase = std::fmod(player.anim_phase, 6.28318530718f);
     }
 
-    float target_blend = anim_blend_target(player.anim_state);
+    float target_blend = player_anim_blend_target(player.anim_state);
     if (player.anim_state == PlayerAnimState::Walk || player.anim_state == PlayerAnimState::Run) {
         target_blend = std::clamp(target_blend * (0.55f + speed_ratio * 0.9f), 0.0f, 1.0f);
     }

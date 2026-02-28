@@ -2,6 +2,8 @@
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_assets/skinned_model.hpp"
 #include "engine_gameplay/animation/skeletal_animator.hpp"
+#include "engine_gameplay/player/player_controller.hpp"
+#include "engine_gameplay/player/player_visuals.hpp"
 #ifndef GLM_ENABLE_EXPERIMENTAL
 #define GLM_ENABLE_EXPERIMENTAL
 #endif
@@ -76,44 +78,8 @@ const char *egl_error_to_string(EGLint err) {
     }
 }
 
-float mobile_anim_cycle_rate(PlayerAnimState state) {
-    switch (state) {
-    case PlayerAnimState::Walk:
-        return 5.0f;
-    case PlayerAnimState::Run:
-        return 8.0f;
-    case PlayerAnimState::Crawl:
-        return 2.8f;
-    case PlayerAnimState::Jump:
-        return 3.0f;
-    case PlayerAnimState::Idle:
-    default:
-        return 1.0f;
-    }
-}
-
-float mobile_anim_blend_target(PlayerAnimState state) {
-    switch (state) {
-    case PlayerAnimState::Walk:
-        return 0.5f;
-    case PlayerAnimState::Run:
-        return 1.0f;
-    case PlayerAnimState::Crawl:
-        return 0.35f;
-    case PlayerAnimState::Jump:
-        return 0.75f;
-    case PlayerAnimState::Idle:
-    default:
-        return 0.0f;
-    }
-}
-
 glm::vec3 player_color_from_id(uint32_t player_id) {
-    const uint32_t h = (player_id * 2654435761u) ^ 0x9e3779b9u;
-    const float r = 0.25f + 0.65f * static_cast<float>((h >> 0) & 0xFF) / 255.0f;
-    const float g = 0.25f + 0.65f * static_cast<float>((h >> 8) & 0xFF) / 255.0f;
-    const float b = 0.25f + 0.65f * static_cast<float>((h >> 16) & 0xFF) / 255.0f;
-    return glm::vec3(r, g, b);
+    return player_color_from_network_id(player_id);
 }
 
 GLuint compile_shader(GLenum type, const char *src) {
@@ -1352,11 +1318,11 @@ struct AndroidRenderer {
             }
         }
         player_anim_state = next_state;
-        player_anim_phase += mobile_anim_cycle_rate(player_anim_state) * static_cast<float>(dt_seconds);
+        player_anim_phase += player_anim_cycle_rate(player_anim_state) * static_cast<float>(dt_seconds);
         if (player_anim_phase > 6.28318530718f) {
             player_anim_phase = std::fmod(player_anim_phase, 6.28318530718f);
         }
-        const float blend_target = mobile_anim_blend_target(player_anim_state);
+        const float blend_target = player_anim_blend_target(player_anim_state);
         const float blend_lerp = std::clamp(static_cast<float>(dt_seconds) * 10.0f, 0.0f, 1.0f);
         player_anim_blend += (blend_target - player_anim_blend) * blend_lerp;
 

@@ -9,7 +9,6 @@
 
 #include <glm/gtx/quaternion.hpp>
 #include <glm/gtx/transform.hpp>
-#include <glm/gtx/transform.hpp>
 
 namespace {
 bool str_contains_ci(const std::string &haystack, const char *needle) {

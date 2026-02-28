@@ -24,6 +24,9 @@ struct MovementDebug {
     glm::vec3 desired = glm::vec3(0.0f);
 };
 
+float player_anim_cycle_rate(PlayerAnimState state);
+float player_anim_blend_target(PlayerAnimState state);
+
 class PlayerControllerSystem {
 public:
     static PlayerEntity spawn_player(const VoxelCollisionWorld &collision_world);

@@ -2,6 +2,7 @@
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_net/net_common.hpp"
 #include "engine_physics/avbd_solver.hpp"
+#include "engine_physics/vehicle/vehicle_foundation.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
 #include "platform/android_platform.hpp"
@@ -229,6 +230,42 @@ void test_android_platform_state() {
     assert(!platform.active());
 }
 
+void test_vehicle_foundation_fixed_step_counter() {
+    FixedStepCounter counter(1.0 / 60.0);
+    const uint32_t s0 = counter.consume(1.0 / 30.0);
+    assert(s0 == 2);
+    const uint32_t s1 = counter.consume(1.0 / 120.0);
+    assert(s1 == 0 || s1 == 1);
+    assert(counter.tick() >= 2);
+    assert(counter.alpha() >= 0.0 && counter.alpha() <= 1.0);
+}
+
+void test_vehicle_kinematic_determinism() {
+    VehicleKinematicState a{};
+    VehicleKinematicState b{};
+    const VehicleControlInput input{1.0f, 0.0f, 0.4f, 0.0f};
+    const VehiclePhysicsTuning tuning{};
+    for (int i = 0; i < 240; ++i) {
+        integrate_vehicle_kinematics(a, input, tuning, 1.0f / 60.0f);
+        integrate_vehicle_kinematics(b, input, tuning, 1.0f / 60.0f);
+    }
+    assert(glm::length(a.position - b.position) < 1.0e-4f);
+    assert(std::isfinite(a.position.x) && std::isfinite(a.position.y) && std::isfinite(a.position.z));
+}
+
+void test_aircraft_kinematic_determinism() {
+    AircraftKinematicState a{};
+    AircraftKinematicState b{};
+    const AircraftControlInput input{0.8f, 0.2f, -0.1f, 0.05f};
+    const AircraftPhysicsTuning tuning{};
+    for (int i = 0; i < 300; ++i) {
+        integrate_aircraft_kinematics(a, input, tuning, 1.0f / 120.0f);
+        integrate_aircraft_kinematics(b, input, tuning, 1.0f / 120.0f);
+    }
+    assert(glm::length(a.position - b.position) < 1.0e-4f);
+    assert(std::isfinite(a.euler.x) && std::isfinite(a.euler.y) && std::isfinite(a.euler.z));
+}
+
 }
 
 int main() {
@@ -242,5 +279,8 @@ int main() {
     test_avbd_solver_lifecycle();
     test_web_platform_state();
     test_android_platform_state();
+    test_vehicle_foundation_fixed_step_counter();
+    test_vehicle_kinematic_determinism();
+    test_aircraft_kinematic_determinism();
     return 0;
 }

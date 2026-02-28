@@ -2,6 +2,8 @@
 
 #include "engine_render/render_backend.hpp"
 
+#include <glm/mat4x4.hpp>
+
 struct GLFWwindow;
 
 class GLRenderer : public IRenderBackend {
@@ -14,9 +16,15 @@ public:
     void end_frame() override;
 
 private:
-    void draw_mesh(const RenderMesh &mesh) const;
+    bool init_pipeline();
+    void shutdown_pipeline();
+    void draw_mesh(const RenderMesh &mesh, const glm::mat4 &mvp) const;
 
     GLFWwindow *window = nullptr;
     RenderScene scene;
     bool imgui_ready = false;
+    unsigned int program = 0;
+    unsigned int vertex_buffer = 0;
+    unsigned int index_buffer = 0;
+    int uniform_mvp = -1;
 };

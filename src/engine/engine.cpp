@@ -40,6 +40,7 @@ constexpr float k_aircraft_body_width = 1.1f;
 constexpr float k_aircraft_body_height = 0.55f;
 constexpr uint32_t k_remote_interp_delay_ticks = 6;
 constexpr size_t k_remote_sample_history_max = 16;
+constexpr float k_minigame_interact_radius = 2.6f;
 
 std::filesystem::path executable_directory() {
     namespace fs = std::filesystem;
@@ -253,6 +254,23 @@ void disable_gameplay_actions(InputState &input) {
     input.interact_pressed = false;
     input.sprint_held = false;
     input.crouch_held = false;
+}
+
+glm::vec3 minigame_color(MiniGameType type) {
+    switch (type) {
+    case MiniGameType::Snake:
+        return glm::vec3(0.15f, 0.85f, 0.25f);
+    case MiniGameType::Golf:
+        return glm::vec3(0.20f, 0.72f, 0.95f);
+    case MiniGameType::Tetris:
+        return glm::vec3(0.86f, 0.42f, 0.92f);
+    case MiniGameType::Racing:
+        return glm::vec3(1.0f, 0.55f, 0.20f);
+    case MiniGameType::TicTacToe:
+        return glm::vec3(0.95f, 0.95f, 0.32f);
+    default:
+        return glm::vec3(0.8f, 0.8f, 0.8f);
+    }
 }
 }
 
@@ -774,8 +792,13 @@ void Engine::tick(double frame_dt) {
         gameplay_input_secondary = gameplay_input;
     }
 
-    handle_vehicle_interaction(gameplay_input);
-    handle_aircraft_interaction(gameplay_input);
+    handle_minigame_interaction(gameplay_input);
+    if (!active_minigame.active) {
+        handle_vehicle_interaction(gameplay_input);
+        handle_aircraft_interaction(gameplay_input);
+    } else {
+        disable_gameplay_actions(gameplay_input);
+    }
 
     PlayerControllerSystem::update_camera_rig(local_player, gameplay_input, touch_input_mode, static_cast<float>(frame_dt));
     if (runtime_options.splitscreen) {
@@ -794,9 +817,16 @@ void Engine::tick(double frame_dt) {
         if (jump_consumed) {
             step_input.jump_pressed = false;
         }
-        update_vehicle_sim(step_input, static_cast<float>(fixed.fixed_dt));
-        update_aircraft_sim(step_input, static_cast<float>(fixed.fixed_dt));
-        if (vehicle.occupied || aircraft.occupied) {
+        if (active_minigame.active) {
+            update_active_minigame(step_input, static_cast<float>(fixed.fixed_dt));
+            last_collision_debug = PlayerCollisionDebug{};
+        } else {
+            update_vehicle_sim(step_input, static_cast<float>(fixed.fixed_dt));
+            update_aircraft_sim(step_input, static_cast<float>(fixed.fixed_dt));
+        }
+        if (active_minigame.active) {
+            last_collision_debug = PlayerCollisionDebug{};
+        } else if (vehicle.occupied || aircraft.occupied) {
             last_collision_debug = PlayerCollisionDebug{};
         } else {
             last_collision_debug = PlayerControllerSystem::simulate_fixed(
@@ -979,6 +1009,27 @@ void Engine::build_static_scene() {
         aircraft.position,
         glm::vec3(0.0f, aircraft.yaw, 0.0f),
         rotate_y(glm::vec3(0.0f, 0.0f, 1.0f), aircraft.yaw) * aircraft.speed);
+
+    minigame_hotspots.clear();
+    const auto spawn_hotspot = [&](MiniGameType type, const glm::vec3 &base) {
+        MiniGameHotspot hotspot{};
+        hotspot.type = type;
+        hotspot.position = base;
+        constexpr float k_probe_radius = 0.35f;
+        constexpr float k_probe_height = 1.8f;
+        hotspot.position.y = collision_world.find_spawn_height(
+            glm::vec2(base.x, base.z),
+            k_probe_radius,
+            k_probe_height) +
+            0.05f;
+        hotspot.interact_radius = k_minigame_interact_radius;
+        minigame_hotspots.push_back(hotspot);
+    };
+    spawn_hotspot(MiniGameType::Snake, glm::vec3(4.0f, 0.0f, 26.0f));
+    spawn_hotspot(MiniGameType::Golf, glm::vec3(22.0f, 0.0f, 5.0f));
+    spawn_hotspot(MiniGameType::Tetris, glm::vec3(28.0f, 0.0f, 25.0f));
+    spawn_hotspot(MiniGameType::Racing, glm::vec3(-2.0f, 0.0f, 12.0f));
+    spawn_hotspot(MiniGameType::TicTacToe, glm::vec3(10.0f, 0.0f, -3.0f));
 }
 
 void Engine::update_third_person_camera(PlayerEntity &player, Camera &out_camera) {
@@ -1084,6 +1135,81 @@ void Engine::handle_aircraft_interaction(const InputState &input) {
         local_player.controller.velocity = glm::vec3(0.0f);
         local_player.controller.grounded = false;
     }
+}
+
+void Engine::handle_minigame_interaction(const InputState &input) {
+    nearby_minigame_hotspot = -1;
+    minigame_hint.clear();
+
+    if (!gameplay_started || gui_menu.open()) {
+        return;
+    }
+
+    if (active_minigame.active) {
+        if (active_minigame_hotspot >= 0 && active_minigame_hotspot < static_cast<int>(minigame_hotspots.size())) {
+            nearby_minigame_hotspot = active_minigame_hotspot;
+            const MiniGameHotspot &hotspot = minigame_hotspots[static_cast<size_t>(active_minigame_hotspot)];
+            minigame_hint = std::string(minigame_name(hotspot.type)) + " in progress";
+            if (active_minigame.completed) {
+                minigame_hint += active_minigame.victory ? " [WIN]" : " [DONE]";
+                minigame_hint += " - press INTERACT to exit";
+            } else {
+                minigame_hint += " - press CROUCH to exit";
+            }
+        }
+
+        if ((input.interact_pressed && active_minigame.completed) || input.crouch_held) {
+            active_minigame.active = false;
+            active_minigame_hotspot = -1;
+            local_player.controller.velocity = glm::vec3(0.0f);
+            local_player.controller.grounded = true;
+            minigame_hint = "Exited minigame.";
+        }
+        return;
+    }
+
+    float best_distance = 1e9f;
+    int best_index = -1;
+    for (size_t i = 0; i < minigame_hotspots.size(); ++i) {
+        const MiniGameHotspot &hotspot = minigame_hotspots[i];
+        const float distance = glm::length(local_player.transform.position - hotspot.position);
+        if (distance <= hotspot.interact_radius && distance < best_distance) {
+            best_distance = distance;
+            best_index = static_cast<int>(i);
+        }
+    }
+
+    nearby_minigame_hotspot = best_index;
+    if (best_index >= 0) {
+        const MiniGameHotspot &hotspot = minigame_hotspots[static_cast<size_t>(best_index)];
+        minigame_hint = std::string("Press INTERACT to play ") + minigame_name(hotspot.type);
+        if (input.interact_pressed) {
+            minigame_begin(active_minigame, hotspot.type, static_cast<uint32_t>(fixed.tick + 17u * static_cast<uint32_t>(best_index + 1)));
+            active_minigame_hotspot = best_index;
+            vehicle.occupied = false;
+            aircraft.occupied = false;
+            local_player.controller.velocity = glm::vec3(0.0f);
+            local_player.controller.grounded = true;
+            minigame_hint = std::string("Started ") + minigame_name(hotspot.type);
+        }
+    }
+}
+
+void Engine::update_active_minigame(const InputState &input, float dt) {
+    if (!active_minigame.active || active_minigame_hotspot < 0 || active_minigame_hotspot >= static_cast<int>(minigame_hotspots.size())) {
+        return;
+    }
+
+    const MiniGameHotspot &hotspot = minigame_hotspots[static_cast<size_t>(active_minigame_hotspot)];
+    const float seat_y = collision_world.find_spawn_height(
+        glm::vec2(hotspot.position.x, hotspot.position.z),
+        local_player.controller.capsuleRadius,
+        local_player.controller.capsuleHeight) +
+        0.05f;
+    local_player.transform.position = glm::vec3(hotspot.position.x, seat_y, hotspot.position.z);
+    local_player.controller.velocity = glm::vec3(0.0f);
+    local_player.controller.grounded = true;
+    minigame_tick(active_minigame, input, dt);
 }
 
 void Engine::update_vehicle_sim(const InputState &input, float dt) {
@@ -1283,6 +1409,23 @@ void Engine::refresh_overlay_text() {
         append_mesh(scene.debug_screen, build_screen_text_mesh(text, -0.95f, 0.92f, 0.0049f, glm::vec3(0.95f, 0.95f, 0.82f)));
     }
 
+    if (!menu_is_open && (active_minigame.active || nearby_minigame_hotspot >= 0)) {
+        std::string panel = active_minigame.active
+            ? minigame_status_text(active_minigame)
+            : "MINIGAME HOTSPOT";
+        if (!minigame_hint.empty()) {
+            panel += "\n";
+            panel += minigame_hint;
+        }
+        if (active_minigame.active && !active_minigame.completed) {
+            panel += "\nMOVE/JUMP/INTERACT play, CROUCH exits";
+        }
+
+        append_screen_rect(-0.98f, -0.12f, 0.30f, -0.40f, glm::vec3(0.04f, 0.06f, 0.08f));
+        append_screen_rect(-0.97f, -0.13f, 0.28f, -0.39f, glm::vec3(0.08f, 0.10f, 0.13f));
+        append_mesh(scene.debug_screen, build_screen_text_mesh(panel, -0.95f, -0.16f, 0.0054f, glm::vec3(0.91f, 0.96f, 1.0f)));
+    }
+
     if (net_client.is_connected()) {
         multiplayer_hint = "Connected to game server.";
     }
@@ -1443,6 +1586,89 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 aircraft.position + rotate_y(glm::vec3(0.0f, 0.0f, 4.0f), aircraft.yaw),
                 0.05f,
                 glm::vec3(0.2f, 0.9f, 1.0f)));
+    }
+
+    if (!runtime_options.debug_collision_only) {
+        auto append_minigame_voxel = [&](const glm::vec3 &center, const glm::vec3 &half, const glm::vec3 &color) {
+            append_mesh(scene.debug_world, build_debug_aabb_mesh(center - half, center + half, color));
+        };
+
+        for (size_t i = 0; i < minigame_hotspots.size(); ++i) {
+            const MiniGameHotspot &hotspot = minigame_hotspots[i];
+            const glm::vec3 color = minigame_color(hotspot.type);
+            const bool selected = static_cast<int>(i) == nearby_minigame_hotspot || static_cast<int>(i) == active_minigame_hotspot;
+            append_mesh(
+                scene.debug_world,
+                build_debug_line_mesh(
+                    hotspot.position + glm::vec3(0.0f, 0.2f, 0.0f),
+                    hotspot.position + glm::vec3(0.0f, 3.0f, 0.0f),
+                    selected ? 0.09f : 0.06f,
+                    color));
+            append_mesh(
+                scene.debug_world,
+                build_debug_sphere_mesh(
+                    hotspot.position + glm::vec3(0.0f, 3.2f, 0.0f),
+                    selected ? 0.28f : 0.2f,
+                    color));
+            append_mesh(
+                scene.debug_world,
+                build_debug_sphere_mesh(
+                    hotspot.position + glm::vec3(0.0f, 0.15f, 0.0f),
+                    selected ? 0.17f : 0.12f,
+                    color * glm::vec3(1.1f)));
+        }
+
+        if (active_minigame.active &&
+            active_minigame_hotspot >= 0 &&
+            active_minigame_hotspot < static_cast<int>(minigame_hotspots.size())) {
+            const MiniGameHotspot &hotspot = minigame_hotspots[static_cast<size_t>(active_minigame_hotspot)];
+            const glm::vec3 base = hotspot.position + glm::vec3(-1.6f, 0.25f, -1.4f);
+            const glm::vec3 half(0.08f, 0.08f, 0.08f);
+
+            if (active_minigame.type == MiniGameType::Snake) {
+                for (int i = 0; i < active_minigame.snake.length; ++i) {
+                    const glm::ivec2 c = active_minigame.snake.body[static_cast<size_t>(i)];
+                    append_minigame_voxel(
+                        base + glm::vec3(c.x * 0.18f, 0.0f, c.y * 0.18f),
+                        half,
+                        glm::vec3(0.2f, 0.9f, 0.3f));
+                }
+                append_minigame_voxel(
+                    base + glm::vec3(active_minigame.snake.food.x * 0.18f, 0.0f, active_minigame.snake.food.y * 0.18f),
+                    half,
+                    glm::vec3(0.95f, 0.25f, 0.2f));
+            } else if (active_minigame.type == MiniGameType::TicTacToe) {
+                for (int y = 0; y < 3; ++y) {
+                    for (int x = 0; x < 3; ++x) {
+                        const int idx = y * 3 + x;
+                        const uint8_t cell = active_minigame.tictactoe.board[static_cast<size_t>(idx)];
+                        const glm::vec3 cpos = base + glm::vec3(x * 0.32f, 0.0f, y * 0.32f);
+                        append_minigame_voxel(cpos, glm::vec3(0.11f, 0.03f, 0.11f), glm::vec3(0.18f, 0.22f, 0.26f));
+                        if (cell == 1) {
+                            append_minigame_voxel(cpos + glm::vec3(0.0f, 0.1f, 0.0f), glm::vec3(0.05f), glm::vec3(0.15f, 0.9f, 0.3f));
+                        } else if (cell == 2) {
+                            append_minigame_voxel(cpos + glm::vec3(0.0f, 0.1f, 0.0f), glm::vec3(0.05f), glm::vec3(0.9f, 0.2f, 0.2f));
+                        }
+                    }
+                }
+            } else if (active_minigame.type == MiniGameType::Golf) {
+                append_minigame_voxel(base + glm::vec3(active_minigame.golf.ball.x * 0.2f, 0.0f, active_minigame.golf.ball.y * 0.2f), half, glm::vec3(0.9f));
+                append_minigame_voxel(base + glm::vec3(active_minigame.golf.hole.x * 0.2f, 0.0f, active_minigame.golf.hole.y * 0.2f), half, glm::vec3(0.2f, 0.6f, 1.0f));
+            } else if (active_minigame.type == MiniGameType::Tetris) {
+                for (int y = 0; y < TetrisState::k_board_h; ++y) {
+                    for (int x = 0; x < TetrisState::k_board_w; ++x) {
+                        const uint8_t filled = active_minigame.tetris.board[static_cast<size_t>(y * TetrisState::k_board_w + x)];
+                        if (filled == 0) {
+                            continue;
+                        }
+                        append_minigame_voxel(base + glm::vec3(x * 0.13f, y * 0.02f, 0.0f), glm::vec3(0.05f, 0.01f, 0.05f), glm::vec3(0.78f, 0.42f, 0.92f));
+                    }
+                }
+            } else if (active_minigame.type == MiniGameType::Racing) {
+                const float progress = active_minigame.racing.track_progress / 65.0f;
+                append_minigame_voxel(base + glm::vec3(progress * 1.8f, 0.0f, 0.0f), glm::vec3(0.07f), glm::vec3(1.0f, 0.55f, 0.2f));
+            }
+        }
     }
 
     if (!runtime_options.debug_collision_only) {

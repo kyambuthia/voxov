@@ -19,9 +19,13 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 # Build options
 option(VOXOV_BUILD_TESTS "Build tests" OFF)
 option(VOXOV_BUILD_EXAMPLES "Build examples" OFF)
+option(VOXOV_BUILD_LEGACY_DEMOS "Build legacy SDL/Vulkan demo entrypoints" OFF)
 option(VOXOV_ENABLE_ASSERTIONS "Enable assertions in release builds" ON)
 option(VOXOV_ENABLE_ANDROID_BACKEND "Compile Android platform backend skeleton" ON)
 option(VOXOV_ENABLE_WEB_BACKEND "Compile Web platform backend skeleton" ON)
+option(VOXOV_ENABLE_IOS_BACKEND "Compile iOS platform backend scaffold" ON)
+option(VOXOV_ENABLE_CONSOLE_BACKEND "Compile console platform backend scaffold" ON)
+option(VOXOV_ENABLE_XR "Compile XR session scaffold" ON)
 option(VOXOV_ENABLE_VULKAN "Enable Vulkan backend and shader toolchain requirements" ON)
 
 if(ANDROID)
@@ -46,6 +50,7 @@ if(ANDROID)
         src/engine_assets/cgltf_impl.cpp
         src/engine_assets/skinned_model.cpp
         src/engine_gameplay/animation/skeletal_animator.cpp
+        src/engine_gameplay/player/player_visuals.cpp
         src/engine_ui/gui_menu.cpp
         src/engine_audio/ui_audio.cpp
         src/engine_math/camera.cpp
@@ -202,14 +207,7 @@ target_link_libraries(engine_core PUBLIC fmt::fmt spdlog::spdlog)
 add_library(platform_desktop STATIC
     src/platform/platform.cpp
     src/platform/desktop/input_desktop.cpp
-    src/platform/android/input_android.cpp
 )
-if(VOXOV_ENABLE_ANDROID_BACKEND)
-    target_sources(platform_desktop PRIVATE src/platform/android_platform.cpp)
-endif()
-if(VOXOV_ENABLE_WEB_BACKEND)
-    target_sources(platform_desktop PRIVATE src/platform/web_platform.cpp)
-endif()
 target_include_directories(platform_desktop PUBLIC src)
 target_link_libraries(platform_desktop PUBLIC glfw glm::glm)
 
@@ -218,6 +216,14 @@ add_library(engine_math STATIC
 )
 target_include_directories(engine_math PUBLIC src)
 target_link_libraries(engine_math PUBLIC glm::glm)
+
+if(VOXOV_ENABLE_XR)
+    add_library(engine_xr STATIC
+        src/engine_xr/xr_session.cpp
+    )
+    target_include_directories(engine_xr PUBLIC src)
+    target_link_libraries(engine_xr PUBLIC glm::glm)
+endif()
 
 add_library(engine_world STATIC
     src/engine_world/voxel_chunk.cpp
@@ -271,10 +277,33 @@ add_library(engine STATIC
     src/engine_audio/ui_audio.cpp
     src/engine_gameplay/animation/skeletal_animator.cpp
     src/engine_gameplay/player/player_controller.cpp
+    src/engine_gameplay/player/player_visuals.cpp
     src/engine_ui/gui_menu.cpp
 )
 target_include_directories(engine PUBLIC src dependencies/miniaudio dependencies/cgltf)
 target_link_libraries(engine PUBLIC engine_core engine_render engine_physics engine_net engine_math engine_world platform_desktop)
+if(VOXOV_ENABLE_XR)
+    target_link_libraries(engine PUBLIC engine_xr)
+    target_compile_definitions(engine PUBLIC VOXOV_ENABLE_XR=1)
+else()
+    target_compile_definitions(engine PUBLIC VOXOV_ENABLE_XR=0)
+endif()
+
+set(VOXOV_PLATFORM_FUTURE_SOURCES "")
+if(VOXOV_ENABLE_IOS_BACKEND)
+    list(APPEND VOXOV_PLATFORM_FUTURE_SOURCES
+        src/platform/ios_platform.cpp
+    )
+endif()
+if(VOXOV_ENABLE_CONSOLE_BACKEND)
+    list(APPEND VOXOV_PLATFORM_FUTURE_SOURCES
+        src/platform/console_platform.cpp
+    )
+endif()
+if(VOXOV_PLATFORM_FUTURE_SOURCES)
+    add_library(platform_future STATIC ${VOXOV_PLATFORM_FUTURE_SOURCES})
+    target_include_directories(platform_future PUBLIC src)
+endif()
 
 add_executable(voxov
     src/game/main.cpp
@@ -393,6 +422,12 @@ if(VOXOV_ENABLE_VULKAN)
     )
 endif()
 
+# Runtime model assets are required for skinned character rendering.
+install(DIRECTORY assets/models/player/
+    DESTINATION bin/assets/models/player
+    FILES_MATCHING PATTERN "*.glb" PATTERN "*.md" PATTERN "LICENSE*"
+)
+
 if(VOXOV_BUILD_TESTS)
     enable_testing()
     add_executable(voxov_tests
@@ -408,4 +443,15 @@ if(VOXOV_BUILD_TESTS)
     target_include_directories(voxov_net_stress PRIVATE src)
     target_link_libraries(voxov_net_stress PRIVATE engine_net)
     add_test(NAME voxov_net_stress COMMAND voxov_net_stress)
+endif()
+
+if(VOXOV_BUILD_LEGACY_DEMOS)
+    add_custom_target(voxov_legacy_sources
+        SOURCES
+            src/main.cpp
+            src/game.cpp
+            src/renderer/vulkan_app.cpp
+            src/world/planet_world.cpp
+            src/engine_assets/static_model.cpp
+    )
 endif()

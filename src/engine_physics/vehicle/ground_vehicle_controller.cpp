@@ -34,6 +34,7 @@ void GroundVehicleController::reset(const glm::vec3 &position, float yaw_radians
     current = GroundVehicleState{};
     current.kinematic.position = position;
     current.kinematic.yaw = yaw_radians;
+    drivetrain.reset();
     prev_vertical_error = 0.0f;
 }
 
@@ -41,7 +42,11 @@ void GroundVehicleController::step(
     const VehicleControlInput &input,
     const VoxelCollisionWorld &collision_world,
     float dt_seconds) {
-    integrate_vehicle_kinematics(current.kinematic, input, tuning, dt_seconds);
+    const glm::vec3 fwd_before = glm::vec3(std::sin(current.kinematic.yaw), 0.0f, std::cos(current.kinematic.yaw));
+    const float wheel_speed = glm::dot(current.kinematic.velocity, fwd_before);
+    VehicleControlInput drive_input = input;
+    drive_input.throttle = drivetrain.update(input.throttle, wheel_speed, dt_seconds);
+    integrate_vehicle_kinematics(current.kinematic, drive_input, tuning, dt_seconds);
 
     float desired_chassis_y = 0.0f;
     uint32_t grounded_count = 0;
@@ -92,7 +97,10 @@ void GroundVehicleController::step(
     const glm::vec3 fwd = glm::vec3(std::sin(current.kinematic.yaw), 0.0f, std::cos(current.kinematic.yaw));
     const float speed = glm::dot(current.kinematic.velocity, fwd);
     current.telemetry.speed_mps = std::fabs(speed);
-    current.telemetry.engine_load = std::clamp(std::fabs(input.throttle), 0.0f, 1.0f);
+    current.telemetry.engine_load = std::clamp(
+        drivetrain.telemetry().engine_rpm / 7000.0f,
+        0.0f,
+        1.0f);
     current.telemetry.longitudinal_slip = std::clamp(input.throttle - speed * 0.06f, -1.0f, 1.0f);
     current.telemetry.lateral_slip = std::clamp(std::fabs(input.steer) * current.telemetry.speed_mps * 0.08f, 0.0f, 1.0f);
     current.telemetry.grounded_wheels = grounded_count;

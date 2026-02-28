@@ -1,5 +1,6 @@
 #pragma once
 
+#include "engine_physics/vehicle/vehicle_drivetrain.hpp"
 #include "engine_physics/vehicle/vehicle_foundation.hpp"
 
 #include <array>
@@ -38,6 +39,7 @@ public:
 
 private:
     VehiclePhysicsTuning tuning{};
+    VehicleDrivetrain drivetrain{};
     std::array<GroundVehicleWheel, 4> wheels{};
     GroundVehicleState current{};
     float prev_vertical_error = 0.0f;

@@ -256,6 +256,7 @@ add_library(engine_physics STATIC
     src/engine_physics/jolt_solver.cpp
     src/engine_physics/vehicle/aircraft_controller.cpp
     src/engine_physics/vehicle/ground_vehicle_controller.cpp
+    src/engine_physics/vehicle/vehicle_drivetrain.cpp
     src/engine_physics/vehicle/vehicle_foundation.cpp
     src/engine_physics/vehicle/voxel_vehicle_builder.cpp
     src/engine_physics/voxel/voxel_physics_bridge.cpp

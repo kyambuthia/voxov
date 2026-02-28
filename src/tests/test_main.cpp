@@ -4,6 +4,7 @@
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_physics/vehicle/aircraft_controller.hpp"
 #include "engine_physics/vehicle/ground_vehicle_controller.hpp"
+#include "engine_physics/vehicle/vehicle_drivetrain.hpp"
 #include "engine_physics/vehicle/vehicle_foundation.hpp"
 #include "engine_physics/vehicle/voxel_vehicle_builder.hpp"
 #include "engine_physics/voxel/voxel_physics_bridge.hpp"
@@ -400,6 +401,19 @@ void test_aircraft_controller_throttle_and_pitch() {
     assert(controller.state().kinematic.position.y > 2.0f);
 }
 
+void test_vehicle_drivetrain_shift_behavior() {
+    VehicleDrivetrain drivetrain;
+    drivetrain.reset();
+    float scaled_throttle = 0.0f;
+
+    for (int i = 0; i < 240; ++i) {
+        scaled_throttle = drivetrain.update(1.0f, 24.0f, 1.0f / 60.0f);
+    }
+    assert(drivetrain.telemetry().current_gear >= 2);
+    assert(drivetrain.telemetry().engine_rpm > 1500.0f);
+    assert(scaled_throttle > 0.1f);
+}
+
 }
 
 int main() {
@@ -422,5 +436,6 @@ int main() {
     test_voxel_vehicle_builder_deterministic();
     test_ground_vehicle_controller_accel_and_brake();
     test_aircraft_controller_throttle_and_pitch();
+    test_vehicle_drivetrain_shift_behavior();
     return 0;
 }

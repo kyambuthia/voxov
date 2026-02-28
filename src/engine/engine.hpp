@@ -32,6 +32,7 @@ struct EngineRuntimeOptions {
     bool debug_xray = false;
     bool debug_collision_only = false;
     bool debug_freeze = false;
+    bool vehicle_sandbox = false;
     PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
 };
 

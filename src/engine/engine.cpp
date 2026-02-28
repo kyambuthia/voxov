@@ -1091,7 +1091,8 @@ void Engine::update_vehicle_sim(const InputState &input, float dt) {
         vehicle.speed = 0.0f;
         return;
     }
-    if (!vehicle.occupied) {
+    const bool sandbox_drive = runtime_options.vehicle_sandbox && !vehicle.occupied;
+    if (!vehicle.occupied && !sandbox_drive) {
         VehicleControlInput coast{};
         coast.brake = 0.2f;
         vehicle.controller.step(coast, collision_world, dt);
@@ -1113,12 +1114,14 @@ void Engine::update_vehicle_sim(const InputState &input, float dt) {
     vehicle.yaw = vehicle.controller.state().kinematic.yaw;
     vehicle.speed = vehicle.controller.state().telemetry.speed_mps;
 
-    local_player.transform.position = vehicle_seat_world_position();
-    local_player.transform.rotation = glm::angleAxis(vehicle.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
-    local_player.controller.velocity = glm::vec3(0.0f);
-    local_player.controller.grounded = true;
-    local_player.anim_state = PlayerAnimState::Idle;
-    local_player.anim_blend = 0.0f;
+    if (vehicle.occupied) {
+        local_player.transform.position = vehicle_seat_world_position();
+        local_player.transform.rotation = glm::angleAxis(vehicle.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+        local_player.controller.velocity = glm::vec3(0.0f);
+        local_player.controller.grounded = true;
+        local_player.anim_state = PlayerAnimState::Idle;
+        local_player.anim_blend = 0.0f;
+    }
 }
 
 void Engine::update_aircraft_sim(const InputState &input, float dt) {
@@ -1126,7 +1129,8 @@ void Engine::update_aircraft_sim(const InputState &input, float dt) {
         aircraft.occupied = false;
         return;
     }
-    if (!aircraft.occupied) {
+    const bool sandbox_fly = runtime_options.vehicle_sandbox && !aircraft.occupied;
+    if (!aircraft.occupied && !sandbox_fly) {
         return;
     }
 
@@ -1143,12 +1147,14 @@ void Engine::update_aircraft_sim(const InputState &input, float dt) {
     aircraft.position.x = std::clamp(aircraft.position.x, -26.0f, 52.0f);
     aircraft.position.z = std::clamp(aircraft.position.z, -26.0f, 52.0f);
 
-    local_player.transform.position = aircraft_seat_world_position();
-    local_player.transform.rotation = glm::angleAxis(aircraft.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
-    local_player.controller.velocity = aircraft.controller.state().kinematic.velocity;
-    local_player.controller.grounded = false;
-    local_player.anim_state = PlayerAnimState::Idle;
-    local_player.anim_blend = 0.0f;
+    if (aircraft.occupied) {
+        local_player.transform.position = aircraft_seat_world_position();
+        local_player.transform.rotation = glm::angleAxis(aircraft.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+        local_player.controller.velocity = aircraft.controller.state().kinematic.velocity;
+        local_player.controller.grounded = false;
+        local_player.anim_state = PlayerAnimState::Idle;
+        local_player.anim_blend = 0.0f;
+    }
 }
 
 void Engine::refresh_overlay_text() {

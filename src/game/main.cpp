@@ -85,6 +85,7 @@ int main(int argc, char **argv) {
     bool debug_xray = false;
     bool debug_collision_only = false;
     bool debug_freeze = false;
+    bool vehicle_sandbox = false;
     bool start_fullscreen = false;
     int window_width = 1280;
     int window_height = 720;
@@ -134,6 +135,8 @@ int main(int argc, char **argv) {
         } else if (std::strcmp(argv[i], "--debug-freeze") == 0) {
             debug_collision = true;
             debug_freeze = true;
+        } else if (std::strcmp(argv[i], "--vehicle-sandbox") == 0) {
+            vehicle_sandbox = true;
         } else if (std::strcmp(argv[i], "--fullscreen") == 0) {
             start_fullscreen = true;
         } else if (std::strcmp(argv[i], "--windowed") == 0) {
@@ -200,6 +203,7 @@ int main(int argc, char **argv) {
         options.debug_xray = debug_xray;
         options.debug_collision_only = debug_collision_only;
         options.debug_freeze = debug_freeze;
+        options.vehicle_sandbox = vehicle_sandbox;
         options.physics_backend = physics_backend;
         engine.init(platform.native_window(), backend, options);
     } catch (const std::exception &e) {

@@ -7,6 +7,7 @@
 #include "engine_physics/vehicle/ground_vehicle_controller.hpp"
 #include "engine_physics/vehicle/vehicle_drivetrain.hpp"
 #include "engine_physics/vehicle/vehicle_foundation.hpp"
+#include "engine_physics/vehicle/vehicle_sandbox_scene.hpp"
 #include "engine_physics/vehicle/voxel_vehicle_builder.hpp"
 #include "engine_physics/voxel/voxel_physics_bridge.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
@@ -452,6 +453,28 @@ void test_vehicle_damage_model_deterministic() {
     assert(a.stats().destroyed_cells == b.stats().destroyed_cells);
 }
 
+void test_vehicle_sandbox_scene_step() {
+    VehicleSandboxScene sandbox;
+    sandbox.init_default();
+
+    InputState vehicle_input{};
+    vehicle_input.move = glm::vec2(0.1f, 1.0f);
+    InputState aircraft_input{};
+    aircraft_input.move = glm::vec2(-0.2f, 0.7f);
+    aircraft_input.jump_held = true;
+
+    for (int i = 0; i < 90; ++i) {
+        sandbox.step(vehicle_input, aircraft_input, 1.0f / 60.0f);
+    }
+
+    const VehicleSandboxSnapshot snap = sandbox.snapshot();
+    assert(snap.vehicle_speed_mps > 0.5f);
+    assert(snap.aircraft_speed_mps > 6.0f);
+    assert(snap.vehicle_position.y > 0.2f);
+    assert(snap.aircraft_position.y > 2.0f);
+    assert(snap.static_shape_count > 0);
+}
+
 }
 
 int main() {
@@ -477,5 +500,6 @@ int main() {
     test_vehicle_drivetrain_shift_behavior();
     test_vehicle_damage_model_impact();
     test_vehicle_damage_model_deterministic();
+    test_vehicle_sandbox_scene_step();
     return 0;
 }

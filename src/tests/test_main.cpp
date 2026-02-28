@@ -1,6 +1,7 @@
 #include "engine_math/camera.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_net/net_common.hpp"
+#include "engine_physics/avbd_solver.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
 
@@ -157,6 +158,18 @@ void test_player_animation_state_transitions() {
     assert(player.anim_state == PlayerAnimState::Jump);
 }
 
+void test_avbd_solver_lifecycle() {
+    AvbdSolver solver;
+    EnginePhysicsSettings settings{};
+    settings.gravity = -9.81f;
+    solver.init(settings);
+    for (int i = 0; i < 32; ++i) {
+        solver.step(1.0f / 60.0f);
+    }
+    solver.shutdown();
+    solver.step(1.0f / 60.0f);
+}
+
 }
 
 int main() {
@@ -167,5 +180,6 @@ int main() {
     test_strafe_axis_sign();
     test_player_settles_on_ground();
     test_player_animation_state_transitions();
+    test_avbd_solver_lifecycle();
     return 0;
 }

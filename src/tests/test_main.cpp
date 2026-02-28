@@ -4,6 +4,8 @@
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
+#include "platform/android_platform.hpp"
+#include "platform/web_platform.hpp"
 
 #include <cassert>
 #include <cmath>
@@ -170,6 +172,43 @@ void test_avbd_solver_lifecycle() {
     solver.step(1.0f / 60.0f);
 }
 
+void test_web_platform_state() {
+    WebPlatform platform;
+    assert(platform.init(640, 360));
+    assert(platform.active());
+    assert(platform.width() == 640);
+    assert(platform.height() == 360);
+    assert(platform.poll_events());
+    assert(platform.tick() == 1);
+    platform.set_focused(false);
+    assert(!platform.active());
+    assert(!platform.poll_events());
+    platform.set_focused(true);
+    assert(platform.poll_events());
+    platform.shutdown();
+    assert(!platform.active());
+}
+
+void test_android_platform_state() {
+    AndroidPlatform platform;
+    assert(platform.init(1920, 1080));
+    assert(platform.active());
+    assert(platform.width() == 1920);
+    assert(platform.height() == 1080);
+    assert(platform.poll_events());
+    platform.on_pause();
+    assert(!platform.active());
+    assert(!platform.poll_events());
+    platform.on_resume();
+    platform.on_resize(1280, 720);
+    assert(platform.width() == 1280);
+    assert(platform.height() == 720);
+    assert(platform.active());
+    assert(platform.frame_time_seconds() > 0.0);
+    platform.shutdown();
+    assert(!platform.active());
+}
+
 }
 
 int main() {
@@ -181,5 +220,7 @@ int main() {
     test_player_settles_on_ground();
     test_player_animation_state_transitions();
     test_avbd_solver_lifecycle();
+    test_web_platform_state();
+    test_android_platform_state();
     return 0;
 }

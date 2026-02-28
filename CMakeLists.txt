@@ -432,6 +432,8 @@ if(VOXOV_BUILD_TESTS)
     enable_testing()
     add_executable(voxov_tests
         src/tests/test_main.cpp
+        src/platform/android_platform.cpp
+        src/platform/web_platform.cpp
     )
     target_include_directories(voxov_tests PRIVATE src)
     target_link_libraries(voxov_tests PRIVATE engine engine_math engine_world engine_net)

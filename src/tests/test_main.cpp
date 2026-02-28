@@ -3,6 +3,7 @@
 #include "engine_net/net_common.hpp"
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_physics/vehicle/vehicle_foundation.hpp"
+#include "engine_physics/voxel/voxel_physics_bridge.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
 #include "platform/android_platform.hpp"
@@ -11,6 +12,7 @@
 #include <cassert>
 #include <cmath>
 #include <cstdint>
+#include <vector>
 
 namespace {
 
@@ -266,6 +268,47 @@ void test_aircraft_kinematic_determinism() {
     assert(std::isfinite(a.euler.x) && std::isfinite(a.euler.y) && std::isfinite(a.euler.z));
 }
 
+void test_voxel_physics_bridge_chunk_tracking() {
+    VoxelPhysicsBridge bridge;
+    VoxelChunk chunk;
+    chunk.generate_flat_ground(2);
+
+    const VoxelChunkCoord coord{1, -2};
+    assert(!bridge.has_chunk(coord));
+    bridge.register_chunk(coord, chunk);
+    assert(bridge.has_chunk(coord));
+    assert(bridge.chunk_count() == 1);
+
+    assert(bridge.take_chunk_dirty(coord));
+    assert(!bridge.take_chunk_dirty(coord));
+
+    bridge.unregister_chunk(coord);
+    assert(!bridge.has_chunk(coord));
+    assert(bridge.chunk_count() == 0);
+}
+
+void test_voxel_physics_bridge_shape_build() {
+    VoxelPhysicsBridge bridge;
+    VoxelChunk chunk;
+    chunk.generate_flat_ground(0);
+    bridge.register_chunk(VoxelChunkCoord{2, 3}, chunk);
+
+    const std::vector<VoxelStaticShape> shapes = bridge.build_chunk_shapes(VoxelChunkCoord{2, 3});
+    assert(!shapes.empty());
+
+    bool found_chunk_offset = false;
+    for (const VoxelStaticShape &shape : shapes) {
+        assert(shape.max.x > shape.min.x);
+        assert(shape.max.y > shape.min.y);
+        assert(shape.max.z > shape.min.z);
+        if (shape.min.x >= static_cast<float>(2 * VoxelChunk::CHUNK_X) &&
+            shape.min.z >= static_cast<float>(3 * VoxelChunk::CHUNK_Z)) {
+            found_chunk_offset = true;
+        }
+    }
+    assert(found_chunk_offset);
+}
+
 }
 
 int main() {
@@ -282,5 +325,7 @@ int main() {
     test_vehicle_foundation_fixed_step_counter();
     test_vehicle_kinematic_determinism();
     test_aircraft_kinematic_determinism();
+    test_voxel_physics_bridge_chunk_tracking();
+    test_voxel_physics_bridge_shape_build();
     return 0;
 }

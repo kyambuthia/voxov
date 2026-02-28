@@ -935,7 +935,8 @@ const RenderStats &Engine::stats() const {
 }
 
 void Engine::build_static_scene() {
-    world_chunk.generate_heightmap_terrain();
+    constexpr uint64_t k_world_seed = 0x0DDF00D5EEDull;
+    world_chunk.generate_heightmap_terrain_seeded(k_world_seed, 0, 0);
     collision_world = VoxelCollisionWorld(&world_chunk);
 
     scene = RenderScene{};

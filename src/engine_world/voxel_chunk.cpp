@@ -1,4 +1,5 @@
 #include "engine_world/voxel_chunk.hpp"
+#include "engine_world/world_gen.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -46,18 +47,25 @@ size_t VoxelChunk::index(int x, int y, int z) const {
 }
 
 void VoxelChunk::generate_heightmap_terrain() {
+    generate_heightmap_terrain_seeded(0x564F58554C4Cull, 0, 0);
+}
+
+void VoxelChunk::generate_heightmap_terrain_seeded(uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
     voxels.fill(0);
     constexpr float flat_height = 6.0f;
     constexpr float inner = 3.8f;
     constexpr float outer = 6.2f;
     const float cx = static_cast<float>(CHUNK_X - 1) * 0.5f;
     const float cz = static_cast<float>(CHUNK_Z - 1) * 0.5f;
+    const int32_t world_base_x = chunk_x * CHUNK_X;
+    const int32_t world_base_z = chunk_z * CHUNK_Z;
+    const WorldGenerator generator(world_seed);
 
     for (int z = 0; z < CHUNK_Z; ++z) {
         for (int x = 0; x < CHUNK_X; ++x) {
-            float sx = static_cast<float>(x) / static_cast<float>(CHUNK_X);
-            float sz = static_cast<float>(z) / static_cast<float>(CHUNK_Z);
-            float h = 5.0f + std::sin(sx * 6.28f) * 2.0f + std::cos(sz * 9.42f) * 1.5f;
+            const float world_x = static_cast<float>(world_base_x + x);
+            const float world_z = static_cast<float>(world_base_z + z);
+            float h = generator.sample_height(world_x, world_z);
             const float dx = static_cast<float>(x) - cx;
             const float dz = static_cast<float>(z) - cz;
             const float ring_d = std::max(std::fabs(dx), std::fabs(dz));

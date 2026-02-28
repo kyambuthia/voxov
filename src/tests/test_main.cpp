@@ -9,6 +9,7 @@
 
 #include <cassert>
 #include <cmath>
+#include <cstddef>
 #include <cstdint>
 
 namespace {
@@ -58,6 +59,41 @@ void test_chunk_meshing() {
     assert(!mesh.vertices.empty());
     assert(!mesh.indices.empty());
     assert(mesh.indices.size() % 3 == 0);
+}
+
+void test_chunk_seed_determinism() {
+    VoxelChunk a;
+    VoxelChunk b;
+    VoxelChunk c;
+
+    a.generate_heightmap_terrain_seeded(12345u, 4, -2);
+    b.generate_heightmap_terrain_seeded(12345u, 4, -2);
+    c.generate_heightmap_terrain_seeded(12345u, 5, -2);
+
+    const RenderMesh mesh_a = a.build_naive_mesh();
+    const RenderMesh mesh_b = b.build_naive_mesh();
+    const RenderMesh mesh_c = c.build_naive_mesh();
+
+    assert(mesh_a.vertices.size() == mesh_b.vertices.size());
+    assert(mesh_a.indices.size() == mesh_b.indices.size());
+    for (size_t i = 0; i < mesh_a.vertices.size(); ++i) {
+        const glm::vec3 pa = mesh_a.vertices[i].position;
+        const glm::vec3 pb = mesh_b.vertices[i].position;
+        assert(std::fabs(pa.x - pb.x) < 0.0001f);
+        assert(std::fabs(pa.y - pb.y) < 0.0001f);
+        assert(std::fabs(pa.z - pb.z) < 0.0001f);
+    }
+
+    bool different = mesh_a.vertices.size() != mesh_c.vertices.size() ||
+                     mesh_a.indices.size() != mesh_c.indices.size();
+    if (!different && !mesh_a.vertices.empty() && !mesh_c.vertices.empty()) {
+        const glm::vec3 pa = mesh_a.vertices.front().position;
+        const glm::vec3 pc = mesh_c.vertices.front().position;
+        different = std::fabs(pa.x - pc.x) > 0.0001f ||
+                    std::fabs(pa.y - pc.y) > 0.0001f ||
+                    std::fabs(pa.z - pc.z) > 0.0001f;
+    }
+    assert(different);
 }
 
 void test_camera_yaw_response() {
@@ -215,6 +251,7 @@ int main() {
     test_camera_vectors();
     test_net_pod_serialization();
     test_chunk_meshing();
+    test_chunk_seed_determinism();
     test_camera_yaw_response();
     test_strafe_axis_sign();
     test_player_settles_on_ground();

@@ -7,9 +7,9 @@
 
 class VoxelChunk {
 public:
-    static constexpr int CHUNK_X = 16;
-    static constexpr int CHUNK_Y = 16;
-    static constexpr int CHUNK_Z = 16;
+    static constexpr int CHUNK_X = 64;
+    static constexpr int CHUNK_Y = 32;
+    static constexpr int CHUNK_Z = 64;
 
     void generate_heightmap_terrain();
     void generate_heightmap_terrain_seeded(uint64_t world_seed, int32_t chunk_x, int32_t chunk_z);

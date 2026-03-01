@@ -72,6 +72,23 @@ void test_chunk_meshing() {
     assert(mesh.indices.size() % 3 == 0);
 }
 
+void test_chunk_world_footprint() {
+    VoxelChunk chunk;
+    chunk.generate_flat_ground(0);
+    const RenderMesh mesh = chunk.build_naive_mesh();
+    assert(!mesh.vertices.empty());
+
+    float max_x = -1000.0f;
+    float max_z = -1000.0f;
+    for (const RenderVertex &v : mesh.vertices) {
+        max_x = std::max(max_x, v.position.x);
+        max_z = std::max(max_z, v.position.z);
+    }
+
+    assert(max_x >= static_cast<float>(VoxelChunk::CHUNK_X) - 0.001f);
+    assert(max_z >= static_cast<float>(VoxelChunk::CHUNK_Z) - 0.001f);
+}
+
 void test_chunk_seed_determinism() {
     VoxelChunk a;
     VoxelChunk b;
@@ -608,6 +625,7 @@ int main() {
     test_camera_vectors();
     test_net_pod_serialization();
     test_chunk_meshing();
+    test_chunk_world_footprint();
     test_chunk_seed_determinism();
     test_camera_yaw_response();
     test_strafe_axis_sign();

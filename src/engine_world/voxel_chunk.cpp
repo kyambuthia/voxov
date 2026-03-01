@@ -53,8 +53,9 @@ void VoxelChunk::generate_heightmap_terrain() {
 void VoxelChunk::generate_heightmap_terrain_seeded(uint64_t world_seed, int32_t chunk_x, int32_t chunk_z) {
     voxels.fill(0);
     constexpr float flat_height = 6.0f;
-    constexpr float inner = 3.8f;
-    constexpr float outer = 6.2f;
+    const float min_dim = static_cast<float>(std::min(CHUNK_X, CHUNK_Z));
+    const float inner = min_dim * 0.24f;
+    const float outer = min_dim * 0.39f;
     const float cx = static_cast<float>(CHUNK_X - 1) * 0.5f;
     const float cz = static_cast<float>(CHUNK_Z - 1) * 0.5f;
     const int32_t world_base_x = chunk_x * CHUNK_X;

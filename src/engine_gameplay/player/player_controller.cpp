@@ -117,7 +117,10 @@ float player_anim_blend_target(PlayerAnimState state) {
 PlayerEntity PlayerControllerSystem::spawn_player(const VoxelCollisionWorld &collision_world) {
     PlayerEntity player{};
     player.network_id = 1;
-    const glm::vec2 spawn_xz = find_flat_spawn_xz(collision_world, glm::vec2(8.0f, 8.0f));
+    const glm::vec2 preferred_spawn(
+        static_cast<float>(VoxelChunk::CHUNK_X) * 0.5f,
+        static_cast<float>(VoxelChunk::CHUNK_Z) * 0.5f);
+    const glm::vec2 spawn_xz = find_flat_spawn_xz(collision_world, preferred_spawn);
     player.transform.position.x = spawn_xz.x;
     player.transform.position.z = spawn_xz.y;
     player.transform.position.y = collision_world.find_spawn_height(

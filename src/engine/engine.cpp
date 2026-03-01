@@ -34,13 +34,13 @@ constexpr float k_vehicle_body_height = 0.65f;
 constexpr float k_vehicle_wheel_radius = 0.32f;
 constexpr float k_vehicle_interact_radius = 2.1f;
 constexpr bool k_vehicle_feature_enabled = true;
-constexpr float k_aircraft_interact_radius = 2.8f;
+constexpr float k_aircraft_interact_radius = 4.2f;
 constexpr float k_aircraft_body_length = 2.7f;
 constexpr float k_aircraft_body_width = 1.1f;
 constexpr float k_aircraft_body_height = 0.55f;
 constexpr uint32_t k_remote_interp_delay_ticks = 6;
 constexpr size_t k_remote_sample_history_max = 16;
-constexpr float k_minigame_interact_radius = 2.6f;
+constexpr float k_minigame_interact_radius = 4.5f;
 
 std::filesystem::path executable_directory() {
     namespace fs = std::filesystem;
@@ -309,7 +309,9 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
             k_vehicle_wheel_radius;
     }
     vehicle.controller.reset(vehicle.position, vehicle.yaw);
-    aircraft.position = local_player.transform.position + glm::vec3(-5.0f, 5.0f, -4.0f);
+    aircraft.position = local_player.transform.position + glm::vec3(-5.0f, 0.0f, -4.0f);
+    aircraft.position.y = collision_world.find_spawn_height(
+        glm::vec2(aircraft.position.x, aircraft.position.z), 1.0f, 1.8f) + 1.2f;
     aircraft.yaw = 0.25f;
     aircraft.speed = 9.0f;
     aircraft.occupied = false;
@@ -796,8 +798,6 @@ void Engine::tick(double frame_dt) {
     if (!active_minigame.active) {
         handle_vehicle_interaction(gameplay_input);
         handle_aircraft_interaction(gameplay_input);
-    } else {
-        disable_gameplay_actions(gameplay_input);
     }
 
     PlayerControllerSystem::update_camera_rig(local_player, gameplay_input, touch_input_mode, static_cast<float>(frame_dt));
@@ -988,9 +988,12 @@ void Engine::build_static_scene() {
     scene = RenderScene{};
     scene.opaque_meshes.push_back(world_chunk.build_sky_placeholder(240.0f));
     scene.opaque_meshes.push_back(world_chunk.build_naive_mesh());
-    scene.debug_grid = world_chunk.build_debug_grid(96.0f, 1.0f);
+    scene.debug_grid = world_chunk.build_debug_grid(160.0f, 1.0f);
 
-    vehicle.position = glm::vec3(12.0f, 0.0f, 12.0f);
+    const glm::vec2 center(
+        static_cast<float>(VoxelChunk::CHUNK_X) * 0.5f,
+        static_cast<float>(VoxelChunk::CHUNK_Z) * 0.5f);
+    vehicle.position = glm::vec3(center.x - 5.0f, 0.0f, center.y - 2.0f);
     vehicle.yaw = 0.0f;
     vehicle.speed = 0.0f;
     vehicle.occupied = false;
@@ -1001,7 +1004,9 @@ void Engine::build_static_scene() {
     vehicle.position.y = ground_y + k_vehicle_wheel_radius;
     vehicle.controller.reset(vehicle.position, vehicle.yaw);
 
-    aircraft.position = glm::vec3(18.0f, ground_y + 6.0f, 10.0f);
+    aircraft.position = glm::vec3(center.x + 6.0f, 0.0f, center.y - 3.0f);
+    aircraft.position.y = collision_world.find_spawn_height(
+        glm::vec2(aircraft.position.x, aircraft.position.z), 1.0f, 1.8f) + 1.2f;
     aircraft.yaw = -0.2f;
     aircraft.speed = 8.0f;
     aircraft.occupied = false;
@@ -1025,11 +1030,11 @@ void Engine::build_static_scene() {
         hotspot.interact_radius = k_minigame_interact_radius;
         minigame_hotspots.push_back(hotspot);
     };
-    spawn_hotspot(MiniGameType::Snake, glm::vec3(4.0f, 0.0f, 26.0f));
-    spawn_hotspot(MiniGameType::Golf, glm::vec3(22.0f, 0.0f, 5.0f));
-    spawn_hotspot(MiniGameType::Tetris, glm::vec3(28.0f, 0.0f, 25.0f));
-    spawn_hotspot(MiniGameType::Racing, glm::vec3(-2.0f, 0.0f, 12.0f));
-    spawn_hotspot(MiniGameType::TicTacToe, glm::vec3(10.0f, 0.0f, -3.0f));
+    spawn_hotspot(MiniGameType::Snake, glm::vec3(center.x - 16.0f, 0.0f, center.y + 10.0f));
+    spawn_hotspot(MiniGameType::Golf, glm::vec3(center.x + 14.0f, 0.0f, center.y - 12.0f));
+    spawn_hotspot(MiniGameType::Tetris, glm::vec3(center.x + 15.0f, 0.0f, center.y + 12.0f));
+    spawn_hotspot(MiniGameType::Racing, glm::vec3(center.x - 18.0f, 0.0f, center.y - 8.0f));
+    spawn_hotspot(MiniGameType::TicTacToe, glm::vec3(center.x, 0.0f, center.y - 16.0f));
 }
 
 void Engine::update_third_person_camera(PlayerEntity &player, Camera &out_camera) {
@@ -1172,7 +1177,10 @@ void Engine::handle_minigame_interaction(const InputState &input) {
     int best_index = -1;
     for (size_t i = 0; i < minigame_hotspots.size(); ++i) {
         const MiniGameHotspot &hotspot = minigame_hotspots[i];
-        const float distance = glm::length(local_player.transform.position - hotspot.position);
+        const glm::vec2 to_hotspot(
+            local_player.transform.position.x - hotspot.position.x,
+            local_player.transform.position.z - hotspot.position.z);
+        const float distance = glm::length(to_hotspot);
         if (distance <= hotspot.interact_radius && distance < best_distance) {
             best_distance = distance;
             best_index = static_cast<int>(i);
@@ -1220,12 +1228,7 @@ void Engine::update_vehicle_sim(const InputState &input, float dt) {
     }
     const bool sandbox_drive = runtime_options.vehicle_sandbox && !vehicle.occupied;
     if (!vehicle.occupied && !sandbox_drive) {
-        VehicleControlInput coast{};
-        coast.brake = 0.2f;
-        vehicle.controller.step(coast, collision_world, dt);
-        vehicle.position = vehicle.controller.state().kinematic.position;
-        vehicle.yaw = vehicle.controller.state().kinematic.yaw;
-        vehicle.speed = vehicle.controller.state().telemetry.speed_mps;
+        vehicle.speed = 0.0f;
         return;
     }
     if (aircraft.occupied) {

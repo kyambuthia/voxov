@@ -107,6 +107,42 @@ glm::vec3 rotate_y(const glm::vec3 &v, float yaw_radians) {
     return glm::vec3(v.x * c - v.z * s, v.y, v.x * s + v.z * c);
 }
 
+struct SurfaceFrame {
+    glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+    glm::vec3 east = glm::vec3(1.0f, 0.0f, 0.0f);
+    glm::vec3 north = glm::vec3(0.0f, 0.0f, 1.0f);
+};
+
+SurfaceFrame make_surface_frame(glm::vec3 up_raw) {
+    SurfaceFrame frame{};
+    if (glm::length(up_raw) > 0.001f) {
+        frame.up = glm::normalize(up_raw);
+    }
+    glm::vec3 ref_axis(0.0f, 1.0f, 0.0f);
+    if (std::fabs(glm::dot(frame.up, ref_axis)) > 0.94f) {
+        ref_axis = glm::vec3(1.0f, 0.0f, 0.0f);
+    }
+    frame.east = glm::normalize(glm::cross(ref_axis, frame.up));
+    frame.north = glm::normalize(glm::cross(frame.up, frame.east));
+    return frame;
+}
+
+glm::vec3 rotate_on_surface(const glm::vec3 &local, const SurfaceFrame &frame, float yaw_radians) {
+    glm::vec3 forward = frame.north * std::cos(yaw_radians) + frame.east * std::sin(yaw_radians);
+    if (glm::length(forward) <= 0.001f) {
+        forward = frame.north;
+    } else {
+        forward = glm::normalize(forward);
+    }
+    glm::vec3 right = glm::cross(forward, frame.up);
+    if (glm::length(right) <= 0.001f) {
+        right = frame.east;
+    } else {
+        right = glm::normalize(right);
+    }
+    return right * local.x + frame.up * local.y + forward * local.z;
+}
+
 glm::vec3 player_color_from_id(uint32_t player_id) {
     return player_color_from_network_id(player_id);
 }
@@ -1326,6 +1362,15 @@ void Engine::update_active_minigame(const InputState &input, float dt) {
         const glm::vec3 up = glm::normalize(hotspot.position - spherical_planet_center);
         const float shell_radius = spherical_planet_radius + local_player.controller.capsuleHeight * 0.52f;
         local_player.transform.position = spherical_planet_center + up * shell_radius;
+        const float yaw = local_player.camera_rig.yaw * 0.01745329251994329577f;
+        const SurfaceFrame frame = make_surface_frame(up);
+        glm::vec3 forward = glm::normalize(frame.north * std::cos(yaw) + frame.east * std::sin(yaw));
+        glm::vec3 right = glm::cross(forward, up);
+        if (glm::length(right) > 0.001f) {
+            right = glm::normalize(right);
+            forward = glm::normalize(glm::cross(up, right));
+            local_player.transform.rotation = glm::quat_cast(glm::mat3(right, up, forward));
+        }
     } else {
         const float seat_y = collision_world.find_spawn_height(
             glm::vec2(hotspot.position.x, hotspot.position.z),
@@ -1333,8 +1378,8 @@ void Engine::update_active_minigame(const InputState &input, float dt) {
             local_player.controller.capsuleHeight) +
             0.05f;
         local_player.transform.position = glm::vec3(hotspot.position.x, seat_y, hotspot.position.z);
+        local_player.transform.rotation = glm::angleAxis(local_player.camera_rig.yaw * 0.01745329251994329577f, glm::vec3(0.0f, 1.0f, 0.0f));
     }
-    local_player.transform.rotation = glm::angleAxis(local_player.camera_rig.yaw * 0.01745329251994329577f, glm::vec3(0.0f, 1.0f, 0.0f));
     local_player.camera_rig.distance = std::clamp(local_player.camera_rig.distance, 3.8f, 4.8f);
     local_player.camera_rig.pitch = std::clamp(local_player.camera_rig.pitch, -15.0f, 10.0f);
     local_player.controller.velocity = glm::vec3(0.0f);
@@ -1925,8 +1970,19 @@ void Engine::rebuild_dynamic_debug_mesh() {
             active_minigame_hotspot >= 0 &&
             active_minigame_hotspot < static_cast<int>(minigame_hotspots.size())) {
             const float board_yaw = local_player.camera_rig.yaw * 0.01745329251994329577f;
-            const glm::vec3 board_origin = local_player.transform.position + rotate_y(glm::vec3(0.0f, 1.28f, 2.35f), board_yaw);
+            glm::vec3 board_origin = local_player.transform.position + rotate_y(glm::vec3(0.0f, 1.28f, 2.35f), board_yaw);
+            SurfaceFrame board_frame{};
+            bool use_surface_frame = false;
+            if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+                const glm::vec3 up = local_player.transform.position - spherical_planet_center;
+                board_frame = make_surface_frame(up);
+                board_origin = local_player.transform.position + rotate_on_surface(glm::vec3(0.0f, 1.28f, 2.35f), board_frame, board_yaw);
+                use_surface_frame = true;
+            }
             auto board_point = [&](const glm::vec3 &local) {
+                if (use_surface_frame) {
+                    return board_origin + rotate_on_surface(local, board_frame, board_yaw);
+                }
                 return board_origin + rotate_y(local, board_yaw);
             };
             auto append_board_voxel = [&](const glm::vec3 &local_center, const glm::vec3 &half, const glm::vec3 &color) {

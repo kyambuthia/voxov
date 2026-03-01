@@ -1265,7 +1265,7 @@ void Engine::update_aircraft_sim(const InputState &input, float dt) {
     }
 
     AircraftControlInput control{};
-    control.throttle = std::clamp(0.5f + input.move.y * 0.5f, 0.0f, 1.0f);
+    control.throttle = std::clamp(input.move.y, 0.0f, 1.0f);
     control.yaw = input.move.x;
     control.pitch = (input.jump_held ? 0.45f : 0.0f) + (input.crouch_held ? -0.35f : 0.0f);
     control.roll = -input.move.x * 0.55f;
@@ -1274,8 +1274,9 @@ void Engine::update_aircraft_sim(const InputState &input, float dt) {
     aircraft.position = aircraft.controller.state().kinematic.position;
     aircraft.yaw = aircraft.controller.state().kinematic.euler.y;
     aircraft.speed = aircraft.controller.state().telemetry.speed_mps;
-    aircraft.position.x = std::clamp(aircraft.position.x, -26.0f, 52.0f);
-    aircraft.position.z = std::clamp(aircraft.position.z, -26.0f, 52.0f);
+    constexpr float k_bounds_margin = 2.0f;
+    aircraft.position.x = std::clamp(aircraft.position.x, k_bounds_margin, static_cast<float>(VoxelChunk::CHUNK_X) - k_bounds_margin);
+    aircraft.position.z = std::clamp(aircraft.position.z, k_bounds_margin, static_cast<float>(VoxelChunk::CHUNK_Z) - k_bounds_margin);
 
     if (aircraft.occupied) {
         local_player.transform.position = aircraft_seat_world_position();

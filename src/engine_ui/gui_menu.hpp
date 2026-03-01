@@ -73,5 +73,5 @@ private:
     bool is_open = true;
     int selected_item = 0;
     MenuPage page = MenuPage::Main;
-    Character selected_character = Character::Fox;
+    Character selected_character = Character::Capsule;
 };

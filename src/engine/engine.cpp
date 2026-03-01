@@ -41,7 +41,7 @@ constexpr float k_aircraft_body_width = 1.1f;
 constexpr float k_aircraft_body_height = 0.55f;
 constexpr uint32_t k_remote_interp_delay_ticks = 6;
 constexpr size_t k_remote_sample_history_max = 16;
-constexpr float k_minigame_interact_radius = 4.5f;
+constexpr float k_minigame_interact_radius = 6.5f;
 
 std::filesystem::path executable_directory() {
     namespace fs = std::filesystem;
@@ -346,6 +346,7 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
         glm::vec2(aircraft.position.x, aircraft.position.z), 1.0f, 1.8f) + 1.2f;
     aircraft.yaw = 0.25f;
     aircraft.speed = 0.0f;
+    aircraft.throttle_cmd = 0.0f;
     aircraft.occupied = false;
     aircraft.controller.reset(
         aircraft.position,
@@ -1041,6 +1042,7 @@ void Engine::build_static_scene() {
         glm::vec2(aircraft.position.x, aircraft.position.z), 1.0f, 1.8f) + 1.2f;
     aircraft.yaw = -0.2f;
     aircraft.speed = 0.0f;
+    aircraft.throttle_cmd = 0.0f;
     aircraft.occupied = false;
     aircraft.controller.reset(
         aircraft.position,
@@ -1154,6 +1156,7 @@ void Engine::handle_aircraft_interaction(const InputState &input) {
 
     if (aircraft.occupied) {
         aircraft.occupied = false;
+        aircraft.throttle_cmd = 0.0f;
         const glm::vec3 exit_candidate = aircraft.position + rotate_y(glm::vec3(-2.5f, -1.0f, -1.2f), aircraft.yaw);
         local_player.transform.position = exit_candidate;
         local_player.transform.position.y = collision_world.find_spawn_height(
@@ -1169,6 +1172,7 @@ void Engine::handle_aircraft_interaction(const InputState &input) {
     const float d = glm::length(local_player.transform.position - aircraft.position);
     if (d <= k_aircraft_interact_radius) {
         aircraft.occupied = true;
+        aircraft.throttle_cmd = 0.0f;
         local_player.transform.position = aircraft_seat_world_position();
         local_player.camera_rig.yaw = glm::degrees(aircraft.yaw);
         local_player.controller.velocity = glm::vec3(0.0f);
@@ -1258,21 +1262,31 @@ void Engine::update_vehicle_sim(const InputState &input, float dt) {
     if (!k_vehicle_feature_enabled) {
         vehicle.occupied = false;
         vehicle.speed = 0.0f;
+        last_vehicle_control = VehicleControlInput{};
         return;
     }
     const bool sandbox_drive = runtime_options.vehicle_sandbox && !vehicle.occupied;
     if (!vehicle.occupied && !sandbox_drive) {
         vehicle.speed = 0.0f;
+        last_vehicle_control = VehicleControlInput{};
         return;
     }
     if (aircraft.occupied) {
+        last_vehicle_control = VehicleControlInput{};
         return;
     }
     VehicleControlInput control{};
-    control.throttle = -input.move.y;
-    control.steer = input.move.x;
-    control.brake = 0.0f;
+    const float steer_axis = (std::fabs(input.move.x) > 0.05f) ? input.move.x : 0.0f;
+    const float desired_throttle = (std::fabs(input.move.y) > 0.05f) ? std::clamp(-input.move.y, -1.0f, 1.0f) : 0.0f;
+    const glm::vec3 forward(std::sin(vehicle.yaw), 0.0f, std::cos(vehicle.yaw));
+    const float signed_speed = glm::dot(vehicle.controller.state().kinematic.velocity, forward);
+    const bool oppose_motion = desired_throttle * signed_speed < -0.6f && std::fabs(signed_speed) > 1.0f;
+
+    control.throttle = oppose_motion ? 0.0f : desired_throttle;
+    control.steer = steer_axis;
+    control.brake = oppose_motion ? std::min(1.0f, std::fabs(desired_throttle)) : 0.0f;
     control.handbrake = input.crouch_held ? 1.0f : 0.0f;
+    last_vehicle_control = control;
     vehicle.controller.step(control, collision_world, dt);
     vehicle.position = vehicle.controller.state().kinematic.position;
     vehicle.yaw = vehicle.controller.state().kinematic.yaw;
@@ -1291,19 +1305,29 @@ void Engine::update_vehicle_sim(const InputState &input, float dt) {
 void Engine::update_aircraft_sim(const InputState &input, float dt) {
     if (!k_vehicle_feature_enabled) {
         aircraft.occupied = false;
+        aircraft.throttle_cmd = 0.0f;
+        last_aircraft_control = AircraftControlInput{};
         return;
     }
     if (!aircraft.occupied) {
         aircraft.speed = 0.0f;
+        aircraft.throttle_cmd = 0.0f;
+        last_aircraft_control = AircraftControlInput{};
         return;
     }
 
     AircraftControlInput control{};
-    const float throttle_axis = std::clamp(input.move.y, 0.0f, 1.0f);
-    control.throttle = (throttle_axis > 0.08f) ? throttle_axis : 0.0f;
+    const float key_throttle_delta =
+        ((input.key_w ? 1.0f : 0.0f) - (input.key_s ? 1.0f : 0.0f)) * dt * 0.9f;
+    aircraft.throttle_cmd = std::clamp(aircraft.throttle_cmd + key_throttle_delta, 0.0f, 1.0f);
+    if (!input.key_w && !input.key_s && std::fabs(input.move.y) > 0.2f) {
+        aircraft.throttle_cmd = std::clamp((input.move.y + 1.0f) * 0.5f, 0.0f, 1.0f);
+    }
+    control.throttle = aircraft.throttle_cmd;
     control.yaw = input.move.x;
     control.pitch = (input.jump_held ? 0.45f : 0.0f) + (input.crouch_held ? -0.35f : 0.0f);
     control.roll = -input.move.x * 0.55f;
+    last_aircraft_control = control;
     aircraft.controller.step(control, collision_world, dt);
 
     aircraft.position = aircraft.controller.state().kinematic.position;
@@ -1380,7 +1404,7 @@ void Engine::refresh_overlay_text() {
                     glm::vec3(0.88f, 0.93f, 0.99f)));
         }
     } else if (runtime_options.devhud) {
-        char text[768]{};
+        char text[1024]{};
         const float vehicle_distance = k_vehicle_feature_enabled
             ? glm::length(local_player.transform.position - vehicle.position)
             : 0.0f;
@@ -1392,7 +1416,7 @@ void Engine::refresh_overlay_text() {
         std::snprintf(
             text,
             sizeof(text),
-            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f\nAIR %s SPD %.1f DIST %.1f",
+            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f C[th %.2f br %.2f st %.2f hb %.2f]\nAIR %s SPD %.1f DIST %.1f C[th %.2f y %.2f p %.2f r %.2f]",
             render_stats.fps,
             last_frame_dt,
             fixed.fixed_dt,
@@ -1440,9 +1464,17 @@ void Engine::refresh_overlay_text() {
             local_player.anim_phase,
             k_vehicle_feature_enabled ? (vehicle.occupied ? "ONBOARD" : "ON FOOT") : "DISABLED",
             vehicle_distance,
+            last_vehicle_control.throttle,
+            last_vehicle_control.brake,
+            last_vehicle_control.steer,
+            last_vehicle_control.handbrake,
             k_vehicle_feature_enabled ? (aircraft.occupied ? "ONBOARD" : "ON FOOT") : "DISABLED",
             aircraft.speed,
-            aircraft_distance);
+            aircraft_distance,
+            last_aircraft_control.throttle,
+            last_aircraft_control.yaw,
+            last_aircraft_control.pitch,
+            last_aircraft_control.roll);
         append_screen_rect(-0.98f, 0.98f, 0.10f, 0.08f, glm::vec3(0.05f, 0.07f, 0.10f));
         append_screen_rect(-0.97f, 0.97f, 0.09f, 0.10f, glm::vec3(0.09f, 0.11f, 0.16f));
         append_mesh(scene.debug_screen, build_screen_text_mesh(text, -0.95f, 0.92f, 0.0049f, glm::vec3(0.95f, 0.95f, 0.82f)));

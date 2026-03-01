@@ -80,6 +80,7 @@ private:
         glm::vec3 position = glm::vec3(16.0f, 8.0f, 16.0f);
         float yaw = 0.0f;
         float speed = 8.0f;
+        float throttle_cmd = 0.0f;
         bool occupied = false;
     };
     struct MiniGameHotspot {
@@ -183,6 +184,8 @@ private:
     RenderMesh frozen_debug_world{};
     VehicleState vehicle{};
     AircraftState aircraft{};
+    VehicleControlInput last_vehicle_control{};
+    AircraftControlInput last_aircraft_control{};
     std::vector<MiniGameHotspot> minigame_hotspots;
     int nearby_minigame_hotspot = -1;
     int active_minigame_hotspot = -1;

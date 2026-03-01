@@ -195,6 +195,10 @@ GuiMenu::Character GuiMenu::character() const {
     return selected_character;
 }
 
+void GuiMenu::set_character(Character character) {
+    selected_character = character;
+}
+
 GuiMenu::Page GuiMenu::page_id() const {
     switch (page) {
     case MenuPage::Main: return Page::Main;

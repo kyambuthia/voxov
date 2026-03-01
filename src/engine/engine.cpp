@@ -277,6 +277,7 @@ glm::vec3 minigame_color(MiniGameType type) {
 
 void Engine::init(void *window_handle, RenderBackendType backend_type, const EngineRuntimeOptions &options) {
     runtime_options = options;
+    gui_menu.set_character(GuiMenu::Character::Capsule);
 
     EnginePhysicsSettings settings{};
     settings.solver_backend = runtime_options.physics_backend;

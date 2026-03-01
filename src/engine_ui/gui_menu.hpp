@@ -52,6 +52,7 @@ public:
     int count() const;
     Page page_id() const;
     Character character() const;
+    void set_character(Character character);
     void set_selected(int index);
     std::string build_text(bool devhud_enabled, bool noclip_enabled, const std::string &multiplayer_hint = std::string()) const;
     std::string page_title() const;

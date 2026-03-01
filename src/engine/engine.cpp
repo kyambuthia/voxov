@@ -1253,9 +1253,20 @@ void Engine::update_active_minigame(const InputState &input, float dt) {
         local_player.controller.capsuleHeight) +
         0.05f;
     local_player.transform.position = glm::vec3(hotspot.position.x, seat_y, hotspot.position.z);
+    local_player.transform.rotation = glm::angleAxis(local_player.camera_rig.yaw * 0.01745329251994329577f, glm::vec3(0.0f, 1.0f, 0.0f));
     local_player.controller.velocity = glm::vec3(0.0f);
     local_player.controller.grounded = true;
-    minigame_tick(active_minigame, input, dt);
+
+    const bool has_minigame_movement =
+        std::fabs(input.move.x) > 0.1f ||
+        std::fabs(input.move.y) > 0.1f;
+    local_player.anim_state = has_minigame_movement ? PlayerAnimState::Walk : PlayerAnimState::Idle;
+    local_player.anim_blend = has_minigame_movement ? 0.35f : 0.0f;
+
+    InputState minigame_input = input;
+    // Allow SPACE as an action key inside minigames in addition to interact.
+    minigame_input.interact_pressed = minigame_input.interact_pressed || input.jump_pressed;
+    minigame_tick(active_minigame, minigame_input, dt);
 }
 
 void Engine::update_vehicle_sim(const InputState &input, float dt) {
@@ -1485,26 +1496,30 @@ void Engine::refresh_overlay_text() {
             std::string title = minigame_name(active_minigame.type);
             std::string status = minigame_status_text(active_minigame);
             std::string objective = "OBJECTIVE";
-            std::string controls = "WASD move  SPACE action  F/E interact  C/CTRL exit";
+            std::string controls = "WASD move  SPACE/F/E action  C/CTRL exit";
             float progress = 0.0f;
 
             switch (active_minigame.type) {
             case MiniGameType::Snake:
                 objective = "OBJECTIVE: Reach length 24 without colliding";
+                controls = "WASD steer snake  C/CTRL exit";
                 progress = std::clamp(static_cast<float>(active_minigame.snake.length) / 24.0f, 0.0f, 1.0f);
                 break;
             case MiniGameType::Golf: {
                 objective = "OBJECTIVE: Sink the ball in fewer strokes";
+                controls = "A/D aim  W/S power  SPACE/F/E swing  C/CTRL exit";
                 const float dist = glm::length(active_minigame.golf.hole - active_minigame.golf.ball);
                 progress = std::clamp(1.0f - (dist / 9.5f), 0.0f, 1.0f);
                 break;
             }
             case MiniGameType::Tetris:
                 objective = "OBJECTIVE: Reach score 1200 before topping out";
+                controls = "A/D move  SPACE rotate  S soft drop  C/CTRL exit";
                 progress = std::clamp(static_cast<float>(active_minigame.score) / 1200.0f, 0.0f, 1.0f);
                 break;
             case MiniGameType::Racing:
                 objective = "OBJECTIVE: Complete 3 laps";
+                controls = "W/S throttle  A/D steer  C/CTRL exit";
                 progress = std::clamp(
                     (static_cast<float>(active_minigame.racing.lap) + active_minigame.racing.track_progress / 65.0f) / 3.0f,
                     0.0f,
@@ -1512,6 +1527,7 @@ void Engine::refresh_overlay_text() {
                 break;
             case MiniGameType::TicTacToe:
                 objective = "OBJECTIVE: Align 3 marks before the AI";
+                controls = "WASD move cursor  SPACE/F/E place  C/CTRL exit";
                 progress = std::clamp(static_cast<float>(active_minigame.tictactoe.turns) / 9.0f, 0.0f, 1.0f);
                 break;
             default:

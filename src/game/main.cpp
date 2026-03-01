@@ -86,6 +86,7 @@ int main(int argc, char **argv) {
     bool debug_collision_only = false;
     bool debug_freeze = false;
     bool vehicle_sandbox = false;
+    bool spherical_planet = false;
     bool start_fullscreen = false;
     int window_width = 1280;
     int window_height = 720;
@@ -137,6 +138,8 @@ int main(int argc, char **argv) {
             debug_freeze = true;
         } else if (std::strcmp(argv[i], "--vehicle-sandbox") == 0) {
             vehicle_sandbox = true;
+        } else if (std::strcmp(argv[i], "--spherical-planet") == 0 || std::strcmp(argv[i], "--planet-sphere") == 0) {
+            spherical_planet = true;
         } else if (std::strcmp(argv[i], "--fullscreen") == 0) {
             start_fullscreen = true;
         } else if (std::strcmp(argv[i], "--windowed") == 0) {
@@ -204,6 +207,7 @@ int main(int argc, char **argv) {
         options.debug_collision_only = debug_collision_only;
         options.debug_freeze = debug_freeze;
         options.vehicle_sandbox = vehicle_sandbox;
+        options.spherical_planet = spherical_planet;
         options.physics_backend = physics_backend;
         engine.init(platform.native_window(), backend, options);
     } catch (const std::exception &e) {

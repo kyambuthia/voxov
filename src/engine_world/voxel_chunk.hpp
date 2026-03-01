@@ -13,6 +13,7 @@ public:
 
     void generate_heightmap_terrain();
     void generate_heightmap_terrain_seeded(uint64_t world_seed, int32_t chunk_x, int32_t chunk_z);
+    void generate_spherical_planet_seeded(uint64_t world_seed);
     void generate_flat_ground(int ground_y);
     bool solid(int x, int y, int z) const;
     void set_solid(int x, int y, int z, bool value);

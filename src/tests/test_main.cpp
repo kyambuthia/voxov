@@ -124,6 +124,25 @@ void test_chunk_seed_determinism() {
     assert(different);
 }
 
+void test_chunk_spherical_planet_generation() {
+    VoxelChunk chunk;
+    chunk.generate_spherical_planet_seeded(0xBEEF1234u);
+    const RenderMesh mesh = chunk.build_naive_mesh();
+    assert(!mesh.vertices.empty());
+    assert(!mesh.indices.empty());
+
+    int solid_count = 0;
+    for (int z = 0; z < VoxelChunk::CHUNK_Z; ++z) {
+        for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
+            for (int x = 0; x < VoxelChunk::CHUNK_X; ++x) {
+                solid_count += chunk.solid(x, y, z) ? 1 : 0;
+            }
+        }
+    }
+    assert(solid_count > 0);
+    assert(solid_count < (VoxelChunk::CHUNK_X * VoxelChunk::CHUNK_Y * VoxelChunk::CHUNK_Z) / 2);
+}
+
 void test_camera_yaw_response() {
     PlayerEntity player{};
     player.camera_rig.yaw = 0.0f;
@@ -699,6 +718,7 @@ int main() {
     test_chunk_meshing();
     test_chunk_world_footprint();
     test_chunk_seed_determinism();
+    test_chunk_spherical_planet_generation();
     test_camera_yaw_response();
     test_strafe_axis_sign();
     test_player_settles_on_ground();

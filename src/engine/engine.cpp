@@ -1015,7 +1015,11 @@ const RenderStats &Engine::stats() const {
 
 void Engine::build_static_scene() {
     constexpr uint64_t k_world_seed = 0x0DDF00D5EEDull;
-    world_chunk.generate_heightmap_terrain_seeded(k_world_seed, 0, 0);
+    if (runtime_options.spherical_planet) {
+        world_chunk.generate_spherical_planet_seeded(k_world_seed);
+    } else {
+        world_chunk.generate_heightmap_terrain_seeded(k_world_seed, 0, 0);
+    }
     collision_world = VoxelCollisionWorld(&world_chunk);
 
     scene = RenderScene{};
@@ -1064,11 +1068,19 @@ void Engine::build_static_scene() {
         hotspot.interact_radius = k_minigame_interact_radius;
         minigame_hotspots.push_back(hotspot);
     };
-    spawn_hotspot(MiniGameType::Snake, glm::vec3(center.x - 16.0f, 0.0f, center.y + 10.0f));
-    spawn_hotspot(MiniGameType::Golf, glm::vec3(center.x + 14.0f, 0.0f, center.y - 12.0f));
-    spawn_hotspot(MiniGameType::Tetris, glm::vec3(center.x + 15.0f, 0.0f, center.y + 12.0f));
-    spawn_hotspot(MiniGameType::Racing, glm::vec3(center.x - 18.0f, 0.0f, center.y - 8.0f));
-    spawn_hotspot(MiniGameType::TicTacToe, glm::vec3(center.x, 0.0f, center.y - 16.0f));
+    if (runtime_options.spherical_planet) {
+        spawn_hotspot(MiniGameType::Snake, glm::vec3(center.x - 7.0f, 0.0f, center.y + 5.0f));
+        spawn_hotspot(MiniGameType::Golf, glm::vec3(center.x + 6.0f, 0.0f, center.y - 5.0f));
+        spawn_hotspot(MiniGameType::Tetris, glm::vec3(center.x + 7.5f, 0.0f, center.y + 6.0f));
+        spawn_hotspot(MiniGameType::Racing, glm::vec3(center.x - 8.0f, 0.0f, center.y - 4.0f));
+        spawn_hotspot(MiniGameType::TicTacToe, glm::vec3(center.x, 0.0f, center.y - 7.5f));
+    } else {
+        spawn_hotspot(MiniGameType::Snake, glm::vec3(center.x - 16.0f, 0.0f, center.y + 10.0f));
+        spawn_hotspot(MiniGameType::Golf, glm::vec3(center.x + 14.0f, 0.0f, center.y - 12.0f));
+        spawn_hotspot(MiniGameType::Tetris, glm::vec3(center.x + 15.0f, 0.0f, center.y + 12.0f));
+        spawn_hotspot(MiniGameType::Racing, glm::vec3(center.x - 18.0f, 0.0f, center.y - 8.0f));
+        spawn_hotspot(MiniGameType::TicTacToe, glm::vec3(center.x, 0.0f, center.y - 16.0f));
+    }
 }
 
 void Engine::update_third_person_camera(PlayerEntity &player, Camera &out_camera) {

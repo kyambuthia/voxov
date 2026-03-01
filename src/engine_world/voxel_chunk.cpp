@@ -88,6 +88,55 @@ void VoxelChunk::generate_heightmap_terrain_seeded(uint64_t world_seed, int32_t 
     }
 }
 
+void VoxelChunk::generate_spherical_planet_seeded(uint64_t world_seed) {
+    voxels.fill(0);
+    const WorldGenerator generator(world_seed);
+
+    const float cx = static_cast<float>(CHUNK_X - 1) * 0.5f;
+    const float cy = static_cast<float>(CHUNK_Y - 1) * 0.42f;
+    const float cz = static_cast<float>(CHUNK_Z - 1) * 0.5f;
+    const float base_radius = static_cast<float>(std::min({CHUNK_X, CHUNK_Y, CHUNK_Z})) * 0.34f;
+    const float shell_min = base_radius * 0.24f;
+
+    for (int z = 0; z < CHUNK_Z; ++z) {
+        for (int y = 0; y < CHUNK_Y; ++y) {
+            for (int x = 0; x < CHUNK_X; ++x) {
+                const float dx = static_cast<float>(x) - cx;
+                const float dy = static_cast<float>(y) - cy;
+                const float dz = static_cast<float>(z) - cz;
+                const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
+                if (dist <= 0.001f) {
+                    voxels[index(x, y, z)] = 1;
+                    continue;
+                }
+
+                const float noise_a = generator.sample_height(cx + dx * 1.9f, cz + dz * 1.9f) - 6.0f;
+                const float noise_b = std::sin(dy * 0.43f + static_cast<float>(world_seed & 0xffu) * 0.03f) * 0.9f;
+                const float radial_noise = noise_a * 0.22f + noise_b;
+                const float shell_radius = base_radius + radial_noise;
+
+                if (dist <= shell_radius && dist >= shell_min) {
+                    voxels[index(x, y, z)] = 1;
+                }
+            }
+        }
+    }
+
+    // Ensure a stable spawnable cap near the top hemisphere.
+    const int spawn_cap_y = std::clamp(static_cast<int>(std::floor(cy + base_radius - 1.5f)), 1, CHUNK_Y - 2);
+    for (int z = static_cast<int>(cz) - 3; z <= static_cast<int>(cz) + 3; ++z) {
+        for (int x = static_cast<int>(cx) - 3; x <= static_cast<int>(cx) + 3; ++x) {
+            if (x < 1 || z < 1 || x >= CHUNK_X - 1 || z >= CHUNK_Z - 1) {
+                continue;
+            }
+            voxels[index(x, spawn_cap_y, z)] = 1;
+            for (int y = spawn_cap_y + 1; y < CHUNK_Y; ++y) {
+                voxels[index(x, y, z)] = 0;
+            }
+        }
+    }
+}
+
 void VoxelChunk::generate_flat_ground(int ground_y) {
     voxels.fill(0);
     const int max_y = std::clamp(ground_y, 0, CHUNK_Y - 1);

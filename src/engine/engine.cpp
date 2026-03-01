@@ -1717,71 +1717,87 @@ void Engine::rebuild_dynamic_debug_mesh() {
         if (active_minigame.active &&
             active_minigame_hotspot >= 0 &&
             active_minigame_hotspot < static_cast<int>(minigame_hotspots.size())) {
-            const MiniGameHotspot &hotspot = minigame_hotspots[static_cast<size_t>(active_minigame_hotspot)];
-            const glm::vec3 base = hotspot.position + glm::vec3(-1.6f, 0.25f, -1.4f);
-            const glm::vec3 half(0.08f, 0.08f, 0.08f);
+            const float board_yaw = local_player.camera_rig.yaw * 0.01745329251994329577f;
+            const glm::vec3 board_origin = local_player.transform.position + rotate_y(glm::vec3(0.0f, 1.05f, 1.55f), board_yaw);
+            auto board_point = [&](const glm::vec3 &local) {
+                return board_origin + rotate_y(local, board_yaw);
+            };
+            auto append_board_voxel = [&](const glm::vec3 &local_center, const glm::vec3 &half, const glm::vec3 &color) {
+                append_minigame_voxel(board_point(local_center), half, color);
+            };
+
+            // Physical board/platform in front of the player so it reads as "player is playing".
+            append_board_voxel(glm::vec3(0.0f, -0.16f, 0.0f), glm::vec3(1.18f, 0.06f, 0.86f), glm::vec3(0.18f, 0.20f, 0.23f));
+            append_board_voxel(glm::vec3(0.0f, -0.06f, 0.0f), glm::vec3(1.12f, 0.03f, 0.80f), glm::vec3(0.10f, 0.12f, 0.15f));
 
             if (active_minigame.type == MiniGameType::Snake) {
+                const float cell = 0.13f;
+                const glm::vec3 base(-0.62f, 0.01f, -0.62f);
+                const glm::vec3 half(0.055f, 0.055f, 0.055f);
                 for (int i = 0; i < active_minigame.snake.length; ++i) {
                     const glm::ivec2 c = active_minigame.snake.body[static_cast<size_t>(i)];
-                    append_minigame_voxel(
-                        base + glm::vec3(c.x * 0.18f, 0.0f, c.y * 0.18f),
+                    append_board_voxel(
+                        base + glm::vec3(c.x * cell, 0.0f, c.y * cell),
                         half,
                         glm::vec3(0.2f, 0.9f, 0.3f));
                 }
-                append_minigame_voxel(
-                    base + glm::vec3(active_minigame.snake.food.x * 0.18f, 0.0f, active_minigame.snake.food.y * 0.18f),
+                append_board_voxel(
+                    base + glm::vec3(active_minigame.snake.food.x * cell, 0.0f, active_minigame.snake.food.y * cell),
                     half,
                     glm::vec3(0.95f, 0.25f, 0.2f));
             } else if (active_minigame.type == MiniGameType::TicTacToe) {
+                const glm::vec3 base(-0.32f, 0.01f, -0.32f);
                 const int cursor = std::clamp(active_minigame.tictactoe.cursor, 0, 8);
                 for (int y = 0; y < 3; ++y) {
                     for (int x = 0; x < 3; ++x) {
                         const int idx = y * 3 + x;
                         const uint8_t cell = active_minigame.tictactoe.board[static_cast<size_t>(idx)];
                         const glm::vec3 cpos = base + glm::vec3(x * 0.32f, 0.0f, y * 0.32f);
-                        append_minigame_voxel(cpos, glm::vec3(0.11f, 0.03f, 0.11f), glm::vec3(0.18f, 0.22f, 0.26f));
+                        append_board_voxel(cpos, glm::vec3(0.11f, 0.03f, 0.11f), glm::vec3(0.18f, 0.22f, 0.26f));
                         if (!active_minigame.completed && idx == cursor) {
-                            append_minigame_voxel(cpos + glm::vec3(0.0f, 0.055f, 0.0f), glm::vec3(0.11f, 0.015f, 0.11f), glm::vec3(0.95f, 0.95f, 0.35f));
+                            append_board_voxel(cpos + glm::vec3(0.0f, 0.055f, 0.0f), glm::vec3(0.11f, 0.015f, 0.11f), glm::vec3(0.95f, 0.95f, 0.35f));
                         }
                         if (cell == 1) {
-                            append_minigame_voxel(cpos + glm::vec3(0.0f, 0.1f, 0.0f), glm::vec3(0.05f), glm::vec3(0.15f, 0.9f, 0.3f));
+                            append_board_voxel(cpos + glm::vec3(0.0f, 0.1f, 0.0f), glm::vec3(0.05f), glm::vec3(0.15f, 0.9f, 0.3f));
                         } else if (cell == 2) {
-                            append_minigame_voxel(cpos + glm::vec3(0.0f, 0.1f, 0.0f), glm::vec3(0.05f), glm::vec3(0.9f, 0.2f, 0.2f));
+                            append_board_voxel(cpos + glm::vec3(0.0f, 0.1f, 0.0f), glm::vec3(0.05f), glm::vec3(0.9f, 0.2f, 0.2f));
                         }
                     }
                 }
             } else if (active_minigame.type == MiniGameType::Golf) {
-                const glm::vec3 ball = base + glm::vec3(active_minigame.golf.ball.x * 0.2f, 0.0f, active_minigame.golf.ball.y * 0.2f);
-                const glm::vec3 hole = base + glm::vec3(active_minigame.golf.hole.x * 0.2f, 0.0f, active_minigame.golf.hole.y * 0.2f);
-                append_minigame_voxel(ball, half, glm::vec3(0.9f));
-                append_minigame_voxel(hole, half, glm::vec3(0.2f, 0.6f, 1.0f));
+                const glm::vec3 base(-0.78f, 0.0f, -0.55f);
+                const glm::vec3 half(0.07f, 0.07f, 0.07f);
+                const glm::vec3 ball = base + glm::vec3(active_minigame.golf.ball.x * 0.16f, 0.0f, active_minigame.golf.ball.y * 0.16f);
+                const glm::vec3 hole = base + glm::vec3(active_minigame.golf.hole.x * 0.16f, 0.0f, active_minigame.golf.hole.y * 0.16f);
+                append_board_voxel(ball, half, glm::vec3(0.9f));
+                append_board_voxel(hole, half, glm::vec3(0.2f, 0.6f, 1.0f));
 
                 const glm::vec3 aim_dir(std::cos(active_minigame.golf.aim_radians), 0.0f, std::sin(active_minigame.golf.aim_radians));
                 const float aim_len = 0.35f + active_minigame.golf.power * 0.65f;
                 append_mesh(
                     scene.debug_world,
                     build_debug_line_mesh(
-                        ball + glm::vec3(0.0f, 0.08f, 0.0f),
-                        ball + glm::vec3(0.0f, 0.08f, 0.0f) + aim_dir * aim_len,
+                        board_point(ball + glm::vec3(0.0f, 0.08f, 0.0f)),
+                        board_point(ball + glm::vec3(0.0f, 0.08f, 0.0f) + aim_dir * aim_len),
                         0.03f,
                         glm::vec3(1.0f, 0.9f, 0.3f)));
 
-                const glm::vec3 power_anchor = base + glm::vec3(-0.35f, 0.02f, -0.45f);
-                append_minigame_voxel(power_anchor, glm::vec3(0.12f, 0.02f, 0.02f), glm::vec3(0.2f, 0.2f, 0.24f));
-                append_minigame_voxel(
+                const glm::vec3 power_anchor = glm::vec3(-0.90f, 0.02f, -0.68f);
+                append_board_voxel(power_anchor, glm::vec3(0.12f, 0.02f, 0.02f), glm::vec3(0.2f, 0.2f, 0.24f));
+                append_board_voxel(
                     power_anchor + glm::vec3((-0.12f + active_minigame.golf.power * 0.24f), 0.03f, 0.0f),
                     glm::vec3(std::max(0.02f, active_minigame.golf.power * 0.12f), 0.015f, 0.015f),
                     glm::vec3(0.2f + active_minigame.golf.power * 0.8f, 0.7f, 0.25f));
             } else if (active_minigame.type == MiniGameType::Tetris) {
                 const float cell_size = 0.13f;
+                const glm::vec3 base(-0.65f, 0.0f, -0.08f);
                 for (int y = 0; y < TetrisState::k_board_h; ++y) {
                     for (int x = 0; x < TetrisState::k_board_w; ++x) {
                         const uint8_t filled = active_minigame.tetris.board[static_cast<size_t>(y * TetrisState::k_board_w + x)];
                         if (filled == 0) {
                             continue;
                         }
-                        append_minigame_voxel(base + glm::vec3(x * cell_size, y * 0.02f, 0.0f), glm::vec3(0.05f, 0.01f, 0.05f), glm::vec3(0.78f, 0.42f, 0.92f));
+                        append_board_voxel(base + glm::vec3(x * cell_size, y * 0.02f, 0.0f), glm::vec3(0.05f, 0.01f, 0.05f), glm::vec3(0.78f, 0.42f, 0.92f));
                     }
                 }
                 if (!active_minigame.completed) {
@@ -1795,7 +1811,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
                         if (x < 0 || x >= TetrisState::k_board_w || y < 0 || y >= TetrisState::k_board_h) {
                             continue;
                         }
-                        append_minigame_voxel(
+                        append_board_voxel(
                             base + glm::vec3(x * cell_size, y * 0.02f + 0.03f, 0.0f),
                             glm::vec3(0.05f, 0.012f, 0.05f),
                             glm::vec3(0.95f, 0.75f, 0.25f));
@@ -1804,17 +1820,18 @@ void Engine::rebuild_dynamic_debug_mesh() {
             } else if (active_minigame.type == MiniGameType::Racing) {
                 constexpr float track_len = 1.8f;
                 constexpr float track_half_w = 0.16f;
-                append_minigame_voxel(base + glm::vec3(track_len * 0.5f, 0.0f, 0.0f), glm::vec3(track_len * 0.5f, 0.02f, track_half_w), glm::vec3(0.22f, 0.22f, 0.24f));
+                const glm::vec3 base(-0.86f, 0.0f, 0.0f);
+                append_board_voxel(base + glm::vec3(track_len * 0.5f, 0.0f, 0.0f), glm::vec3(track_len * 0.5f, 0.02f, track_half_w), glm::vec3(0.22f, 0.22f, 0.24f));
 
                 for (int cp = 0; cp < 4; ++cp) {
                     const float t = static_cast<float>(cp) / 4.0f;
                     const float x = t * track_len;
-                    append_minigame_voxel(base + glm::vec3(x, 0.05f, -track_half_w), glm::vec3(0.02f, 0.06f, 0.02f), glm::vec3(0.95f, 0.45f, 0.2f));
-                    append_minigame_voxel(base + glm::vec3(x, 0.05f, track_half_w), glm::vec3(0.02f, 0.06f, 0.02f), glm::vec3(0.95f, 0.45f, 0.2f));
+                    append_board_voxel(base + glm::vec3(x, 0.05f, -track_half_w), glm::vec3(0.02f, 0.06f, 0.02f), glm::vec3(0.95f, 0.45f, 0.2f));
+                    append_board_voxel(base + glm::vec3(x, 0.05f, track_half_w), glm::vec3(0.02f, 0.06f, 0.02f), glm::vec3(0.95f, 0.45f, 0.2f));
                 }
 
                 const float progress = std::clamp(active_minigame.racing.track_progress / 65.0f, 0.0f, 1.0f);
-                append_minigame_voxel(
+                append_board_voxel(
                     base + glm::vec3(progress * track_len, 0.05f, 0.0f),
                     glm::vec3(0.07f, 0.07f, 0.09f),
                     glm::vec3(1.0f, 0.75f, 0.2f));

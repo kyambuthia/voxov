@@ -1254,6 +1254,8 @@ void Engine::update_active_minigame(const InputState &input, float dt) {
         0.05f;
     local_player.transform.position = glm::vec3(hotspot.position.x, seat_y, hotspot.position.z);
     local_player.transform.rotation = glm::angleAxis(local_player.camera_rig.yaw * 0.01745329251994329577f, glm::vec3(0.0f, 1.0f, 0.0f));
+    local_player.camera_rig.distance = std::clamp(local_player.camera_rig.distance, 3.8f, 4.8f);
+    local_player.camera_rig.pitch = std::clamp(local_player.camera_rig.pitch, -15.0f, 10.0f);
     local_player.controller.velocity = glm::vec3(0.0f);
     local_player.controller.grounded = true;
 
@@ -1766,7 +1768,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
             active_minigame_hotspot >= 0 &&
             active_minigame_hotspot < static_cast<int>(minigame_hotspots.size())) {
             const float board_yaw = local_player.camera_rig.yaw * 0.01745329251994329577f;
-            const glm::vec3 board_origin = local_player.transform.position + rotate_y(glm::vec3(0.0f, 1.05f, 1.55f), board_yaw);
+            const glm::vec3 board_origin = local_player.transform.position + rotate_y(glm::vec3(0.0f, 1.28f, 2.35f), board_yaw);
             auto board_point = [&](const glm::vec3 &local) {
                 return board_origin + rotate_y(local, board_yaw);
             };
@@ -1774,23 +1776,24 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 append_minigame_voxel(board_point(local_center), half, color);
             };
 
-            // Physical board/platform in front of the player so it reads as "player is playing".
-            append_board_voxel(glm::vec3(0.0f, -0.16f, 0.0f), glm::vec3(1.18f, 0.06f, 0.86f), glm::vec3(0.18f, 0.20f, 0.23f));
-            append_board_voxel(glm::vec3(0.0f, -0.06f, 0.0f), glm::vec3(1.12f, 0.03f, 0.80f), glm::vec3(0.10f, 0.12f, 0.15f));
+            // Cabinet-like play station in front of the player.
+            append_board_voxel(glm::vec3(0.0f, -0.20f, 0.0f), glm::vec3(1.20f, 0.07f, 0.92f), glm::vec3(0.18f, 0.20f, 0.23f));
+            append_board_voxel(glm::vec3(0.0f, -0.08f, 0.0f), glm::vec3(1.14f, 0.03f, 0.84f), glm::vec3(0.10f, 0.12f, 0.15f));
+            append_board_voxel(glm::vec3(0.0f, 0.72f, -0.78f), glm::vec3(1.16f, 0.78f, 0.05f), glm::vec3(0.09f, 0.10f, 0.13f));
 
             if (active_minigame.type == MiniGameType::Snake) {
-                const float cell = 0.13f;
-                const glm::vec3 base(-0.62f, 0.01f, -0.62f);
-                const glm::vec3 half(0.055f, 0.055f, 0.055f);
+                const float cell = 0.18f;
+                const glm::vec3 base(-0.80f, -0.12f, -0.70f);
+                const glm::vec3 half(0.075f, 0.075f, 0.055f);
                 for (int i = 0; i < active_minigame.snake.length; ++i) {
                     const glm::ivec2 c = active_minigame.snake.body[static_cast<size_t>(i)];
                     append_board_voxel(
-                        base + glm::vec3(c.x * cell, 0.0f, c.y * cell),
+                        base + glm::vec3(c.x * cell, c.y * cell, 0.0f),
                         half,
                         glm::vec3(0.2f, 0.9f, 0.3f));
                 }
                 append_board_voxel(
-                    base + glm::vec3(active_minigame.snake.food.x * cell, 0.0f, active_minigame.snake.food.y * cell),
+                    base + glm::vec3(active_minigame.snake.food.x * cell, active_minigame.snake.food.y * cell, 0.0f),
                     half,
                     glm::vec3(0.95f, 0.25f, 0.2f));
             } else if (active_minigame.type == MiniGameType::TicTacToe) {
@@ -1837,15 +1840,16 @@ void Engine::rebuild_dynamic_debug_mesh() {
                     glm::vec3(std::max(0.02f, active_minigame.golf.power * 0.12f), 0.015f, 0.015f),
                     glm::vec3(0.2f + active_minigame.golf.power * 0.8f, 0.7f, 0.25f));
             } else if (active_minigame.type == MiniGameType::Tetris) {
-                const float cell_size = 0.13f;
-                const glm::vec3 base(-0.65f, 0.0f, -0.08f);
+                const float cell_size = 0.18f;
+                const float row_height = 0.095f;
+                const glm::vec3 base(-0.90f, -0.46f, -0.68f);
                 for (int y = 0; y < TetrisState::k_board_h; ++y) {
                     for (int x = 0; x < TetrisState::k_board_w; ++x) {
                         const uint8_t filled = active_minigame.tetris.board[static_cast<size_t>(y * TetrisState::k_board_w + x)];
                         if (filled == 0) {
                             continue;
                         }
-                        append_board_voxel(base + glm::vec3(x * cell_size, y * 0.02f, 0.0f), glm::vec3(0.05f, 0.01f, 0.05f), glm::vec3(0.78f, 0.42f, 0.92f));
+                        append_board_voxel(base + glm::vec3(x * cell_size, y * row_height, 0.0f), glm::vec3(0.075f, 0.040f, 0.045f), glm::vec3(0.78f, 0.42f, 0.92f));
                     }
                 }
                 if (!active_minigame.completed) {
@@ -1860,8 +1864,8 @@ void Engine::rebuild_dynamic_debug_mesh() {
                             continue;
                         }
                         append_board_voxel(
-                            base + glm::vec3(x * cell_size, y * 0.02f + 0.03f, 0.0f),
-                            glm::vec3(0.05f, 0.012f, 0.05f),
+                            base + glm::vec3(x * cell_size, y * row_height + 0.02f, 0.0f),
+                            glm::vec3(0.075f, 0.045f, 0.050f),
                             glm::vec3(0.95f, 0.75f, 0.25f));
                     }
                 }

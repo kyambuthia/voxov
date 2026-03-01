@@ -378,7 +378,14 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
     vehicle.yaw = 0.3f;
     vehicle.speed = 0.0f;
     vehicle.occupied = false;
-    if (k_vehicle_feature_enabled) {
+    if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+        const glm::vec3 spawn_up = glm::normalize(local_player.transform.position - spherical_planet_center);
+        const SurfaceFrame spawn_frame = make_surface_frame(spawn_up);
+        const glm::vec3 vehicle_seed = local_player.transform.position + spawn_frame.east * 3.5f + spawn_frame.north * 1.5f;
+        const glm::vec3 vehicle_dir = glm::normalize(vehicle_seed - spherical_planet_center);
+        vehicle.position = spherical_planet_center + vehicle_dir * (spherical_planet_radius + k_vehicle_wheel_radius + 0.06f);
+        vehicle.yaw = std::atan2(spawn_frame.north.x, spawn_frame.north.z);
+    } else if (k_vehicle_feature_enabled) {
         vehicle.position.y = collision_world.find_spawn_height(
             glm::vec2(vehicle.position.x, vehicle.position.z),
             0.8f,
@@ -387,12 +394,21 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
     }
     vehicle.controller.reset(vehicle.position, vehicle.yaw);
     aircraft.position = local_player.transform.position + glm::vec3(-5.0f, 0.0f, -4.0f);
-    aircraft.position.y = collision_world.find_spawn_height(
-        glm::vec2(aircraft.position.x, aircraft.position.z), 1.0f, 1.8f) + 1.2f;
     aircraft.yaw = 0.25f;
     aircraft.speed = 0.0f;
     aircraft.throttle_cmd = 0.0f;
     aircraft.occupied = false;
+    if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+        const glm::vec3 spawn_up = glm::normalize(local_player.transform.position - spherical_planet_center);
+        const SurfaceFrame spawn_frame = make_surface_frame(spawn_up);
+        const glm::vec3 aircraft_seed = local_player.transform.position - spawn_frame.east * 5.0f - spawn_frame.north * 4.0f;
+        const glm::vec3 aircraft_dir = glm::normalize(aircraft_seed - spherical_planet_center);
+        aircraft.position = spherical_planet_center + aircraft_dir * (spherical_planet_radius + 1.8f);
+        aircraft.yaw = std::atan2(-spawn_frame.north.x, -spawn_frame.north.z);
+    } else {
+        aircraft.position.y = collision_world.find_spawn_height(
+            glm::vec2(aircraft.position.x, aircraft.position.z), 1.0f, 1.8f) + 1.2f;
+    }
     aircraft.controller.reset(
         aircraft.position,
         glm::vec3(0.0f, aircraft.yaw, 0.0f),
@@ -1231,13 +1247,22 @@ void Engine::handle_vehicle_interaction(const InputState &input) {
 
     if (vehicle.occupied) {
         vehicle.occupied = false;
-        const glm::vec3 exit_candidate = vehicle.position + rotate_y(glm::vec3(-1.8f, 0.0f, 0.0f), vehicle.yaw);
-        local_player.transform.position = exit_candidate;
-        local_player.transform.position.y = collision_world.find_spawn_height(
-            glm::vec2(local_player.transform.position.x, local_player.transform.position.z),
-            local_player.controller.capsuleRadius,
-            local_player.controller.capsuleHeight) +
-            0.05f;
+        if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+            const glm::vec3 up = glm::normalize(vehicle.position - spherical_planet_center);
+            const SurfaceFrame frame = make_surface_frame(up);
+            glm::vec3 exit_candidate = vehicle.position - frame.east * 1.8f;
+            glm::vec3 exit_dir = glm::normalize(exit_candidate - spherical_planet_center);
+            const float shell_radius = spherical_planet_radius + local_player.controller.capsuleHeight * 0.52f;
+            local_player.transform.position = spherical_planet_center + exit_dir * shell_radius;
+        } else {
+            const glm::vec3 exit_candidate = vehicle.position + rotate_y(glm::vec3(-1.8f, 0.0f, 0.0f), vehicle.yaw);
+            local_player.transform.position = exit_candidate;
+            local_player.transform.position.y = collision_world.find_spawn_height(
+                glm::vec2(local_player.transform.position.x, local_player.transform.position.z),
+                local_player.controller.capsuleRadius,
+                local_player.controller.capsuleHeight) +
+                0.05f;
+        }
         local_player.controller.velocity = glm::vec3(0.0f);
         local_player.controller.grounded = true;
         return;
@@ -1268,13 +1293,22 @@ void Engine::handle_aircraft_interaction(const InputState &input) {
     if (aircraft.occupied) {
         aircraft.occupied = false;
         aircraft.throttle_cmd = 0.0f;
-        const glm::vec3 exit_candidate = aircraft.position + rotate_y(glm::vec3(-2.5f, -1.0f, -1.2f), aircraft.yaw);
-        local_player.transform.position = exit_candidate;
-        local_player.transform.position.y = collision_world.find_spawn_height(
-            glm::vec2(local_player.transform.position.x, local_player.transform.position.z),
-            local_player.controller.capsuleRadius,
-            local_player.controller.capsuleHeight) +
-            0.05f;
+        if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+            const glm::vec3 up = glm::normalize(aircraft.position - spherical_planet_center);
+            const SurfaceFrame frame = make_surface_frame(up);
+            glm::vec3 exit_candidate = aircraft.position - frame.east * 2.4f - frame.north * 0.9f;
+            glm::vec3 exit_dir = glm::normalize(exit_candidate - spherical_planet_center);
+            const float shell_radius = spherical_planet_radius + local_player.controller.capsuleHeight * 0.52f;
+            local_player.transform.position = spherical_planet_center + exit_dir * shell_radius;
+        } else {
+            const glm::vec3 exit_candidate = aircraft.position + rotate_y(glm::vec3(-2.5f, -1.0f, -1.2f), aircraft.yaw);
+            local_player.transform.position = exit_candidate;
+            local_player.transform.position.y = collision_world.find_spawn_height(
+                glm::vec2(local_player.transform.position.x, local_player.transform.position.z),
+                local_player.controller.capsuleRadius,
+                local_player.controller.capsuleHeight) +
+                0.05f;
+        }
         local_player.controller.velocity = glm::vec3(0.0f);
         local_player.controller.grounded = true;
         return;
@@ -1472,9 +1506,11 @@ void Engine::update_aircraft_sim(const InputState &input, float dt) {
     aircraft.position = aircraft.controller.state().kinematic.position;
     aircraft.yaw = aircraft.controller.state().kinematic.euler.y;
     aircraft.speed = aircraft.controller.state().telemetry.speed_mps;
-    constexpr float k_bounds_margin = 2.0f;
-    aircraft.position.x = std::clamp(aircraft.position.x, k_bounds_margin, static_cast<float>(VoxelChunk::CHUNK_X) - k_bounds_margin);
-    aircraft.position.z = std::clamp(aircraft.position.z, k_bounds_margin, static_cast<float>(VoxelChunk::CHUNK_Z) - k_bounds_margin);
+    if (!runtime_options.spherical_planet) {
+        constexpr float k_bounds_margin = 2.0f;
+        aircraft.position.x = std::clamp(aircraft.position.x, k_bounds_margin, static_cast<float>(VoxelChunk::CHUNK_X) - k_bounds_margin);
+        aircraft.position.z = std::clamp(aircraft.position.z, k_bounds_margin, static_cast<float>(VoxelChunk::CHUNK_Z) - k_bounds_margin);
+    }
 
     if (aircraft.occupied) {
         local_player.transform.position = aircraft_seat_world_position();

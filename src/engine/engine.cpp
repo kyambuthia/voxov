@@ -34,7 +34,7 @@ constexpr float k_vehicle_body_height = 0.65f;
 constexpr float k_vehicle_wheel_radius = 0.32f;
 constexpr float k_vehicle_interact_radius = 2.1f;
 constexpr bool k_vehicle_feature_enabled = true;
-constexpr float k_vehicle_visual_yaw_offset = 3.14159265358979323846f;
+constexpr float k_vehicle_visual_yaw_offset = 0.0f;
 constexpr float k_aircraft_interact_radius = 4.2f;
 constexpr float k_aircraft_body_length = 2.7f;
 constexpr float k_aircraft_body_width = 1.1f;
@@ -1238,9 +1238,9 @@ void Engine::update_vehicle_sim(const InputState &input, float dt) {
         return;
     }
     VehicleControlInput control{};
-    control.throttle = input.move.y;
+    control.throttle = -input.move.y;
     control.steer = input.move.x;
-    control.brake = input.move.y < -0.05f ? std::min(1.0f, -input.move.y) : 0.0f;
+    control.brake = 0.0f;
     control.handbrake = input.crouch_held ? 1.0f : 0.0f;
     vehicle.controller.step(control, collision_world, dt);
     vehicle.position = vehicle.controller.state().kinematic.position;

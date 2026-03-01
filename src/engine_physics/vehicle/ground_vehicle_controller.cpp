@@ -15,10 +15,10 @@ glm::vec3 rotate_y(const glm::vec3 &v, float yaw_radians) {
 
 GroundVehicleController::GroundVehicleController() {
     wheels = {{
-        {glm::vec3(-0.85f, 0.38f, 1.20f), 0.32f, 0.38f, 0.24f},
-        {glm::vec3(0.85f, 0.38f, 1.20f), 0.32f, 0.38f, 0.24f},
-        {glm::vec3(-0.85f, 0.38f, -1.20f), 0.32f, 0.38f, 0.24f},
-        {glm::vec3(0.85f, 0.38f, -1.20f), 0.32f, 0.38f, 0.24f},
+        {glm::vec3(-0.85f, 0.14f, 1.20f), 0.32f, 0.38f, 0.24f},
+        {glm::vec3(0.85f, 0.14f, 1.20f), 0.32f, 0.38f, 0.24f},
+        {glm::vec3(-0.85f, 0.14f, -1.20f), 0.32f, 0.38f, 0.24f},
+        {glm::vec3(0.85f, 0.14f, -1.20f), 0.32f, 0.38f, 0.24f},
     }};
 }
 

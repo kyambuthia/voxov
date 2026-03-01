@@ -1088,11 +1088,27 @@ void Engine::build_static_scene() {
         minigame_hotspots.push_back(hotspot);
     };
     if (runtime_options.spherical_planet) {
-        spawn_hotspot(MiniGameType::Snake, glm::vec3(center.x - 7.0f, 0.0f, center.y + 5.0f));
-        spawn_hotspot(MiniGameType::Golf, glm::vec3(center.x + 6.0f, 0.0f, center.y - 5.0f));
-        spawn_hotspot(MiniGameType::Tetris, glm::vec3(center.x + 7.5f, 0.0f, center.y + 6.0f));
-        spawn_hotspot(MiniGameType::Racing, glm::vec3(center.x - 8.0f, 0.0f, center.y - 4.0f));
-        spawn_hotspot(MiniGameType::TicTacToe, glm::vec3(center.x, 0.0f, center.y - 7.5f));
+        const auto spawn_spherical_hotspot = [&](MiniGameType type, const glm::vec3 &dir_raw) {
+            const glm::vec3 dir = glm::normalize(dir_raw);
+            const glm::vec3 ray_start = spherical_planet_center + dir * (spherical_planet_radius * 2.6f);
+            float hit_dist = 0.0f;
+            glm::vec3 position = spherical_planet_center + dir * (spherical_planet_radius + 0.12f);
+            if (collision_world.raycast(ray_start, -dir, spherical_planet_radius * 3.2f, hit_dist)) {
+                position = ray_start - dir * hit_dist + dir * 0.14f;
+            }
+
+            MiniGameHotspot hotspot{};
+            hotspot.type = type;
+            hotspot.position = position;
+            hotspot.interact_radius = std::max(k_minigame_interact_radius, 7.0f);
+            minigame_hotspots.push_back(hotspot);
+        };
+
+        spawn_spherical_hotspot(MiniGameType::Snake, glm::vec3(-0.55f, 0.82f, 0.20f));
+        spawn_spherical_hotspot(MiniGameType::Golf, glm::vec3(0.58f, 0.77f, -0.18f));
+        spawn_spherical_hotspot(MiniGameType::Tetris, glm::vec3(0.15f, 0.90f, 0.42f));
+        spawn_spherical_hotspot(MiniGameType::Racing, glm::vec3(-0.18f, 0.72f, -0.62f));
+        spawn_spherical_hotspot(MiniGameType::TicTacToe, glm::vec3(0.52f, 0.80f, 0.38f));
     } else {
         spawn_hotspot(MiniGameType::Snake, glm::vec3(center.x - 16.0f, 0.0f, center.y + 10.0f));
         spawn_hotspot(MiniGameType::Golf, glm::vec3(center.x + 14.0f, 0.0f, center.y - 12.0f));
@@ -1306,12 +1322,18 @@ void Engine::update_active_minigame(const InputState &input, float dt) {
     }
 
     const MiniGameHotspot &hotspot = minigame_hotspots[static_cast<size_t>(active_minigame_hotspot)];
-    const float seat_y = collision_world.find_spawn_height(
-        glm::vec2(hotspot.position.x, hotspot.position.z),
-        local_player.controller.capsuleRadius,
-        local_player.controller.capsuleHeight) +
-        0.05f;
-    local_player.transform.position = glm::vec3(hotspot.position.x, seat_y, hotspot.position.z);
+    if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+        const glm::vec3 up = glm::normalize(hotspot.position - spherical_planet_center);
+        const float shell_radius = spherical_planet_radius + local_player.controller.capsuleHeight * 0.52f;
+        local_player.transform.position = spherical_planet_center + up * shell_radius;
+    } else {
+        const float seat_y = collision_world.find_spawn_height(
+            glm::vec2(hotspot.position.x, hotspot.position.z),
+            local_player.controller.capsuleRadius,
+            local_player.controller.capsuleHeight) +
+            0.05f;
+        local_player.transform.position = glm::vec3(hotspot.position.x, seat_y, hotspot.position.z);
+    }
     local_player.transform.rotation = glm::angleAxis(local_player.camera_rig.yaw * 0.01745329251994329577f, glm::vec3(0.0f, 1.0f, 0.0f));
     local_player.camera_rig.distance = std::clamp(local_player.camera_rig.distance, 3.8f, 4.8f);
     local_player.camera_rig.pitch = std::clamp(local_player.camera_rig.pitch, -15.0f, 10.0f);
@@ -1448,7 +1470,7 @@ void Engine::update_spherical_player_sim(const InputState &input, float dt) {
     }
 
     float radial_velocity = glm::dot(local_player.controller.velocity, up);
-    const float gravity_mag = std::fabs(local_player.controller.gravity) * 0.62f;
+    const float gravity_mag = std::fabs(local_player.controller.gravity) * 0.9f;
     if (local_player.controller.grounded && input.jump_pressed) {
         radial_velocity = local_player.controller.jumpVelocity;
         local_player.controller.grounded = false;
@@ -1456,13 +1478,18 @@ void Engine::update_spherical_player_sim(const InputState &input, float dt) {
     radial_velocity -= gravity_mag * dt;
 
     local_player.controller.velocity = desired * move_speed + up * radial_velocity;
+    if (glm::length(desired) < 0.001f) {
+        glm::vec3 tangential = local_player.controller.velocity - up * glm::dot(local_player.controller.velocity, up);
+        tangential *= std::clamp(1.0f - 6.0f * dt, 0.0f, 1.0f);
+        local_player.controller.velocity = tangential + up * radial_velocity;
+    }
     local_player.transform.position += local_player.controller.velocity * dt;
 
     const glm::vec3 to_updated = local_player.transform.position - spherical_planet_center;
     const float updated_dist = std::max(glm::length(to_updated), 0.001f);
     const glm::vec3 updated_up = to_updated / updated_dist;
     const float shell_radius = spherical_planet_radius + local_player.controller.capsuleHeight * 0.52f;
-    if (updated_dist < shell_radius) {
+    if (updated_dist < shell_radius + 0.08f) {
         local_player.transform.position = spherical_planet_center + updated_up * shell_radius;
         const float inward_speed = glm::dot(local_player.controller.velocity, updated_up);
         if (inward_speed < 0.0f) {

@@ -1226,10 +1226,18 @@ void Engine::update_third_person_camera(PlayerEntity &player, const glm::vec3 &r
 }
 
 glm::vec3 Engine::vehicle_seat_world_position() const {
+    if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+        const glm::vec3 up = glm::normalize(vehicle.position - spherical_planet_center);
+        return vehicle.position + up * (k_vehicle_body_height + 0.5f);
+    }
     return vehicle.position + rotate_y(glm::vec3(0.0f, k_vehicle_body_height + 0.5f, 0.0f), vehicle.yaw + k_vehicle_visual_yaw_offset);
 }
 
 glm::vec3 Engine::aircraft_seat_world_position() const {
+    if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+        const glm::vec3 up = glm::normalize(aircraft.position - spherical_planet_center);
+        return aircraft.position + up * 0.8f;
+    }
     return aircraft.position + rotate_y(glm::vec3(0.0f, 0.8f, 0.0f), aircraft.yaw);
 }
 
@@ -1981,23 +1989,27 @@ void Engine::rebuild_dynamic_debug_mesh() {
             const MiniGameHotspot &hotspot = minigame_hotspots[i];
             const glm::vec3 color = minigame_color(hotspot.type);
             const bool selected = static_cast<int>(i) == nearby_minigame_hotspot || static_cast<int>(i) == active_minigame_hotspot;
+            glm::vec3 up(0.0f, 1.0f, 0.0f);
+            if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+                up = glm::normalize(hotspot.position - spherical_planet_center);
+            }
             append_mesh(
                 scene.debug_world,
                 build_debug_line_mesh(
-                    hotspot.position + glm::vec3(0.0f, 0.2f, 0.0f),
-                    hotspot.position + glm::vec3(0.0f, 3.0f, 0.0f),
+                    hotspot.position + up * 0.2f,
+                    hotspot.position + up * 3.0f,
                     selected ? 0.09f : 0.06f,
                     color));
             append_mesh(
                 scene.debug_world,
                 build_debug_sphere_mesh(
-                    hotspot.position + glm::vec3(0.0f, 3.2f, 0.0f),
+                    hotspot.position + up * 3.2f,
                     selected ? 0.28f : 0.2f,
                     color));
             append_mesh(
                 scene.debug_world,
                 build_debug_sphere_mesh(
-                    hotspot.position + glm::vec3(0.0f, 0.15f, 0.0f),
+                    hotspot.position + up * 0.15f,
                     selected ? 0.17f : 0.12f,
                     color * glm::vec3(1.1f)));
         }

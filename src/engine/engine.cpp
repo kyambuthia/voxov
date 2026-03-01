@@ -34,6 +34,7 @@ constexpr float k_vehicle_body_height = 0.65f;
 constexpr float k_vehicle_wheel_radius = 0.32f;
 constexpr float k_vehicle_interact_radius = 2.1f;
 constexpr bool k_vehicle_feature_enabled = true;
+constexpr float k_vehicle_visual_yaw_offset = 0.0f;
 constexpr float k_aircraft_interact_radius = 4.2f;
 constexpr float k_aircraft_body_length = 2.7f;
 constexpr float k_aircraft_body_width = 1.1f;
@@ -313,12 +314,12 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
     aircraft.position.y = collision_world.find_spawn_height(
         glm::vec2(aircraft.position.x, aircraft.position.z), 1.0f, 1.8f) + 1.2f;
     aircraft.yaw = 0.25f;
-    aircraft.speed = 9.0f;
+    aircraft.speed = 0.0f;
     aircraft.occupied = false;
     aircraft.controller.reset(
         aircraft.position,
         glm::vec3(0.0f, aircraft.yaw, 0.0f),
-        rotate_y(glm::vec3(0.0f, 0.0f, 1.0f), aircraft.yaw) * aircraft.speed);
+        glm::vec3(0.0f));
     if (runtime_options.splitscreen) {
         local_player_secondary = PlayerControllerSystem::spawn_player(collision_world);
         local_player_secondary.network_id = 2;
@@ -1008,12 +1009,12 @@ void Engine::build_static_scene() {
     aircraft.position.y = collision_world.find_spawn_height(
         glm::vec2(aircraft.position.x, aircraft.position.z), 1.0f, 1.8f) + 1.2f;
     aircraft.yaw = -0.2f;
-    aircraft.speed = 8.0f;
+    aircraft.speed = 0.0f;
     aircraft.occupied = false;
     aircraft.controller.reset(
         aircraft.position,
         glm::vec3(0.0f, aircraft.yaw, 0.0f),
-        rotate_y(glm::vec3(0.0f, 0.0f, 1.0f), aircraft.yaw) * aircraft.speed);
+        glm::vec3(0.0f));
 
     minigame_hotspots.clear();
     const auto spawn_hotspot = [&](MiniGameType type, const glm::vec3 &base) {
@@ -1065,7 +1066,7 @@ void Engine::update_third_person_camera(PlayerEntity &player, const glm::vec3 &r
 }
 
 glm::vec3 Engine::vehicle_seat_world_position() const {
-    return vehicle.position + rotate_y(glm::vec3(0.0f, k_vehicle_body_height + 0.5f, 0.0f), vehicle.yaw);
+    return vehicle.position + rotate_y(glm::vec3(0.0f, k_vehicle_body_height + 0.5f, 0.0f), vehicle.yaw + k_vehicle_visual_yaw_offset);
 }
 
 glm::vec3 Engine::aircraft_seat_world_position() const {
@@ -1157,9 +1158,9 @@ void Engine::handle_minigame_interaction(const InputState &input) {
             minigame_hint = std::string(minigame_name(hotspot.type)) + " in progress";
             if (active_minigame.completed) {
                 minigame_hint += active_minigame.victory ? " [WIN]" : " [DONE]";
-                minigame_hint += " - press INTERACT to exit";
+                minigame_hint += " - press F or E to exit";
             } else {
-                minigame_hint += " - press CROUCH to exit";
+                minigame_hint += " - press C/CTRL to exit";
             }
         }
 
@@ -1190,7 +1191,7 @@ void Engine::handle_minigame_interaction(const InputState &input) {
     nearby_minigame_hotspot = best_index;
     if (best_index >= 0) {
         const MiniGameHotspot &hotspot = minigame_hotspots[static_cast<size_t>(best_index)];
-        minigame_hint = std::string("Press INTERACT to play ") + minigame_name(hotspot.type);
+        minigame_hint = std::string("Press F or E to play ") + minigame_name(hotspot.type);
         if (input.interact_pressed) {
             minigame_begin(active_minigame, hotspot.type, static_cast<uint32_t>(fixed.tick + 17u * static_cast<uint32_t>(best_index + 1)));
             active_minigame_hotspot = best_index;
@@ -1246,7 +1247,7 @@ void Engine::update_vehicle_sim(const InputState &input, float dt) {
 
     if (vehicle.occupied) {
         local_player.transform.position = vehicle_seat_world_position();
-        local_player.transform.rotation = glm::angleAxis(vehicle.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+        local_player.transform.rotation = glm::angleAxis(vehicle.yaw + k_vehicle_visual_yaw_offset, glm::vec3(0.0f, 1.0f, 0.0f));
         local_player.controller.velocity = glm::vec3(0.0f);
         local_player.controller.grounded = true;
         local_player.anim_state = PlayerAnimState::Idle;
@@ -1422,7 +1423,7 @@ void Engine::refresh_overlay_text() {
             panel += minigame_hint;
         }
         if (active_minigame.active && !active_minigame.completed) {
-            panel += "\nMOVE/JUMP/INTERACT play, CROUCH exits";
+            panel += "\nWASD+SPACE+F/E play, C/CTRL exits";
         }
 
         append_screen_rect(-0.98f, -0.12f, 0.30f, -0.40f, glm::vec3(0.04f, 0.06f, 0.08f));
@@ -1490,6 +1491,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
             append_vehicle_tri(a, c, d, color);
         };
     auto append_vehicle_box = [&](const glm::vec3 &local_center, const glm::vec3 &half_extent, const glm::vec3 &color) {
+        const float visual_yaw = vehicle.yaw + k_vehicle_visual_yaw_offset;
         const glm::vec3 lc[8] = {
             {-half_extent.x, -half_extent.y, -half_extent.z},
             {half_extent.x, -half_extent.y, -half_extent.z},
@@ -1502,7 +1504,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
         };
         glm::vec3 p[8]{};
         for (int i = 0; i < 8; ++i) {
-            p[i] = vehicle.position + rotate_y(local_center + lc[i], vehicle.yaw);
+            p[i] = vehicle.position + rotate_y(local_center + lc[i], visual_yaw);
         }
         append_vehicle_quad(p[0], p[1], p[3], p[2], color);
         append_vehicle_quad(p[4], p[6], p[7], p[5], color);
@@ -1526,16 +1528,13 @@ void Engine::rebuild_dynamic_debug_mesh() {
             glm::vec3(0.55f, 0.12f, 0.14f),
             glm::vec3(0.08f, 0.08f, 0.08f));
 
-        const glm::vec3 wheel_offsets[4] = {
-            {-k_vehicle_body_half_width - 0.1f, 0.0f, k_vehicle_body_half_length - 0.28f},
-            {k_vehicle_body_half_width + 0.1f, 0.0f, k_vehicle_body_half_length - 0.28f},
-            {-k_vehicle_body_half_width - 0.1f, 0.0f, -k_vehicle_body_half_length + 0.28f},
-            {k_vehicle_body_half_width + 0.1f, 0.0f, -k_vehicle_body_half_length + 0.28f},
-        };
-        for (const glm::vec3 &off : wheel_offsets) {
+        const auto &wheel_setup = vehicle.controller.wheel_setup();
+        const float visual_yaw = vehicle.yaw + k_vehicle_visual_yaw_offset;
+        for (const GroundVehicleWheel &wheel : wheel_setup) {
+            const glm::vec3 wheel_offset(wheel.local_mount.x, 0.0f, wheel.local_mount.z);
             append_mesh(
                 scene.debug_world,
-                build_debug_sphere_mesh(vehicle.position + rotate_y(off, vehicle.yaw), k_vehicle_wheel_radius, glm::vec3(0.12f, 0.12f, 0.12f)));
+                build_debug_sphere_mesh(vehicle.position + rotate_y(wheel_offset, visual_yaw), wheel.radius, glm::vec3(0.12f, 0.12f, 0.12f)));
         }
 
         append_mesh(

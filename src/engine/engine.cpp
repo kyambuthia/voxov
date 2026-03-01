@@ -273,6 +273,36 @@ glm::vec3 minigame_color(MiniGameType type) {
         return glm::vec3(0.8f, 0.8f, 0.8f);
     }
 }
+
+glm::ivec2 tetris_visual_cell(int shape, int rot, int i) {
+    static constexpr glm::ivec2 k_shape_rot[4][4][4] = {
+        { // I
+            {{-1, 0}, {0, 0}, {1, 0}, {2, 0}},
+            {{0, -1}, {0, 0}, {0, 1}, {0, 2}},
+            {{-1, 1}, {0, 1}, {1, 1}, {2, 1}},
+            {{1, -1}, {1, 0}, {1, 1}, {1, 2}},
+        },
+        { // O
+            {{0, 0}, {1, 0}, {0, 1}, {1, 1}},
+            {{0, 0}, {1, 0}, {0, 1}, {1, 1}},
+            {{0, 0}, {1, 0}, {0, 1}, {1, 1}},
+            {{0, 0}, {1, 0}, {0, 1}, {1, 1}},
+        },
+        { // T
+            {{-1, 0}, {0, 0}, {1, 0}, {0, 1}},
+            {{0, -1}, {0, 0}, {0, 1}, {1, 0}},
+            {{-1, 0}, {0, 0}, {1, 0}, {0, -1}},
+            {{0, -1}, {0, 0}, {0, 1}, {-1, 0}},
+        },
+        { // L
+            {{-1, 0}, {0, 0}, {1, 0}, {1, 1}},
+            {{0, -1}, {0, 0}, {0, 1}, {1, -1}},
+            {{-1, -1}, {-1, 0}, {0, 0}, {1, 0}},
+            {{-1, 1}, {0, -1}, {0, 0}, {0, 1}},
+        }
+    };
+    return k_shape_rot[shape % 4][rot % 4][i % 4];
+}
 }
 
 void Engine::init(void *window_handle, RenderBackendType backend_type, const EngineRuntimeOptions &options) {
@@ -1419,20 +1449,28 @@ void Engine::refresh_overlay_text() {
     }
 
     if (!menu_is_open && (active_minigame.active || nearby_minigame_hotspot >= 0)) {
-        std::string panel = active_minigame.active
-            ? minigame_status_text(active_minigame)
-            : "MINIGAME HOTSPOT";
-        if (!minigame_hint.empty()) {
-            panel += "\n";
-            panel += minigame_hint;
+        if (active_minigame.active) {
+            std::string line = minigame_status_text(active_minigame);
+            if (!minigame_hint.empty()) {
+                line += " | ";
+                line += minigame_hint;
+            }
+            if (!active_minigame.completed) {
+                line += " | WASD+SPACE+F/E play, C/CTRL exit";
+            }
+            append_screen_rect(-0.98f, 0.98f, 0.98f, 0.88f, glm::vec3(0.04f, 0.06f, 0.08f));
+            append_screen_rect(-0.97f, 0.97f, 0.97f, 0.89f, glm::vec3(0.08f, 0.10f, 0.13f));
+            append_mesh(scene.debug_screen, build_screen_text_mesh(line, -0.95f, 0.94f, 0.0049f, glm::vec3(0.91f, 0.96f, 1.0f)));
+        } else {
+            std::string panel = "MINIGAME HOTSPOT";
+            if (!minigame_hint.empty()) {
+                panel += "\n";
+                panel += minigame_hint;
+            }
+            append_screen_rect(-0.98f, -0.70f, -0.22f, -0.84f, glm::vec3(0.04f, 0.06f, 0.08f));
+            append_screen_rect(-0.97f, -0.71f, -0.23f, -0.83f, glm::vec3(0.08f, 0.10f, 0.13f));
+            append_mesh(scene.debug_screen, build_screen_text_mesh(panel, -0.95f, -0.75f, 0.0052f, glm::vec3(0.91f, 0.96f, 1.0f)));
         }
-        if (active_minigame.active && !active_minigame.completed) {
-            panel += "\nWASD+SPACE+F/E play, C/CTRL exits";
-        }
-
-        append_screen_rect(-0.98f, -0.12f, 0.30f, -0.40f, glm::vec3(0.04f, 0.06f, 0.08f));
-        append_screen_rect(-0.97f, -0.13f, 0.28f, -0.39f, glm::vec3(0.08f, 0.10f, 0.13f));
-        append_mesh(scene.debug_screen, build_screen_text_mesh(panel, -0.95f, -0.16f, 0.0054f, glm::vec3(0.91f, 0.96f, 1.0f)));
     }
 
     if (net_client.is_connected()) {
@@ -1651,12 +1689,16 @@ void Engine::rebuild_dynamic_debug_mesh() {
                     half,
                     glm::vec3(0.95f, 0.25f, 0.2f));
             } else if (active_minigame.type == MiniGameType::TicTacToe) {
+                const int cursor = std::clamp(active_minigame.tictactoe.cursor, 0, 8);
                 for (int y = 0; y < 3; ++y) {
                     for (int x = 0; x < 3; ++x) {
                         const int idx = y * 3 + x;
                         const uint8_t cell = active_minigame.tictactoe.board[static_cast<size_t>(idx)];
                         const glm::vec3 cpos = base + glm::vec3(x * 0.32f, 0.0f, y * 0.32f);
                         append_minigame_voxel(cpos, glm::vec3(0.11f, 0.03f, 0.11f), glm::vec3(0.18f, 0.22f, 0.26f));
+                        if (!active_minigame.completed && idx == cursor) {
+                            append_minigame_voxel(cpos + glm::vec3(0.0f, 0.055f, 0.0f), glm::vec3(0.11f, 0.015f, 0.11f), glm::vec3(0.95f, 0.95f, 0.35f));
+                        }
                         if (cell == 1) {
                             append_minigame_voxel(cpos + glm::vec3(0.0f, 0.1f, 0.0f), glm::vec3(0.05f), glm::vec3(0.15f, 0.9f, 0.3f));
                         } else if (cell == 2) {
@@ -1665,21 +1707,72 @@ void Engine::rebuild_dynamic_debug_mesh() {
                     }
                 }
             } else if (active_minigame.type == MiniGameType::Golf) {
-                append_minigame_voxel(base + glm::vec3(active_minigame.golf.ball.x * 0.2f, 0.0f, active_minigame.golf.ball.y * 0.2f), half, glm::vec3(0.9f));
-                append_minigame_voxel(base + glm::vec3(active_minigame.golf.hole.x * 0.2f, 0.0f, active_minigame.golf.hole.y * 0.2f), half, glm::vec3(0.2f, 0.6f, 1.0f));
+                const glm::vec3 ball = base + glm::vec3(active_minigame.golf.ball.x * 0.2f, 0.0f, active_minigame.golf.ball.y * 0.2f);
+                const glm::vec3 hole = base + glm::vec3(active_minigame.golf.hole.x * 0.2f, 0.0f, active_minigame.golf.hole.y * 0.2f);
+                append_minigame_voxel(ball, half, glm::vec3(0.9f));
+                append_minigame_voxel(hole, half, glm::vec3(0.2f, 0.6f, 1.0f));
+
+                const glm::vec3 aim_dir(std::cos(active_minigame.golf.aim_radians), 0.0f, std::sin(active_minigame.golf.aim_radians));
+                const float aim_len = 0.35f + active_minigame.golf.power * 0.65f;
+                append_mesh(
+                    scene.debug_world,
+                    build_debug_line_mesh(
+                        ball + glm::vec3(0.0f, 0.08f, 0.0f),
+                        ball + glm::vec3(0.0f, 0.08f, 0.0f) + aim_dir * aim_len,
+                        0.03f,
+                        glm::vec3(1.0f, 0.9f, 0.3f)));
+
+                const glm::vec3 power_anchor = base + glm::vec3(-0.35f, 0.02f, -0.45f);
+                append_minigame_voxel(power_anchor, glm::vec3(0.12f, 0.02f, 0.02f), glm::vec3(0.2f, 0.2f, 0.24f));
+                append_minigame_voxel(
+                    power_anchor + glm::vec3((-0.12f + active_minigame.golf.power * 0.24f), 0.03f, 0.0f),
+                    glm::vec3(std::max(0.02f, active_minigame.golf.power * 0.12f), 0.015f, 0.015f),
+                    glm::vec3(0.2f + active_minigame.golf.power * 0.8f, 0.7f, 0.25f));
             } else if (active_minigame.type == MiniGameType::Tetris) {
+                const float cell_size = 0.13f;
                 for (int y = 0; y < TetrisState::k_board_h; ++y) {
                     for (int x = 0; x < TetrisState::k_board_w; ++x) {
                         const uint8_t filled = active_minigame.tetris.board[static_cast<size_t>(y * TetrisState::k_board_w + x)];
                         if (filled == 0) {
                             continue;
                         }
-                        append_minigame_voxel(base + glm::vec3(x * 0.13f, y * 0.02f, 0.0f), glm::vec3(0.05f, 0.01f, 0.05f), glm::vec3(0.78f, 0.42f, 0.92f));
+                        append_minigame_voxel(base + glm::vec3(x * cell_size, y * 0.02f, 0.0f), glm::vec3(0.05f, 0.01f, 0.05f), glm::vec3(0.78f, 0.42f, 0.92f));
+                    }
+                }
+                if (!active_minigame.completed) {
+                    for (int i = 0; i < 4; ++i) {
+                        const glm::ivec2 c = tetris_visual_cell(
+                            active_minigame.tetris.active_shape,
+                            active_minigame.tetris.active_rotation,
+                            i);
+                        const int x = active_minigame.tetris.active_x + c.x;
+                        const int y = active_minigame.tetris.active_y + c.y;
+                        if (x < 0 || x >= TetrisState::k_board_w || y < 0 || y >= TetrisState::k_board_h) {
+                            continue;
+                        }
+                        append_minigame_voxel(
+                            base + glm::vec3(x * cell_size, y * 0.02f + 0.03f, 0.0f),
+                            glm::vec3(0.05f, 0.012f, 0.05f),
+                            glm::vec3(0.95f, 0.75f, 0.25f));
                     }
                 }
             } else if (active_minigame.type == MiniGameType::Racing) {
-                const float progress = active_minigame.racing.track_progress / 65.0f;
-                append_minigame_voxel(base + glm::vec3(progress * 1.8f, 0.0f, 0.0f), glm::vec3(0.07f), glm::vec3(1.0f, 0.55f, 0.2f));
+                constexpr float track_len = 1.8f;
+                constexpr float track_half_w = 0.16f;
+                append_minigame_voxel(base + glm::vec3(track_len * 0.5f, 0.0f, 0.0f), glm::vec3(track_len * 0.5f, 0.02f, track_half_w), glm::vec3(0.22f, 0.22f, 0.24f));
+
+                for (int cp = 0; cp < 4; ++cp) {
+                    const float t = static_cast<float>(cp) / 4.0f;
+                    const float x = t * track_len;
+                    append_minigame_voxel(base + glm::vec3(x, 0.05f, -track_half_w), glm::vec3(0.02f, 0.06f, 0.02f), glm::vec3(0.95f, 0.45f, 0.2f));
+                    append_minigame_voxel(base + glm::vec3(x, 0.05f, track_half_w), glm::vec3(0.02f, 0.06f, 0.02f), glm::vec3(0.95f, 0.45f, 0.2f));
+                }
+
+                const float progress = std::clamp(active_minigame.racing.track_progress / 65.0f, 0.0f, 1.0f);
+                append_minigame_voxel(
+                    base + glm::vec3(progress * track_len, 0.05f, 0.0f),
+                    glm::vec3(0.07f, 0.07f, 0.09f),
+                    glm::vec3(1.0f, 0.75f, 0.2f));
             }
         }
     }

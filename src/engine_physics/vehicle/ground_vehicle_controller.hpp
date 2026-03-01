@@ -36,6 +36,7 @@ public:
         float dt_seconds);
 
     const GroundVehicleState &state() const;
+    const std::array<GroundVehicleWheel, 4> &wheel_setup() const;
 
 private:
     VehiclePhysicsTuning tuning{};

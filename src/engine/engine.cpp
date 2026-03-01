@@ -34,7 +34,7 @@ constexpr float k_vehicle_body_height = 0.65f;
 constexpr float k_vehicle_wheel_radius = 0.32f;
 constexpr float k_vehicle_interact_radius = 2.1f;
 constexpr bool k_vehicle_feature_enabled = true;
-constexpr float k_vehicle_visual_yaw_offset = 0.0f;
+constexpr float k_vehicle_visual_yaw_offset = 3.14159265358979323846f;
 constexpr float k_aircraft_interact_radius = 4.2f;
 constexpr float k_aircraft_body_length = 2.7f;
 constexpr float k_aircraft_body_width = 1.1f;
@@ -1103,6 +1103,7 @@ void Engine::handle_vehicle_interaction(const InputState &input) {
     if (d <= k_vehicle_interact_radius) {
         vehicle.occupied = true;
         local_player.transform.position = vehicle_seat_world_position();
+        local_player.camera_rig.yaw = glm::degrees(vehicle.yaw + k_vehicle_visual_yaw_offset);
         local_player.controller.velocity = glm::vec3(0.0f);
         local_player.controller.grounded = true;
     }
@@ -1138,6 +1139,7 @@ void Engine::handle_aircraft_interaction(const InputState &input) {
     if (d <= k_aircraft_interact_radius) {
         aircraft.occupied = true;
         local_player.transform.position = aircraft_seat_world_position();
+        local_player.camera_rig.yaw = glm::degrees(aircraft.yaw);
         local_player.controller.velocity = glm::vec3(0.0f);
         local_player.controller.grounded = false;
     }
@@ -1260,13 +1262,14 @@ void Engine::update_aircraft_sim(const InputState &input, float dt) {
         aircraft.occupied = false;
         return;
     }
-    const bool sandbox_fly = runtime_options.vehicle_sandbox && !aircraft.occupied;
-    if (!aircraft.occupied && !sandbox_fly) {
+    if (!aircraft.occupied) {
+        aircraft.speed = 0.0f;
         return;
     }
 
     AircraftControlInput control{};
-    control.throttle = std::clamp(input.move.y, 0.0f, 1.0f);
+    const float throttle_axis = std::clamp(input.move.y, 0.0f, 1.0f);
+    control.throttle = (throttle_axis > 0.08f) ? throttle_axis : 0.0f;
     control.yaw = input.move.x;
     control.pitch = (input.jump_held ? 0.45f : 0.0f) + (input.crouch_held ? -0.35f : 0.0f);
     control.roll = -input.move.x * 0.55f;
@@ -1530,8 +1533,14 @@ void Engine::rebuild_dynamic_debug_mesh() {
 
         const auto &wheel_setup = vehicle.controller.wheel_setup();
         const float visual_yaw = vehicle.yaw + k_vehicle_visual_yaw_offset;
-        for (const GroundVehicleWheel &wheel : wheel_setup) {
-            const glm::vec3 wheel_offset(wheel.local_mount.x, 0.0f, wheel.local_mount.z);
+        const auto &wheel_compression = vehicle.controller.state().wheel_compression;
+        for (size_t i = 0; i < wheel_setup.size(); ++i) {
+            const GroundVehicleWheel &wheel = wheel_setup[i];
+            const float suspension_length = wheel.suspension_rest_length - wheel_compression[i] * wheel.suspension_travel;
+            const glm::vec3 wheel_offset(
+                wheel.local_mount.x,
+                wheel.local_mount.y - suspension_length,
+                wheel.local_mount.z);
             append_mesh(
                 scene.debug_world,
                 build_debug_sphere_mesh(vehicle.position + rotate_y(wheel_offset, visual_yaw), wheel.radius, glm::vec3(0.12f, 0.12f, 0.12f)));

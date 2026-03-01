@@ -139,3 +139,7 @@ void GroundVehicleController::step(
 const GroundVehicleState &GroundVehicleController::state() const {
     return current;
 }
+
+const std::array<GroundVehicleWheel, 4> &GroundVehicleController::wheel_setup() const {
+    return wheels;
+}

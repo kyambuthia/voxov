@@ -93,8 +93,10 @@ InputState DesktopInputBackend::poll() {
     prev_enter_down = enter_down;
 
     const bool f_down = glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS;
-    out.interact_pressed = f_down && !prev_f_down;
+    const bool e_down = glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS;
+    out.interact_pressed = (f_down && !prev_f_down) || (e_down && !prev_e_down);
     prev_f_down = f_down;
+    prev_e_down = e_down;
 
     const bool f1_down = glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS;
     out.debug_toggle_pressed = f1_down && !prev_f1_down;
@@ -143,7 +145,7 @@ InputState DesktopInputBackend::poll() {
     if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
         out.zoom_delta += 0.08f;
     }
-    if (glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS) {
+    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
         out.zoom_delta -= 0.08f;
     }
 

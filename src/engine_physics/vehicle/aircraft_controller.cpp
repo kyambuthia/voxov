@@ -77,7 +77,8 @@ void AircraftController::step(
 
     const float thrust = control.throttle * stable_tuning.max_thrust_newtons;
     const float lift = stable_tuning.lift_coefficient * speed * speed * lift_factor;
-    const float drag = stable_tuning.drag_coefficient * speed * speed * (1.0f + std::fabs(aoa) * 0.45f);
+    const float idle_drag_boost = (1.0f - control.throttle) * 2.4f;
+    const float drag = stable_tuning.drag_coefficient * speed * speed * (1.0f + std::fabs(aoa) * 0.45f + idle_drag_boost);
     const glm::vec3 force =
         forward * thrust +
         up * lift -
@@ -92,6 +93,18 @@ void AircraftController::step(
     if (current.kinematic.position.y < terrain_floor) {
         current.kinematic.position.y = terrain_floor;
         current.kinematic.velocity.y = std::max(0.0f, current.kinematic.velocity.y);
+    }
+
+    const bool near_idle =
+        control.throttle < 0.05f &&
+        std::fabs(control.pitch) < 0.05f &&
+        std::fabs(control.yaw) < 0.05f &&
+        std::fabs(control.roll) < 0.05f;
+    if (near_idle) {
+        const float planar_damping = std::clamp(1.0f - 3.0f * dt_seconds, 0.0f, 1.0f);
+        current.kinematic.velocity.x *= planar_damping;
+        current.kinematic.velocity.z *= planar_damping;
+        current.kinematic.ang_vel *= std::clamp(1.0f - 4.5f * dt_seconds, 0.0f, 1.0f);
     }
 
     current.telemetry.speed_mps = glm::length(current.kinematic.velocity);

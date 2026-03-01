@@ -598,6 +598,27 @@ void test_aircraft_controller_stall_behavior() {
     assert(controller.state().kinematic.position.y < 12.0f);
 }
 
+void test_aircraft_controller_idle_damps_horizontal_motion() {
+    VoxelChunk chunk;
+    chunk.generate_flat_ground(0);
+    VoxelCollisionWorld collision_world(&chunk);
+
+    AircraftController controller;
+    controller.reset(glm::vec3(14.0f, 10.0f, 14.0f), glm::vec3(0.0f), glm::vec3(8.0f, 0.0f, 0.0f));
+    AircraftControlInput idle{};
+    idle.throttle = 0.0f;
+    const float initial_planar_speed = glm::length(glm::vec2(
+        controller.state().kinematic.velocity.x,
+        controller.state().kinematic.velocity.z));
+    for (int i = 0; i < 180; ++i) {
+        controller.step(idle, collision_world, 1.0f / 60.0f);
+    }
+    const float final_planar_speed = glm::length(glm::vec2(
+        controller.state().kinematic.velocity.x,
+        controller.state().kinematic.velocity.z));
+    assert(final_planar_speed < initial_planar_speed * 0.6f);
+}
+
 void test_vehicle_drivetrain_shift_behavior() {
     VehicleDrivetrain drivetrain;
     drivetrain.reset();
@@ -702,6 +723,7 @@ int main() {
     test_aircraft_controller_throttle_and_pitch();
     test_aircraft_controller_yaw_turn_direction();
     test_aircraft_controller_stall_behavior();
+    test_aircraft_controller_idle_damps_horizontal_motion();
     test_vehicle_drivetrain_shift_behavior();
     test_vehicle_damage_model_impact();
     test_vehicle_damage_model_deterministic();

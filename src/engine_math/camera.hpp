@@ -24,9 +24,17 @@ public:
     float z_near = 0.1f;
     float z_far = 2000.0f;
 
+    void set_view_override(const glm::mat4 &view_matrix);
+    void clear_view_override();
+    bool has_view_override() const;
+
     glm::mat4 view() const;
     glm::mat4 projection(float aspect_ratio) const;
     glm::vec3 forward() const;
     glm::vec3 right() const;
     glm::vec3 up() const;
+
+private:
+    bool use_view_override = false;
+    glm::mat4 view_override = glm::mat4(1.0f);
 };

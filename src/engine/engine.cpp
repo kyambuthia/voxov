@@ -1107,23 +1107,51 @@ void Engine::update_third_person_camera(PlayerEntity &player, Camera &out_camera
 }
 
 void Engine::update_third_person_camera(PlayerEntity &player, const glm::vec3 &render_position, Camera &out_camera) {
-    const glm::vec3 pivot = render_position + glm::vec3(0.0f, player.camera_rig.pivotHeight, 0.0f);
+    if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+        const glm::vec3 to_player = render_position - spherical_planet_center;
+        const glm::vec3 local_up = (glm::length(to_player) > 0.001f)
+            ? glm::normalize(to_player)
+            : glm::vec3(0.0f, 1.0f, 0.0f);
 
+        glm::vec3 ref_axis(0.0f, 1.0f, 0.0f);
+        if (std::fabs(glm::dot(local_up, ref_axis)) > 0.94f) {
+            ref_axis = glm::vec3(1.0f, 0.0f, 0.0f);
+        }
+        const glm::vec3 east = glm::normalize(glm::cross(ref_axis, local_up));
+        const glm::vec3 north = glm::normalize(glm::cross(local_up, east));
+
+        const float yaw = player.camera_rig.yaw * 0.01745329251994329577f;
+        const float pitch = player.camera_rig.pitch * 0.01745329251994329577f;
+        const glm::vec3 tangent_forward = glm::normalize(north * std::cos(yaw) + east * std::sin(yaw));
+        const glm::vec3 orbit_forward = glm::normalize(tangent_forward * std::cos(pitch) + local_up * std::sin(pitch));
+        const glm::vec3 pivot = render_position + local_up * player.camera_rig.pivotHeight;
+
+        float camera_distance = player.camera_rig.distance;
+        float hit_distance = 0.0f;
+        if (collision_world.raycast(pivot, -orbit_forward, player.camera_rig.distance, hit_distance)) {
+            camera_distance = std::max(player.camera_rig.minDistance, hit_distance - 0.15f);
+        }
+
+        const glm::vec3 camera_pos = pivot - orbit_forward * camera_distance;
+        out_camera.transform.position = camera_pos;
+        out_camera.transform.euler_radians = glm::vec3(0.0f);
+        out_camera.set_view_override(glm::lookAt(camera_pos, pivot, local_up));
+        return;
+    }
+
+    out_camera.clear_view_override();
+    const glm::vec3 pivot = render_position + glm::vec3(0.0f, player.camera_rig.pivotHeight, 0.0f);
     const glm::vec3 orbit_forward = PlayerControllerSystem::orbit_forward_from_angles(
         player.camera_rig.yaw,
         player.camera_rig.pitch);
-
     float camera_distance = player.camera_rig.distance;
     float hit_distance = 0.0f;
     if (collision_world.raycast(pivot, -orbit_forward, player.camera_rig.distance, hit_distance)) {
         camera_distance = std::max(player.camera_rig.minDistance, hit_distance - 0.15f);
     }
-
     const glm::vec3 camera_pos = pivot - orbit_forward * camera_distance;
     const glm::vec3 view_dir = glm::normalize(pivot - camera_pos);
-
     out_camera.transform.position = camera_pos;
-    // Camera basis uses local -Z as forward at zero rotation, so solve yaw from -view_dir.
     out_camera.transform.euler_radians.y = std::atan2(-view_dir.x, -view_dir.z);
     out_camera.transform.euler_radians.x = std::asin(std::clamp(view_dir.y, -1.0f, 1.0f));
     out_camera.transform.euler_radians.z = 0.0f;

@@ -41,6 +41,26 @@ void test_camera_vectors() {
     assert(std::fabs(r.z) < 0.0001f);
 }
 
+void test_camera_view_override_basis() {
+    Camera camera;
+    const glm::vec3 eye(0.0f, 2.0f, 5.0f);
+    const glm::vec3 target(0.0f, 2.0f, 4.0f);
+    const glm::vec3 up(0.0f, 1.0f, 0.0f);
+    camera.set_view_override(glm::lookAt(eye, target, up));
+
+    const glm::vec3 f = camera.forward();
+    const glm::vec3 r = camera.right();
+    const glm::vec3 u = camera.up();
+    assert(std::fabs(f.x) < 0.0001f);
+    assert(std::fabs(f.y) < 0.0001f);
+    assert(std::fabs(f.z + 1.0f) < 0.0001f);
+    assert(std::fabs(r.x - 1.0f) < 0.0001f);
+    assert(std::fabs(u.y - 1.0f) < 0.0001f);
+
+    camera.clear_view_override();
+    assert(!camera.has_view_override());
+}
+
 void test_net_pod_serialization() {
     NetSnapshot in{};
     in.tick = 42;
@@ -714,6 +734,7 @@ void test_vehicle_sandbox_scene_step() {
 
 int main() {
     test_camera_vectors();
+    test_camera_view_override_basis();
     test_net_pod_serialization();
     test_chunk_meshing();
     test_chunk_world_footprint();

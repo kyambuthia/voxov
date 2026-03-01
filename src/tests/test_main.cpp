@@ -521,6 +521,24 @@ void test_ground_vehicle_controller_accel_and_brake() {
     assert(controller.state().telemetry.speed_mps < speed_after_accel);
 }
 
+void test_ground_vehicle_forward_direction() {
+    VoxelChunk chunk;
+    chunk.generate_flat_ground(0);
+    VoxelCollisionWorld collision_world(&chunk);
+
+    GroundVehicleController controller;
+    controller.reset(glm::vec3(10.0f, 1.2f, 10.0f), 0.0f);
+
+    const float z0 = controller.state().kinematic.position.z;
+    VehicleControlInput throttle{};
+    throttle.throttle = 1.0f;
+    for (int i = 0; i < 60; ++i) {
+        controller.step(throttle, collision_world, 1.0f / 60.0f);
+    }
+    const float z1 = controller.state().kinematic.position.z;
+    assert(z1 > z0);
+}
+
 void test_aircraft_controller_throttle_and_pitch() {
     VoxelChunk chunk;
     chunk.generate_flat_ground(0);
@@ -647,6 +665,7 @@ int main() {
     test_voxel_vehicle_builder_mass_properties();
     test_voxel_vehicle_builder_deterministic();
     test_ground_vehicle_controller_accel_and_brake();
+    test_ground_vehicle_forward_direction();
     test_aircraft_controller_throttle_and_pitch();
     test_vehicle_drivetrain_shift_behavior();
     test_vehicle_damage_model_impact();

@@ -1513,23 +1513,23 @@ void Engine::rebuild_dynamic_debug_mesh() {
 
     if (k_vehicle_feature_enabled && !runtime_options.debug_collision_only) {
         append_vehicle_box(
-            glm::vec3(0.0f, k_vehicle_wheel_radius + k_vehicle_body_height * 0.5f, 0.0f),
+            glm::vec3(0.0f, k_vehicle_body_height * 0.5f, 0.0f),
             glm::vec3(k_vehicle_body_half_width, k_vehicle_body_height * 0.5f, k_vehicle_body_half_length),
             vehicle.occupied ? glm::vec3(0.15f, 0.78f, 0.35f) : glm::vec3(0.85f, 0.62f, 0.22f));
         append_vehicle_box(
-            glm::vec3(0.0f, k_vehicle_wheel_radius + k_vehicle_body_height + 0.28f, -0.1f),
+            glm::vec3(0.0f, k_vehicle_body_height + 0.28f, -0.1f),
             glm::vec3(0.58f, 0.28f, 0.68f),
             glm::vec3(0.2f, 0.35f, 0.42f));
         append_vehicle_box(
-            glm::vec3(0.0f, k_vehicle_wheel_radius + 0.58f, k_vehicle_body_half_length - 0.22f),
+            glm::vec3(0.0f, 0.58f, k_vehicle_body_half_length - 0.22f),
             glm::vec3(0.55f, 0.12f, 0.14f),
             glm::vec3(0.08f, 0.08f, 0.08f));
 
         const glm::vec3 wheel_offsets[4] = {
-            {-k_vehicle_body_half_width - 0.1f, k_vehicle_wheel_radius, -k_vehicle_body_half_length + 0.28f},
-            {k_vehicle_body_half_width + 0.1f, k_vehicle_wheel_radius, -k_vehicle_body_half_length + 0.28f},
-            {-k_vehicle_body_half_width - 0.1f, k_vehicle_wheel_radius, k_vehicle_body_half_length - 0.28f},
-            {k_vehicle_body_half_width + 0.1f, k_vehicle_wheel_radius, k_vehicle_body_half_length - 0.28f},
+            {-k_vehicle_body_half_width - 0.1f, 0.0f, k_vehicle_body_half_length - 0.28f},
+            {k_vehicle_body_half_width + 0.1f, 0.0f, k_vehicle_body_half_length - 0.28f},
+            {-k_vehicle_body_half_width - 0.1f, 0.0f, -k_vehicle_body_half_length + 0.28f},
+            {k_vehicle_body_half_width + 0.1f, 0.0f, -k_vehicle_body_half_length + 0.28f},
         };
         for (const glm::vec3 &off : wheel_offsets) {
             append_mesh(

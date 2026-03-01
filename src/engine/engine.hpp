@@ -102,6 +102,7 @@ private:
     void update_active_minigame(const InputState &input, float dt);
     void update_vehicle_sim(const InputState &input, float dt);
     void update_aircraft_sim(const InputState &input, float dt);
+    void update_spherical_player_sim(const InputState &input, float dt);
     glm::vec3 vehicle_seat_world_position() const;
     glm::vec3 aircraft_seat_world_position() const;
     void rebuild_dynamic_debug_mesh();
@@ -192,4 +193,6 @@ private:
     int active_minigame_hotspot = -1;
     MiniGameState active_minigame{};
     std::string minigame_hint;
+    glm::vec3 spherical_planet_center = glm::vec3(0.0f);
+    float spherical_planet_radius = 0.0f;
 };

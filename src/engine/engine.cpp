@@ -328,6 +328,15 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
 
     build_static_scene();
     local_player = PlayerControllerSystem::spawn_player(collision_world);
+    if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+        const float spawn_radius = spherical_planet_radius + local_player.controller.capsuleHeight * 0.52f;
+        local_player.transform.position = spherical_planet_center + glm::vec3(0.0f, spawn_radius, 0.0f);
+        local_player.transform.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+        local_player.controller.velocity = glm::vec3(0.0f);
+        local_player.controller.grounded = true;
+        local_player.camera_rig.pitch = -8.0f;
+        local_player.camera_rig.distance = 4.2f;
+    }
     local_player_prev_position = local_player.transform.position;
     vehicle.position = local_player.transform.position + glm::vec3(3.5f, 0.0f, 1.5f);
     vehicle.yaw = 0.3f;
@@ -861,6 +870,9 @@ void Engine::tick(double frame_dt) {
             last_collision_debug = PlayerCollisionDebug{};
         } else if (vehicle.occupied || aircraft.occupied) {
             last_collision_debug = PlayerCollisionDebug{};
+        } else if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+            update_spherical_player_sim(step_input, static_cast<float>(fixed.fixed_dt));
+            last_collision_debug = PlayerCollisionDebug{};
         } else {
             last_collision_debug = PlayerControllerSystem::simulate_fixed(
                 local_player,
@@ -1017,8 +1029,15 @@ void Engine::build_static_scene() {
     constexpr uint64_t k_world_seed = 0x0DDF00D5EEDull;
     if (runtime_options.spherical_planet) {
         world_chunk.generate_spherical_planet_seeded(k_world_seed);
+        spherical_planet_center = glm::vec3(
+            static_cast<float>(VoxelChunk::CHUNK_X - 1) * 0.5f,
+            static_cast<float>(VoxelChunk::CHUNK_Y - 1) * 0.42f,
+            static_cast<float>(VoxelChunk::CHUNK_Z - 1) * 0.5f);
+        spherical_planet_radius = static_cast<float>(std::min({VoxelChunk::CHUNK_X, VoxelChunk::CHUNK_Y, VoxelChunk::CHUNK_Z})) * 0.34f;
     } else {
         world_chunk.generate_heightmap_terrain_seeded(k_world_seed, 0, 0);
+        spherical_planet_center = glm::vec3(0.0f);
+        spherical_planet_radius = 0.0f;
     }
     collision_world = VoxelCollisionWorld(&world_chunk);
 
@@ -1370,6 +1389,77 @@ void Engine::update_aircraft_sim(const InputState &input, float dt) {
         local_player.anim_state = PlayerAnimState::Idle;
         local_player.anim_blend = 0.0f;
     }
+}
+
+void Engine::update_spherical_player_sim(const InputState &input, float dt) {
+    if (dt <= 0.0f || spherical_planet_radius <= 0.0f) {
+        return;
+    }
+
+    const glm::vec3 to_player = local_player.transform.position - spherical_planet_center;
+    const float dist = std::max(glm::length(to_player), 0.001f);
+    const glm::vec3 up = to_player / dist;
+
+    glm::vec3 ref_axis(0.0f, 1.0f, 0.0f);
+    if (std::fabs(glm::dot(up, ref_axis)) > 0.94f) {
+        ref_axis = glm::vec3(1.0f, 0.0f, 0.0f);
+    }
+    const glm::vec3 east = glm::normalize(glm::cross(ref_axis, up));
+    const glm::vec3 north = glm::normalize(glm::cross(up, east));
+
+    glm::vec3 desired = north * input.move.y + east * input.move.x;
+    if (glm::length(desired) > 0.001f) {
+        desired = glm::normalize(desired);
+    }
+
+    float move_speed = local_player.controller.walkSpeed;
+    if (input.crouch_held) {
+        move_speed = local_player.controller.crawlSpeed;
+    } else if (input.sprint_held) {
+        move_speed = local_player.controller.sprintSpeed;
+    }
+
+    float radial_velocity = glm::dot(local_player.controller.velocity, up);
+    const float gravity_mag = std::fabs(local_player.controller.gravity) * 0.62f;
+    if (local_player.controller.grounded && input.jump_pressed) {
+        radial_velocity = local_player.controller.jumpVelocity;
+        local_player.controller.grounded = false;
+    }
+    radial_velocity -= gravity_mag * dt;
+
+    local_player.controller.velocity = desired * move_speed + up * radial_velocity;
+    local_player.transform.position += local_player.controller.velocity * dt;
+
+    const glm::vec3 to_updated = local_player.transform.position - spherical_planet_center;
+    const float updated_dist = std::max(glm::length(to_updated), 0.001f);
+    const glm::vec3 updated_up = to_updated / updated_dist;
+    const float shell_radius = spherical_planet_radius + local_player.controller.capsuleHeight * 0.52f;
+    if (updated_dist < shell_radius) {
+        local_player.transform.position = spherical_planet_center + updated_up * shell_radius;
+        const float inward_speed = glm::dot(local_player.controller.velocity, updated_up);
+        if (inward_speed < 0.0f) {
+            local_player.controller.velocity -= updated_up * inward_speed;
+        }
+        local_player.controller.grounded = true;
+    } else {
+        local_player.controller.grounded = false;
+    }
+
+    glm::vec3 forward = desired;
+    if (glm::length(forward) < 0.001f) {
+        forward = local_player.transform.rotation * glm::vec3(0.0f, 0.0f, 1.0f);
+        forward -= updated_up * glm::dot(forward, updated_up);
+        if (glm::length(forward) > 0.001f) {
+            forward = glm::normalize(forward);
+        } else {
+            forward = north;
+        }
+    }
+    glm::vec3 right = glm::normalize(glm::cross(forward, updated_up));
+    forward = glm::normalize(glm::cross(updated_up, right));
+    local_player.transform.rotation = glm::quat_cast(glm::mat3(right, updated_up, forward));
+
+    PlayerControllerSystem::update_animation_state(local_player, input, dt, false);
 }
 
 void Engine::refresh_overlay_text() {

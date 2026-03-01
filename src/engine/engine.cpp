@@ -1450,26 +1450,71 @@ void Engine::refresh_overlay_text() {
 
     if (!menu_is_open && (active_minigame.active || nearby_minigame_hotspot >= 0)) {
         if (active_minigame.active) {
-            std::string line = minigame_status_text(active_minigame);
+            std::string title = minigame_name(active_minigame.type);
+            std::string status = minigame_status_text(active_minigame);
+            std::string objective = "OBJECTIVE";
+            std::string controls = "WASD move  SPACE action  F/E interact  C/CTRL exit";
+            float progress = 0.0f;
+
+            switch (active_minigame.type) {
+            case MiniGameType::Snake:
+                objective = "OBJECTIVE: Reach length 24 without colliding";
+                progress = std::clamp(static_cast<float>(active_minigame.snake.length) / 24.0f, 0.0f, 1.0f);
+                break;
+            case MiniGameType::Golf: {
+                objective = "OBJECTIVE: Sink the ball in fewer strokes";
+                const float dist = glm::length(active_minigame.golf.hole - active_minigame.golf.ball);
+                progress = std::clamp(1.0f - (dist / 9.5f), 0.0f, 1.0f);
+                break;
+            }
+            case MiniGameType::Tetris:
+                objective = "OBJECTIVE: Reach score 1200 before topping out";
+                progress = std::clamp(static_cast<float>(active_minigame.score) / 1200.0f, 0.0f, 1.0f);
+                break;
+            case MiniGameType::Racing:
+                objective = "OBJECTIVE: Complete 3 laps";
+                progress = std::clamp(
+                    (static_cast<float>(active_minigame.racing.lap) + active_minigame.racing.track_progress / 65.0f) / 3.0f,
+                    0.0f,
+                    1.0f);
+                break;
+            case MiniGameType::TicTacToe:
+                objective = "OBJECTIVE: Align 3 marks before the AI";
+                progress = std::clamp(static_cast<float>(active_minigame.tictactoe.turns) / 9.0f, 0.0f, 1.0f);
+                break;
+            default:
+                break;
+            }
+
+            if (active_minigame.completed) {
+                controls = "Press F/E to leave";
+                progress = 1.0f;
+            }
+
+            append_screen_rect(0.24f, 0.98f, 0.98f, 0.70f, glm::vec3(0.04f, 0.06f, 0.08f));
+            append_screen_rect(0.25f, 0.97f, 0.97f, 0.71f, glm::vec3(0.08f, 0.10f, 0.13f));
+
+            append_mesh(scene.debug_screen, build_screen_text_mesh(title, 0.28f, 0.93f, 0.0068f, glm::vec3(0.98f, 0.98f, 1.0f)));
+            append_mesh(scene.debug_screen, build_screen_text_mesh(status, 0.28f, 0.88f, 0.0052f, glm::vec3(0.89f, 0.95f, 1.0f)));
+            append_mesh(scene.debug_screen, build_screen_text_mesh(objective, 0.28f, 0.83f, 0.0048f, glm::vec3(0.86f, 0.91f, 0.98f)));
+            append_mesh(scene.debug_screen, build_screen_text_mesh(controls, 0.28f, 0.77f, 0.0046f, glm::vec3(0.83f, 0.89f, 0.97f)));
             if (!minigame_hint.empty()) {
-                line += " | ";
-                line += minigame_hint;
+                append_mesh(scene.debug_screen, build_screen_text_mesh(minigame_hint, 0.28f, 0.73f, 0.0045f, glm::vec3(0.8f, 0.88f, 0.96f)));
             }
-            if (!active_minigame.completed) {
-                line += " | WASD+SPACE+F/E play, C/CTRL exit";
-            }
-            append_screen_rect(-0.98f, 0.98f, 0.98f, 0.88f, glm::vec3(0.04f, 0.06f, 0.08f));
-            append_screen_rect(-0.97f, 0.97f, 0.97f, 0.89f, glm::vec3(0.08f, 0.10f, 0.13f));
-            append_mesh(scene.debug_screen, build_screen_text_mesh(line, -0.95f, 0.94f, 0.0049f, glm::vec3(0.91f, 0.96f, 1.0f)));
+
+            append_screen_rect(0.28f, 0.71f, 0.94f, 0.685f, glm::vec3(0.18f, 0.20f, 0.24f));
+            const float fill_right = 0.28f + (0.94f - 0.28f) * progress;
+            append_screen_rect(0.28f, 0.71f, fill_right, 0.685f, glm::vec3(0.24f, 0.72f, 0.98f));
         } else {
             std::string panel = "MINIGAME HOTSPOT";
             if (!minigame_hint.empty()) {
                 panel += "\n";
                 panel += minigame_hint;
             }
-            append_screen_rect(-0.98f, -0.70f, -0.22f, -0.84f, glm::vec3(0.04f, 0.06f, 0.08f));
-            append_screen_rect(-0.97f, -0.71f, -0.23f, -0.83f, glm::vec3(0.08f, 0.10f, 0.13f));
-            append_mesh(scene.debug_screen, build_screen_text_mesh(panel, -0.95f, -0.75f, 0.0052f, glm::vec3(0.91f, 0.96f, 1.0f)));
+            panel += "\nPress F or E to start";
+            append_screen_rect(0.42f, -0.73f, 0.98f, -0.90f, glm::vec3(0.04f, 0.06f, 0.08f));
+            append_screen_rect(0.43f, -0.74f, 0.97f, -0.89f, glm::vec3(0.08f, 0.10f, 0.13f));
+            append_mesh(scene.debug_screen, build_screen_text_mesh(panel, 0.45f, -0.78f, 0.0050f, glm::vec3(0.91f, 0.96f, 1.0f)));
         }
     }
 

@@ -25,4 +25,6 @@ public:
 private:
     size_t index(int x, int y, int z) const;
     std::array<uint8_t, CHUNK_X * CHUNK_Y * CHUNK_Z> voxels{};
+    bool spherical_surface_mode = false;
+    glm::vec3 spherical_surface_center = glm::vec3(0.0f);
 };

@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
     bool debug_collision_only = false;
     bool debug_freeze = false;
     bool vehicle_sandbox = false;
-    bool spherical_planet = false;
+    bool spherical_planet = true;
     bool start_fullscreen = false;
     int window_width = 1280;
     int window_height = 720;
@@ -140,6 +140,8 @@ int main(int argc, char **argv) {
             vehicle_sandbox = true;
         } else if (std::strcmp(argv[i], "--spherical-planet") == 0 || std::strcmp(argv[i], "--planet-sphere") == 0) {
             spherical_planet = true;
+        } else if (std::strcmp(argv[i], "--flat-world") == 0) {
+            spherical_planet = false;
         } else if (std::strcmp(argv[i], "--fullscreen") == 0) {
             start_fullscreen = true;
         } else if (std::strcmp(argv[i], "--windowed") == 0) {

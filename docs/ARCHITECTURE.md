@@ -40,6 +40,10 @@ Design implications:
 - Physics uses a shared authority model with mode-specific tuning (capsule, wheeled, aircraft) under one replication protocol.
 - Streaming and LOD systems must prioritize content along current traversal velocity (ground and high-speed flight profiles).
 
+Current execution note:
+
+- During multiplayer hardening phases, on-foot traversal is the default runtime path and vehicle/aircraft gameplay is intentionally gated/deferred.
+
 ## Runtime layers
 
 - `platform/*`: window/context/input/time abstraction

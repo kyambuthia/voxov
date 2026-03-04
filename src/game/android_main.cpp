@@ -13,12 +13,14 @@
 #include "engine_audio/ui_audio.hpp"
 #include "engine_net/net_client.hpp"
 #include "engine_net/lan_discovery.hpp"
+#include "engine_net/remote_interp.hpp"
 #include "engine_net/net_server.hpp"
 
 #include <android/input.h>
 #include <android/log.h>
 #include <android/asset_manager.h>
 #include <android_native_app_glue.h>
+#include <jni.h>
 #include <EGL/egl.h>
 #include <GLES2/gl2.h>
 
@@ -285,6 +287,203 @@ RenderMesh build_overlay_text_mesh(
     return mesh;
 }
 
+class AndroidMulticastLock {
+public:
+    void set_activity(android_app *app_state) {
+        app = app_state;
+    }
+
+    void acquire() {
+        if (held) {
+            return;
+        }
+        bool attached = false;
+        JNIEnv *env = attach_env(attached);
+        if (!env) {
+            return;
+        }
+        if (!ensure_lock(env)) {
+            detach_if_needed(attached);
+            return;
+        }
+        if (call_lock_method(env, "acquire", "()V")) {
+            held = true;
+            __android_log_print(ANDROID_LOG_INFO, kLogTag, "Android multicast lock acquired");
+        }
+        detach_if_needed(attached);
+    }
+
+    void release() {
+        if (!held && lock_global == nullptr) {
+            return;
+        }
+        bool attached = false;
+        JNIEnv *env = attach_env(attached);
+        if (!env) {
+            return;
+        }
+        if (lock_global != nullptr && held) {
+            if (call_lock_method(env, "release", "()V")) {
+                __android_log_print(ANDROID_LOG_INFO, kLogTag, "Android multicast lock released");
+            }
+        }
+        held = false;
+        detach_if_needed(attached);
+    }
+
+    void shutdown() {
+        release();
+
+        bool attached = false;
+        JNIEnv *env = attach_env(attached);
+        if (!env) {
+            lock_global = nullptr;
+            wifi_manager_global = nullptr;
+            return;
+        }
+        if (lock_global != nullptr) {
+            env->DeleteGlobalRef(lock_global);
+            lock_global = nullptr;
+        }
+        if (wifi_manager_global != nullptr) {
+            env->DeleteGlobalRef(wifi_manager_global);
+            wifi_manager_global = nullptr;
+        }
+        detach_if_needed(attached);
+    }
+
+private:
+    JNIEnv *attach_env(bool &attached) const {
+        attached = false;
+        if (!app || !app->activity || !app->activity->vm) {
+            return nullptr;
+        }
+        JNIEnv *env = nullptr;
+        if (app->activity->vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) == JNI_OK) {
+            return env;
+        }
+        if (app->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+            __android_log_print(ANDROID_LOG_ERROR, kLogTag, "AttachCurrentThread failed for multicast lock");
+            return nullptr;
+        }
+        attached = true;
+        return env;
+    }
+
+    void detach_if_needed(bool attached) const {
+        if (!attached || !app || !app->activity || !app->activity->vm) {
+            return;
+        }
+        app->activity->vm->DetachCurrentThread();
+    }
+
+    bool ensure_lock(JNIEnv *env) {
+        if (!env || lock_global != nullptr) {
+            return lock_global != nullptr;
+        }
+        if (!app || !app->activity || app->activity->clazz == nullptr) {
+            return false;
+        }
+
+        jobject activity = app->activity->clazz;
+        jclass activity_cls = env->GetObjectClass(activity);
+        if (!activity_cls) {
+            return false;
+        }
+        jmethodID get_system_service = env->GetMethodID(
+            activity_cls,
+            "getSystemService",
+            "(Ljava/lang/String;)Ljava/lang/Object;");
+        env->DeleteLocalRef(activity_cls);
+        if (!get_system_service) {
+            return false;
+        }
+
+        jstring wifi_service = env->NewStringUTF("wifi");
+        jobject wifi_manager_local = env->CallObjectMethod(activity, get_system_service, wifi_service);
+        env->DeleteLocalRef(wifi_service);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            return false;
+        }
+        if (!wifi_manager_local) {
+            return false;
+        }
+
+        jclass wifi_cls = env->GetObjectClass(wifi_manager_local);
+        if (!wifi_cls) {
+            env->DeleteLocalRef(wifi_manager_local);
+            return false;
+        }
+        jmethodID create_lock = env->GetMethodID(
+            wifi_cls,
+            "createMulticastLock",
+            "(Ljava/lang/String;)Landroid/net/wifi/WifiManager$MulticastLock;");
+        env->DeleteLocalRef(wifi_cls);
+        if (!create_lock) {
+            env->DeleteLocalRef(wifi_manager_local);
+            return false;
+        }
+
+        jstring lock_name = env->NewStringUTF("voxov_lan_discovery");
+        jobject lock_local = env->CallObjectMethod(wifi_manager_local, create_lock, lock_name);
+        env->DeleteLocalRef(lock_name);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            env->DeleteLocalRef(wifi_manager_local);
+            return false;
+        }
+        if (!lock_local) {
+            env->DeleteLocalRef(wifi_manager_local);
+            return false;
+        }
+
+        jclass lock_cls = env->GetObjectClass(lock_local);
+        if (lock_cls) {
+            jmethodID set_ref_counted = env->GetMethodID(lock_cls, "setReferenceCounted", "(Z)V");
+            if (set_ref_counted) {
+                env->CallVoidMethod(lock_local, set_ref_counted, JNI_FALSE);
+                if (env->ExceptionCheck()) {
+                    env->ExceptionClear();
+                }
+            }
+            env->DeleteLocalRef(lock_cls);
+        }
+
+        wifi_manager_global = env->NewGlobalRef(wifi_manager_local);
+        lock_global = env->NewGlobalRef(lock_local);
+        env->DeleteLocalRef(wifi_manager_local);
+        env->DeleteLocalRef(lock_local);
+        return lock_global != nullptr;
+    }
+
+    bool call_lock_method(JNIEnv *env, const char *method_name, const char *signature) {
+        if (!env || !lock_global || !method_name || !signature) {
+            return false;
+        }
+        jclass lock_cls = env->GetObjectClass(lock_global);
+        if (!lock_cls) {
+            return false;
+        }
+        jmethodID method = env->GetMethodID(lock_cls, method_name, signature);
+        env->DeleteLocalRef(lock_cls);
+        if (!method) {
+            return false;
+        }
+        env->CallVoidMethod(lock_global, method);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            return false;
+        }
+        return true;
+    }
+
+    android_app *app = nullptr;
+    jobject wifi_manager_global = nullptr;
+    jobject lock_global = nullptr;
+    bool held = false;
+};
+
 struct TouchState {
     int32_t left_pointer = -1;
     int32_t right_pointer = -1;
@@ -387,6 +586,7 @@ struct AndroidRenderer {
     NetClient net_client{};
     LanDiscovery lan_discovery{};
     NetServer local_server{};
+    AndroidMulticastLock multicast_lock{};
     bool net_initialized = false;
     bool net_connected = false;
     bool net_connecting = false;
@@ -418,6 +618,15 @@ struct AndroidRenderer {
         int w = 0;
         int h = 0;
     };
+
+    void refresh_multicast_lock_state() {
+        const bool needs_multicast = searching_nearby || (local_server_running && !local_server_loopback);
+        if (needs_multicast) {
+            multicast_lock.acquire();
+        } else {
+            multicast_lock.release();
+        }
+    }
 
     UiRect jump_button_rect() const {
         const int w = std::max(118, std::min(206, width / 4));
@@ -530,6 +739,7 @@ struct AndroidRenderer {
         local_server_running = false;
         local_server_loopback = true;
         hosting_local = false;
+        refresh_multicast_lock_state();
         __android_log_print(ANDROID_LOG_INFO, kLogTag, "Local server stopped");
     }
 
@@ -544,6 +754,7 @@ struct AndroidRenderer {
         net_target_valid = false;
         net_local_player_id = 0;
         remote_render_players.clear();
+        refresh_multicast_lock_state();
     }
 
     void shutdown_network() {
@@ -551,6 +762,7 @@ struct AndroidRenderer {
         stop_local_server();
         lan_discovery.stop();
         searching_nearby = false;
+        refresh_multicast_lock_state();
         if (net_initialized) {
             net_client.shutdown();
             net_initialized = false;
@@ -601,6 +813,7 @@ struct AndroidRenderer {
         lan_discovery.stop();
         searching_nearby = false;
         multiplayer_hint = "Hosting this device only.";
+        refresh_multicast_lock_state();
         connect_local();
     }
 
@@ -622,6 +835,7 @@ struct AndroidRenderer {
         lan_discovery.start_host(kLocalPlayPort, "VOXOV Host");
         searching_nearby = false;
         multiplayer_hint = "Hosting Wi-Fi game. Friends tap Join Nearby.";
+        refresh_multicast_lock_state();
         connect_local();
     }
 
@@ -633,9 +847,11 @@ struct AndroidRenderer {
         lan_discovery.start_client();
         searching_nearby = true;
         multiplayer_hint = "Searching nearby Wi-Fi hosts...";
+        refresh_multicast_lock_state();
     }
 
     void pump_network(double dt_seconds) {
+        refresh_multicast_lock_state();
         if (local_server_running) {
             local_server.pump();
             if (!local_server_loopback) {
@@ -687,6 +903,7 @@ struct AndroidRenderer {
                     net_connect_elapsed = 0.0;
                     searching_nearby = false;
                     multiplayer_hint = "Joining " + host.name + " (" + host.ip + ")";
+                    refresh_multicast_lock_state();
                 }
             }
             return;
@@ -753,27 +970,15 @@ struct AndroidRenderer {
             remote.anim_phase = state.anim_phase;
             remote.anim_blend = state.anim_blend;
             const glm::vec3 sample_velocity(state.vx, state.vy, state.vz);
-            const bool should_push_sample =
-                remote.samples.empty() ||
-                !(remote.samples.back().position == target &&
-                  remote.samples.back().server_tick == state.tick &&
-                  remote.samples.back().velocity == sample_velocity &&
-                  remote.samples.back().anim_state == state.anim_state &&
-                  remote.samples.back().anim_phase == state.anim_phase &&
-                  remote.samples.back().anim_blend == state.anim_blend);
-            if (should_push_sample) {
-                RemoteRenderPlayer::Sample sample{};
-                sample.server_tick = state.tick;
-                sample.position = target;
-                sample.velocity = sample_velocity;
-                sample.anim_state = state.anim_state;
-                sample.anim_phase = state.anim_phase;
-                sample.anim_blend = state.anim_blend;
-                remote.samples.push_back(sample);
-                while (remote.samples.size() > kRemoteSampleHistoryMax) {
-                    remote.samples.pop_front();
-                }
-            }
+            net_remote_push_sample(
+                remote,
+                state.tick,
+                target,
+                sample_velocity,
+                state.anim_state,
+                state.anim_phase,
+                state.anim_blend,
+                kRemoteSampleHistoryMax);
             seen_remote_ids.insert(player_id);
         }
 
@@ -955,6 +1160,7 @@ struct AndroidRenderer {
             return false;
         }
         this->app = app;
+        multicast_lock.set_activity(app);
 
         display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
         if (display == EGL_NO_DISPLAY) {
@@ -1122,6 +1328,7 @@ struct AndroidRenderer {
 
     void shutdown() {
         shutdown_network();
+        multicast_lock.shutdown();
         if (audio_ready) {
             ui_audio.shutdown();
             audio_ready = false;
@@ -1326,88 +1533,13 @@ struct AndroidRenderer {
         const float blend_lerp = std::clamp(static_cast<float>(dt_seconds) * 10.0f, 0.0f, 1.0f);
         player_anim_blend += (blend_target - player_anim_blend) * blend_lerp;
 
-        const float remote_lerp = std::clamp(static_cast<float>(dt_seconds) * 12.0f, 0.0f, 1.0f);
-        uint32_t max_remote_sample_tick = 0;
-        bool have_remote_samples = false;
-        for (const auto &[player_id, remote] : remote_render_players) {
-            (void)player_id;
-            if (!remote.samples.empty()) {
-                max_remote_sample_tick = std::max(max_remote_sample_tick, remote.samples.back().server_tick);
-                have_remote_samples = true;
-            }
-        }
-        if (have_remote_samples) {
-            const double desired_tick = static_cast<double>(
-                max_remote_sample_tick > kRemoteInterpDelayTicks ? (max_remote_sample_tick - kRemoteInterpDelayTicks) : 0u);
-            if (!remote_interp_tick_cursor_initialized) {
-                remote_interp_tick_cursor = desired_tick;
-                remote_interp_tick_cursor_initialized = true;
-            } else {
-                remote_interp_tick_cursor += dt_seconds * 60.0;
-                if (remote_interp_tick_cursor < (desired_tick - 20.0)) {
-                    remote_interp_tick_cursor = desired_tick;
-                }
-                remote_interp_tick_cursor = std::min(remote_interp_tick_cursor, desired_tick + 2.0);
-            }
-        } else {
-            remote_interp_tick_cursor_initialized = false;
-        }
-        for (auto &[player_id, remote] : remote_render_players) {
-            (void)player_id;
-            const double target_tick_f = remote_interp_tick_cursor_initialized
-                ? remote_interp_tick_cursor
-                : static_cast<double>(remote.samples.empty() ? 0u : remote.samples.back().server_tick);
-            while (remote.samples.size() >= 3 &&
-                   static_cast<double>(remote.samples[1].server_tick) <= target_tick_f) {
-                remote.samples.pop_front();
-            }
-
-            glm::vec3 predicted_target = remote.target_position + remote.velocity * 0.035f;
-            if (!remote.samples.empty()) {
-                if (remote.samples.size() >= 2) {
-                    const auto &a = remote.samples[0];
-                    const auto &b = remote.samples[1];
-                    if (target_tick_f <= static_cast<double>(a.server_tick)) {
-                        predicted_target = a.position;
-                        remote.velocity = a.velocity;
-                        remote.anim_state = a.anim_state;
-                        remote.anim_phase = a.anim_phase;
-                        remote.anim_blend = a.anim_blend;
-                    } else if (target_tick_f <= static_cast<double>(b.server_tick)) {
-                        const float dt_ticks = static_cast<float>(std::max<uint32_t>(1u, b.server_tick - a.server_tick));
-                        const float t = std::clamp(static_cast<float>(target_tick_f - static_cast<double>(a.server_tick)) / dt_ticks, 0.0f, 1.0f);
-                        predicted_target = glm::mix(a.position, b.position, t);
-                        remote.velocity = glm::mix(a.velocity, b.velocity, t);
-                        remote.anim_state = (t < 0.5f) ? a.anim_state : b.anim_state;
-                        remote.anim_phase = glm::mix(a.anim_phase, b.anim_phase, t);
-                        remote.anim_blend = glm::mix(a.anim_blend, b.anim_blend, t);
-                    } else {
-                        const auto &latest = remote.samples.back();
-                        const double ahead_ticks = std::max(0.0, target_tick_f - static_cast<double>(latest.server_tick));
-                        const float extrap = std::clamp(static_cast<float>(ahead_ticks / 60.0), 0.0f, 0.10f);
-                        predicted_target = latest.position + latest.velocity * extrap;
-                        remote.velocity = latest.velocity;
-                        remote.anim_state = latest.anim_state;
-                        remote.anim_phase = latest.anim_phase;
-                        remote.anim_blend = latest.anim_blend;
-                    }
-                } else {
-                    const auto &latest = remote.samples.back();
-                    predicted_target = latest.position;
-                    remote.velocity = latest.velocity;
-                    remote.anim_state = latest.anim_state;
-                    remote.anim_phase = latest.anim_phase;
-                    remote.anim_blend = latest.anim_blend;
-                }
-                remote.target_position = predicted_target;
-            }
-            const float err = glm::length(remote.position - predicted_target);
-            if (err > 4.0f) {
-                remote.position = predicted_target;
-            } else {
-                remote.position = glm::mix(remote.position, predicted_target, remote_lerp);
-            }
-        }
+        net_remote_interpolate(
+            remote_render_players,
+            remote_interp_tick_cursor,
+            remote_interp_tick_cursor_initialized,
+            dt_seconds,
+            1.0 / 60.0,
+            kRemoteInterpDelayTicks);
 
         touch.jump_pressed = false;
     }

@@ -53,7 +53,7 @@ jobs:
 
       - name: Configure
         run: |
-          cmake -S . -B build -G Ninja \
+          cmake -S . -B build/desktop/release-linux -G Ninja \
             -DCMAKE_BUILD_TYPE=Release \
             -DVOXOV_BUILD_TESTS=OFF \
             -DUSE_AVX2=OFF \
@@ -62,15 +62,15 @@ jobs:
             -DUSE_LZCNT=OFF
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build/desktop/release-linux --parallel
 
       - name: Prepare linux artifact bundle
         run: |
           ASSET_DIR="VOXOV-${GITHUB_REF_NAME}-linux-x86_64"
           mkdir -p "${ASSET_DIR}"
-          cp build/bin/voxov "${ASSET_DIR}/"
+          cp build/desktop/release-linux/bin/voxov "${ASSET_DIR}/"
           chmod +x "${ASSET_DIR}/voxov"
-          cp build/*.spv "${ASSET_DIR}/" 2>/dev/null || true
+          cp build/desktop/release-linux/*.spv "${ASSET_DIR}/" 2>/dev/null || true
           cp /usr/local/lib/libdxcompiler.so "${ASSET_DIR}/" 2>/dev/null || true
           cp /usr/local/lib/libdxil.so "${ASSET_DIR}/" 2>/dev/null || true
           cat > "${ASSET_DIR}/run.sh" << 'EOF'
@@ -138,7 +138,7 @@ jobs:
       - name: Configure
         shell: powershell
         run: |
-          cmake -S . -B build -G Ninja `
+          cmake -S . -B build/desktop/release-windows -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DVOXOV_BUILD_TESTS=OFF `
             -DVOXOV_ENABLE_VULKAN=OFF `
@@ -151,16 +151,16 @@ jobs:
             -DUSE_LZCNT=OFF
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build/desktop/release-windows --parallel
 
       - name: Prepare windows artifact
         shell: powershell
         run: |
           $AssetDir = "VOXOV-$env:GITHUB_REF_NAME-windows-x86_64"
           New-Item -ItemType Directory -Force -Path $AssetDir | Out-Null
-          Copy-Item "build/bin/voxov.exe" "$AssetDir/" -Force
-          Copy-Item "build/bin/*.dll" "$AssetDir/" -ErrorAction SilentlyContinue
-          Copy-Item "build/*.spv" "$AssetDir/" -ErrorAction SilentlyContinue
+          Copy-Item "build/desktop/release-windows/bin/voxov.exe" "$AssetDir/" -Force
+          Copy-Item "build/desktop/release-windows/bin/*.dll" "$AssetDir/" -ErrorAction SilentlyContinue
+          Copy-Item "build/desktop/release-windows/*.spv" "$AssetDir/" -ErrorAction SilentlyContinue
           $AssetZip = "$AssetDir.zip"
           Compress-Archive -Path "$AssetDir/*" -DestinationPath $AssetZip -Force
 

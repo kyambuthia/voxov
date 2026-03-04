@@ -118,6 +118,7 @@ bool NetClient::init() {
         return false;
     }
     initialized = true;
+    next_packet_sequence = 1;
     debug_counters = DebugCounters{};
     refresh_debug_stats();
     return true;
@@ -166,6 +167,7 @@ void NetClient::shutdown() {
     server_protocol_info = NetProtocolInfo{};
     has_last_snapshot_sequence = false;
     last_snapshot_sequence = 0;
+    next_packet_sequence = 1;
     if (client) {
         enet_host_destroy(client);
         client = nullptr;
@@ -197,7 +199,10 @@ void NetClient::pump() {
                 static_cast<int>(addr.port));
             if (has_pending_interest && peer) {
                 ChunkInterestPacket packet{};
-                packet.header = net_make_header(NetMsgType::ChunkInterest, static_cast<uint8_t>(sizeof(packet.interest)));
+                packet.header = net_make_header(
+                    NetMsgType::ChunkInterest,
+                    static_cast<uint16_t>(sizeof(packet.interest)),
+                    next_packet_sequence++);
                 packet.interest = pending_interest;
                 ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE);
                 enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Reliable), net_packet);
@@ -319,7 +324,10 @@ void NetClient::send_input(const NetTickInput &input) {
     }
 
     InputPacket packet{};
-    packet.header = net_make_header(NetMsgType::Input, static_cast<uint8_t>(sizeof(packet.input)));
+    packet.header = net_make_header(
+        NetMsgType::Input,
+        static_cast<uint16_t>(sizeof(packet.input)),
+        next_packet_sequence++);
     packet.input = input;
     ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), 0);
     enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Unreliable), net_packet);
@@ -335,7 +343,10 @@ void NetClient::set_chunk_interest(const NetChunkInterest &interest) {
     }
 
     ChunkInterestPacket packet{};
-    packet.header = net_make_header(NetMsgType::ChunkInterest, static_cast<uint8_t>(sizeof(packet.interest)));
+    packet.header = net_make_header(
+        NetMsgType::ChunkInterest,
+        static_cast<uint16_t>(sizeof(packet.interest)),
+        next_packet_sequence++);
     packet.interest = interest;
     ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE);
     enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Reliable), net_packet);

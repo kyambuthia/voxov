@@ -135,7 +135,10 @@ void NetServer::send_chunk_state(ENetPeer *peer, ClientState &state, NetChunkCoo
     }
 
     ChunkStatePacket packet{};
-    packet.header = net_make_header(NetMsgType::ChunkState, static_cast<uint8_t>(sizeof(packet.state)));
+    packet.header = net_make_header(
+        NetMsgType::ChunkState,
+        static_cast<uint16_t>(sizeof(packet.state)),
+        next_packet_sequence++);
     packet.state.coord = coord;
     packet.state.version = version;
 
@@ -226,7 +229,10 @@ void NetServer::send_snapshots() {
 
     for (auto &[peer_ptr, state] : clients) {
         SnapshotPacket snap{};
-        snap.header = net_make_header(NetMsgType::Snapshot, static_cast<uint8_t>(sizeof(snap.snapshot)));
+        snap.header = net_make_header(
+            NetMsgType::Snapshot,
+            static_cast<uint16_t>(sizeof(snap.snapshot)),
+            next_packet_sequence++);
         snap.snapshot.player_id = state.player_id;
         snap.snapshot.tick = state.last_input.tick;
         snap.snapshot.sequence = state.next_snapshot_sequence++;
@@ -258,7 +264,10 @@ void NetServer::broadcast_player_states() {
                 continue;
             }
             PlayerStatePacket packet{};
-            packet.header = net_make_header(NetMsgType::PlayerState, static_cast<uint8_t>(sizeof(packet.state)));
+            packet.header = net_make_header(
+                NetMsgType::PlayerState,
+                static_cast<uint16_t>(sizeof(packet.state)),
+                next_packet_sequence++);
             packet.state = subject.state;
             packet.state.sequence = state_sequence;
 
@@ -275,7 +284,10 @@ void NetServer::broadcast_player_remove(uint32_t player_id) {
         return;
     }
     PlayerRemovePacket packet{};
-    packet.header = net_make_header(NetMsgType::PlayerRemove, static_cast<uint8_t>(sizeof(packet.payload)));
+    packet.header = net_make_header(
+        NetMsgType::PlayerRemove,
+        static_cast<uint16_t>(sizeof(packet.payload)),
+        next_packet_sequence++);
     packet.payload.player_id = player_id;
     ENetPacket *out = enet_packet_create(&packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE);
     enet_host_broadcast(server, static_cast<uint8_t>(NetChannel::Reliable), out);
@@ -361,6 +373,7 @@ bool NetServer::init(uint16_t port, bool loopback_only) {
         return false;
     }
     last_player_broadcast_ms = 0;
+    next_packet_sequence = 1;
     server_sim_tick = 0;
     last_pump_ms = 0;
     sim_accumulator_ms = 0.0;
@@ -377,6 +390,7 @@ void NetServer::shutdown() {
     sim_accumulator_ms = 0.0;
     last_snapshot_send_ms = 0;
     last_player_broadcast_ms = 0;
+    next_packet_sequence = 1;
     if (server) {
         enet_host_destroy(server);
         server = nullptr;
@@ -433,14 +447,20 @@ void NetServer::pump() {
             spdlog::info("NetServer: client connected, assigned player_id={}, clients={}", state.player_id, clients.size());
 
             AssignPlayerPacket assign{};
-            assign.header = net_make_header(NetMsgType::AssignPlayer, static_cast<uint8_t>(sizeof(assign.payload)));
+            assign.header = net_make_header(
+                NetMsgType::AssignPlayer,
+                static_cast<uint16_t>(sizeof(assign.payload)),
+                next_packet_sequence++);
             assign.payload.player_id = state.player_id;
             ENetPacket *out = enet_packet_create(&assign, sizeof(assign), ENET_PACKET_FLAG_RELIABLE);
             enet_peer_send(event.peer, static_cast<uint8_t>(NetChannel::Reliable), out);
             record_tx(sizeof(assign));
 
             ProtocolInfoPacket proto{};
-            proto.header = net_make_header(NetMsgType::ProtocolInfo, static_cast<uint8_t>(sizeof(proto.payload)));
+            proto.header = net_make_header(
+                NetMsgType::ProtocolInfo,
+                static_cast<uint16_t>(sizeof(proto.payload)),
+                next_packet_sequence++);
             proto.payload.protocol_version = k_net_protocol_version;
             proto.payload.feature_flags =
                 net_feature(NetFeatureFlags::InterestFilteredReplication) |

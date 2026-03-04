@@ -1,16 +1,20 @@
 # Build Targets
 
-VOXOV targets true cross-platform shipping from one architecture:
+VOXOV targets cross-platform shipping from one architecture:
 
 - Desktop: Linux/Windows/macOS
 - Mobile: Android/iOS
 - Consoles: PlayStation/Xbox/Nintendo platform targets
 
+All generated outputs must live under `./build/<target>/...`.
+
 ## Desktop (Windows/Linux/macOS)
 
+Configure + build:
+
 ```bash
-cmake -S . -B build -DVOXOV_BUILD_TESTS=ON
-cmake --build build -j
+cmake -S . -B ./build/desktop/main -DVOXOV_BUILD_TESTS=ON
+cmake --build ./build/desktop/main --parallel
 ```
 
 Run Vulkan backend:
@@ -31,7 +35,7 @@ Run headless authoritative server:
 ./build/desktop/main/bin/voxov --headless-server
 ```
 
-LAN replication demo (same Wi-Fi):
+LAN replication demo:
 
 ```bash
 # server host
@@ -44,50 +48,37 @@ LAN replication demo (same Wi-Fi):
 ./build/desktop/main/bin/voxov --renderer gl --connect <SERVER_LAN_IP> --port 7777 --devhud
 ```
 
-## Android (bring-up)
+## Android
 
-Android now has a dedicated CMake path when `ANDROID=ON`:
+Android has a dedicated native runtime target when `ANDROID=ON`:
 
 - Target: `voxov_android` (shared library)
 - Entry point: `src/game/android_main.cpp`
-- Native glue: NDK `android_native_app_glue`
+- Packaging/build flow: Gradle app module under `android/`
 
-Build details and Android Studio setup:
+See `docs/ANDROID.md` for Gradle + native CMake details.
 
-- `docs/ANDROID.md`
+## Web
 
-## iOS (planned)
+Web preview target (Emscripten):
 
-Requirements:
+```bash
+EM_CACHE=./build/web/cache emcmake cmake -S . -B ./build/web/main -G Ninja
+EM_CACHE=./build/web/cache cmake --build ./build/web/main --parallel
+```
 
-- platform backend under `platform/*` for iOS lifecycle/input/window integration
-- Vulkan strategy via platform-approved graphics path (for example MoltenVK where valid)
-- touch/gamepad input mapping through shared input abstraction
-- budgeted streaming profile using mobile memory caps
+Output:
 
-Current scaffold status:
+- `./build/web/main/bin/voxov_web.html`
+- `./build/web/main/bin/voxov_web.js`
+- `./build/web/main/bin/voxov_web.wasm`
+
+## iOS (planned scaffold)
 
 - `src/platform/ios_platform.cpp` compiles as a lifecycle/event scaffold.
+- Full runtime integration is still planned work.
 
-## Consoles (planned)
-
-Requirements:
-
-- no gameplay/render logic forks; platform code contained in backend and platform layers
-- fixed memory/streaming budgets per platform profile
-- renderer backend capability table to enable/disable optional features safely
-- network protocol and save paths remain deterministic and certification-friendly
-
-Current scaffold status:
+## Consoles (planned scaffold)
 
 - `src/platform/console_platform.cpp` compiles as a placeholder backend.
-
-## Web (foundation)
-
-Skeleton backend compiled: `src/platform/web_platform.cpp`.
-Desktop build keeps it as a no-op stub unless `__EMSCRIPTEN__` is defined.
-
-Suggested next step:
-- add Emscripten toolchain target in CMake
-- implement `web_platform.cpp` with emscripten main loop
-- replace GL fixed-function draw path with GLSL ES 3.0 shaders for WebGL2 compatibility.
+- Platform certification and memory-profile work is deferred.

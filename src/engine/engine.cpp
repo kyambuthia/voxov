@@ -3,6 +3,7 @@
 #include "engine_gameplay/animation/skeletal_animator.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_gameplay/player/player_visuals.hpp"
+#include "engine_net/remote_interp.hpp"
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
@@ -656,27 +657,15 @@ void Engine::sync_network_state(uint32_t sim_tick, const InputState &net_input) 
         render_player.anim_phase = state.anim_phase;
         render_player.anim_blend = state.anim_blend;
         const glm::vec3 sample_velocity(state.vx, state.vy, state.vz);
-        const bool should_push_sample =
-            render_player.samples.empty() ||
-            !(render_player.samples.back().position == target &&
-              render_player.samples.back().server_tick == state.tick &&
-              render_player.samples.back().velocity == sample_velocity &&
-              render_player.samples.back().anim_state == state.anim_state &&
-              render_player.samples.back().anim_phase == state.anim_phase &&
-              render_player.samples.back().anim_blend == state.anim_blend);
-        if (should_push_sample) {
-            RemoteRenderPlayer::Sample sample{};
-            sample.server_tick = state.tick;
-            sample.position = target;
-            sample.velocity = sample_velocity;
-            sample.anim_state = state.anim_state;
-            sample.anim_phase = state.anim_phase;
-            sample.anim_blend = state.anim_blend;
-            render_player.samples.push_back(sample);
-            while (render_player.samples.size() > k_remote_sample_history_max) {
-                render_player.samples.pop_front();
-            }
-        }
+        net_remote_push_sample(
+            render_player,
+            state.tick,
+            target,
+            sample_velocity,
+            state.anim_state,
+            state.anim_phase,
+            state.anim_blend,
+            k_remote_sample_history_max);
         seen_remote_ids.insert(player_id);
     }
 
@@ -776,90 +765,17 @@ void Engine::process_menu_actions(const InputState &primary_input) {
 }
 
 void Engine::update_remote_interpolation(double frame_dt) {
-    const float remote_lerp = std::clamp(static_cast<float>(frame_dt) * 12.0f, 0.0f, 1.0f);
-    const float remote_rot_lerp = std::clamp(static_cast<float>(frame_dt) * 9.0f, 0.0f, 1.0f);
-    uint32_t max_remote_sample_tick = 0;
-    bool have_remote_samples = false;
-    for (const auto &[player_id, render_player] : remote_render_players) {
-        (void)player_id;
-        if (!render_player.samples.empty()) {
-            max_remote_sample_tick = std::max(max_remote_sample_tick, render_player.samples.back().server_tick);
-            have_remote_samples = true;
-        }
-    }
-    if (have_remote_samples) {
-        const double desired_tick = static_cast<double>(
-            max_remote_sample_tick > k_remote_interp_delay_ticks ? (max_remote_sample_tick - k_remote_interp_delay_ticks) : 0u);
-        if (!remote_interp_tick_cursor_initialized) {
-            remote_interp_tick_cursor = desired_tick;
-            remote_interp_tick_cursor_initialized = true;
-        } else {
-            remote_interp_tick_cursor += frame_dt / fixed.fixed_dt;
-            if (remote_interp_tick_cursor < (desired_tick - 20.0)) {
-                remote_interp_tick_cursor = desired_tick;
-            }
-            remote_interp_tick_cursor = std::min(remote_interp_tick_cursor, desired_tick + 2.0);
-        }
-    } else {
-        remote_interp_tick_cursor_initialized = false;
-    }
+    net_remote_interpolate(
+        remote_render_players,
+        remote_interp_tick_cursor,
+        remote_interp_tick_cursor_initialized,
+        frame_dt,
+        fixed.fixed_dt,
+        k_remote_interp_delay_ticks);
 
+    const float remote_rot_lerp = std::clamp(static_cast<float>(frame_dt) * 9.0f, 0.0f, 1.0f);
     for (auto &[player_id, render_player] : remote_render_players) {
         (void)player_id;
-        const double target_tick_f = remote_interp_tick_cursor_initialized
-            ? remote_interp_tick_cursor
-            : static_cast<double>(render_player.samples.empty() ? 0u : render_player.samples.back().server_tick);
-        while (render_player.samples.size() >= 3 &&
-               static_cast<double>(render_player.samples[1].server_tick) <= target_tick_f) {
-            render_player.samples.pop_front();
-        }
-
-        glm::vec3 predicted_target = render_player.target_position + render_player.velocity * 0.035f;
-        if (!render_player.samples.empty()) {
-            if (render_player.samples.size() >= 2) {
-                const auto &a = render_player.samples[0];
-                const auto &b = render_player.samples[1];
-                if (target_tick_f <= static_cast<double>(a.server_tick)) {
-                    predicted_target = a.position;
-                    render_player.velocity = a.velocity;
-                    render_player.anim_state = a.anim_state;
-                    render_player.anim_phase = a.anim_phase;
-                    render_player.anim_blend = a.anim_blend;
-                } else if (target_tick_f <= static_cast<double>(b.server_tick)) {
-                    const float dt_ticks = static_cast<float>(std::max<uint32_t>(1u, b.server_tick - a.server_tick));
-                    const float t = std::clamp(static_cast<float>(target_tick_f - static_cast<double>(a.server_tick)) / dt_ticks, 0.0f, 1.0f);
-                    predicted_target = glm::mix(a.position, b.position, t);
-                    render_player.velocity = glm::mix(a.velocity, b.velocity, t);
-                    render_player.anim_state = (t < 0.5f) ? a.anim_state : b.anim_state;
-                    render_player.anim_phase = glm::mix(a.anim_phase, b.anim_phase, t);
-                    render_player.anim_blend = glm::mix(a.anim_blend, b.anim_blend, t);
-                } else {
-                    const auto &latest = render_player.samples.back();
-                    const double ahead_ticks = std::max(0.0, target_tick_f - static_cast<double>(latest.server_tick));
-                    const float extrap = std::clamp(static_cast<float>(ahead_ticks * fixed.fixed_dt), 0.0f, 0.10f);
-                    predicted_target = latest.position + latest.velocity * extrap;
-                    render_player.velocity = latest.velocity;
-                    render_player.anim_state = latest.anim_state;
-                    render_player.anim_phase = latest.anim_phase;
-                    render_player.anim_blend = latest.anim_blend;
-                }
-            } else {
-                const auto &latest = render_player.samples.back();
-                predicted_target = latest.position;
-                render_player.velocity = latest.velocity;
-                render_player.anim_state = latest.anim_state;
-                render_player.anim_phase = latest.anim_phase;
-                render_player.anim_blend = latest.anim_blend;
-            }
-            render_player.target_position = predicted_target;
-        }
-
-        const float err = glm::length(render_player.position - predicted_target);
-        if (err > 4.0f) {
-            render_player.position = predicted_target;
-        } else {
-            render_player.position = glm::mix(render_player.position, predicted_target, remote_lerp);
-        }
         render_player.orientation = glm::normalize(glm::slerp(
             render_player.orientation,
             render_player.target_orientation,

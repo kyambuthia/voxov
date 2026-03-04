@@ -14,47 +14,120 @@ struct ClientStats {
     bool assigned = false;
     uint32_t assigned_id = 0;
     uint32_t snapshots = 0;
+    uint32_t snapshots_after_reconnect = 0;
     uint32_t chunk_updates = 0;
     uint32_t remote_state_frames = 0;
     uint32_t max_remote_seen = 0;
+    uint32_t forced_disconnects = 0;
+    bool reconnect_attempted = false;
+    bool assigned_after_reconnect = false;
 };
 
-bool run_stress() {
-    constexpr uint16_t kPort = 17777;
-    constexpr int kClientCount = 12;
-    constexpr int kTicks = 1200; // ~12s at 10ms tick
-    constexpr int kSleepMs = 10;
+struct StressScenario {
+    const char *name = "";
+    int client_count = 0;
+    int ticks = 0;
+    int sleep_ms = 0;
+    bool reconnect_cycle = false;
+};
 
-    NetServer server;
-    if (!server.init(kPort, true)) {
-        std::fprintf(stderr, "FAIL: server init failed on port %u\n", kPort);
+bool run_scenario(const StressScenario &scenario) {
+    constexpr uint16_t kPort = 17777;
+    if (scenario.client_count <= 0 || scenario.ticks <= 0 || scenario.sleep_ms < 0) {
+        std::fprintf(stderr, "FAIL[%s]: invalid scenario config\n", scenario.name);
         return false;
     }
 
-    std::vector<NetClient> clients(static_cast<size_t>(kClientCount));
-    std::vector<ClientStats> stats(static_cast<size_t>(kClientCount));
+    NetServer server;
+    if (!server.init(kPort, true)) {
+        std::fprintf(stderr, "FAIL[%s]: server init failed on port %u\n", scenario.name, kPort);
+        return false;
+    }
+
+    std::vector<NetClient> clients(static_cast<size_t>(scenario.client_count));
+    std::vector<ClientStats> stats(static_cast<size_t>(scenario.client_count));
+    std::vector<bool> reconnect_target(static_cast<size_t>(scenario.client_count), false);
+    std::vector<bool> temporarily_disconnected(static_cast<size_t>(scenario.client_count), false);
 
     NetChunkInterest interest{};
     interest.center_x = 0;
     interest.center_z = 0;
     interest.radius = 2;
 
-    for (int i = 0; i < kClientCount; ++i) {
+    auto cleanup = [&]() {
+        for (NetClient &client : clients) {
+            client.disconnect();
+            client.shutdown();
+        }
+        server.shutdown();
+    };
+
+    for (int i = 0; i < scenario.client_count; ++i) {
         if (!clients[static_cast<size_t>(i)].init()) {
-            std::fprintf(stderr, "FAIL: client[%d] init failed\n", i);
+            std::fprintf(stderr, "FAIL[%s]: client[%d] init failed\n", scenario.name, i);
+            cleanup();
             return false;
         }
         if (!clients[static_cast<size_t>(i)].connect("127.0.0.1", kPort)) {
-            std::fprintf(stderr, "FAIL: client[%d] connect enqueue failed\n", i);
+            std::fprintf(stderr, "FAIL[%s]: client[%d] connect enqueue failed\n", scenario.name, i);
+            cleanup();
             return false;
         }
         clients[static_cast<size_t>(i)].set_chunk_interest(interest);
     }
 
-    for (int tick = 0; tick < kTicks; ++tick) {
+    int disconnect_tick = -1;
+    int reconnect_tick = -1;
+    if (scenario.reconnect_cycle) {
+        disconnect_tick = scenario.ticks / 3;
+        reconnect_tick = disconnect_tick + std::max(30, scenario.ticks / 10);
+        bool any_target = false;
+        for (int i = 0; i < scenario.client_count; ++i) {
+            if ((i % 5) == 2) {
+                reconnect_target[static_cast<size_t>(i)] = true;
+                any_target = true;
+            }
+        }
+        if (!any_target) {
+            reconnect_target[0] = true;
+        }
+    }
+
+    bool ok = true;
+    for (int tick = 0; tick < scenario.ticks; ++tick) {
         server.pump();
 
-        for (int i = 0; i < kClientCount; ++i) {
+        if (scenario.reconnect_cycle && tick == disconnect_tick) {
+            for (int i = 0; i < scenario.client_count; ++i) {
+                if (!reconnect_target[static_cast<size_t>(i)]) {
+                    continue;
+                }
+                clients[static_cast<size_t>(i)].disconnect();
+                temporarily_disconnected[static_cast<size_t>(i)] = true;
+                stats[static_cast<size_t>(i)].forced_disconnects += 1;
+            }
+        }
+
+        if (scenario.reconnect_cycle && tick == reconnect_tick) {
+            for (int i = 0; i < scenario.client_count; ++i) {
+                if (!temporarily_disconnected[static_cast<size_t>(i)]) {
+                    continue;
+                }
+                if (!clients[static_cast<size_t>(i)].connect("127.0.0.1", kPort)) {
+                    std::fprintf(stderr, "FAIL[%s]: client[%d] reconnect enqueue failed\n", scenario.name, i);
+                    ok = false;
+                    break;
+                }
+                clients[static_cast<size_t>(i)].set_chunk_interest(interest);
+                temporarily_disconnected[static_cast<size_t>(i)] = false;
+                stats[static_cast<size_t>(i)].reconnect_attempted = true;
+            }
+            if (!ok) {
+                break;
+            }
+        }
+
+        for (int i = 0; i < scenario.client_count; ++i) {
             NetClient &client = clients[static_cast<size_t>(i)];
             ClientStats &s = stats[static_cast<size_t>(i)];
 
@@ -65,6 +138,9 @@ bool run_stress() {
             if (local_id != 0) {
                 s.assigned = true;
                 s.assigned_id = local_id;
+                if (s.reconnect_attempted && tick >= reconnect_tick) {
+                    s.assigned_after_reconnect = true;
+                }
             }
 
             if (client.is_connected()) {
@@ -85,6 +161,9 @@ bool run_stress() {
             while (client.poll_snapshot(snapshot)) {
                 if (std::isfinite(snapshot.x) && std::isfinite(snapshot.y) && std::isfinite(snapshot.z)) {
                     s.snapshots++;
+                    if (s.reconnect_attempted && tick >= reconnect_tick) {
+                        s.snapshots_after_reconnect++;
+                    }
                 }
             }
 
@@ -99,8 +178,8 @@ bool run_stress() {
                 s.remote_state_frames++;
             }
             uint32_t remote_count = 0;
-            for (const auto &[pid, _] : players) {
-                (void)_;
+            for (const auto &[pid, state] : players) {
+                (void)state;
                 if (pid != local_id) {
                     remote_count++;
                 }
@@ -110,21 +189,27 @@ bool run_stress() {
             }
         }
 
-        std::this_thread::sleep_for(std::chrono::milliseconds(kSleepMs));
+        if (scenario.sleep_ms > 0) {
+            std::this_thread::sleep_for(std::chrono::milliseconds(scenario.sleep_ms));
+        }
     }
 
-    bool ok = true;
     int assigned_count = 0;
     int snapshot_clients = 0;
     int chunk_clients = 0;
     int remote_visible_clients = 0;
+    int reconnect_targets = 0;
+    int reconnect_assigned = 0;
+    int reconnect_snapshot_ok = 0;
 
-    for (int i = 0; i < kClientCount; ++i) {
+    const uint32_t min_snapshot_threshold = static_cast<uint32_t>(std::max(12, scenario.ticks / 24));
+
+    for (int i = 0; i < scenario.client_count; ++i) {
         const ClientStats &s = stats[static_cast<size_t>(i)];
         if (s.assigned) {
             assigned_count++;
         }
-        if (s.snapshots > 50) {
+        if (s.snapshots >= min_snapshot_threshold) {
             snapshot_clients++;
         }
         if (s.chunk_updates > 0) {
@@ -133,50 +218,93 @@ bool run_stress() {
         if (s.max_remote_seen > 0) {
             remote_visible_clients++;
         }
+        if (reconnect_target[static_cast<size_t>(i)]) {
+            reconnect_targets++;
+            if (s.assigned_after_reconnect) {
+                reconnect_assigned++;
+            }
+            if (s.snapshots_after_reconnect >= 6) {
+                reconnect_snapshot_ok++;
+            }
+        }
 
         std::fprintf(
             stderr,
-            "client[%02d] connected=%d assigned=%u snapshots=%u chunks=%u remote_frames=%u max_remote=%u\n",
+            "[%s] client[%02d] connected=%d assigned=%u snapshots=%u chunks=%u remote_frames=%u max_remote=%u disc=%u rec_assigned=%d rec_snaps=%u\n",
+            scenario.name,
             i,
             s.connected ? 1 : 0,
             s.assigned_id,
             s.snapshots,
             s.chunk_updates,
             s.remote_state_frames,
-            s.max_remote_seen);
+            s.max_remote_seen,
+            s.forced_disconnects,
+            s.assigned_after_reconnect ? 1 : 0,
+            s.snapshots_after_reconnect);
     }
 
-    // Expectations are intentionally conservative to avoid flakiness in CI/local VMs.
-    if (assigned_count < kClientCount) {
-        std::fprintf(stderr, "FAIL: only %d/%d clients received AssignPlayer\n", assigned_count, kClientCount);
+    if (assigned_count < scenario.client_count) {
+        std::fprintf(stderr, "FAIL[%s]: only %d/%d clients received AssignPlayer\n", scenario.name, assigned_count, scenario.client_count);
         ok = false;
     }
-    if (snapshot_clients < (kClientCount - 1)) {
-        std::fprintf(stderr, "FAIL: only %d/%d clients received enough snapshots\n", snapshot_clients, kClientCount);
+    if (snapshot_clients < std::max(1, scenario.client_count - 1)) {
+        std::fprintf(stderr, "FAIL[%s]: only %d/%d clients received enough snapshots\n", scenario.name, snapshot_clients, scenario.client_count);
         ok = false;
     }
-    if (chunk_clients < (kClientCount - 1)) {
-        std::fprintf(stderr, "FAIL: only %d/%d clients received chunk updates\n", chunk_clients, kClientCount);
+    if (chunk_clients < std::max(1, scenario.client_count - 1)) {
+        std::fprintf(stderr, "FAIL[%s]: only %d/%d clients received chunk updates\n", scenario.name, chunk_clients, scenario.client_count);
         ok = false;
     }
-    if (remote_visible_clients < (kClientCount - 2)) {
-        std::fprintf(stderr, "FAIL: only %d/%d clients observed remote player replication\n", remote_visible_clients, kClientCount);
+    if (remote_visible_clients < std::max(1, scenario.client_count - 1)) {
+        std::fprintf(stderr, "FAIL[%s]: only %d/%d clients observed remote replication\n", scenario.name, remote_visible_clients, scenario.client_count);
         ok = false;
+    }
+    if (scenario.reconnect_cycle) {
+        if (reconnect_assigned < reconnect_targets) {
+            std::fprintf(stderr, "FAIL[%s]: only %d/%d reconnect targets reassigned\n", scenario.name, reconnect_assigned, reconnect_targets);
+            ok = false;
+        }
+        if (reconnect_snapshot_ok < reconnect_targets) {
+            std::fprintf(stderr, "FAIL[%s]: only %d/%d reconnect targets received post-reconnect snapshots\n", scenario.name, reconnect_snapshot_ok, reconnect_targets);
+            ok = false;
+        }
     }
 
-    for (NetClient &client : clients) {
-        client.disconnect();
-        client.shutdown();
+    cleanup();
+    if (ok) {
+        std::fprintf(
+            stderr,
+            "PASS[%s]: clients=%d assigned=%d snapshot_ok=%d chunk_ok=%d remote_ok=%d reconnect=%d/%d\n",
+            scenario.name,
+            scenario.client_count,
+            assigned_count,
+            snapshot_clients,
+            chunk_clients,
+            remote_visible_clients,
+            reconnect_assigned,
+            reconnect_targets);
     }
-    server.shutdown();
-
     return ok;
 }
 }
 
 int main() {
-    const bool ok = run_stress();
-    if (!ok) {
+    const StressScenario scenarios[] = {
+        {"s2", 2, 600, 6, false},
+        {"s8", 8, 700, 6, false},
+        {"s16", 16, 800, 6, true},
+        {"s32", 32, 900, 6, true},
+    };
+
+    bool all_ok = true;
+    for (const StressScenario &scenario : scenarios) {
+        if (!run_scenario(scenario)) {
+            all_ok = false;
+        }
+    }
+
+    if (!all_ok) {
         return 1;
     }
     std::fprintf(stderr, "Net stress PASS\n");

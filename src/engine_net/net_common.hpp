@@ -54,7 +54,8 @@ enum class NetMsgType : uint8_t {
 };
 
 constexpr uint32_t k_net_packet_magic = 0x564F5832u; // "VOX2"
-constexpr uint16_t k_net_protocol_version = 1u;
+constexpr uint16_t k_net_protocol_version = 2u;
+constexpr uint16_t k_net_max_payload_bytes = 2048u;
 
 enum class NetFeatureFlags : uint16_t {
     None = 0,
@@ -75,20 +76,30 @@ struct NetPacketHeader {
     uint32_t magic = k_net_packet_magic;
     uint16_t version = k_net_protocol_version;
     uint8_t type = 0;
-    uint8_t payload_size = 0;
+    uint8_t flags = 0;
+    uint32_t sequence = 0;
+    uint16_t payload_size = 0;
 };
 #pragma pack(pop)
 
-inline NetPacketHeader net_make_header(NetMsgType type, uint8_t payload_size) {
+inline NetPacketHeader net_make_header(
+    NetMsgType type,
+    uint16_t payload_size,
+    uint32_t sequence = 0,
+    uint8_t flags = 0) {
     NetPacketHeader header{};
     header.type = static_cast<uint8_t>(type);
+    header.flags = flags;
+    header.sequence = sequence;
     header.payload_size = payload_size;
     return header;
 }
 
 inline bool net_header_basic_valid(const NetPacketHeader &header) {
     return header.magic == k_net_packet_magic &&
-           header.version == k_net_protocol_version;
+           header.version == k_net_protocol_version &&
+           header.type != 0 &&
+           header.payload_size <= k_net_max_payload_bytes;
 }
 
 struct NetAssignPlayer {

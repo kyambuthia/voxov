@@ -2,58 +2,73 @@
 
 ## Current status
 
-Android now has a native build target:
+Android is an active gameplay target, not just bring-up.
 
-- CMake target: `voxov_android`
-- Output library name: `libvoxov.so`
-- Entry point: `src/game/android_main.cpp` (`android_main` via `native_app_glue`)
-
-This is a foundation target for bring-up and logging. Full gameplay/render loop integration on Android is the next phase.
+- Runtime entrypoint: `src/game/android_main.cpp`
+- Native target: `voxov_android` (`libvoxov.so`)
+- Rendering path: EGL + OpenGL ES runtime in native loop
+- Multiplayer path: ENet client/server integration, remote interpolation, dev HUD net stats
+- LAN discovery: multicast permission + native-side `WifiManager.MulticastLock` management during host/join discovery
 
 ## Prerequisites
 
 - Android Studio installed
 - Android SDK + NDK installed
-- CMake available from Android Studio or system
-- Environment variable `ANDROID_NDK_HOME` set (or provide full NDK path manually)
+- Java 21 (for Gradle release workflow parity)
+- `ANDROID_NDK_HOME` set when doing direct native CMake builds
 
-## Build from command line (arm64)
+## Build via Gradle (recommended)
+
+From repo root:
 
 ```bash
-cmake -S . -B build/android/arm64-cmake \
+gradle -p android :app:assembleDebug
+```
+
+Release APK (signed via configured keystore vars):
+
+```bash
+gradle -p android :app:assembleRelease
+```
+
+Expected artifacts:
+
+- Debug: `android/app/build/outputs/apk/debug/app-debug.apk`
+- Release: `android/app/build/outputs/apk/release/app-release.apk`
+
+## Build native library via CMake (arm64)
+
+```bash
+cmake -S . -B ./build/android/arm64-cmake \
   -G Ninja \
   -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK_HOME/build/cmake/android.toolchain.cmake" \
   -DANDROID_ABI=arm64-v8a \
   -DANDROID_PLATFORM=29 \
   -DCMAKE_BUILD_TYPE=Debug
 
-cmake --build build/android/arm64-cmake --parallel
+cmake --build ./build/android/arm64-cmake --parallel
 ```
 
-Expected output:
+Expected native output:
 
-- `build/android/arm64-cmake/lib/libvoxov.so` (or equivalent library output path)
+- `./build/android/arm64-cmake/lib/libvoxov.so` (or equivalent toolchain output path)
 
-## Android Studio integration (externalNativeBuild)
+## Runtime validation checklist
 
-1. Create or open an Android app module.
-2. Use `externalNativeBuild.cmake` and point to this repo `CMakeLists.txt`.
-3. Pass CMake arguments:
-   - `-DANDROID=ON`
-   - ABI and API level from your Gradle config.
-4. Build the app; Gradle will build and package `libvoxov.so`.
-
-## Validate runtime logs
-
-After launch, check Logcat for tag `VOXOV`:
+After install/launch, check Logcat (`VOXOV` tag):
 
 - `android_main started`
 - `APP_CMD_INIT_WINDOW`
-- `APP_CMD_GAINED_FOCUS`
+- `EGL ready`
+- periodic frame/network lines including `rem=`, `cpps=`, `snap=`
 
-## Next integration steps
+Multiplayer checks:
 
-1. Hook Android input/touch/gamepad into engine input pipeline.
-2. Add Android Vulkan surface + renderer path through platform abstraction.
-3. Wire asset packaging/loading for APK/AAB.
-4. Add Android-specific memory/performance profiles for chunk streaming.
+1. Host LAN on one device and join nearby from another.
+2. Confirm remote players are visible and animated.
+3. Confirm leaving/joining updates remote count and no stale remotes remain.
+
+## Notes
+
+- Android currently uses a native GLES runtime path and does not yet share the full desktop `Engine` orchestration layer.
+- Ongoing work should prioritize shared multiplayer/simulation helpers over renderer rewrites.

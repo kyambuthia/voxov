@@ -61,5 +61,6 @@ private:
     NetProtocolInfo server_protocol_info{};
     bool has_pending_interest = false;
     NetChunkInterest pending_interest{};
+    uint32_t next_packet_sequence = 1;
     DebugCounters debug_counters{};
 };

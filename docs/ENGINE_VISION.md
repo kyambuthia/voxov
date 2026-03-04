@@ -27,6 +27,7 @@ The demo should be a small co-op scene that demonstrates:
 - replicated player movement
 - a small shared world state (e.g., a few blocks/entities)
 - stable frame pacing and render loop
+- on-foot traversal baseline first; vehicle/aircraft traversal is intentionally deferred until protocol/runtime hardening is complete
 
 Success criteria: two clients connect to a server, move around, and see each other consistently,
 with graceful disconnects and recoveries.

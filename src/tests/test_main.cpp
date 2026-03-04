@@ -82,6 +82,27 @@ void test_net_pod_serialization() {
     assert(std::fabs(out.z - in.z) < 0.0001f);
 }
 
+void test_net_header_validation() {
+    const NetPacketHeader ok = net_make_header(NetMsgType::Snapshot, static_cast<uint16_t>(sizeof(NetSnapshot)), 12u, 0u);
+    assert(net_header_basic_valid(ok));
+
+    NetPacketHeader wrong_magic = ok;
+    wrong_magic.magic ^= 0x1u;
+    assert(!net_header_basic_valid(wrong_magic));
+
+    NetPacketHeader wrong_version = ok;
+    wrong_version.version = 99u;
+    assert(!net_header_basic_valid(wrong_version));
+
+    NetPacketHeader wrong_type = ok;
+    wrong_type.type = 0;
+    assert(!net_header_basic_valid(wrong_type));
+
+    NetPacketHeader too_big_payload = ok;
+    too_big_payload.payload_size = static_cast<uint16_t>(k_net_max_payload_bytes + 1u);
+    assert(!net_header_basic_valid(too_big_payload));
+}
+
 void test_chunk_meshing() {
     VoxelChunk chunk;
     chunk.generate_heightmap_terrain();
@@ -736,6 +757,7 @@ int main() {
     test_camera_vectors();
     test_camera_view_override_basis();
     test_net_pod_serialization();
+    test_net_header_validation();
     test_chunk_meshing();
     test_chunk_world_footprint();
     test_chunk_seed_determinism();

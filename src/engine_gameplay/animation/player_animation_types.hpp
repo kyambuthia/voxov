@@ -4,27 +4,27 @@
 
 enum class PlayerAnimState : uint8_t {
     Idle = 0,
-    Push,
-    Cruise,
-    TurnLeft,
-    TurnRight,
-    Ollie,
-    Kickflip,
-    ShoveIt,
-    Manual,
-    GrindEnter,
-    GrindLoop,
-    GrindExit,
-    Airborne,
-    Land,
-    Bail
+    StartMove,
+    StopMove,
+    LocomotionWalk,
+    LocomotionRun,
+    JumpTakeoff,
+    JumpLoop,
+    FallLoop,
+    LandSoft,
+    LandHard,
+    PivotLeft,
+    PivotRight,
+    TurnInPlaceLeft,
+    TurnInPlaceRight,
+    MovingTurn,
+    Recovery
 };
 
 enum class PlayerAnimEventType : uint8_t {
     None = 0,
-    BoardContact,
+    Footstep,
     Landing,
-    TrickApex,
     SoundTrigger
 };
 

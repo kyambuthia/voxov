@@ -59,6 +59,16 @@ cmake --build build/desktop/main --parallel
 - Provenance, licensing, and hashes are documented in `assets/audio/ui/README.md`.
 
 ## Showcase
+### Current Android Gameplay
+Click the preview to open the small MP4 recording.
+
+[![VOXOV Android Gameplay Video Preview](docs/media/voxov_android_gameplay_01.jpg)](docs/media/voxov_android_gameplay.mp4)
+
+| Android Screenshot 1 | Android Screenshot 2 |
+| --- | --- |
+| ![VOXOV Android Screenshot 1](docs/media/voxov_android_gameplay_01.jpg) | ![VOXOV Android Screenshot 2](docs/media/voxov_android_gameplay_02.jpg) |
+
+### Previous Showcase
 ![VOXOV Android Gameplay GIF](docs/media/voxov_android_gameplay.gif)
 
 ![VOXOV Gameplay GIF](docs/media/voxov_state.gif)

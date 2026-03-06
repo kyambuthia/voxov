@@ -259,29 +259,89 @@ void test_player_animation_state_transitions() {
     InputState input{};
     PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
     assert(player.anim_state == PlayerAnimState::Idle);
+    assert(player.animation.state == PlayerAnimState::Idle);
+    assert(player.movement.state == PlayerMovementState::GroundSkating);
 
     input.move = glm::vec2(0.0f, 1.0f);
     input.sprint_held = false;
     input.crouch_held = false;
-    PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
-    assert(player.anim_state == PlayerAnimState::Walk);
+    for (int i = 0; i < 8; ++i) {
+        PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+    }
+    assert(player.anim_state == PlayerAnimState::Cruise);
+    assert(player.animation.state == PlayerAnimState::Cruise);
 
     input.sprint_held = true;
     input.crouch_held = false;
     PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
-    assert(player.anim_state == PlayerAnimState::Run);
+    assert(player.anim_state == PlayerAnimState::Push);
 
     input.sprint_held = false;
     input.crouch_held = true;
-    PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
-    assert(player.anim_state == PlayerAnimState::Crawl);
+    for (int i = 0; i < 12; ++i) {
+        PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+    }
+    assert(player.anim_state == PlayerAnimState::Manual);
+    assert(player.movement.state == PlayerMovementState::ManualBalance);
+    assert(player.trick.state == PlayerTrickState::Manual);
+    assert(player.score.combo_active);
 
     input.move = glm::vec2(0.0f);
     input.crouch_held = false;
     input.jump_pressed = true;
     player.controller.grounded = true;
     PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
-    assert(player.anim_state == PlayerAnimState::Jump);
+    assert(player.anim_state == PlayerAnimState::Ollie);
+    assert(player.movement.state == PlayerMovementState::Airborne);
+    assert(player.trick.state == PlayerTrickState::Ollie);
+}
+
+void test_player_coyote_jump_window() {
+    VoxelChunk chunk;
+    chunk.generate_flat_ground(0);
+    VoxelCollisionWorld collision_world(&chunk);
+
+    PlayerEntity player = PlayerControllerSystem::spawn_player(collision_world);
+    player.transform.position = glm::vec3(8.0f, 1.05f, 8.0f);
+    player.controller.grounded = true;
+
+    InputState input{};
+    PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+    player.controller.grounded = false;
+    player.movement.coyote_timer = player.skate_tuning.coyote_time * 0.5f;
+    input.jump_pressed = true;
+    PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+
+    assert(player.movement.state == PlayerMovementState::Airborne);
+    assert(player.movement.vertical_velocity > 0.0f);
+}
+
+void test_player_combo_banks_after_timeout() {
+    VoxelChunk chunk;
+    chunk.generate_flat_ground(0);
+    VoxelCollisionWorld collision_world(&chunk);
+
+    PlayerEntity player = PlayerControllerSystem::spawn_player(collision_world);
+    player.transform.position = glm::vec3(8.0f, 1.05f, 8.0f);
+    player.controller.grounded = true;
+
+    InputState input{};
+    input.move = glm::vec2(0.0f, 1.0f);
+    input.crouch_held = true;
+    for (int i = 0; i < 16; ++i) {
+        PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+    }
+    assert(player.score.combo_active);
+    assert(player.score.combo_score > 0);
+
+    input.move = glm::vec2(0.0f);
+    input.crouch_held = false;
+    for (int i = 0; i < 150; ++i) {
+        PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+    }
+
+    assert(!player.score.combo_active);
+    assert(player.score.total_score > 0);
 }
 
 void test_avbd_solver_lifecycle() {
@@ -766,6 +826,8 @@ int main() {
     test_strafe_axis_sign();
     test_player_settles_on_ground();
     test_player_animation_state_transitions();
+    test_player_coyote_jump_window();
+    test_player_combo_banks_after_timeout();
     test_avbd_solver_lifecycle();
     test_minigame_snake_runs();
     test_minigame_golf_shot();

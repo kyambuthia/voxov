@@ -24,8 +24,13 @@ struct MovementDebug {
     glm::vec3 desired = glm::vec3(0.0f);
 };
 
+const char *player_movement_state_name(PlayerMovementState state);
+const char *player_trick_state_name(PlayerTrickState state);
+const char *player_trick_note();
+
 float player_anim_cycle_rate(PlayerAnimState state);
 float player_anim_blend_target(PlayerAnimState state);
+float player_anim_crossfade_seconds(PlayerAnimState state);
 
 class PlayerControllerSystem {
 public:
@@ -41,5 +46,5 @@ public:
         float dt,
         bool noclip);
 
-    static void update_animation_state(PlayerEntity &player, const InputState &input, float dt, bool noclip);
+    static void update_animation_state(PlayerEntity &player, const InputState &input, float dt, bool noclip, bool was_grounded);
 };

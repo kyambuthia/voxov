@@ -1,4 +1,5 @@
 #include "engine_net/net_server.hpp"
+#include "engine_gameplay/animation/player_animation_graph.hpp"
 
 #include <enet/enet.h>
 #include <spdlog/spdlog.h>
@@ -60,33 +61,11 @@ constexpr uint64_t kPlayerBroadcastIntervalMs = 33;
 constexpr int kMaxCatchupTicksPerPump = 8;
 
 float server_anim_cycle_rate(uint8_t anim_state) {
-    switch (anim_state) {
-    case 1: // walk
-        return 5.0f;
-    case 2: // run
-        return 8.0f;
-    case 3: // jump
-        return 3.0f;
-    case 4: // crawl
-        return 2.8f;
-    default:
-        return 1.0f;
-    }
+    return player_animation_definition(static_cast<PlayerAnimState>(anim_state)).phase_rate;
 }
 
 float server_anim_blend_target(uint8_t anim_state) {
-    switch (anim_state) {
-    case 1:
-        return 0.5f;
-    case 2:
-        return 1.0f;
-    case 3:
-        return 0.75f;
-    case 4:
-        return 0.35f;
-    default:
-        return 0.0f;
-    }
+    return player_animation_definition(static_cast<PlayerAnimState>(anim_state)).target_blend;
 }
 
 uint64_t now_ms() {
@@ -187,17 +166,17 @@ void NetServer::simulate_client_tick(ClientState &state) {
 
     const float planar_speed = std::sqrt(state.state.vx * state.state.vx + state.state.vz * state.state.vz);
     if (state.state.y > (kServerSpawnY + 0.02f) || std::fabs(state.state.vy) > 0.08f) {
-        state.state.anim_state = 3;
+        state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::Airborne);
     } else if (planar_speed > 0.2f) {
         if (crouch_held) {
-            state.state.anim_state = 4;
+            state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::Manual);
         } else if (sprint_held) {
-            state.state.anim_state = 2;
+            state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::Push);
         } else {
-            state.state.anim_state = 1;
+            state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::Cruise);
         }
     } else {
-        state.state.anim_state = 0;
+        state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::Idle);
     }
 
     state.state.anim_phase += server_anim_cycle_rate(state.state.anim_state) * kServerTickDt;

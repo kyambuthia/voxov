@@ -1071,18 +1071,28 @@ struct AndroidRenderer {
             float height = player_capsule_height;
             float bob = 0.0f;
             switch (remote.anim_state) {
-            case static_cast<uint8_t>(PlayerAnimState::Walk):
+            case static_cast<uint8_t>(PlayerAnimState::Cruise):
+            case static_cast<uint8_t>(PlayerAnimState::TurnLeft):
+            case static_cast<uint8_t>(PlayerAnimState::TurnRight):
                 bob = 0.05f * std::fabs(std::sin(remote.anim_phase));
                 break;
-            case static_cast<uint8_t>(PlayerAnimState::Run):
+            case static_cast<uint8_t>(PlayerAnimState::Push):
                 bob = 0.09f * std::fabs(std::sin(remote.anim_phase));
                 break;
-            case static_cast<uint8_t>(PlayerAnimState::Crawl):
+            case static_cast<uint8_t>(PlayerAnimState::Manual):
+            case static_cast<uint8_t>(PlayerAnimState::GrindEnter):
+            case static_cast<uint8_t>(PlayerAnimState::GrindLoop):
+            case static_cast<uint8_t>(PlayerAnimState::GrindExit):
+            case static_cast<uint8_t>(PlayerAnimState::Bail):
                 height *= 0.55f;
                 radius *= 1.08f;
                 bob = 0.02f * std::fabs(std::sin(remote.anim_phase * 0.8f));
                 break;
-            case static_cast<uint8_t>(PlayerAnimState::Jump):
+            case static_cast<uint8_t>(PlayerAnimState::Ollie):
+            case static_cast<uint8_t>(PlayerAnimState::Kickflip):
+            case static_cast<uint8_t>(PlayerAnimState::ShoveIt):
+            case static_cast<uint8_t>(PlayerAnimState::Airborne):
+            case static_cast<uint8_t>(PlayerAnimState::Land):
                 bob = 0.06f * std::sin(remote.anim_phase * 0.65f);
                 break;
             default:
@@ -1514,14 +1524,14 @@ struct AndroidRenderer {
         const bool moving = glm::length(touch.left_value) > 0.12f;
         PlayerAnimState next_state = PlayerAnimState::Idle;
         if (!noclip && !player_grounded) {
-            next_state = PlayerAnimState::Jump;
+            next_state = PlayerAnimState::Airborne;
         } else if (moving) {
             if (touch.crouch_held) {
-                next_state = PlayerAnimState::Crawl;
+                next_state = PlayerAnimState::Manual;
             } else if (touch.sprint_held) {
-                next_state = PlayerAnimState::Run;
+                next_state = PlayerAnimState::Push;
             } else {
-                next_state = PlayerAnimState::Walk;
+                next_state = PlayerAnimState::Cruise;
             }
         }
         player_anim_state = next_state;

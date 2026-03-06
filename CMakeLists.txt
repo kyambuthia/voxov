@@ -49,6 +49,9 @@ if(ANDROID)
         src/platform/android/input_android.cpp
         src/engine_assets/cgltf_impl.cpp
         src/engine_assets/skinned_model.cpp
+        src/engine_gameplay/animation/animation_runtime.cpp
+        src/engine_gameplay/animation/player_animation_graph.cpp
+        src/engine_gameplay/animation/player_animation_types.cpp
         src/engine_gameplay/animation/skeletal_animator.cpp
         src/engine_gameplay/player/player_visuals.cpp
         src/engine_ui/gui_menu.cpp
@@ -272,6 +275,8 @@ add_library(engine_net STATIC
     src/engine_net/net_client.cpp
     src/engine_net/net_server.cpp
     src/engine_net/lan_discovery.cpp
+    src/engine_gameplay/animation/player_animation_graph.cpp
+    src/engine_gameplay/animation/player_animation_types.cpp
 )
 target_include_directories(engine_net PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/enet/include)
 target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog)
@@ -284,6 +289,9 @@ add_library(engine STATIC
     src/engine_assets/cgltf_impl.cpp
     src/engine_assets/skinned_model.cpp
     src/engine_audio/ui_audio.cpp
+    src/engine_gameplay/animation/animation_runtime.cpp
+    src/engine_gameplay/animation/player_animation_graph.cpp
+    src/engine_gameplay/animation/player_animation_types.cpp
     src/engine_gameplay/animation/skeletal_animator.cpp
     src/engine_gameplay/minigames/minigames.cpp
     src/engine_gameplay/player/player_controller.cpp

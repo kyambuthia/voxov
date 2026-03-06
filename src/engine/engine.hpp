@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine_core/timing.hpp"
+#include "engine_gameplay/animation/animation_runtime.hpp"
 #include "engine_gameplay/player/player_components.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_gameplay/minigames/minigames.hpp"
@@ -66,6 +67,7 @@ private:
         uint8_t anim_state = 0;
         float anim_phase = 0.0f;
         float anim_blend = 0.0f;
+        PlayerAnimationRuntime animation_runtime{};
         bool initialized = false;
         std::deque<Sample> samples;
     };
@@ -153,6 +155,8 @@ private:
     bool has_fox_player_model = false;
     SkinnedModel humanoid_player_model;
     bool has_humanoid_player_model = false;
+    PlayerAnimationRuntime local_player_animation;
+    PlayerAnimationRuntime local_player_secondary_animation;
     EngineRuntimeOptions runtime_options{};
 
     double fps_accumulator = 0.0;

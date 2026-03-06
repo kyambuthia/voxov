@@ -47,11 +47,12 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
     model_scale = 1.0f;
     model_ground_lift = 0.0f;
     model_axis_correction = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    model_facing_correction = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     bind_vertices.clear();
     mesh_indices.clear();
-    nodes.clear();
-    joints.clear();
-    clips.clear();
+    animation_skeleton = AnimationSkeleton{};
+    animation_clips.clear();
+    animation_graph.states.clear();
 
     cgltf_options options{};
     cgltf_data *data = nullptr;
@@ -68,28 +69,28 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
         return false;
     }
 
-    nodes.resize(data->nodes_count);
+    animation_skeleton.nodes.resize(data->nodes_count);
     for (size_t i = 0; i < data->nodes_count; ++i) {
-        NodeTransform n{};
+        AnimationSkeletonNode node{};
         const cgltf_node &src = data->nodes[i];
+        node.name = src.name ? src.name : ("node_" + std::to_string(i));
         if (src.has_translation) {
-            n.translation = glm::vec3(src.translation[0], src.translation[1], src.translation[2]);
+            node.bind_local.translation = glm::vec3(src.translation[0], src.translation[1], src.translation[2]);
         }
         if (src.has_rotation) {
-            n.rotation = glm::quat(src.rotation[3], src.rotation[0], src.rotation[1], src.rotation[2]);
+            node.bind_local.rotation = glm::quat(src.rotation[3], src.rotation[0], src.rotation[1], src.rotation[2]);
         }
         if (src.has_scale) {
-            n.scale = glm::vec3(src.scale[0], src.scale[1], src.scale[2]);
+            node.bind_local.scale = glm::vec3(src.scale[0], src.scale[1], src.scale[2]);
         }
-        nodes[i] = n;
+        animation_skeleton.nodes[i] = node;
     }
     for (size_t i = 0; i < data->nodes_count; ++i) {
         const cgltf_node &src = data->nodes[i];
         for (size_t c = 0; c < src.children_count; ++c) {
             const int child_idx = node_index_from_ptr(data, src.children[c]);
             if (child_idx >= 0) {
-                nodes[i].children.push_back(child_idx);
-                nodes[static_cast<size_t>(child_idx)].parent = static_cast<int>(i);
+                animation_skeleton.nodes[static_cast<size_t>(child_idx)].parent = static_cast<int>(i);
             }
         }
     }
@@ -195,17 +196,21 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
     }
 
     const cgltf_skin *skin = skinned_node->skin;
-    joints.resize(skin->joints_count);
+    animation_skeleton.skin_joints.resize(skin->joints_count);
     for (size_t i = 0; i < skin->joints_count; ++i) {
-        Joint j{};
-        j.node_index = node_index_from_ptr(data, skin->joints[i]);
-        if (skin->inverse_bind_matrices && i < skin->inverse_bind_matrices->count) {
-            j.inverse_bind = read_mat4_from_accessor(skin->inverse_bind_matrices, i);
+        const int node_index = node_index_from_ptr(data, skin->joints[i]);
+        animation_skeleton.skin_joints[i] = node_index;
+        if (node_index < 0 || node_index >= static_cast<int>(animation_skeleton.nodes.size())) {
+            continue;
         }
-        joints[i] = j;
+        AnimationSkeletonNode &node = animation_skeleton.nodes[static_cast<size_t>(node_index)];
+        node.skin_joint = true;
+        if (skin->inverse_bind_matrices && i < skin->inverse_bind_matrices->count) {
+            node.inverse_bind = read_mat4_from_accessor(skin->inverse_bind_matrices, i);
+        }
     }
 
-    clips.reserve(data->animations_count);
+    animation_clips.reserve(data->animations_count);
     for (size_t i = 0; i < data->animations_count; ++i) {
         const cgltf_animation &src_anim = data->animations[i];
         AnimationClip clip{};
@@ -229,7 +234,7 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
             }
 
             if (ch.target_path == cgltf_animation_path_type_translation || ch.target_path == cgltf_animation_path_type_scale) {
-                Vec3Channel vc{};
+                AnimationVec3Track vc{};
                 vc.node_index = node_idx;
                 vc.times = times;
                 vc.values.resize(kcount);
@@ -244,7 +249,7 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
                     clip.scales.push_back(std::move(vc));
                 }
             } else if (ch.target_path == cgltf_animation_path_type_rotation) {
-                QuatChannel qc{};
+                AnimationQuatTrack qc{};
                 qc.node_index = node_idx;
                 qc.times = times;
                 qc.values.resize(kcount);
@@ -256,11 +261,12 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
                 clip.rotations.push_back(std::move(qc));
             }
         }
-        clips.push_back(std::move(clip));
+        animation_clips.push_back(std::move(clip));
     }
 
     cgltf_free(data);
-    ready = !bind_vertices.empty() && !mesh_indices.empty() && !joints.empty();
+    animation_graph = resolve_player_animation_graph(animation_clips);
+    ready = !bind_vertices.empty() && !mesh_indices.empty() && !animation_skeleton.skin_joints.empty();
     if (!ready) {
         out_error = "parsed model missing vertices/indices/joints";
         return false;
@@ -273,171 +279,68 @@ bool SkinnedModel::loaded() const {
 }
 
 bool SkinnedModel::has_animation() const {
-    return !clips.empty();
+    return !animation_clips.empty();
 }
 
-int SkinnedModel::select_clip(PlayerAnimState state) const {
-    if (clips.empty()) {
-        return -1;
-    }
-    auto find_by = [&](const char *needle) -> int {
-        for (size_t i = 0; i < clips.size(); ++i) {
-            if (str_contains_ci(clips[i].name, needle)) {
-                return static_cast<int>(i);
-            }
-        }
-        return -1;
-    };
-
-    if (state == PlayerAnimState::Run) {
-        int i = find_by("run");
-        if (i >= 0) {
-            return i;
-        }
-    }
-    if (state == PlayerAnimState::Walk || state == PlayerAnimState::Crawl) {
-        int i = find_by("walk");
-        if (i >= 0) {
-            return i;
-        }
-    }
-    if (state == PlayerAnimState::Idle) {
-        int i = find_by("idle");
-        if (i >= 0) {
-            return i;
-        }
-        i = find_by("stand");
-        if (i >= 0) {
-            return i;
-        }
-        i = find_by("breath");
-        if (i >= 0) {
-            return i;
-        }
-        i = find_by("survey");
-        if (i >= 0) {
-            return i;
-        }
-        // Prefer a static bind pose over an arbitrary motion clip when truly idle.
-        return -1;
-    }
-    int fallback_walk = find_by("walk");
-    if (fallback_walk >= 0) {
-        return fallback_walk;
-    }
-    return 0;
+const AnimationSkeleton &SkinnedModel::skeleton() const {
+    return animation_skeleton;
 }
 
-glm::vec3 SkinnedModel::sample_vec3_channel(const Vec3Channel &channel, float time_s) {
-    if (channel.times.empty() || channel.values.empty()) {
-        return glm::vec3(0.0f);
-    }
-    if (channel.times.size() == 1) {
-        return channel.values[0];
-    }
-    if (time_s <= channel.times.front()) {
-        return channel.values.front();
-    }
-    if (time_s >= channel.times.back()) {
-        return channel.values.back();
-    }
-
-    auto upper = std::upper_bound(channel.times.begin(), channel.times.end(), time_s);
-    const size_t i1 = static_cast<size_t>(std::distance(channel.times.begin(), upper));
-    const size_t i0 = i1 - 1;
-    const float t0 = channel.times[i0];
-    const float t1 = channel.times[i1];
-    const float alpha = (time_s - t0) / std::max(1e-6f, t1 - t0);
-    return glm::mix(channel.values[i0], channel.values[i1], alpha);
+const std::vector<AnimationClip> &SkinnedModel::clips() const {
+    return animation_clips;
 }
 
-glm::quat SkinnedModel::sample_quat_channel(const QuatChannel &channel, float time_s) {
-    if (channel.times.empty() || channel.values.empty()) {
-        return glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-    }
-    if (channel.times.size() == 1) {
-        return channel.values[0];
-    }
-    if (time_s <= channel.times.front()) {
-        return channel.values.front();
-    }
-    if (time_s >= channel.times.back()) {
-        return channel.values.back();
-    }
-
-    auto upper = std::upper_bound(channel.times.begin(), channel.times.end(), time_s);
-    const size_t i1 = static_cast<size_t>(std::distance(channel.times.begin(), upper));
-    const size_t i0 = i1 - 1;
-    const float t0 = channel.times[i0];
-    const float t1 = channel.times[i1];
-    const float alpha = (time_s - t0) / std::max(1e-6f, t1 - t0);
-    return glm::normalize(glm::slerp(channel.values[i0], channel.values[i1], alpha));
+const ResolvedPlayerAnimationGraph &SkinnedModel::graph() const {
+    return animation_graph;
 }
 
-glm::mat4 SkinnedModel::compose_trs(const glm::vec3 &t, const glm::quat &r, const glm::vec3 &s) {
-    return glm::translate(glm::mat4(1.0f), t) * glm::mat4_cast(r) * glm::scale(glm::mat4(1.0f), s);
+PlayerAnimationSample SkinnedModel::sample_pose(
+    PlayerAnimState state,
+    float anim_phase,
+    PlayerAnimState source_state,
+    float source_phase,
+    float transition_alpha) const {
+    return sample_player_animation(
+        animation_skeleton,
+        animation_clips,
+        animation_graph,
+        state,
+        anim_phase,
+        source_state,
+        source_phase,
+        transition_alpha);
 }
 
-void SkinnedModel::compute_global_matrices(
-    const std::vector<glm::vec3> &local_t,
-    const std::vector<glm::quat> &local_r,
-    const std::vector<glm::vec3> &local_s,
-    std::vector<glm::mat4> &out_global) const {
-    out_global.resize(nodes.size(), glm::mat4(1.0f));
-    for (size_t i = 0; i < nodes.size(); ++i) {
-        const glm::mat4 local = compose_trs(local_t[i], local_r[i], local_s[i]);
-        const int parent = nodes[i].parent;
-        out_global[i] = (parent >= 0) ? out_global[static_cast<size_t>(parent)] * local : local;
-    }
+RenderMesh SkinnedModel::build_render_mesh(
+    const PlayerAnimationRuntime &runtime,
+    const glm::vec3 &world_position,
+    const glm::quat &world_rotation,
+    const glm::vec3 &color) const {
+    return build_render_mesh(
+        runtime.state(),
+        runtime.phase_radians(),
+        runtime.previous_state(),
+        runtime.previous_phase_radians(),
+        runtime.transition_alpha(),
+        world_position,
+        world_rotation,
+        color);
 }
 
 RenderMesh SkinnedModel::build_render_mesh(
     PlayerAnimState state,
     float anim_phase,
-    float anim_blend,
+    PlayerAnimState source_state,
+    float source_phase,
+    float transition_alpha,
     const glm::vec3 &world_position,
     const glm::quat &world_rotation,
     const glm::vec3 &color) const {
-    (void)anim_blend;
     RenderMesh out{};
     if (!ready) {
         return out;
     }
-
-    std::vector<glm::vec3> local_t(nodes.size());
-    std::vector<glm::quat> local_r(nodes.size());
-    std::vector<glm::vec3> local_s(nodes.size());
-    for (size_t i = 0; i < nodes.size(); ++i) {
-        local_t[i] = nodes[i].translation;
-        local_r[i] = nodes[i].rotation;
-        local_s[i] = nodes[i].scale;
-    }
-
-    const int clip_idx = select_clip(state);
-    if (clip_idx >= 0 && clip_idx < static_cast<int>(clips.size()) && clips[static_cast<size_t>(clip_idx)].duration > 0.0f) {
-        const AnimationClip &clip = clips[static_cast<size_t>(clip_idx)];
-        const float loop_t = std::fmod((anim_phase / 6.28318530718f) * clip.duration, clip.duration);
-        for (const Vec3Channel &ch : clip.translations) {
-            local_t[static_cast<size_t>(ch.node_index)] = sample_vec3_channel(ch, loop_t);
-        }
-        for (const QuatChannel &ch : clip.rotations) {
-            local_r[static_cast<size_t>(ch.node_index)] = sample_quat_channel(ch, loop_t);
-        }
-        for (const Vec3Channel &ch : clip.scales) {
-            local_s[static_cast<size_t>(ch.node_index)] = sample_vec3_channel(ch, loop_t);
-        }
-    }
-
-    std::vector<glm::mat4> global_nodes;
-    compute_global_matrices(local_t, local_r, local_s, global_nodes);
-
-    std::vector<glm::mat4> joint_mats(joints.size(), glm::mat4(1.0f));
-    for (size_t i = 0; i < joints.size(); ++i) {
-        const int node_idx = joints[i].node_index;
-        if (node_idx >= 0 && node_idx < static_cast<int>(global_nodes.size())) {
-            joint_mats[i] = global_nodes[static_cast<size_t>(node_idx)] * joints[i].inverse_bind;
-        }
-    }
+    const PlayerAnimationSample sample = sample_pose(state, anim_phase, source_state, source_phase, transition_alpha);
 
     const glm::mat4 local_adjust =
         glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, model_ground_lift, 0.0f)) *
@@ -454,10 +357,10 @@ RenderMesh SkinnedModel::build_render_mesh(
         for (int k = 0; k < 4; ++k) {
             const uint32_t joint_idx = v.joints[static_cast<size_t>(k)];
             const float weight = v.weights[static_cast<size_t>(k)];
-            if (weight <= 1e-6f || joint_idx >= joint_mats.size()) {
+            if (weight <= 1e-6f || joint_idx >= sample.skin_matrices.size()) {
                 continue;
             }
-            skinned += (joint_mats[joint_idx] * bind_pos) * weight;
+            skinned += (sample.skin_matrices[joint_idx] * bind_pos) * weight;
         }
         const glm::vec4 world_pos = world * glm::vec4(skinned.x, skinned.y, skinned.z, 1.0f);
         out.vertices[i].position = glm::vec3(world_pos);
@@ -465,4 +368,35 @@ RenderMesh SkinnedModel::build_render_mesh(
     }
 
     return out;
+}
+
+void SkinnedModel::append_debug_skeleton(
+    RenderMesh &dst,
+    const PlayerAnimationRuntime &runtime,
+    const glm::vec3 &world_position,
+    const glm::quat &world_rotation,
+    const glm::vec3 &color,
+    float line_thickness) const {
+    if (!ready) {
+        return;
+    }
+    const PlayerAnimationSample sample = sample_pose(
+        runtime.state(),
+        runtime.phase_radians(),
+        runtime.previous_state(),
+        runtime.previous_phase_radians(),
+        runtime.transition_alpha());
+    const glm::mat4 local_adjust =
+        glm::translate(glm::mat4(1.0f), glm::vec3(0.0f, model_ground_lift, 0.0f)) *
+        glm::mat4_cast(model_facing_correction * model_axis_correction);
+    append_sampled_skeleton(
+        dst,
+        animation_skeleton,
+        sample,
+        world_position,
+        world_rotation,
+        model_scale,
+        local_adjust,
+        color,
+        line_thickness);
 }

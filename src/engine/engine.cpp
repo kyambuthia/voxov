@@ -149,20 +149,7 @@ glm::vec3 player_color_from_id(uint32_t player_id) {
 }
 
 const char *anim_state_name(PlayerAnimState state) {
-    switch (state) {
-    case PlayerAnimState::Idle:
-        return "IDLE";
-    case PlayerAnimState::Walk:
-        return "WALK";
-    case PlayerAnimState::Run:
-        return "RUN";
-    case PlayerAnimState::Jump:
-        return "JUMP";
-    case PlayerAnimState::Crawl:
-        return "CRAWL";
-    default:
-        return "UNK";
-    }
+    return player_anim_state_name(state);
 }
 
 const char *reconcile_mode_name(uint8_t mode) {
@@ -245,16 +232,26 @@ AnimatedCapsuleShape animated_shape(
     out.bob = 0.01f * std::sin(anim_phase);
 
     switch (anim_state) {
-    case static_cast<uint8_t>(PlayerAnimState::Walk):
+    case static_cast<uint8_t>(PlayerAnimState::Cruise):
+    case static_cast<uint8_t>(PlayerAnimState::TurnLeft):
+    case static_cast<uint8_t>(PlayerAnimState::TurnRight):
         out.bob = 0.06f * std::max(0.35f, anim_blend) * anim_pulse(anim_phase);
         break;
-    case static_cast<uint8_t>(PlayerAnimState::Run):
+    case static_cast<uint8_t>(PlayerAnimState::Push):
         out.bob = 0.11f * std::max(0.55f, anim_blend) * anim_pulse(anim_phase);
         break;
-    case static_cast<uint8_t>(PlayerAnimState::Jump):
+    case static_cast<uint8_t>(PlayerAnimState::Ollie):
+    case static_cast<uint8_t>(PlayerAnimState::Kickflip):
+    case static_cast<uint8_t>(PlayerAnimState::ShoveIt):
+    case static_cast<uint8_t>(PlayerAnimState::Airborne):
+    case static_cast<uint8_t>(PlayerAnimState::Land):
         out.bob = 0.08f * std::sin(anim_phase * 0.65f);
         break;
-    case static_cast<uint8_t>(PlayerAnimState::Crawl):
+    case static_cast<uint8_t>(PlayerAnimState::Manual):
+    case static_cast<uint8_t>(PlayerAnimState::GrindEnter):
+    case static_cast<uint8_t>(PlayerAnimState::GrindLoop):
+    case static_cast<uint8_t>(PlayerAnimState::GrindExit):
+    case static_cast<uint8_t>(PlayerAnimState::Bail):
         out.height = base_height * 0.55f;
         out.radius = base_radius * 1.08f;
         out.pivot_height = base_pivot_height * 0.62f;
@@ -283,6 +280,32 @@ bool try_load_character_model(
     }
     spdlog::warn("{} player model not loaded: {}", label, load_error);
     return false;
+}
+
+void sync_local_animation_runtime(PlayerEntity &player, PlayerAnimationRuntime &runtime, float dt) {
+    if (runtime.state() != player.anim_state) {
+        runtime.request_state(player.anim_state, player_anim_crossfade_seconds(player.anim_state));
+    }
+    runtime.advance(dt);
+    player.animation.state = runtime.state();
+    player.anim_previous_state = runtime.previous_state();
+    player.anim_previous_phase = runtime.previous_phase_radians();
+    player.anim_phase = runtime.phase_radians();
+    player.animation.phase = player.anim_phase;
+    player.anim_transition_duration = player_anim_crossfade_seconds(player.anim_state);
+    player.anim_transition_time = runtime.transition_alpha() * player.anim_transition_duration;
+    player.animation.blend = player.anim_blend;
+    if (!runtime.events().empty()) {
+        player.last_anim_event = runtime.events().back().type;
+    }
+    runtime.clear_events();
+}
+
+template <typename RemoteRenderPlayerT>
+void sync_remote_animation_runtime(RemoteRenderPlayerT &player, float dt) {
+    const PlayerAnimState state = static_cast<PlayerAnimState>(player.anim_state);
+    player.animation_runtime.sync_external_state(state, player.anim_phase, player_anim_crossfade_seconds(state));
+    player.animation_runtime.advance_transition(dt);
 }
 
 void disable_gameplay_actions(InputState &input) {
@@ -375,6 +398,7 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
         local_player.camera_rig.distance = 4.2f;
     }
     local_player_prev_position = local_player.transform.position;
+    local_player_animation.reset(local_player.anim_state);
     vehicle.position = local_player.transform.position + glm::vec3(3.5f, 0.0f, 1.5f);
     vehicle.yaw = 0.3f;
     vehicle.speed = 0.0f;
@@ -420,6 +444,7 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
         local_player_secondary.transform.position.x += 2.5f;
         local_player_secondary.camera_rig.yaw = 180.0f;
         local_player_secondary_prev_position = local_player_secondary.transform.position;
+        local_player_secondary_animation.reset(local_player_secondary.anim_state);
     }
     update_third_person_camera(local_player, camera);
     if (runtime_options.splitscreen) {
@@ -648,6 +673,7 @@ void Engine::sync_network_state(uint32_t sim_tick, const InputState &net_input) 
             render_player.position = target;
             render_player.orientation = local_player.transform.rotation;
             render_player.target_orientation = render_player.orientation;
+            render_player.animation_runtime.reset(static_cast<PlayerAnimState>(state.anim_state));
             render_player.initialized = true;
         }
         render_player.target_position = target;
@@ -780,6 +806,7 @@ void Engine::update_remote_interpolation(double frame_dt) {
             render_player.orientation,
             render_player.target_orientation,
             remote_rot_lerp));
+        sync_remote_animation_runtime(render_player, static_cast<float>(frame_dt));
     }
 }
 
@@ -859,6 +886,13 @@ void Engine::tick(double frame_dt) {
                 collision_world,
                 static_cast<float>(fixed.fixed_dt),
                 runtime_options.noclip);
+        }
+        sync_local_animation_runtime(local_player, local_player_animation, static_cast<float>(fixed.fixed_dt));
+        if (runtime_options.splitscreen) {
+            sync_local_animation_runtime(
+                local_player_secondary,
+                local_player_secondary_animation,
+                static_cast<float>(fixed.fixed_dt));
         }
         jump_consumed = jump_consumed || input_state.jump_pressed;
 
@@ -1346,7 +1380,10 @@ void Engine::update_active_minigame(const InputState &input, float dt) {
     const bool has_minigame_movement =
         std::fabs(input.move.x) > 0.1f ||
         std::fabs(input.move.y) > 0.1f;
-    local_player.anim_state = has_minigame_movement ? PlayerAnimState::Walk : PlayerAnimState::Idle;
+    local_player.movement.state = PlayerMovementState::GroundSkating;
+    local_player.animation.state = has_minigame_movement ? PlayerAnimState::Cruise : PlayerAnimState::Idle;
+    local_player.anim_state = has_minigame_movement ? PlayerAnimState::Cruise : PlayerAnimState::Idle;
+    local_player.animation.blend = has_minigame_movement ? 0.35f : 0.0f;
     local_player.anim_blend = has_minigame_movement ? 0.35f : 0.0f;
 
     InputState minigame_input = input;
@@ -1394,7 +1431,10 @@ void Engine::update_vehicle_sim(const InputState &input, float dt) {
         local_player.transform.rotation = glm::angleAxis(vehicle.yaw + k_vehicle_visual_yaw_offset, glm::vec3(0.0f, 1.0f, 0.0f));
         local_player.controller.velocity = glm::vec3(0.0f);
         local_player.controller.grounded = true;
+        local_player.movement.state = PlayerMovementState::GroundSkating;
+        local_player.animation.state = PlayerAnimState::Idle;
         local_player.anim_state = PlayerAnimState::Idle;
+        local_player.animation.blend = 0.0f;
         local_player.anim_blend = 0.0f;
     }
 }
@@ -1441,7 +1481,10 @@ void Engine::update_aircraft_sim(const InputState &input, float dt) {
         local_player.transform.rotation = glm::angleAxis(aircraft.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
         local_player.controller.velocity = aircraft.controller.state().kinematic.velocity;
         local_player.controller.grounded = false;
+        local_player.movement.state = PlayerMovementState::Airborne;
+        local_player.animation.state = PlayerAnimState::Idle;
         local_player.anim_state = PlayerAnimState::Idle;
+        local_player.animation.blend = 0.0f;
         local_player.anim_blend = 0.0f;
     }
 }
@@ -1450,6 +1493,7 @@ void Engine::update_spherical_player_sim(const InputState &input, float dt) {
     if (dt <= 0.0f || spherical_planet_radius <= 0.0f) {
         return;
     }
+    const bool was_grounded = local_player.controller.grounded;
 
     const glm::vec3 to_player = local_player.transform.position - spherical_planet_center;
     const float dist = std::max(glm::length(to_player), 0.001f);
@@ -1519,7 +1563,7 @@ void Engine::update_spherical_player_sim(const InputState &input, float dt) {
     forward = glm::normalize(glm::cross(updated_up, right));
     local_player.transform.rotation = glm::quat_cast(glm::mat3(right, updated_up, forward));
 
-    PlayerControllerSystem::update_animation_state(local_player, input, dt, false);
+    PlayerControllerSystem::update_animation_state(local_player, input, dt, false, was_grounded);
 }
 
 void Engine::refresh_overlay_text() {
@@ -1591,7 +1635,7 @@ void Engine::refresh_overlay_text() {
         std::snprintf(
             text,
             sizeof(text),
-            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nANIM %s BL %.2f PH %.2f\nVEH %s DIST %.1f C[th %.2f br %.2f st %.2f hb %.2f]\nAIR %s SPD %.1f DIST %.1f C[th %.2f y %.2f p %.2f r %.2f]",
+            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nMOVE %s SPD %.2f BAL %.2f LAND %d\nANIM %s BL %.2f PH %.2f X %.2f EVT %s\nTRK %s CH %u NOTE %s\nCOMBO %d X%d T%.2f TOT %d\nVEH %s DIST %.1f C[th %.2f br %.2f st %.2f hb %.2f]\nAIR %s SPD %.1f DIST %.1f C[th %.2f y %.2f p %.2f r %.2f]",
             render_stats.fps,
             last_frame_dt,
             fixed.fixed_dt,
@@ -1634,9 +1678,22 @@ void Engine::refresh_overlay_text() {
             last_reconcile_snapshot_sequence,
             reconcile_replay_ticks,
             static_cast<unsigned long long>(reconcile_corrections),
+            player_movement_state_name(local_player.movement.state),
+            local_player.movement.forward_speed,
+            local_player.movement.balance,
+            local_player.movement.just_landed ? 1 : 0,
             anim_state_name(local_player.anim_state),
             local_player.anim_blend,
             local_player.anim_phase,
+            local_player_animation.transition_alpha(),
+            player_anim_event_name(local_player.last_anim_event),
+            player_trick_state_name(local_player.trick.state),
+            local_player.trick.chain_count,
+            player_trick_note(),
+            local_player.score.combo_score,
+            local_player.score.combo_multiplier,
+            local_player.score.combo_timer,
+            local_player.score.total_score,
             k_vehicle_feature_enabled ? (vehicle.occupied ? "ONBOARD" : "ON FOOT") : "DISABLED",
             vehicle_distance,
             last_vehicle_control.throttle,
@@ -1774,6 +1831,34 @@ void Engine::rebuild_dynamic_debug_mesh() {
         local_player.transform.position + glm::vec3(0.0f, local_shape.pivot_height + local_shape.bob, 0.0f),
         0.12f,
         glm::vec3(0.2f, 0.85f, 1.0f));
+
+    auto append_skateboard = [&](const PlayerEntity &player, float bob, const glm::vec3 &accent_color) {
+        const glm::vec3 deck_center =
+            player.transform.position +
+            player.transform.rotation * player.board.local_offset +
+            glm::vec3(0.0f, bob, 0.0f);
+        append_mesh(
+            scene.debug_world,
+            build_debug_aabb_mesh(
+                deck_center - player.board.half_extents,
+                deck_center + player.board.half_extents,
+                player.board.deck_color * accent_color));
+
+        const glm::vec3 wheel_offsets[4] = {
+            {-player.board.wheel_track, -player.board.half_extents.y - player.board.wheel_radius, -player.board.wheel_base},
+            {player.board.wheel_track, -player.board.half_extents.y - player.board.wheel_radius, -player.board.wheel_base},
+            {-player.board.wheel_track, -player.board.half_extents.y - player.board.wheel_radius, player.board.wheel_base},
+            {player.board.wheel_track, -player.board.half_extents.y - player.board.wheel_radius, player.board.wheel_base},
+        };
+        for (const glm::vec3 &offset : wheel_offsets) {
+            append_mesh(
+                scene.debug_world,
+                build_debug_sphere_mesh(
+                    deck_center + player.transform.rotation * offset,
+                    player.board.wheel_radius,
+                    glm::vec3(0.08f, 0.08f, 0.08f) * accent_color));
+        }
+    };
 
     auto append_vehicle_tri = [&](const glm::vec3 &a, const glm::vec3 &b, const glm::vec3 &c, const glm::vec3 &color) {
         const uint32_t base = static_cast<uint32_t>(scene.debug_world.vertices.size());
@@ -2069,15 +2154,14 @@ void Engine::rebuild_dynamic_debug_mesh() {
     }
 
     if (!runtime_options.debug_collision_only) {
+        append_skateboard(local_player, local_shape.bob, glm::vec3(1.0f));
         if ((!render_skinned_avatar && !render_skeleton_only) || collision_debug_enabled || runtime_options.devhud) {
             append_mesh(scene.debug_world, player_capsule);
             append_mesh(scene.debug_world, target_marker);
         }
         if (render_skinned_avatar) {
             const RenderMesh local_model = selected_player_model->build_render_mesh(
-                local_player.anim_state,
-                local_player.anim_phase,
-                local_player.anim_blend,
+                local_player_animation,
                 local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
                 local_player.transform.rotation,
                 player_color_from_id(local_player.network_id));
@@ -2088,17 +2172,27 @@ void Engine::rebuild_dynamic_debug_mesh() {
             }
         }
         if (render_skeleton_only || (render_skinned_avatar && (collision_debug_enabled || runtime_options.devhud))) {
-            const SkeletonPose local_pose = SkeletalAnimator::sample_pose(
-                local_player.anim_state,
-                local_player.anim_phase,
-                local_player.anim_blend);
-            SkeletalAnimator::append_debug_skeleton(
-                scene.debug_world,
-                local_pose,
-                local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
-                local_player.transform.rotation,
-                glm::vec3(0.95f, 0.97f, 1.0f),
-                0.012f);
+            if (render_skinned_avatar) {
+                selected_player_model->append_debug_skeleton(
+                    scene.debug_world,
+                    local_player_animation,
+                    local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
+                    local_player.transform.rotation,
+                    glm::vec3(0.95f, 0.97f, 1.0f),
+                    0.012f);
+            } else {
+                const SkeletonPose local_pose = SkeletalAnimator::sample_pose(
+                    local_player.anim_state,
+                    local_player.anim_phase,
+                    local_player.anim_blend);
+                SkeletalAnimator::append_debug_skeleton(
+                    scene.debug_world,
+                    local_pose,
+                    local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
+                    local_player.transform.rotation,
+                    glm::vec3(0.95f, 0.97f, 1.0f),
+                    0.012f);
+            }
         }
     }
 
@@ -2120,15 +2214,14 @@ void Engine::rebuild_dynamic_debug_mesh() {
             0.10f,
             glm::vec3(0.6f, 0.85f, 1.0f));
         if (!runtime_options.debug_collision_only) {
+            append_skateboard(local_player_secondary, p2_shape.bob, glm::vec3(0.92f, 0.96f, 1.0f));
             if ((!render_skinned_avatar && !render_skeleton_only) || collision_debug_enabled || runtime_options.devhud) {
                 append_mesh(scene.debug_world, p2_capsule);
                 append_mesh(scene.debug_world, p2_target);
             }
             if (render_skinned_avatar) {
                 const RenderMesh p2_model = selected_player_model->build_render_mesh(
-                    local_player_secondary.anim_state,
-                    local_player_secondary.anim_phase,
-                    local_player_secondary.anim_blend,
+                    local_player_secondary_animation,
                     local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
                     local_player_secondary.transform.rotation,
                     player_color_from_id(local_player_secondary.network_id));
@@ -2139,17 +2232,27 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 }
             }
             if (render_skeleton_only) {
-                const SkeletonPose p2_pose = SkeletalAnimator::sample_pose(
-                    local_player_secondary.anim_state,
-                    local_player_secondary.anim_phase,
-                    local_player_secondary.anim_blend);
-                SkeletalAnimator::append_debug_skeleton(
-                    scene.debug_world,
-                    p2_pose,
-                    local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
-                    local_player_secondary.transform.rotation,
-                    glm::vec3(0.86f, 0.92f, 1.0f),
-                    0.010f);
+                if (render_skinned_avatar) {
+                    selected_player_model->append_debug_skeleton(
+                        scene.debug_world,
+                        local_player_secondary_animation,
+                        local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
+                        local_player_secondary.transform.rotation,
+                        glm::vec3(0.86f, 0.92f, 1.0f),
+                        0.010f);
+                } else {
+                    const SkeletonPose p2_pose = SkeletalAnimator::sample_pose(
+                        local_player_secondary.anim_state,
+                        local_player_secondary.anim_phase,
+                        local_player_secondary.anim_blend);
+                    SkeletalAnimator::append_debug_skeleton(
+                        scene.debug_world,
+                        p2_pose,
+                        local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
+                        local_player_secondary.transform.rotation,
+                        glm::vec3(0.86f, 0.92f, 1.0f),
+                        0.010f);
+                }
             }
         }
     }
@@ -2207,9 +2310,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
         }
         if (render_skinned_avatar) {
             const RenderMesh remote_model = selected_player_model->build_render_mesh(
-                static_cast<PlayerAnimState>(render_player.anim_state),
-                render_player.anim_phase,
-                render_player.anim_blend,
+                render_player.animation_runtime,
                 remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
                 render_player.orientation,
                 player_color_from_id(player_id) * glm::vec3(1.08f, 1.08f, 1.08f));

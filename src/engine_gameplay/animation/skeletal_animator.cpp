@@ -197,16 +197,26 @@ SkeletonPose SkeletalAnimator::sample_pose(PlayerAnimState state, float phase, f
     apply_idle_motion(pose, phase, clamped_blend);
 
     switch (state) {
-    case PlayerAnimState::Walk:
+    case PlayerAnimState::Cruise:
+    case PlayerAnimState::TurnLeft:
+    case PlayerAnimState::TurnRight:
         apply_walk_or_run(pose, phase, 0.82f + 0.24f * clamped_blend);
         break;
-    case PlayerAnimState::Run:
+    case PlayerAnimState::Push:
         apply_walk_or_run(pose, phase, 1.15f + 0.34f * clamped_blend);
         break;
-    case PlayerAnimState::Jump:
+    case PlayerAnimState::Ollie:
+    case PlayerAnimState::Kickflip:
+    case PlayerAnimState::ShoveIt:
+    case PlayerAnimState::Airborne:
+    case PlayerAnimState::Land:
+    case PlayerAnimState::GrindEnter:
+    case PlayerAnimState::GrindExit:
         apply_jump(pose, phase);
         break;
-    case PlayerAnimState::Crawl:
+    case PlayerAnimState::Manual:
+    case PlayerAnimState::GrindLoop:
+    case PlayerAnimState::Bail:
         apply_crawl(pose, phase);
         break;
     case PlayerAnimState::Idle:

@@ -617,6 +617,13 @@ struct AndroidRenderer {
         int h = 0;
     };
 
+    struct UiSafeArea {
+        int left = 0;
+        int top = 0;
+        int right = 0;
+        int bottom = 0;
+    };
+
     void refresh_multicast_lock_state() {
         const bool needs_multicast = searching_nearby || (local_server_running && !local_server_loopback);
         if (needs_multicast) {
@@ -626,20 +633,55 @@ struct AndroidRenderer {
         }
     }
 
+    UiSafeArea ui_safe_area() const {
+        const int shortest_edge = std::max(1, std::min(width, height));
+        const int side_margin = std::max(18, shortest_edge / 28);
+        const int top_margin = std::max(26, shortest_edge / 18);
+        const int bottom_margin = std::max(20, shortest_edge / 24);
+        return UiSafeArea{side_margin, top_margin, side_margin, bottom_margin};
+    }
+
+    UiRect menu_button_rect() const {
+        const UiSafeArea safe = ui_safe_area();
+        const int w = std::max(112, std::min(168, width / 6));
+        const int h = std::max(56, std::min(84, height / 11));
+        return UiRect{safe.left, safe.top, w, h};
+    }
+
+    UiRect menu_panel_rect() const {
+        const UiSafeArea safe = ui_safe_area();
+        const UiRect menu_button = menu_button_rect();
+        const int gap = std::max(14, std::min(width, height) / 36);
+        const int x = safe.left;
+        const int y = menu_button.y + menu_button.h + gap;
+        const int avail_w = std::max(1, width - safe.left - safe.right);
+        const int avail_h = std::max(1, height - y - safe.bottom);
+        int w = std::min(560, std::max(220, avail_w));
+        int h = std::min(640, std::max(240, avail_h));
+        w = std::min(w, avail_w);
+        h = std::min(h, avail_h);
+        return UiRect{x, y, w, h};
+    }
+
     UiRect jump_button_rect() const {
+        const UiSafeArea safe = ui_safe_area();
         const int w = std::max(118, std::min(206, width / 4));
         const int h = std::max(86, std::min(144, height / 6));
-        return UiRect{width - w - 24, height - h - 24, w, h};
+        return UiRect{width - safe.right - w, height - safe.bottom - h, w, h};
     }
 
     UiRect sprint_button_rect() const {
         const UiRect jump = jump_button_rect();
-        return UiRect{jump.x - jump.w - 16, jump.y, jump.w, jump.h};
+        const int gap = std::max(12, std::min(width, height) / 48);
+        const int left = std::max(ui_safe_area().left, jump.x - jump.w - gap);
+        return UiRect{left, jump.y, jump.w, jump.h};
     }
 
     UiRect crouch_button_rect() const {
         const UiRect jump = jump_button_rect();
-        return UiRect{jump.x, jump.y - jump.h - 14, jump.w, jump.h};
+        const int gap = std::max(12, std::min(width, height) / 48);
+        const int top = std::max(ui_safe_area().top, jump.y - jump.h - gap);
+        return UiRect{jump.x, top, jump.w, jump.h};
     }
 
     static bool rect_contains(const UiRect &r, float px, float py) {
@@ -1587,8 +1629,9 @@ struct AndroidRenderer {
         glDisable(GL_DEPTH_TEST);
         glEnable(GL_SCISSOR_TEST);
 
-        draw_rect(18, 18, 120, 64, 0.18f, 0.24f, 0.32f);
-        draw_rect(22, 22, 112, 56, 0.12f, 0.17f, 0.24f);
+        const UiRect menu_button = menu_button_rect();
+        draw_rect(menu_button.x - 4, menu_button.y - 4, menu_button.w + 8, menu_button.h + 8, 0.18f, 0.24f, 0.32f);
+        draw_rect(menu_button.x, menu_button.y, menu_button.w, menu_button.h, 0.12f, 0.17f, 0.24f);
 
         if (!gui_menu.open() && gameplay_started) {
             const UiRect jump = jump_button_rect();
@@ -1621,10 +1664,11 @@ struct AndroidRenderer {
         }
 
         if (gui_menu.open()) {
-            const int panel_x = 20;
-            const int panel_y = 88;
-            const int panel_w = std::min(560, width - 40);
-            const int panel_h = std::min(640, height - 120);
+            const UiRect panel = menu_panel_rect();
+            const int panel_x = panel.x;
+            const int panel_y = panel.y;
+            const int panel_w = panel.w;
+            const int panel_h = panel.h;
             draw_rect(panel_x, panel_y, panel_w, panel_h, 0.06f, 0.08f, 0.12f);
             draw_rect(panel_x + 4, panel_y + 4, panel_w - 8, panel_h - 8, 0.09f, 0.11f, 0.16f);
 
@@ -1705,9 +1749,10 @@ struct AndroidRenderer {
             };
 
             if (gui_menu.open()) {
-                const int panel_x = 20;
-                const int panel_y = 88;
-                const int panel_w = std::min(560, width - 40);
+                const UiRect panel = menu_panel_rect();
+                const int panel_x = panel.x;
+                const int panel_y = panel.y;
+                const int panel_w = panel.w;
                 const int row_h = (gui_menu.page_id() == GuiMenu::Page::Main) ? 84 : 70;
                 const int row_gap = 12;
                 const int row_count = static_cast<int>(menu_view.items.size());
@@ -1752,12 +1797,12 @@ struct AndroidRenderer {
                         glm::vec3(0.85f, 0.9f, 0.98f));
                 }
             } else if (gameplay_started) {
-                const UiRect menu_btn{22, 22, 112, 56};
-                append_centered(menu_btn, "MENU", 2.8f, glm::vec3(0.93f, 0.95f, 0.99f));
+                append_centered(menu_button, "MENU", 2.8f, glm::vec3(0.93f, 0.95f, 0.99f));
                 append_centered(crouch_button_rect(), "CRAWL", 3.2f, glm::vec3(0.93f, 0.95f, 0.99f));
                 append_centered(jump_button_rect(), "JUMP", 3.2f, glm::vec3(0.93f, 0.95f, 0.99f));
                 append_centered(sprint_button_rect(), "SPRINT", 3.0f, glm::vec3(0.93f, 0.95f, 0.99f));
                 if (devhud) {
+                    const UiRect panel = menu_panel_rect();
                     const NetDebugStats client_stats = net_client.debug_stats();
                     const NetDebugStats server_stats = local_server_running ? local_server.debug_stats() : NetDebugStats{};
                     char line1[160]{};
@@ -1787,9 +1832,9 @@ struct AndroidRenderer {
                         net_reconcile_error,
                         net_last_snapshot_tick,
                         static_cast<unsigned long long>(net_reconcile_corrections));
-                    append_text(line1, 20.0f, 88.0f, 2.0f, glm::vec3(0.88f, 0.94f, 1.0f));
-                    append_text(line2, 20.0f, 112.0f, 1.9f, glm::vec3(0.78f, 0.86f, 0.98f));
-                    append_text(line3, 20.0f, 135.0f, 1.9f, glm::vec3(0.78f, 0.92f, 0.86f));
+                    append_text(line1, static_cast<float>(panel.x), static_cast<float>(panel.y), 2.0f, glm::vec3(0.88f, 0.94f, 1.0f));
+                    append_text(line2, static_cast<float>(panel.x), static_cast<float>(panel.y + 24), 1.9f, glm::vec3(0.78f, 0.86f, 0.98f));
+                    append_text(line3, static_cast<float>(panel.x), static_cast<float>(panel.y + 47), 1.9f, glm::vec3(0.78f, 0.92f, 0.86f));
                 }
             }
 
@@ -1920,7 +1965,7 @@ struct AndroidRenderer {
             const int32_t pointer_id = AMotionEvent_getPointerId(event, action_index);
             const float x = AMotionEvent_getX(event, action_index);
             const float y = AMotionEvent_getY(event, action_index);
-            if (x <= 140.0f && y <= 140.0f) {
+            if (rect_contains_margin(menu_button_rect(), x, y, 16.0f)) {
                 pending_menu_toggle = true;
                 return 1;
             }
@@ -1946,10 +1991,11 @@ struct AndroidRenderer {
                 }
             }
             if (gui_menu.open()) {
-                const int panel_x = 20;
-                const int panel_y = 88;
-                const int panel_w = std::min(560, width - 40);
-                const int panel_h = std::min(640, height - 120);
+                const UiRect panel = menu_panel_rect();
+                const int panel_x = panel.x;
+                const int panel_y = panel.y;
+                const int panel_w = panel.w;
+                const int panel_h = panel.h;
                 const bool inside_panel =
                     (x >= static_cast<float>(panel_x) && x <= static_cast<float>(panel_x + panel_w) &&
                      y >= static_cast<float>(panel_y) && y <= static_cast<float>(panel_y + panel_h));

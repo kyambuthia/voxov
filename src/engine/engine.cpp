@@ -1593,13 +1593,18 @@ void Engine::refresh_overlay_text() {
         append_mesh(scene.debug_screen, rect);
     };
 
+    const float safe_left = -0.92f;
+    const float safe_right = 0.92f;
+    const float safe_top = 0.92f;
+    const float safe_bottom = -0.90f;
+
     const bool menu_is_open = gui_menu.open();
     if (menu_is_open) {
         const GuiMenuView menu_view = gui_menu.build_view(runtime_options.devhud, runtime_options.noclip, multiplayer_hint);
 
-        float y = 0.86f;
+        float y = safe_top - 0.05f;
         if (!menu_view.title.empty()) {
-            append_mesh(scene.debug_screen, build_screen_text_mesh(menu_view.title, -0.90f, y, 0.0082f, glm::vec3(0.96f, 0.98f, 1.0f)));
+            append_mesh(scene.debug_screen, build_screen_text_mesh(menu_view.title, safe_left, y, 0.0082f, glm::vec3(0.96f, 0.98f, 1.0f)));
             y -= 0.11f;
         }
 
@@ -1610,7 +1615,7 @@ void Engine::refresh_overlay_text() {
                 scene.debug_screen,
                 build_screen_text_mesh(
                     line,
-                    -0.88f,
+                    safe_left + 0.02f,
                     y,
                     0.0069f,
                     selected ? glm::vec3(0.96f, 0.98f, 1.0f) : glm::vec3(0.86f, 0.91f, 0.98f)));
@@ -1620,7 +1625,7 @@ void Engine::refresh_overlay_text() {
         if (!menu_view.guide_lines.empty()) {
             y -= 0.02f;
             for (const std::string &line : menu_view.guide_lines) {
-                append_mesh(scene.debug_screen, build_screen_text_mesh(line, -0.88f, y, 0.0059f, glm::vec3(0.80f, 0.88f, 0.97f)));
+                append_mesh(scene.debug_screen, build_screen_text_mesh(line, safe_left + 0.02f, y, 0.0059f, glm::vec3(0.80f, 0.88f, 0.97f)));
                 y -= 0.072f;
             }
         }
@@ -1630,8 +1635,8 @@ void Engine::refresh_overlay_text() {
                 scene.debug_screen,
                 build_screen_text_mesh(
                     "STATUS: " + menu_view.status,
-                    -0.90f,
-                    -0.80f,
+                    safe_left,
+                    safe_bottom + 0.10f,
                     0.0056f,
                     glm::vec3(0.88f, 0.93f, 0.99f)));
         }
@@ -1719,9 +1724,9 @@ void Engine::refresh_overlay_text() {
             last_aircraft_control.yaw,
             last_aircraft_control.pitch,
             last_aircraft_control.roll);
-        append_screen_rect(-0.98f, 0.98f, 0.10f, 0.08f, glm::vec3(0.05f, 0.07f, 0.10f));
-        append_screen_rect(-0.97f, 0.97f, 0.09f, 0.10f, glm::vec3(0.09f, 0.11f, 0.16f));
-        append_mesh(scene.debug_screen, build_screen_text_mesh(text, -0.95f, 0.92f, 0.0049f, glm::vec3(0.95f, 0.95f, 0.82f)));
+        append_screen_rect(safe_left - 0.02f, safe_top, 0.14f, 0.12f, glm::vec3(0.05f, 0.07f, 0.10f));
+        append_screen_rect(safe_left - 0.01f, safe_top - 0.01f, 0.13f, 0.14f, glm::vec3(0.09f, 0.11f, 0.16f));
+        append_mesh(scene.debug_screen, build_screen_text_mesh(text, safe_left + 0.01f, safe_top - 0.06f, 0.0049f, glm::vec3(0.95f, 0.95f, 0.82f)));
     }
 
     if (!menu_is_open && (active_minigame.active || nearby_minigame_hotspot >= 0)) {
@@ -1772,20 +1777,20 @@ void Engine::refresh_overlay_text() {
                 progress = 1.0f;
             }
 
-            append_screen_rect(0.24f, 0.98f, 0.98f, 0.70f, glm::vec3(0.04f, 0.06f, 0.08f));
-            append_screen_rect(0.25f, 0.97f, 0.97f, 0.71f, glm::vec3(0.08f, 0.10f, 0.13f));
+            append_screen_rect(0.30f, safe_top, safe_right, 0.70f, glm::vec3(0.04f, 0.06f, 0.08f));
+            append_screen_rect(0.31f, safe_top - 0.01f, safe_right - 0.01f, 0.71f, glm::vec3(0.08f, 0.10f, 0.13f));
 
-            append_mesh(scene.debug_screen, build_screen_text_mesh(title, 0.28f, 0.93f, 0.0068f, glm::vec3(0.98f, 0.98f, 1.0f)));
-            append_mesh(scene.debug_screen, build_screen_text_mesh(status, 0.28f, 0.88f, 0.0052f, glm::vec3(0.89f, 0.95f, 1.0f)));
-            append_mesh(scene.debug_screen, build_screen_text_mesh(objective, 0.28f, 0.83f, 0.0048f, glm::vec3(0.86f, 0.91f, 0.98f)));
-            append_mesh(scene.debug_screen, build_screen_text_mesh(controls, 0.28f, 0.77f, 0.0046f, glm::vec3(0.83f, 0.89f, 0.97f)));
+            append_mesh(scene.debug_screen, build_screen_text_mesh(title, 0.34f, safe_top - 0.05f, 0.0068f, glm::vec3(0.98f, 0.98f, 1.0f)));
+            append_mesh(scene.debug_screen, build_screen_text_mesh(status, 0.34f, safe_top - 0.10f, 0.0052f, glm::vec3(0.89f, 0.95f, 1.0f)));
+            append_mesh(scene.debug_screen, build_screen_text_mesh(objective, 0.34f, safe_top - 0.15f, 0.0048f, glm::vec3(0.86f, 0.91f, 0.98f)));
+            append_mesh(scene.debug_screen, build_screen_text_mesh(controls, 0.34f, safe_top - 0.21f, 0.0046f, glm::vec3(0.83f, 0.89f, 0.97f)));
             if (!minigame_hint.empty()) {
-                append_mesh(scene.debug_screen, build_screen_text_mesh(minigame_hint, 0.28f, 0.73f, 0.0045f, glm::vec3(0.8f, 0.88f, 0.96f)));
+                append_mesh(scene.debug_screen, build_screen_text_mesh(minigame_hint, 0.34f, safe_top - 0.25f, 0.0045f, glm::vec3(0.8f, 0.88f, 0.96f)));
             }
 
-            append_screen_rect(0.28f, 0.71f, 0.94f, 0.685f, glm::vec3(0.18f, 0.20f, 0.24f));
-            const float fill_right = 0.28f + (0.94f - 0.28f) * progress;
-            append_screen_rect(0.28f, 0.71f, fill_right, 0.685f, glm::vec3(0.24f, 0.72f, 0.98f));
+            append_screen_rect(0.34f, 0.71f, safe_right - 0.04f, 0.685f, glm::vec3(0.18f, 0.20f, 0.24f));
+            const float fill_right = 0.34f + ((safe_right - 0.04f) - 0.34f) * progress;
+            append_screen_rect(0.34f, 0.71f, fill_right, 0.685f, glm::vec3(0.24f, 0.72f, 0.98f));
         } else {
             std::string panel = "MINIGAME HOTSPOT";
             if (!minigame_hint.empty()) {
@@ -1793,9 +1798,9 @@ void Engine::refresh_overlay_text() {
                 panel += minigame_hint;
             }
             panel += "\nPress F or E to start";
-            append_screen_rect(0.42f, -0.73f, 0.98f, -0.90f, glm::vec3(0.04f, 0.06f, 0.08f));
-            append_screen_rect(0.43f, -0.74f, 0.97f, -0.89f, glm::vec3(0.08f, 0.10f, 0.13f));
-            append_mesh(scene.debug_screen, build_screen_text_mesh(panel, 0.45f, -0.78f, 0.0050f, glm::vec3(0.91f, 0.96f, 1.0f)));
+            append_screen_rect(0.46f, -0.73f, safe_right, safe_bottom, glm::vec3(0.04f, 0.06f, 0.08f));
+            append_screen_rect(0.47f, -0.74f, safe_right - 0.01f, safe_bottom + 0.01f, glm::vec3(0.08f, 0.10f, 0.13f));
+            append_mesh(scene.debug_screen, build_screen_text_mesh(panel, 0.50f, -0.78f, 0.0050f, glm::vec3(0.91f, 0.96f, 1.0f)));
         }
     }
 

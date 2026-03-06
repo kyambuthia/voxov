@@ -17,6 +17,7 @@ public:
     bool init(uint16_t port, bool loopback_only = false);
     void shutdown();
     void pump();
+    uint16_t bound_port() const;
     NetDebugStats debug_stats() const;
 
 private:

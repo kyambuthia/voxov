@@ -31,16 +31,35 @@ struct StressScenario {
     bool reconnect_cycle = false;
 };
 
+uint16_t acquire_loopback_port(NetServer &server) {
+    constexpr uint16_t kPortBase = 20000;
+    constexpr uint16_t kPortSpan = 20000;
+    constexpr uint16_t kPortAttempts = 64;
+
+    const uint64_t now_ticks = static_cast<uint64_t>(
+        std::chrono::steady_clock::now().time_since_epoch().count());
+    const uint16_t start_offset = static_cast<uint16_t>(now_ticks % kPortSpan);
+
+    for (uint16_t attempt = 0; attempt < kPortAttempts; ++attempt) {
+        const uint16_t offset = static_cast<uint16_t>((start_offset + attempt) % kPortSpan);
+        const uint16_t candidate = static_cast<uint16_t>(kPortBase + offset);
+        if (server.init(candidate, true)) {
+            return candidate;
+        }
+    }
+    return 0;
+}
+
 bool run_scenario(const StressScenario &scenario) {
-    constexpr uint16_t kPort = 17777;
     if (scenario.client_count <= 0 || scenario.ticks <= 0 || scenario.sleep_ms < 0) {
         std::fprintf(stderr, "FAIL[%s]: invalid scenario config\n", scenario.name);
         return false;
     }
 
     NetServer server;
-    if (!server.init(kPort, true)) {
-        std::fprintf(stderr, "FAIL[%s]: server init failed on port %u\n", scenario.name, kPort);
+    const uint16_t port = acquire_loopback_port(server);
+    if (port == 0) {
+        std::fprintf(stderr, "FAIL[%s]: server init failed across loopback test ports\n", scenario.name);
         return false;
     }
 
@@ -68,8 +87,8 @@ bool run_scenario(const StressScenario &scenario) {
             cleanup();
             return false;
         }
-        if (!clients[static_cast<size_t>(i)].connect("127.0.0.1", kPort)) {
-            std::fprintf(stderr, "FAIL[%s]: client[%d] connect enqueue failed\n", scenario.name, i);
+        if (!clients[static_cast<size_t>(i)].connect("127.0.0.1", port)) {
+            std::fprintf(stderr, "FAIL[%s]: client[%d] connect enqueue failed on port %u\n", scenario.name, i, port);
             cleanup();
             return false;
         }
@@ -113,8 +132,8 @@ bool run_scenario(const StressScenario &scenario) {
                 if (!temporarily_disconnected[static_cast<size_t>(i)]) {
                     continue;
                 }
-                if (!clients[static_cast<size_t>(i)].connect("127.0.0.1", kPort)) {
-                    std::fprintf(stderr, "FAIL[%s]: client[%d] reconnect enqueue failed\n", scenario.name, i);
+                if (!clients[static_cast<size_t>(i)].connect("127.0.0.1", port)) {
+                    std::fprintf(stderr, "FAIL[%s]: client[%d] reconnect enqueue failed on port %u\n", scenario.name, i, port);
                     ok = false;
                     break;
                 }

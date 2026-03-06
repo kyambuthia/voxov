@@ -449,6 +449,11 @@ install(DIRECTORY assets/models/player/
     FILES_MATCHING PATTERN "*.glb" PATTERN "*.md" PATTERN "LICENSE*"
 )
 
+install(DIRECTORY assets/fonts/
+    DESTINATION bin/assets/fonts
+    FILES_MATCHING PATTERN "*.ttf" PATTERN "*.otf" PATTERN "*.md" PATTERN "LICENSE*"
+)
+
 if(VOXOV_BUILD_TESTS)
     enable_testing()
     add_executable(voxov_tests

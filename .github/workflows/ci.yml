@@ -47,7 +47,10 @@ jobs:
           sudo ln -sf /usr/local/bin/dxc /bin/dxc
 
       - name: Configure
-        run: cmake -S . -B build -G Ninja -DVOXOV_BUILD_TESTS=OFF
+        run: cmake -S . -B build/desktop/ci -G Ninja -DVOXOV_BUILD_TESTS=ON
 
       - name: Build
-        run: cmake --build build --parallel
+        run: cmake --build build/desktop/ci --parallel
+
+      - name: Test
+        run: ctest --test-dir build/desktop/ci --output-on-failure

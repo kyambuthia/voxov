@@ -2,6 +2,7 @@
 #include "engine_gameplay/animation/player_animation_graph.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_input/input_state.hpp"
+#include "engine_world/world_gen.hpp"
 
 #include <enet/enet.h>
 #include <spdlog/spdlog.h>
@@ -62,53 +63,10 @@ constexpr double kServerSimTickMs = 1000.0 / 60.0;
 constexpr uint64_t kSnapshotSendIntervalMs = 33;
 constexpr uint64_t kPlayerBroadcastIntervalMs = 33;
 constexpr int kMaxCatchupTicksPerPump = 8;
-constexpr uint64_t kServerWorldSeed = 0x0DDF00D5EEDull;
 
 uint64_t now_ms() {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
-}
-
-void sculpt_locomotion_course(VoxelChunk &chunk) {
-    constexpr int base_y = 6;
-
-    for (int z = 20; z <= 44; ++z) {
-        for (int x = 20; x <= 44; ++x) {
-            for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
-                chunk.set_solid(x, y, z, y <= base_y);
-            }
-        }
-    }
-
-    for (int z = 24; z <= 30; ++z) {
-        for (int x = 21; x <= 27; ++x) {
-            const int terrace = (z - 24) / 2;
-            for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
-                chunk.set_solid(x, y, z, y <= base_y + terrace);
-            }
-        }
-    }
-
-    for (int step = 0; step < 4; ++step) {
-        const int top_y = base_y + step;
-        const int x0 = 34 + step * 2;
-        const int x1 = x0 + 1;
-        for (int z = 24; z <= 29; ++z) {
-            for (int x = x0; x <= x1; ++x) {
-                for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
-                    chunk.set_solid(x, y, z, y <= top_y);
-                }
-            }
-        }
-    }
-
-    for (int z = 34; z <= 40; ++z) {
-        for (int x = 26; x <= 32; ++x) {
-            for (int y = base_y + 1; y < VoxelChunk::CHUNK_Y; ++y) {
-                chunk.set_solid(x, y, z, false);
-            }
-        }
-    }
 }
 
 void sync_net_player_state_from_entity(
@@ -387,8 +345,7 @@ bool NetServer::init(uint16_t port, bool loopback_only) {
     last_pump_ms = 0;
     sim_accumulator_ms = 0.0;
     last_snapshot_send_ms = 0;
-    world_chunk.generate_heightmap_terrain_seeded(kServerWorldSeed, 0, 0);
-    sculpt_locomotion_course(world_chunk);
+    generate_flat_world_locomotion_chunk(world_chunk);
     collision_world = VoxelCollisionWorld(&world_chunk);
     debug_counters = DebugCounters{};
     refresh_debug_stats();
@@ -579,6 +536,13 @@ void NetServer::pump() {
 
     send_snapshots();
     broadcast_player_states();
+}
+
+uint16_t NetServer::bound_port() const {
+    if (!server) {
+        return 0;
+    }
+    return server->address.port;
 }
 
 NetDebugStats NetServer::debug_stats() const {

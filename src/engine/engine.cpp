@@ -7,6 +7,7 @@
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
+#include "engine_world/world_gen.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -996,62 +997,16 @@ const RenderStats &Engine::stats() const {
     return render_stats;
 }
 
-namespace {
-void sculpt_locomotion_course(VoxelChunk &chunk) {
-    constexpr int base_y = 6;
-
-    for (int z = 20; z <= 44; ++z) {
-        for (int x = 20; x <= 44; ++x) {
-            for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
-                chunk.set_solid(x, y, z, y <= base_y);
-            }
-        }
-    }
-
-    for (int z = 24; z <= 30; ++z) {
-        for (int x = 21; x <= 27; ++x) {
-            const int terrace = (z - 24) / 2;
-            for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
-                chunk.set_solid(x, y, z, y <= base_y + terrace);
-            }
-        }
-    }
-
-    for (int step = 0; step < 4; ++step) {
-        const int top_y = base_y + step;
-        const int x0 = 34 + step * 2;
-        const int x1 = x0 + 1;
-        for (int z = 24; z <= 29; ++z) {
-            for (int x = x0; x <= x1; ++x) {
-                for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
-                    chunk.set_solid(x, y, z, y <= top_y);
-                }
-            }
-        }
-    }
-
-    for (int z = 34; z <= 40; ++z) {
-        for (int x = 26; x <= 32; ++x) {
-            for (int y = base_y + 1; y < VoxelChunk::CHUNK_Y; ++y) {
-                chunk.set_solid(x, y, z, false);
-            }
-        }
-    }
-}
-}
-
 void Engine::build_static_scene() {
-    constexpr uint64_t k_world_seed = 0x0DDF00D5EEDull;
     if (runtime_options.spherical_planet) {
-        world_chunk.generate_spherical_planet_seeded(k_world_seed);
+        world_chunk.generate_spherical_planet_seeded(k_voxov_flat_world_seed);
         spherical_planet_center = glm::vec3(
             static_cast<float>(VoxelChunk::CHUNK_X - 1) * 0.5f,
             static_cast<float>(VoxelChunk::CHUNK_Y - 1) * 0.42f,
             static_cast<float>(VoxelChunk::CHUNK_Z - 1) * 0.5f);
         spherical_planet_radius = static_cast<float>(std::min({VoxelChunk::CHUNK_X, VoxelChunk::CHUNK_Y, VoxelChunk::CHUNK_Z})) * 0.34f;
     } else {
-        world_chunk.generate_heightmap_terrain_seeded(k_world_seed, 0, 0);
-        sculpt_locomotion_course(world_chunk);
+        generate_flat_world_locomotion_chunk(world_chunk);
         spherical_planet_center = glm::vec3(0.0f);
         spherical_planet_radius = 0.0f;
     }

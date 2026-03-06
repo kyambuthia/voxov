@@ -67,12 +67,13 @@ jobs:
       - name: Prepare linux artifact bundle
         run: |
           ASSET_DIR="VOXOV-${GITHUB_REF_NAME}-linux-x86_64"
-          mkdir -p "${ASSET_DIR}"
+          mkdir -p "${ASSET_DIR}/assets"
           cp build/desktop/release-linux/bin/voxov "${ASSET_DIR}/"
           chmod +x "${ASSET_DIR}/voxov"
           cp build/desktop/release-linux/*.spv "${ASSET_DIR}/" 2>/dev/null || true
           cp /usr/local/lib/libdxcompiler.so "${ASSET_DIR}/" 2>/dev/null || true
           cp /usr/local/lib/libdxil.so "${ASSET_DIR}/" 2>/dev/null || true
+          cp -R assets/fonts "${ASSET_DIR}/assets/"
           cat > "${ASSET_DIR}/run.sh" << 'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
@@ -93,6 +94,7 @@ jobs:
           test -x "smoke-linux/${ASSET_DIR}/run.sh"
           test -f "smoke-linux/${ASSET_DIR}/triangle.vert.spv"
           test -f "smoke-linux/${ASSET_DIR}/triangle.frag.spv"
+          test -f "smoke-linux/${ASSET_DIR}/assets/fonts/IBMPlexMono-Regular.ttf"
           test -f "smoke-linux/${ASSET_DIR}/libdxcompiler.so"
           test -f "smoke-linux/${ASSET_DIR}/libdxil.so"
           ldd "smoke-linux/${ASSET_DIR}/voxov" | tee /tmp/voxov-linux-ldd.txt
@@ -157,10 +159,11 @@ jobs:
         shell: powershell
         run: |
           $AssetDir = "VOXOV-$env:GITHUB_REF_NAME-windows-x86_64"
-          New-Item -ItemType Directory -Force -Path $AssetDir | Out-Null
+          New-Item -ItemType Directory -Force -Path "$AssetDir/assets" | Out-Null
           Copy-Item "build/desktop/release-windows/bin/voxov.exe" "$AssetDir/" -Force
           Copy-Item "build/desktop/release-windows/bin/*.dll" "$AssetDir/" -ErrorAction SilentlyContinue
           Copy-Item "build/desktop/release-windows/*.spv" "$AssetDir/" -ErrorAction SilentlyContinue
+          Copy-Item "assets/fonts" "$AssetDir/assets/" -Recurse -Force
           $AssetZip = "$AssetDir.zip"
           Compress-Archive -Path "$AssetDir/*" -DestinationPath $AssetZip -Force
 
@@ -177,6 +180,7 @@ jobs:
           if (-not (Test-Path "$SmokeDir/libgcc_s_seh-1.dll")) { throw "libgcc_s_seh-1.dll missing from windows bundle" }
           if (-not (Test-Path "$SmokeDir/libstdc++-6.dll")) { throw "libstdc++-6.dll missing from windows bundle" }
           if (-not (Test-Path "$SmokeDir/libwinpthread-1.dll")) { throw "libwinpthread-1.dll missing from windows bundle" }
+          if (-not (Test-Path "$SmokeDir/assets/fonts/IBMPlexMono-Regular.ttf")) { throw "IBMPlexMono-Regular.ttf missing from windows bundle" }
           $proc = Start-Process -FilePath "$SmokeDir/voxov.exe" -WorkingDirectory $SmokeDir -PassThru
           Start-Sleep -Seconds 3
           if ($proc.HasExited -and $proc.ExitCode -ne 0) {

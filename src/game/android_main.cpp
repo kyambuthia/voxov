@@ -15,10 +15,12 @@
 #include "engine_net/lan_discovery.hpp"
 #include "engine_net/remote_interp.hpp"
 #include "engine_net/net_server.hpp"
+#include "engine_world/world_gen.hpp"
 
 #include <android/input.h>
 #include <android/log.h>
 #include <android/asset_manager.h>
+#include <android/configuration.h>
 #include <android_native_app_glue.h>
 #include <jni.h>
 #include <EGL/egl.h>
@@ -923,7 +925,21 @@ struct AndroidRenderer {
         UiTouchLayout layout{};
         const int shortest_edge = std::max(1, std::min(width, height));
         const int longest_edge = std::max(width, height);
-        layout.tablet = shortest_edge >= 900 || (shortest_edge >= 720 && longest_edge >= 1280);
+        int density_dpi = 0;
+        if (app && app->config) {
+            density_dpi = AConfiguration_getDensity(app->config);
+        }
+
+        if (density_dpi > 0 &&
+            density_dpi != ACONFIGURATION_DENSITY_DEFAULT &&
+            density_dpi != ACONFIGURATION_DENSITY_ANY &&
+            density_dpi != ACONFIGURATION_DENSITY_NONE) {
+            const float shortest_dp = static_cast<float>(shortest_edge) * 160.0f / static_cast<float>(density_dpi);
+            const float longest_dp = static_cast<float>(longest_edge) * 160.0f / static_cast<float>(density_dpi);
+            layout.tablet = shortest_dp >= 600.0f && longest_dp >= 900.0f;
+        } else {
+            layout.tablet = shortest_edge >= 900 || (shortest_edge >= 720 && longest_edge >= 1280);
+        }
 
         if (layout.tablet) {
             layout.menu_w = std::max(136, std::min(188, width / 7));
@@ -1603,7 +1619,7 @@ struct AndroidRenderer {
         init_audio_if_needed();
         u_mvp = glGetUniformLocation(program, "uMVP");
 
-        world.generate_heightmap_terrain();
+        generate_flat_world_locomotion_chunk(world);
         collision_world = VoxelCollisionWorld(&world);
         player_feet_position.y = collision_world.find_spawn_height(
             glm::vec2(player_feet_position.x, player_feet_position.z),

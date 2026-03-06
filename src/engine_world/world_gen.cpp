@@ -1,5 +1,7 @@
 #include "engine_world/world_gen.hpp"
 
+#include "engine_world/voxel_chunk.hpp"
+
 #include <cmath>
 
 namespace {
@@ -32,4 +34,55 @@ float WorldGenerator::sample_height(float world_x, float world_z) const {
     const float medium = std::cos(world_z * 0.09f + seed_phase_z) * 1.8f;
     const float detail = std::sin((world_x + world_z) * 0.21f + seed_phase_x * 3.1f) * 0.8f;
     return 6.0f + low + medium + detail;
+}
+
+void sculpt_locomotion_course(VoxelChunk &chunk) {
+    constexpr int base_y = 6;
+
+    for (int z = 20; z <= 44; ++z) {
+        for (int x = 20; x <= 44; ++x) {
+            for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
+                chunk.set_solid(x, y, z, y <= base_y);
+            }
+        }
+    }
+
+    for (int z = 24; z <= 30; ++z) {
+        for (int x = 21; x <= 27; ++x) {
+            const int terrace = (z - 24) / 2;
+            for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
+                chunk.set_solid(x, y, z, y <= base_y + terrace);
+            }
+        }
+    }
+
+    for (int step = 0; step < 4; ++step) {
+        const int top_y = base_y + step;
+        const int x0 = 34 + step * 2;
+        const int x1 = x0 + 1;
+        for (int z = 24; z <= 29; ++z) {
+            for (int x = x0; x <= x1; ++x) {
+                for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
+                    chunk.set_solid(x, y, z, y <= top_y);
+                }
+            }
+        }
+    }
+
+    for (int z = 34; z <= 40; ++z) {
+        for (int x = 26; x <= 32; ++x) {
+            for (int y = base_y + 1; y < VoxelChunk::CHUNK_Y; ++y) {
+                chunk.set_solid(x, y, z, false);
+            }
+        }
+    }
+}
+
+void generate_flat_world_locomotion_chunk(
+    VoxelChunk &chunk,
+    uint64_t world_seed,
+    int32_t chunk_x,
+    int32_t chunk_z) {
+    chunk.generate_heightmap_terrain_seeded(world_seed, chunk_x, chunk_z);
+    sculpt_locomotion_course(chunk);
 }

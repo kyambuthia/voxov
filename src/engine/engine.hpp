@@ -151,8 +151,6 @@ private:
     bool touch_input_mode = false;
     GuiMenu gui_menu;
     UiAudio ui_audio;
-    SkinnedModel fox_player_model;
-    bool has_fox_player_model = false;
     SkinnedModel humanoid_player_model;
     bool has_humanoid_player_model = false;
     PlayerAnimationRuntime local_player_animation;

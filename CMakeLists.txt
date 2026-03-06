@@ -53,12 +53,14 @@ if(ANDROID)
         src/engine_gameplay/animation/player_animation_graph.cpp
         src/engine_gameplay/animation/player_animation_types.cpp
         src/engine_gameplay/animation/skeletal_animator.cpp
+        src/engine_gameplay/player/player_controller.cpp
         src/engine_gameplay/player/player_visuals.cpp
         src/engine_ui/gui_menu.cpp
         src/engine_audio/ui_audio.cpp
         src/engine_math/camera.cpp
         src/engine_render/debug_text.cpp
         src/engine_render/debug_draw/debug_draw.cpp
+        src/engine_world/world_gen.cpp
         src/engine_world/voxel_chunk.cpp
         src/engine_world/physics/voxel_collision.cpp
         src/engine_net/net_client.cpp

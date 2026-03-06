@@ -1362,7 +1362,9 @@ struct AndroidRenderer {
             capsule_mesh = selected_player_model->build_render_mesh(
                 player_anim_state,
                 player_anim_phase,
-                player_anim_blend,
+                player_anim_state,
+                player_anim_phase,
+                1.0f,
                 glm::vec3(0.0f),
                 player_anim_orientation,
                 glm::vec3(0.95f, 0.5f, 0.2f));

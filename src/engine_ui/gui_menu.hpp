@@ -31,10 +31,9 @@ struct GuiMenuView {
 class GuiMenu {
 public:
     enum class Character {
-        Fox = 0,
-        Humanoid = 1,
-        Capsule = 2,
-        Skeleton = 3
+        Humanoid = 0,
+        Capsule = 1,
+        Skeleton = 2
     };
 
     enum class Page {

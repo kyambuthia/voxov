@@ -197,26 +197,27 @@ SkeletonPose SkeletalAnimator::sample_pose(PlayerAnimState state, float phase, f
     apply_idle_motion(pose, phase, clamped_blend);
 
     switch (state) {
-    case PlayerAnimState::Cruise:
-    case PlayerAnimState::TurnLeft:
-    case PlayerAnimState::TurnRight:
+    case PlayerAnimState::StartMove:
+    case PlayerAnimState::LocomotionWalk:
+    case PlayerAnimState::PivotLeft:
+    case PlayerAnimState::PivotRight:
+    case PlayerAnimState::TurnInPlaceLeft:
+    case PlayerAnimState::TurnInPlaceRight:
+    case PlayerAnimState::MovingTurn:
         apply_walk_or_run(pose, phase, 0.82f + 0.24f * clamped_blend);
         break;
-    case PlayerAnimState::Push:
+    case PlayerAnimState::LocomotionRun:
         apply_walk_or_run(pose, phase, 1.15f + 0.34f * clamped_blend);
         break;
-    case PlayerAnimState::Ollie:
-    case PlayerAnimState::Kickflip:
-    case PlayerAnimState::ShoveIt:
-    case PlayerAnimState::Airborne:
-    case PlayerAnimState::Land:
-    case PlayerAnimState::GrindEnter:
-    case PlayerAnimState::GrindExit:
+    case PlayerAnimState::JumpTakeoff:
+    case PlayerAnimState::JumpLoop:
+    case PlayerAnimState::FallLoop:
+    case PlayerAnimState::LandSoft:
+    case PlayerAnimState::LandHard:
         apply_jump(pose, phase);
         break;
-    case PlayerAnimState::Manual:
-    case PlayerAnimState::GrindLoop:
-    case PlayerAnimState::Bail:
+    case PlayerAnimState::StopMove:
+    case PlayerAnimState::Recovery:
         apply_crawl(pose, phase);
         break;
     case PlayerAnimState::Idle:

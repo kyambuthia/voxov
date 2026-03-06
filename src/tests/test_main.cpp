@@ -260,40 +260,30 @@ void test_player_animation_state_transitions() {
     PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
     assert(player.anim_state == PlayerAnimState::Idle);
     assert(player.animation.state == PlayerAnimState::Idle);
-    assert(player.movement.state == PlayerMovementState::GroundSkating);
+    assert(player.locomotion.state == PlayerLocomotionState::Idle);
 
     input.move = glm::vec2(0.0f, 1.0f);
     input.sprint_held = false;
-    input.crouch_held = false;
-    for (int i = 0; i < 8; ++i) {
+    for (int i = 0; i < 6; ++i) {
         PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
     }
-    assert(player.anim_state == PlayerAnimState::Cruise);
-    assert(player.animation.state == PlayerAnimState::Cruise);
+    assert(player.anim_state == PlayerAnimState::LocomotionWalk || player.anim_state == PlayerAnimState::StartMove);
+    assert(player.locomotion.state == PlayerLocomotionState::Walk || player.locomotion.state == PlayerLocomotionState::StartMove);
 
     input.sprint_held = true;
-    input.crouch_held = false;
-    PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
-    assert(player.anim_state == PlayerAnimState::Push);
-
-    input.sprint_held = false;
-    input.crouch_held = true;
-    for (int i = 0; i < 12; ++i) {
+    for (int i = 0; i < 10; ++i) {
         PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
     }
-    assert(player.anim_state == PlayerAnimState::Manual);
-    assert(player.movement.state == PlayerMovementState::ManualBalance);
-    assert(player.trick.state == PlayerTrickState::Manual);
-    assert(player.score.combo_active);
+    assert(player.anim_state == PlayerAnimState::LocomotionRun || player.anim_state == PlayerAnimState::MovingTurn);
+    assert(player.locomotion.state == PlayerLocomotionState::Run || player.locomotion.state == PlayerLocomotionState::MovingTurn);
 
     input.move = glm::vec2(0.0f);
-    input.crouch_held = false;
+    input.sprint_held = false;
     input.jump_pressed = true;
     player.controller.grounded = true;
     PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
-    assert(player.anim_state == PlayerAnimState::Ollie);
-    assert(player.movement.state == PlayerMovementState::Airborne);
-    assert(player.trick.state == PlayerTrickState::Ollie);
+    assert(player.anim_state == PlayerAnimState::JumpTakeoff);
+    assert(player.locomotion.state == PlayerLocomotionState::JumpStart);
 }
 
 void test_player_coyote_jump_window() {
@@ -308,40 +298,65 @@ void test_player_coyote_jump_window() {
     InputState input{};
     PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
     player.controller.grounded = false;
-    player.movement.coyote_timer = player.skate_tuning.coyote_time * 0.5f;
+    player.locomotion.coyote_timer = player.locomotion_tuning.coyote_time * 0.5f;
     input.jump_pressed = true;
     PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
 
-    assert(player.movement.state == PlayerMovementState::Airborne);
-    assert(player.movement.vertical_velocity > 0.0f);
+    assert(player.locomotion.state == PlayerLocomotionState::JumpStart);
+    assert(player.locomotion.vertical_velocity > 0.0f);
 }
 
-void test_player_combo_banks_after_timeout() {
+void test_player_jump_buffer_consumes_on_landing() {
     VoxelChunk chunk;
     chunk.generate_flat_ground(0);
     VoxelCollisionWorld collision_world(&chunk);
 
     PlayerEntity player = PlayerControllerSystem::spawn_player(collision_world);
-    player.transform.position = glm::vec3(8.0f, 1.05f, 8.0f);
-    player.controller.grounded = true;
+    player.transform.position = glm::vec3(8.0f, 1.45f, 8.0f);
+    player.controller.grounded = false;
+    player.locomotion.vertical_velocity = -0.5f;
 
     InputState input{};
-    input.move = glm::vec2(0.0f, 1.0f);
-    input.crouch_held = true;
-    for (int i = 0; i < 16; ++i) {
+    input.jump_pressed = true;
+    PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+    input.jump_pressed = false;
+
+    for (int i = 0; i < 8; ++i) {
         PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
     }
-    assert(player.score.combo_active);
-    assert(player.score.combo_score > 0);
+    assert(player.locomotion.jump_buffer_timer >= 0.0f);
+    assert(player.locomotion.vertical_velocity > 0.0f);
+}
 
-    input.move = glm::vec2(0.0f);
-    input.crouch_held = false;
-    for (int i = 0; i < 150; ++i) {
-        PlayerControllerSystem::simulate_fixed(player, input, collision_world, 1.0f / 60.0f, false);
+void test_player_landing_thresholds() {
+    VoxelChunk chunk;
+    chunk.generate_flat_ground(0);
+    VoxelCollisionWorld collision_world(&chunk);
+
+    InputState input{};
+    PlayerEntity soft = PlayerControllerSystem::spawn_player(collision_world);
+    soft.transform.position = glm::vec3(8.0f, 1.35f, 8.0f);
+    soft.controller.grounded = false;
+    soft.locomotion.state = PlayerLocomotionState::AirborneFall;
+    soft.locomotion.vertical_velocity = -2.0f;
+    for (int i = 0; i < 30 && !soft.controller.grounded; ++i) {
+        PlayerControllerSystem::simulate_fixed(soft, input, collision_world, 1.0f / 60.0f, false);
     }
+    assert(soft.controller.grounded);
+    assert(soft.locomotion.state == PlayerLocomotionState::LandSoft);
+    assert(soft.anim_state == PlayerAnimState::LandSoft);
 
-    assert(!player.score.combo_active);
-    assert(player.score.total_score > 0);
+    PlayerEntity hard = PlayerControllerSystem::spawn_player(collision_world);
+    hard.transform.position = glm::vec3(8.0f, 4.5f, 8.0f);
+    hard.controller.grounded = false;
+    hard.locomotion.state = PlayerLocomotionState::AirborneFall;
+    hard.locomotion.vertical_velocity = -14.0f;
+    for (int i = 0; i < 45 && !hard.controller.grounded; ++i) {
+        PlayerControllerSystem::simulate_fixed(hard, input, collision_world, 1.0f / 60.0f, false);
+    }
+    assert(hard.controller.grounded);
+    assert(hard.locomotion.state == PlayerLocomotionState::LandHard);
+    assert(hard.anim_state == PlayerAnimState::LandHard);
 }
 
 void test_avbd_solver_lifecycle() {
@@ -827,7 +842,8 @@ int main() {
     test_player_settles_on_ground();
     test_player_animation_state_transitions();
     test_player_coyote_jump_window();
-    test_player_combo_banks_after_timeout();
+    test_player_jump_buffer_consumes_on_landing();
+    test_player_landing_thresholds();
     test_avbd_solver_lifecycle();
     test_minigame_snake_runs();
     test_minigame_golf_shot();

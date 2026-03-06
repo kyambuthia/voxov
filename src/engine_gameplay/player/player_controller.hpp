@@ -24,9 +24,7 @@ struct MovementDebug {
     glm::vec3 desired = glm::vec3(0.0f);
 };
 
-const char *player_movement_state_name(PlayerMovementState state);
-const char *player_trick_state_name(PlayerTrickState state);
-const char *player_trick_note();
+const char *player_locomotion_state_name(PlayerLocomotionState state);
 
 float player_anim_cycle_rate(PlayerAnimState state);
 float player_anim_blend_target(PlayerAnimState state);

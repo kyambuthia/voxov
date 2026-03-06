@@ -527,6 +527,20 @@ struct AndroidRenderer {
         std::deque<Sample> samples;
     };
 
+    struct UiRect {
+        int x = 0;
+        int y = 0;
+        int w = 0;
+        int h = 0;
+    };
+
+    struct UiSafeArea {
+        int left = 0;
+        int top = 0;
+        int right = 0;
+        int bottom = 0;
+    };
+
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLSurface surface = EGL_NO_SURFACE;
     EGLContext context = EGL_NO_CONTEXT;
@@ -609,20 +623,8 @@ struct AndroidRenderer {
     uint64_t frame_counter = 0;
     double remote_interp_tick_cursor = 0.0;
     bool remote_interp_tick_cursor_initialized = false;
-
-    struct UiRect {
-        int x = 0;
-        int y = 0;
-        int w = 0;
-        int h = 0;
-    };
-
-    struct UiSafeArea {
-        int left = 0;
-        int top = 0;
-        int right = 0;
-        int bottom = 0;
-    };
+    mutable UiSafeArea cached_safe_area{};
+    mutable bool cached_safe_area_valid = false;
 
     void refresh_multicast_lock_state() {
         const bool needs_multicast = searching_nearby || (local_server_running && !local_server_loopback);
@@ -633,12 +635,198 @@ struct AndroidRenderer {
         }
     }
 
-    UiSafeArea ui_safe_area() const {
+    JNIEnv *attach_env(bool &attached) const {
+        attached = false;
+        if (!app || !app->activity || !app->activity->vm) {
+            return nullptr;
+        }
+        JNIEnv *env = nullptr;
+        if (app->activity->vm->GetEnv(reinterpret_cast<void **>(&env), JNI_VERSION_1_6) == JNI_OK) {
+            return env;
+        }
+        if (app->activity->vm->AttachCurrentThread(&env, nullptr) != JNI_OK) {
+            __android_log_print(ANDROID_LOG_ERROR, kLogTag, "AttachCurrentThread failed for safe area query");
+            return nullptr;
+        }
+        attached = true;
+        return env;
+    }
+
+    void detach_env(bool attached) const {
+        if (!attached || !app || !app->activity || !app->activity->vm) {
+            return;
+        }
+        app->activity->vm->DetachCurrentThread();
+    }
+
+    UiSafeArea fallback_safe_area() const {
         const int shortest_edge = std::max(1, std::min(width, height));
         const int side_margin = std::max(18, shortest_edge / 28);
         const int top_margin = std::max(26, shortest_edge / 18);
         const int bottom_margin = std::max(20, shortest_edge / 24);
         return UiSafeArea{side_margin, top_margin, side_margin, bottom_margin};
+    }
+
+    UiSafeArea query_platform_safe_area() const {
+        UiSafeArea safe = fallback_safe_area();
+        bool attached = false;
+        JNIEnv *env = attach_env(attached);
+        if (!env || !app || !app->activity || app->activity->clazz == nullptr) {
+            detach_env(attached);
+            return safe;
+        }
+
+        jobject activity = app->activity->clazz;
+        jclass activity_cls = env->GetObjectClass(activity);
+        if (!activity_cls) {
+            detach_env(attached);
+            return safe;
+        }
+
+        const jmethodID get_window = env->GetMethodID(activity_cls, "getWindow", "()Landroid/view/Window;");
+        env->DeleteLocalRef(activity_cls);
+        if (!get_window) {
+            detach_env(attached);
+            return safe;
+        }
+
+        jobject window = env->CallObjectMethod(activity, get_window);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            detach_env(attached);
+            return safe;
+        }
+        if (!window) {
+            detach_env(attached);
+            return safe;
+        }
+
+        jclass window_cls = env->GetObjectClass(window);
+        const jmethodID get_decor_view = window_cls
+            ? env->GetMethodID(window_cls, "getDecorView", "()Landroid/view/View;")
+            : nullptr;
+        if (window_cls) {
+            env->DeleteLocalRef(window_cls);
+        }
+        if (!get_decor_view) {
+            env->DeleteLocalRef(window);
+            detach_env(attached);
+            return safe;
+        }
+
+        jobject decor_view = env->CallObjectMethod(window, get_decor_view);
+        env->DeleteLocalRef(window);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            detach_env(attached);
+            return safe;
+        }
+        if (!decor_view) {
+            detach_env(attached);
+            return safe;
+        }
+
+        jclass view_cls = env->GetObjectClass(decor_view);
+        const jmethodID get_root_window_insets = view_cls
+            ? env->GetMethodID(view_cls, "getRootWindowInsets", "()Landroid/view/WindowInsets;")
+            : nullptr;
+        if (view_cls) {
+            env->DeleteLocalRef(view_cls);
+        }
+        if (!get_root_window_insets) {
+            env->DeleteLocalRef(decor_view);
+            detach_env(attached);
+            return safe;
+        }
+
+        jobject insets = env->CallObjectMethod(decor_view, get_root_window_insets);
+        env->DeleteLocalRef(decor_view);
+        if (env->ExceptionCheck()) {
+            env->ExceptionClear();
+            detach_env(attached);
+            return safe;
+        }
+        if (!insets) {
+            detach_env(attached);
+            return safe;
+        }
+
+        jclass insets_cls = env->GetObjectClass(insets);
+        if (!insets_cls) {
+            env->DeleteLocalRef(insets);
+            detach_env(attached);
+            return safe;
+        }
+
+        const jmethodID inset_left = env->GetMethodID(insets_cls, "getSystemWindowInsetLeft", "()I");
+        const jmethodID inset_top = env->GetMethodID(insets_cls, "getSystemWindowInsetTop", "()I");
+        const jmethodID inset_right = env->GetMethodID(insets_cls, "getSystemWindowInsetRight", "()I");
+        const jmethodID inset_bottom = env->GetMethodID(insets_cls, "getSystemWindowInsetBottom", "()I");
+        int left = 0;
+        int top = 0;
+        int right = 0;
+        int bottom = 0;
+        if (inset_left && inset_top && inset_right && inset_bottom) {
+            left = std::max(0, static_cast<int>(env->CallIntMethod(insets, inset_left)));
+            top = std::max(0, static_cast<int>(env->CallIntMethod(insets, inset_top)));
+            right = std::max(0, static_cast<int>(env->CallIntMethod(insets, inset_right)));
+            bottom = std::max(0, static_cast<int>(env->CallIntMethod(insets, inset_bottom)));
+            if (env->ExceptionCheck()) {
+                env->ExceptionClear();
+                left = top = right = bottom = 0;
+            }
+        }
+
+        const jmethodID get_display_cutout = env->GetMethodID(insets_cls, "getDisplayCutout", "()Landroid/view/DisplayCutout;");
+        env->DeleteLocalRef(insets_cls);
+        if (get_display_cutout) {
+            jobject cutout = env->CallObjectMethod(insets, get_display_cutout);
+            if (env->ExceptionCheck()) {
+                env->ExceptionClear();
+            } else if (cutout) {
+                jclass cutout_cls = env->GetObjectClass(cutout);
+                const jmethodID safe_left = cutout_cls ? env->GetMethodID(cutout_cls, "getSafeInsetLeft", "()I") : nullptr;
+                const jmethodID safe_top = cutout_cls ? env->GetMethodID(cutout_cls, "getSafeInsetTop", "()I") : nullptr;
+                const jmethodID safe_right = cutout_cls ? env->GetMethodID(cutout_cls, "getSafeInsetRight", "()I") : nullptr;
+                const jmethodID safe_bottom = cutout_cls ? env->GetMethodID(cutout_cls, "getSafeInsetBottom", "()I") : nullptr;
+                if (safe_left && safe_top && safe_right && safe_bottom) {
+                    left = std::max(left, std::max(0, static_cast<int>(env->CallIntMethod(cutout, safe_left))));
+                    top = std::max(top, std::max(0, static_cast<int>(env->CallIntMethod(cutout, safe_top))));
+                    right = std::max(right, std::max(0, static_cast<int>(env->CallIntMethod(cutout, safe_right))));
+                    bottom = std::max(bottom, std::max(0, static_cast<int>(env->CallIntMethod(cutout, safe_bottom))));
+                    if (env->ExceptionCheck()) {
+                        env->ExceptionClear();
+                    }
+                }
+                if (cutout_cls) {
+                    env->DeleteLocalRef(cutout_cls);
+                }
+                env->DeleteLocalRef(cutout);
+            }
+        }
+
+        env->DeleteLocalRef(insets);
+        detach_env(attached);
+
+        // Keep a baseline margin even when the platform insets are zero so the GUI
+        // still breathes on rectangular displays.
+        safe.left = std::max(safe.left, left + 8);
+        safe.top = std::max(safe.top, top + 8);
+        safe.right = std::max(safe.right, right + 8);
+        safe.bottom = std::max(safe.bottom, bottom + 8);
+        return safe;
+    }
+
+    void invalidate_safe_area() {
+        cached_safe_area_valid = false;
+    }
+
+    UiSafeArea ui_safe_area() const {
+        if (!cached_safe_area_valid) {
+            cached_safe_area = query_platform_safe_area();
+            cached_safe_area_valid = true;
+        }
+        return cached_safe_area;
     }
 
     UiRect menu_button_rect() const {
@@ -1292,6 +1480,7 @@ struct AndroidRenderer {
         eglSwapInterval(display, 1);
         eglQuerySurface(display, surface, EGL_WIDTH, &width);
         eglQuerySurface(display, surface, EGL_HEIGHT, &height);
+        invalidate_safe_area();
 
         const char *extensions = reinterpret_cast<const char *>(glGetString(GL_EXTENSIONS));
         const bool has_uint_ext = extensions != nullptr && std::string(extensions).find("GL_OES_element_index_uint") != std::string::npos;
@@ -1401,6 +1590,7 @@ struct AndroidRenderer {
 
         width = 0;
         height = 0;
+        invalidate_safe_area();
         gles_version = 0;
         can_draw_uint_indices = false;
         has_last_time = false;

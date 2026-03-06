@@ -186,38 +186,6 @@ glm::quat facing_from_velocity(glm::vec3 velocity, const glm::quat &fallback) {
     return glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
 }
 
-RenderMesh build_wireframe_from_mesh(const RenderMesh &mesh, float thickness, const glm::vec3 &color) {
-    RenderMesh out{};
-    if (mesh.indices.size() < 3 || mesh.vertices.empty()) {
-        return out;
-    }
-
-    std::unordered_set<uint64_t> edges;
-    edges.reserve(mesh.indices.size());
-    auto add_edge = [&](uint32_t a, uint32_t b) {
-        const uint32_t lo = std::min(a, b);
-        const uint32_t hi = std::max(a, b);
-        const uint64_t key = (static_cast<uint64_t>(lo) << 32u) | static_cast<uint64_t>(hi);
-        if (!edges.insert(key).second) {
-            return;
-        }
-        if (lo >= mesh.vertices.size() || hi >= mesh.vertices.size()) {
-            return;
-        }
-        append_mesh(out, build_debug_line_mesh(mesh.vertices[lo].position, mesh.vertices[hi].position, thickness, color));
-    };
-
-    for (size_t i = 0; i + 2 < mesh.indices.size(); i += 3) {
-        const uint32_t a = mesh.indices[i + 0];
-        const uint32_t b = mesh.indices[i + 1];
-        const uint32_t c = mesh.indices[i + 2];
-        add_edge(a, b);
-        add_edge(b, c);
-        add_edge(c, a);
-    }
-    return out;
-}
-
 AnimatedCapsuleShape animated_shape(
     uint8_t anim_state,
     float anim_phase,
@@ -232,26 +200,27 @@ AnimatedCapsuleShape animated_shape(
     out.bob = 0.01f * std::sin(anim_phase);
 
     switch (anim_state) {
-    case static_cast<uint8_t>(PlayerAnimState::Cruise):
-    case static_cast<uint8_t>(PlayerAnimState::TurnLeft):
-    case static_cast<uint8_t>(PlayerAnimState::TurnRight):
+    case static_cast<uint8_t>(PlayerAnimState::StartMove):
+    case static_cast<uint8_t>(PlayerAnimState::LocomotionWalk):
+    case static_cast<uint8_t>(PlayerAnimState::PivotLeft):
+    case static_cast<uint8_t>(PlayerAnimState::PivotRight):
+    case static_cast<uint8_t>(PlayerAnimState::TurnInPlaceLeft):
+    case static_cast<uint8_t>(PlayerAnimState::TurnInPlaceRight):
+    case static_cast<uint8_t>(PlayerAnimState::MovingTurn):
         out.bob = 0.06f * std::max(0.35f, anim_blend) * anim_pulse(anim_phase);
         break;
-    case static_cast<uint8_t>(PlayerAnimState::Push):
+    case static_cast<uint8_t>(PlayerAnimState::LocomotionRun):
         out.bob = 0.11f * std::max(0.55f, anim_blend) * anim_pulse(anim_phase);
         break;
-    case static_cast<uint8_t>(PlayerAnimState::Ollie):
-    case static_cast<uint8_t>(PlayerAnimState::Kickflip):
-    case static_cast<uint8_t>(PlayerAnimState::ShoveIt):
-    case static_cast<uint8_t>(PlayerAnimState::Airborne):
-    case static_cast<uint8_t>(PlayerAnimState::Land):
+    case static_cast<uint8_t>(PlayerAnimState::JumpTakeoff):
+    case static_cast<uint8_t>(PlayerAnimState::JumpLoop):
+    case static_cast<uint8_t>(PlayerAnimState::FallLoop):
+    case static_cast<uint8_t>(PlayerAnimState::LandSoft):
+    case static_cast<uint8_t>(PlayerAnimState::LandHard):
         out.bob = 0.08f * std::sin(anim_phase * 0.65f);
         break;
-    case static_cast<uint8_t>(PlayerAnimState::Manual):
-    case static_cast<uint8_t>(PlayerAnimState::GrindEnter):
-    case static_cast<uint8_t>(PlayerAnimState::GrindLoop):
-    case static_cast<uint8_t>(PlayerAnimState::GrindExit):
-    case static_cast<uint8_t>(PlayerAnimState::Bail):
+    case static_cast<uint8_t>(PlayerAnimState::StopMove):
+    case static_cast<uint8_t>(PlayerAnimState::Recovery):
         out.height = base_height * 0.55f;
         out.radius = base_radius * 1.08f;
         out.pivot_height = base_pivot_height * 0.62f;
@@ -463,7 +432,6 @@ void Engine::init(void *window_handle, RenderBackendType backend_type, const Eng
         local_player.transform.position.y,
         local_player.transform.position.z);
 
-    try_load_character_model(fox_player_model, "fox", "Fox.glb", has_fox_player_model);
     try_load_character_model(humanoid_player_model, "humanoid", "CesiumMan.glb", has_humanoid_player_model);
 
     try {
@@ -1027,6 +995,50 @@ const RenderStats &Engine::stats() const {
     return render_stats;
 }
 
+namespace {
+void sculpt_locomotion_course(VoxelChunk &chunk) {
+    constexpr int base_y = 6;
+
+    for (int z = 20; z <= 44; ++z) {
+        for (int x = 20; x <= 44; ++x) {
+            for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
+                chunk.set_solid(x, y, z, y <= base_y);
+            }
+        }
+    }
+
+    for (int z = 24; z <= 30; ++z) {
+        for (int x = 21; x <= 27; ++x) {
+            const int terrace = (z - 24) / 2;
+            for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
+                chunk.set_solid(x, y, z, y <= base_y + terrace);
+            }
+        }
+    }
+
+    for (int step = 0; step < 4; ++step) {
+        const int top_y = base_y + step;
+        const int x0 = 34 + step * 2;
+        const int x1 = x0 + 1;
+        for (int z = 24; z <= 29; ++z) {
+            for (int x = x0; x <= x1; ++x) {
+                for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
+                    chunk.set_solid(x, y, z, y <= top_y);
+                }
+            }
+        }
+    }
+
+    for (int z = 34; z <= 40; ++z) {
+        for (int x = 26; x <= 32; ++x) {
+            for (int y = base_y + 1; y < VoxelChunk::CHUNK_Y; ++y) {
+                chunk.set_solid(x, y, z, false);
+            }
+        }
+    }
+}
+}
+
 void Engine::build_static_scene() {
     constexpr uint64_t k_world_seed = 0x0DDF00D5EEDull;
     if (runtime_options.spherical_planet) {
@@ -1038,6 +1050,7 @@ void Engine::build_static_scene() {
         spherical_planet_radius = static_cast<float>(std::min({VoxelChunk::CHUNK_X, VoxelChunk::CHUNK_Y, VoxelChunk::CHUNK_Z})) * 0.34f;
     } else {
         world_chunk.generate_heightmap_terrain_seeded(k_world_seed, 0, 0);
+        sculpt_locomotion_course(world_chunk);
         spherical_planet_center = glm::vec3(0.0f);
         spherical_planet_radius = 0.0f;
     }
@@ -1380,9 +1393,9 @@ void Engine::update_active_minigame(const InputState &input, float dt) {
     const bool has_minigame_movement =
         std::fabs(input.move.x) > 0.1f ||
         std::fabs(input.move.y) > 0.1f;
-    local_player.movement.state = PlayerMovementState::GroundSkating;
-    local_player.animation.state = has_minigame_movement ? PlayerAnimState::Cruise : PlayerAnimState::Idle;
-    local_player.anim_state = has_minigame_movement ? PlayerAnimState::Cruise : PlayerAnimState::Idle;
+    local_player.locomotion.state = has_minigame_movement ? PlayerLocomotionState::Walk : PlayerLocomotionState::Idle;
+    local_player.animation.state = has_minigame_movement ? PlayerAnimState::LocomotionWalk : PlayerAnimState::Idle;
+    local_player.anim_state = has_minigame_movement ? PlayerAnimState::LocomotionWalk : PlayerAnimState::Idle;
     local_player.animation.blend = has_minigame_movement ? 0.35f : 0.0f;
     local_player.anim_blend = has_minigame_movement ? 0.35f : 0.0f;
 
@@ -1431,7 +1444,7 @@ void Engine::update_vehicle_sim(const InputState &input, float dt) {
         local_player.transform.rotation = glm::angleAxis(vehicle.yaw + k_vehicle_visual_yaw_offset, glm::vec3(0.0f, 1.0f, 0.0f));
         local_player.controller.velocity = glm::vec3(0.0f);
         local_player.controller.grounded = true;
-        local_player.movement.state = PlayerMovementState::GroundSkating;
+        local_player.locomotion.state = PlayerLocomotionState::Idle;
         local_player.animation.state = PlayerAnimState::Idle;
         local_player.anim_state = PlayerAnimState::Idle;
         local_player.animation.blend = 0.0f;
@@ -1481,7 +1494,7 @@ void Engine::update_aircraft_sim(const InputState &input, float dt) {
         local_player.transform.rotation = glm::angleAxis(aircraft.yaw, glm::vec3(0.0f, 1.0f, 0.0f));
         local_player.controller.velocity = aircraft.controller.state().kinematic.velocity;
         local_player.controller.grounded = false;
-        local_player.movement.state = PlayerMovementState::Airborne;
+        local_player.locomotion.state = PlayerLocomotionState::AirborneFall;
         local_player.animation.state = PlayerAnimState::Idle;
         local_player.anim_state = PlayerAnimState::Idle;
         local_player.animation.blend = 0.0f;
@@ -1635,7 +1648,7 @@ void Engine::refresh_overlay_text() {
         std::snprintf(
             text,
             sizeof(text),
-            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nMOVE %s SPD %.2f BAL %.2f LAND %d\nANIM %s BL %.2f PH %.2f X %.2f EVT %s\nTRK %s CH %u NOTE %s\nCOMBO %d X%d T%.2f TOT %d\nVEH %s DIST %.1f C[th %.2f br %.2f st %.2f hb %.2f]\nAIR %s SPD %.1f DIST %.1f C[th %.2f y %.2f p %.2f r %.2f]",
+            "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps %u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst %u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nLOCO %s SPD %.2f GND %d SLP %.1f CYO %.2f BUF %.2f\nANIM %s BL %.2f PH %.2f X %.2f EVT %s\nPROC lean %.2f bank %.2f land %.2f jump %.2f\nVEH %s DIST %.1f C[th %.2f br %.2f st %.2f hb %.2f]\nAIR %s SPD %.1f DIST %.1f C[th %.2f y %.2f p %.2f r %.2f]",
             render_stats.fps,
             last_frame_dt,
             fixed.fixed_dt,
@@ -1678,22 +1691,21 @@ void Engine::refresh_overlay_text() {
             last_reconcile_snapshot_sequence,
             reconcile_replay_ticks,
             static_cast<unsigned long long>(reconcile_corrections),
-            player_movement_state_name(local_player.movement.state),
-            local_player.movement.forward_speed,
-            local_player.movement.balance,
-            local_player.movement.just_landed ? 1 : 0,
+            player_locomotion_state_name(local_player.locomotion.state),
+            local_player.locomotion.move_speed,
+            local_player.locomotion.stable_grounded ? 1 : 0,
+            local_player.locomotion.slope_angle_deg,
+            local_player.locomotion.coyote_timer,
+            local_player.locomotion.jump_buffer_timer,
             anim_state_name(local_player.anim_state),
             local_player.anim_blend,
             local_player.anim_phase,
             local_player_animation.transition_alpha(),
             player_anim_event_name(local_player.last_anim_event),
-            player_trick_state_name(local_player.trick.state),
-            local_player.trick.chain_count,
-            player_trick_note(),
-            local_player.score.combo_score,
-            local_player.score.combo_multiplier,
-            local_player.score.combo_timer,
-            local_player.score.total_score,
+            local_player.procedural.spine_lean,
+            local_player.procedural.turn_bank,
+            local_player.procedural.landing_compression,
+            local_player.procedural.jump_anticipation,
             k_vehicle_feature_enabled ? (vehicle.occupied ? "ONBOARD" : "ON FOOT") : "DISABLED",
             vehicle_distance,
             last_vehicle_control.throttle,
@@ -1805,13 +1817,10 @@ void Engine::rebuild_dynamic_debug_mesh() {
     const bool collision_debug_enabled = runtime_options.debug_collision;
     const bool render_skeleton_only = gui_menu.character() == GuiMenu::Character::Skeleton;
     const SkinnedModel *selected_player_model = nullptr;
-    if (gui_menu.character() == GuiMenu::Character::Fox && has_fox_player_model) {
-        selected_player_model = &fox_player_model;
-    } else if (gui_menu.character() == GuiMenu::Character::Humanoid && has_humanoid_player_model) {
+    if (gui_menu.character() == GuiMenu::Character::Humanoid && has_humanoid_player_model) {
         selected_player_model = &humanoid_player_model;
     }
     const bool render_skinned_avatar = !render_skeleton_only && selected_player_model != nullptr;
-    const bool render_fox_wireframe = gui_menu.character() == GuiMenu::Character::Fox;
 
     const AnimatedCapsuleShape local_shape = animated_shape(
         static_cast<uint8_t>(local_player.anim_state),
@@ -1831,34 +1840,6 @@ void Engine::rebuild_dynamic_debug_mesh() {
         local_player.transform.position + glm::vec3(0.0f, local_shape.pivot_height + local_shape.bob, 0.0f),
         0.12f,
         glm::vec3(0.2f, 0.85f, 1.0f));
-
-    auto append_skateboard = [&](const PlayerEntity &player, float bob, const glm::vec3 &accent_color) {
-        const glm::vec3 deck_center =
-            player.transform.position +
-            player.transform.rotation * player.board.local_offset +
-            glm::vec3(0.0f, bob, 0.0f);
-        append_mesh(
-            scene.debug_world,
-            build_debug_aabb_mesh(
-                deck_center - player.board.half_extents,
-                deck_center + player.board.half_extents,
-                player.board.deck_color * accent_color));
-
-        const glm::vec3 wheel_offsets[4] = {
-            {-player.board.wheel_track, -player.board.half_extents.y - player.board.wheel_radius, -player.board.wheel_base},
-            {player.board.wheel_track, -player.board.half_extents.y - player.board.wheel_radius, -player.board.wheel_base},
-            {-player.board.wheel_track, -player.board.half_extents.y - player.board.wheel_radius, player.board.wheel_base},
-            {player.board.wheel_track, -player.board.half_extents.y - player.board.wheel_radius, player.board.wheel_base},
-        };
-        for (const glm::vec3 &offset : wheel_offsets) {
-            append_mesh(
-                scene.debug_world,
-                build_debug_sphere_mesh(
-                    deck_center + player.transform.rotation * offset,
-                    player.board.wheel_radius,
-                    glm::vec3(0.08f, 0.08f, 0.08f) * accent_color));
-        }
-    };
 
     auto append_vehicle_tri = [&](const glm::vec3 &a, const glm::vec3 &b, const glm::vec3 &c, const glm::vec3 &color) {
         const uint32_t base = static_cast<uint32_t>(scene.debug_world.vertices.size());
@@ -2154,7 +2135,6 @@ void Engine::rebuild_dynamic_debug_mesh() {
     }
 
     if (!runtime_options.debug_collision_only) {
-        append_skateboard(local_player, local_shape.bob, glm::vec3(1.0f));
         if ((!render_skinned_avatar && !render_skeleton_only) || collision_debug_enabled || runtime_options.devhud) {
             append_mesh(scene.debug_world, player_capsule);
             append_mesh(scene.debug_world, target_marker);
@@ -2165,11 +2145,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
                 local_player.transform.rotation,
                 player_color_from_id(local_player.network_id));
-            if (render_fox_wireframe) {
-                append_mesh(scene.debug_world, build_wireframe_from_mesh(local_model, 0.01f, glm::vec3(0.9f, 0.95f, 1.0f)));
-            } else {
-                append_mesh(scene.debug_world, local_model);
-            }
+            append_mesh(scene.debug_world, local_model);
         }
         if (render_skeleton_only || (render_skinned_avatar && (collision_debug_enabled || runtime_options.devhud))) {
             if (render_skinned_avatar) {
@@ -2214,7 +2190,6 @@ void Engine::rebuild_dynamic_debug_mesh() {
             0.10f,
             glm::vec3(0.6f, 0.85f, 1.0f));
         if (!runtime_options.debug_collision_only) {
-            append_skateboard(local_player_secondary, p2_shape.bob, glm::vec3(0.92f, 0.96f, 1.0f));
             if ((!render_skinned_avatar && !render_skeleton_only) || collision_debug_enabled || runtime_options.devhud) {
                 append_mesh(scene.debug_world, p2_capsule);
                 append_mesh(scene.debug_world, p2_target);
@@ -2225,11 +2200,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
                     local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
                     local_player_secondary.transform.rotation,
                     player_color_from_id(local_player_secondary.network_id));
-                if (render_fox_wireframe) {
-                    append_mesh(scene.debug_world, build_wireframe_from_mesh(p2_model, 0.009f, glm::vec3(0.86f, 0.92f, 1.0f)));
-                } else {
-                    append_mesh(scene.debug_world, p2_model);
-                }
+                append_mesh(scene.debug_world, p2_model);
             }
             if (render_skeleton_only) {
                 if (render_skinned_avatar) {
@@ -2314,11 +2285,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
                 render_player.orientation,
                 player_color_from_id(player_id) * glm::vec3(1.08f, 1.08f, 1.08f));
-            if (render_fox_wireframe) {
-                append_mesh(scene.debug_world, build_wireframe_from_mesh(remote_model, 0.008f, glm::vec3(0.82f, 0.9f, 1.0f)));
-            } else {
-                append_mesh(scene.debug_world, remote_model);
-            }
+            append_mesh(scene.debug_world, remote_model);
         }
     }
 }

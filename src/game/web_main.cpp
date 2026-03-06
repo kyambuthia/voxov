@@ -249,6 +249,36 @@ int main() {
                 Module.__voxovGameFlags = 0;
                 Module.__voxovNetApiReady = !!Module.__voxovNetHost || !!Module.__voxovNetJoin;
 
+                let viewport = document.querySelector('meta[name="viewport"]');
+                if (!viewport) {
+                    viewport = document.createElement("meta");
+                    viewport.name = "viewport";
+                    document.head.appendChild(viewport);
+                }
+                viewport.content = "width=device-width, initial-scale=1, viewport-fit=cover";
+
+                document.documentElement.style.width = "100%";
+                document.documentElement.style.height = "100%";
+                document.documentElement.style.background = "#090c14";
+                document.body.style.margin = "0";
+                document.body.style.width = "100%";
+                document.body.style.height = "100%";
+                document.body.style.overflow = "hidden";
+                document.body.style.background = "#090c14";
+                document.body.style.overscrollBehavior = "none";
+
+                const canvas = Module.canvas || document.getElementById("canvas");
+                if (canvas) {
+                    canvas.style.position = "fixed";
+                    canvas.style.inset = "0";
+                    canvas.style.width = "100vw";
+                    canvas.style.height = "100vh";
+                    canvas.style.display = "block";
+                    canvas.style.touchAction = "none";
+                    canvas.style.boxSizing = "border-box";
+                    canvas.style.background = "#090c14";
+                }
+
                 Module.__voxovPollInputFlags = function() {
                     const out = (Module.__voxovGuiFlags | Module.__voxovGameFlags) | 0;
                     Module.__voxovGuiFlags = 0;

@@ -165,16 +165,13 @@ void NetServer::simulate_client_tick(ClientState &state) {
     }
 
     const float planar_speed = std::sqrt(state.state.vx * state.state.vx + state.state.vz * state.state.vz);
-    if (state.state.y > (kServerSpawnY + 0.02f) || std::fabs(state.state.vy) > 0.08f) {
-        state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::Airborne);
+    if (state.state.vy > 0.12f) {
+        state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::JumpLoop);
+    } else if (state.state.y > (kServerSpawnY + 0.02f) || state.state.vy < -0.12f) {
+        state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::FallLoop);
     } else if (planar_speed > 0.2f) {
-        if (crouch_held) {
-            state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::Manual);
-        } else if (sprint_held) {
-            state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::Push);
-        } else {
-            state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::Cruise);
-        }
+        state.state.anim_state = static_cast<uint8_t>(
+            sprint_held ? PlayerAnimState::LocomotionRun : PlayerAnimState::LocomotionWalk);
     } else {
         state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::Idle);
     }

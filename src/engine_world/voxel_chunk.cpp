@@ -3,37 +3,37 @@
 
 #include <algorithm>
 #include <cmath>
+#include <vector>
 
 namespace {
-constexpr glm::vec3 FACE_NORMALS[6] = {{1.0f, 0.0f, 0.0f}, {-1.0f, 0.0f, 0.0f},
-                                       {0.0f, 1.0f, 0.0f}, {0.0f, -1.0f, 0.0f},
-                                       {0.0f, 0.0f, 1.0f}, {0.0f, 0.0f, -1.0f}};
+void append_greedy_quad(RenderMesh &mesh, const glm::vec3 &origin,
+                        const glm::ivec3 &base, const glm::ivec3 &q,
+                        const glm::ivec3 &du, const glm::ivec3 &dv,
+                        bool positive_face, const glm::vec3 &color) {
+  const uint32_t start = static_cast<uint32_t>(mesh.vertices.size());
+  glm::vec3 p0(0.0f);
+  glm::vec3 p1(0.0f);
+  glm::vec3 p2(0.0f);
+  glm::vec3 p3(0.0f);
 
-constexpr glm::ivec3 FACE_DIRS[6] = {{1, 0, 0},  {-1, 0, 0}, {0, 1, 0},
-                                     {0, -1, 0}, {0, 0, 1},  {0, 0, -1}};
+  if (positive_face) {
+    p0 = origin + glm::vec3(base + q);
+    p1 = origin + glm::vec3(base + q + du);
+    p2 = origin + glm::vec3(base + q + du + dv);
+    p3 = origin + glm::vec3(base + q + dv);
+  } else {
+    p0 = origin + glm::vec3(base);
+    p1 = origin + glm::vec3(base + dv);
+    p2 = origin + glm::vec3(base + du + dv);
+    p3 = origin + glm::vec3(base + du);
+  }
 
-constexpr glm::vec3 FACE_QUADS[6][4] = {
-    {{1, 0, 0}, {1, 1, 0}, {1, 1, 1}, {1, 0, 1}},
-    {{0, 0, 1}, {0, 1, 1}, {0, 1, 0}, {0, 0, 0}},
-    {{0, 1, 1}, {1, 1, 1}, {1, 1, 0}, {0, 1, 0}},
-    {{0, 0, 0}, {1, 0, 0}, {1, 0, 1}, {0, 0, 1}},
-    {{0, 0, 1}, {1, 0, 1}, {1, 1, 1}, {0, 1, 1}},
-    {{0, 1, 0}, {1, 1, 0}, {1, 0, 0}, {0, 0, 0}}};
-
-void append_quad(RenderMesh &mesh, const glm::vec3 &base,
-                 const glm::vec3 quad[4], const glm::vec3 &color) {
-  uint32_t start = static_cast<uint32_t>(mesh.vertices.size());
-  mesh.vertices.push_back({base + quad[0], color});
-  mesh.vertices.push_back({base + quad[1], color});
-  mesh.vertices.push_back({base + quad[2], color});
-  mesh.vertices.push_back({base + quad[3], color});
-
-  mesh.indices.push_back(start + 0);
-  mesh.indices.push_back(start + 1);
-  mesh.indices.push_back(start + 2);
-  mesh.indices.push_back(start + 0);
-  mesh.indices.push_back(start + 2);
-  mesh.indices.push_back(start + 3);
+  mesh.vertices.push_back({p0, color});
+  mesh.vertices.push_back({p1, color});
+  mesh.vertices.push_back({p2, color});
+  mesh.vertices.push_back({p3, color});
+  mesh.indices.insert(mesh.indices.end(), {start, start + 1, start + 2, start,
+                                           start + 2, start + 3});
 }
 } // namespace
 
@@ -169,29 +169,96 @@ void VoxelChunk::set_solid(int x, int y, int z, bool value) {
 
 RenderMesh VoxelChunk::build_naive_mesh(const glm::vec3 &origin) const {
   RenderMesh mesh;
+  constexpr int dims[3] = {CHUNK_X, CHUNK_Y, CHUNK_Z};
+  constexpr int axis_u[3] = {1, 2, 0};
+  constexpr int axis_v[3] = {2, 0, 1};
+  const size_t max_mask_size = static_cast<size_t>(
+      std::max({CHUNK_X * CHUNK_Y, CHUNK_Y * CHUNK_Z, CHUNK_X * CHUNK_Z}));
+  std::vector<int8_t> mask(max_mask_size, 0);
 
-  for (int z = 0; z < CHUNK_Z; ++z) {
-    for (int y = 0; y < CHUNK_Y; ++y) {
-      for (int x = 0; x < CHUNK_X; ++x) {
-        if (!solid(x, y, z)) {
-          continue;
+  for (int d = 0; d < 3; ++d) {
+    const int u = axis_u[d];
+    const int v = axis_v[d];
+    glm::ivec3 x(0);
+    glm::ivec3 q(0);
+    q[d] = 1;
+
+    for (x[d] = -1; x[d] < dims[d];) {
+      int n = 0;
+      for (x[v] = 0; x[v] < dims[v]; ++x[v]) {
+        for (x[u] = 0; x[u] < dims[u]; ++x[u], ++n) {
+          const bool a = x[d] >= 0 && solid(x.x, x.y, x.z);
+          const bool b =
+              x[d] < (dims[d] - 1) && solid(x.x + q.x, x.y + q.y, x.z + q.z);
+
+          if (a == b) {
+            mask[static_cast<size_t>(n)] = 0;
+          } else {
+            mask[static_cast<size_t>(n)] = a ? 1 : -1;
+          }
         }
+      }
 
-        glm::vec3 base(static_cast<float>(x), static_cast<float>(y),
-                       static_cast<float>(z));
-        base += origin;
-        float height_t = static_cast<float>(y) / static_cast<float>(CHUNK_Y);
-        glm::vec3 grass(0.22f + height_t * 0.2f, 0.45f + height_t * 0.35f,
-                        0.16f);
-        glm::vec3 dirt(0.38f, 0.27f, 0.18f);
-
-        for (int face = 0; face < 6; ++face) {
-          const glm::ivec3 n = FACE_DIRS[face];
-          if (solid(x + n.x, y + n.y, z + n.z)) {
+      ++x[d];
+      n = 0;
+      for (int j = 0; j < dims[v]; ++j) {
+        for (int i = 0; i < dims[u];) {
+          const int8_t face = mask[static_cast<size_t>(n)];
+          if (face == 0) {
+            ++i;
+            ++n;
             continue;
           }
-          const glm::vec3 color = (face == 2) ? grass : dirt;
-          append_quad(mesh, base, FACE_QUADS[face], color);
+
+          int width = 1;
+          while ((i + width) < dims[u] &&
+                 mask[static_cast<size_t>(n + width)] == face) {
+            ++width;
+          }
+
+          int height = 1;
+          bool done = false;
+          while ((j + height) < dims[v] && !done) {
+            for (int k = 0; k < width; ++k) {
+              if (mask[static_cast<size_t>(n + k + height * dims[u])] != face) {
+                done = true;
+                break;
+              }
+            }
+            if (!done) {
+              ++height;
+            }
+          }
+
+          glm::ivec3 base(0);
+          base[d] = x[d];
+          base[u] = i;
+          base[v] = j;
+
+          glm::ivec3 du(0);
+          glm::ivec3 dv(0);
+          du[u] = width;
+          dv[v] = height;
+
+          glm::vec3 color(0.38f, 0.27f, 0.18f);
+          if (d == 1 && face > 0) {
+            const float surface_y = static_cast<float>(x[d] - 1);
+            const float height_t =
+                std::clamp(surface_y / static_cast<float>(CHUNK_Y), 0.0f, 1.0f);
+            color = glm::vec3(0.22f + height_t * 0.2f, 0.45f + height_t * 0.35f,
+                              0.16f);
+          }
+
+          append_greedy_quad(mesh, origin, base, q, du, dv, face > 0, color);
+
+          for (int row = 0; row < height; ++row) {
+            for (int col = 0; col < width; ++col) {
+              mask[static_cast<size_t>(n + col + row * dims[u])] = 0;
+            }
+          }
+
+          i += width;
+          n += width;
         }
       }
     }

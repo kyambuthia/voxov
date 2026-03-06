@@ -279,9 +279,10 @@ add_library(engine_net STATIC
     src/engine_net/lan_discovery.cpp
     src/engine_gameplay/animation/player_animation_graph.cpp
     src/engine_gameplay/animation/player_animation_types.cpp
+    src/engine_gameplay/player/player_controller.cpp
 )
 target_include_directories(engine_net PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/enet/include)
-target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog)
+target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog engine_world engine_math glm::glm)
 if(WIN32)
     target_link_libraries(engine_net PUBLIC ws2_32)
 endif()

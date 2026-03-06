@@ -1,5 +1,7 @@
 #include "engine_net/net_server.hpp"
 #include "engine_gameplay/animation/player_animation_graph.hpp"
+#include "engine_gameplay/player/player_controller.hpp"
+#include "engine_input/input_state.hpp"
 
 #include <enet/enet.h>
 #include <spdlog/spdlog.h>
@@ -9,6 +11,8 @@
 #include <cmath>
 #include <chrono>
 #include <algorithm>
+
+#include <glm/gtx/quaternion.hpp>
 
 namespace {
 #pragma pack(push, 1)
@@ -54,23 +58,88 @@ struct PlayerRemovePacket {
 #pragma pack(pop)
 
 constexpr float kServerTickDt = 1.0f / 60.0f;
-constexpr float kServerSpawnY = 6.05f;
 constexpr double kServerSimTickMs = 1000.0 / 60.0;
 constexpr uint64_t kSnapshotSendIntervalMs = 33;
 constexpr uint64_t kPlayerBroadcastIntervalMs = 33;
 constexpr int kMaxCatchupTicksPerPump = 8;
-
-float server_anim_cycle_rate(uint8_t anim_state) {
-    return player_animation_definition(static_cast<PlayerAnimState>(anim_state)).phase_rate;
-}
-
-float server_anim_blend_target(uint8_t anim_state) {
-    return player_animation_definition(static_cast<PlayerAnimState>(anim_state)).target_blend;
-}
+constexpr uint64_t kServerWorldSeed = 0x0DDF00D5EEDull;
 
 uint64_t now_ms() {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();
     return static_cast<uint64_t>(std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
+}
+
+void sculpt_locomotion_course(VoxelChunk &chunk) {
+    constexpr int base_y = 6;
+
+    for (int z = 20; z <= 44; ++z) {
+        for (int x = 20; x <= 44; ++x) {
+            for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
+                chunk.set_solid(x, y, z, y <= base_y);
+            }
+        }
+    }
+
+    for (int z = 24; z <= 30; ++z) {
+        for (int x = 21; x <= 27; ++x) {
+            const int terrace = (z - 24) / 2;
+            for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
+                chunk.set_solid(x, y, z, y <= base_y + terrace);
+            }
+        }
+    }
+
+    for (int step = 0; step < 4; ++step) {
+        const int top_y = base_y + step;
+        const int x0 = 34 + step * 2;
+        const int x1 = x0 + 1;
+        for (int z = 24; z <= 29; ++z) {
+            for (int x = x0; x <= x1; ++x) {
+                for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
+                    chunk.set_solid(x, y, z, y <= top_y);
+                }
+            }
+        }
+    }
+
+    for (int z = 34; z <= 40; ++z) {
+        for (int x = 26; x <= 32; ++x) {
+            for (int y = base_y + 1; y < VoxelChunk::CHUNK_Y; ++y) {
+                chunk.set_solid(x, y, z, false);
+            }
+        }
+    }
+}
+
+void sync_net_player_state_from_entity(
+    const PlayerEntity &player,
+    uint32_t player_id,
+    uint32_t server_tick,
+    NetPlayerState &state) {
+    state.player_id = player_id;
+    state.tick = server_tick;
+    state.x = player.transform.position.x;
+    state.y = player.transform.position.y;
+    state.z = player.transform.position.z;
+    state.vx = player.controller.velocity.x;
+    state.vy = player.controller.velocity.y;
+    state.vz = player.controller.velocity.z;
+    state.anim_state = static_cast<uint8_t>(player.anim_state);
+    state.anim_phase = player.anim_phase;
+    state.anim_blend = player.anim_blend;
+}
+
+glm::vec2 server_spawn_offset(uint32_t player_id) {
+    switch (player_id % 4u) {
+    case 1u:
+        return glm::vec2(-1.5f, 0.0f);
+    case 2u:
+        return glm::vec2(1.5f, 0.0f);
+    case 3u:
+        return glm::vec2(0.0f, 1.5f);
+    default:
+        return glm::vec2(0.0f, -1.5f);
+    }
 }
 }
 
@@ -128,61 +197,25 @@ void NetServer::send_chunk_state(ENetPeer *peer, ClientState &state, NetChunkCoo
 }
 
 void NetServer::simulate_client_tick(ClientState &state) {
-    float move_x = state.last_input.move_x;
-    float move_y = state.last_input.move_y;
-    const float len = std::sqrt(move_x * move_x + move_y * move_y);
-    if (len > 1.0f) {
-        move_x /= len;
-        move_y /= len;
+    InputState input{};
+    input.move.x = state.last_input.move_x;
+    input.move.y = state.last_input.move_y;
+    input.jump_held = net_flag_set(state.last_input.action_flags, NetInputFlags::JumpHeld);
+    input.jump_pressed = net_flag_set(state.last_input.action_flags, NetInputFlags::JumpPressed);
+    input.sprint_held = net_flag_set(state.last_input.action_flags, NetInputFlags::SprintHeld);
+    input.crouch_held = net_flag_set(state.last_input.action_flags, NetInputFlags::CrouchHeld);
+    if (input.jump_pressed) {
+        state.last_input.action_flags &= static_cast<uint8_t>(~net_flag(NetInputFlags::JumpPressed));
     }
+    state.player.camera_rig.yaw = state.last_input.camera_yaw_deg;
 
-    const bool jump_pressed = state.jump_pressed_latched;
-    state.jump_pressed_latched = false;
-    const bool sprint_held = net_flag_set(state.last_input.action_flags, NetInputFlags::SprintHeld);
-    const bool crouch_held = net_flag_set(state.last_input.action_flags, NetInputFlags::CrouchHeld);
-
-    float speed = 4.0f;
-    if (crouch_held) {
-        speed = 2.2f;
-    } else if (sprint_held) {
-        speed = 7.2f;
-    }
-
-    state.state.x += move_x * speed * kServerTickDt;
-    state.state.z += move_y * speed * kServerTickDt;
-    state.state.vx = move_x * speed;
-    state.state.vz = move_y * speed;
-
-    const bool grounded = state.state.y <= (kServerSpawnY + 0.001f) && std::fabs(state.state.vy) < 0.001f;
-    if (jump_pressed && grounded) {
-        state.state.vy = 5.5f;
-    }
-    state.state.vy += -19.62f * kServerTickDt;
-    state.state.y += state.state.vy * kServerTickDt;
-    if (state.state.y < kServerSpawnY) {
-        state.state.y = kServerSpawnY;
-        state.state.vy = 0.0f;
-    }
-
-    const float planar_speed = std::sqrt(state.state.vx * state.state.vx + state.state.vz * state.state.vz);
-    if (state.state.vy > 0.12f) {
-        state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::JumpLoop);
-    } else if (state.state.y > (kServerSpawnY + 0.02f) || state.state.vy < -0.12f) {
-        state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::FallLoop);
-    } else if (planar_speed > 0.2f) {
-        state.state.anim_state = static_cast<uint8_t>(
-            sprint_held ? PlayerAnimState::LocomotionRun : PlayerAnimState::LocomotionWalk);
-    } else {
-        state.state.anim_state = static_cast<uint8_t>(PlayerAnimState::Idle);
-    }
-
-    state.state.anim_phase += server_anim_cycle_rate(state.state.anim_state) * kServerTickDt;
-    if (state.state.anim_phase > 6.28318530718f) {
-        state.state.anim_phase = std::fmod(state.state.anim_phase, 6.28318530718f);
-    }
-    const float target_blend = server_anim_blend_target(state.state.anim_state);
-    state.state.anim_blend += (target_blend - state.state.anim_blend) * 0.18f;
-    state.state.tick = server_sim_tick;
+    (void)PlayerControllerSystem::simulate_fixed(
+        state.player,
+        input,
+        collision_world,
+        kServerTickDt,
+        false);
+    sync_net_player_state_from_entity(state.player, state.player_id, server_sim_tick, state.state);
 }
 
 void NetServer::simulate_fixed_tick() {
@@ -354,6 +387,9 @@ bool NetServer::init(uint16_t port, bool loopback_only) {
     last_pump_ms = 0;
     sim_accumulator_ms = 0.0;
     last_snapshot_send_ms = 0;
+    world_chunk.generate_heightmap_terrain_seeded(kServerWorldSeed, 0, 0);
+    sculpt_locomotion_course(world_chunk);
+    collision_world = VoxelCollisionWorld(&world_chunk);
     debug_counters = DebugCounters{};
     refresh_debug_stats();
     return true;
@@ -361,6 +397,8 @@ bool NetServer::init(uint16_t port, bool loopback_only) {
 
 void NetServer::shutdown() {
     clients.clear();
+    collision_world = VoxelCollisionWorld(nullptr);
+    world_chunk = VoxelChunk{};
     server_sim_tick = 0;
     last_pump_ms = 0;
     sim_accumulator_ms = 0.0;
@@ -401,12 +439,6 @@ void NetServer::pump() {
         case ENET_EVENT_TYPE_CONNECT: {
             ClientState state{};
             state.player_id = next_player_id++;
-            state.state.player_id = state.player_id;
-            state.state.x = 8.0f + static_cast<float>((state.player_id % 3) * 2);
-            state.state.y = kServerSpawnY;
-            state.state.z = 8.0f;
-            state.state.tick = server_sim_tick;
-            state.state.anim_state = 0;
             if (local_only) {
                 char ip_buffer[64]{};
                 if (enet_address_get_host_ip(&event.peer->address, ip_buffer, sizeof(ip_buffer)) != 0) {
@@ -419,6 +451,21 @@ void NetServer::pump() {
                     break;
                 }
             }
+            state.player = PlayerControllerSystem::spawn_player(collision_world);
+            state.player.network_id = state.player_id;
+            const glm::vec2 spawn_offset = server_spawn_offset(state.player_id);
+            state.player.transform.position.x += spawn_offset.x;
+            state.player.transform.position.z += spawn_offset.y;
+            state.player.transform.position.y = collision_world.find_spawn_height(
+                glm::vec2(state.player.transform.position.x, state.player.transform.position.z),
+                state.player.controller.capsuleRadius,
+                state.player.controller.capsuleHeight) + 0.05f;
+            state.player.locomotion.facing_yaw_deg = state.player.camera_rig.yaw;
+            state.player.locomotion.desired_yaw_deg = state.player.camera_rig.yaw;
+            state.player.transform.rotation = glm::angleAxis(
+                state.player.camera_rig.yaw * 0.01745329251994329577f,
+                glm::vec3(0.0f, 1.0f, 0.0f));
+            sync_net_player_state_from_entity(state.player, state.player_id, server_sim_tick, state.state);
             clients[event.peer] = state;
             spdlog::info("NetServer: client connected, assigned player_id={}, clients={}", state.player_id, clients.size());
 
@@ -483,9 +530,6 @@ void NetServer::pump() {
                             std::memcpy(&packet, event.packet->data, sizeof(packet));
                             recognized_message = true;
                             state.last_input = packet.input;
-                            if (net_flag_set(packet.input.action_flags, NetInputFlags::JumpPressed)) {
-                                state.jump_pressed_latched = true;
-                            }
                         }
                         break;
                     case NetMsgType::ChunkInterest:

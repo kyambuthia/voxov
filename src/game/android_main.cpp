@@ -1243,6 +1243,7 @@ struct AndroidRenderer {
         input.tick = net_tick++;
         input.move_x = touch.left_value.x;
         input.move_y = touch.left_value.y;
+        input.camera_yaw_deg = glm::degrees(cam_yaw) + 180.0f;
         input.action_flags = 0;
         if (touch.jump_held) {
             input.action_flags |= net_flag(NetInputFlags::JumpHeld);

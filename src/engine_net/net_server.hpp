@@ -1,10 +1,13 @@
 #pragma once
 
+#include "engine_gameplay/player/player_components.hpp"
 #include "engine_net/net_common.hpp"
+#include "engine_world/physics/voxel_collision.hpp"
+#include "engine_world/voxel_chunk.hpp"
 
 #include <cstddef>
-#include <unordered_map>
 #include <cstdint>
+#include <unordered_map>
 
 struct _ENetHost;
 struct _ENetPeer;
@@ -21,9 +24,9 @@ private:
         uint32_t player_id = 0;
         uint32_t next_player_state_sequence = 1;
         uint32_t next_snapshot_sequence = 1;
+        PlayerEntity player{};
         NetPlayerState state{};
         NetTickInput last_input{};
-        bool jump_pressed_latched = false;
         NetChunkInterest interest{};
         std::unordered_map<int32_t, uint32_t> sent_chunks;
     };
@@ -60,6 +63,8 @@ private:
     bool local_only = false;
     _ENetHost *server = nullptr;
     std::unordered_map<_ENetPeer *, ClientState> clients;
+    VoxelChunk world_chunk{};
+    VoxelCollisionWorld collision_world{nullptr};
     uint32_t next_player_id = 1;
     uint32_t next_packet_sequence = 1;
     uint32_t server_sim_tick = 0;

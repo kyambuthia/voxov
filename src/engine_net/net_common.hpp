@@ -12,6 +12,7 @@ struct NetTickInput {
     uint32_t tick = 0;
     float move_x = 0.0f;
     float move_y = 0.0f;
+    float camera_yaw_deg = 180.0f;
     uint8_t action_flags = 0;
 };
 
@@ -54,7 +55,7 @@ enum class NetMsgType : uint8_t {
 };
 
 constexpr uint32_t k_net_packet_magic = 0x564F5832u; // "VOX2"
-constexpr uint16_t k_net_protocol_version = 2u;
+constexpr uint16_t k_net_protocol_version = 3u;
 constexpr uint16_t k_net_max_payload_bytes = 2048u;
 
 enum class NetFeatureFlags : uint16_t {

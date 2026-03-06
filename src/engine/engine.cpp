@@ -595,6 +595,7 @@ void Engine::sync_network_state(uint32_t sim_tick, const InputState &net_input) 
     input.tick = sim_tick;
     input.move_x = net_input.move.x;
     input.move_y = net_input.move.y;
+    input.camera_yaw_deg = local_player.camera_rig.yaw;
     if (net_input.jump_held) {
         input.action_flags |= net_flag(NetInputFlags::JumpHeld);
     }
@@ -1868,13 +1869,13 @@ void Engine::rebuild_dynamic_debug_mesh() {
         local_player.camera_rig.pivotHeight);
 
     RenderMesh player_capsule = build_debug_capsule_mesh(
-        local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
+        local_player.transform.position,
         local_shape.radius,
         local_shape.height,
         player_color_from_id(local_player.network_id));
 
     RenderMesh target_marker = build_debug_sphere_mesh(
-        local_player.transform.position + glm::vec3(0.0f, local_shape.pivot_height + local_shape.bob, 0.0f),
+        local_player.transform.position + glm::vec3(0.0f, local_shape.pivot_height, 0.0f),
         0.12f,
         glm::vec3(0.2f, 0.85f, 1.0f));
 
@@ -2179,7 +2180,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
         if (render_skinned_avatar) {
             const RenderMesh local_model = selected_player_model->build_render_mesh(
                 local_player_animation,
-                local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
+                local_player.transform.position,
                 local_player.transform.rotation,
                 player_color_from_id(local_player.network_id));
             append_mesh(scene.debug_world, local_model);
@@ -2189,7 +2190,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 selected_player_model->append_debug_skeleton(
                     scene.debug_world,
                     local_player_animation,
-                    local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
+                    local_player.transform.position,
                     local_player.transform.rotation,
                     glm::vec3(0.95f, 0.97f, 1.0f),
                     0.012f);
@@ -2201,7 +2202,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
                 SkeletalAnimator::append_debug_skeleton(
                     scene.debug_world,
                     local_pose,
-                    local_player.transform.position + glm::vec3(0.0f, local_shape.bob, 0.0f),
+                    local_player.transform.position,
                     local_player.transform.rotation,
                     glm::vec3(0.95f, 0.97f, 1.0f),
                     0.012f);
@@ -2218,12 +2219,12 @@ void Engine::rebuild_dynamic_debug_mesh() {
             local_player_secondary.controller.capsuleHeight,
             local_player_secondary.camera_rig.pivotHeight);
         RenderMesh p2_capsule = build_debug_capsule_mesh(
-            local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
+            local_player_secondary.transform.position,
             p2_shape.radius,
             p2_shape.height,
             player_color_from_id(local_player_secondary.network_id));
         RenderMesh p2_target = build_debug_sphere_mesh(
-            local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.pivot_height + p2_shape.bob, 0.0f),
+            local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.pivot_height, 0.0f),
             0.10f,
             glm::vec3(0.6f, 0.85f, 1.0f));
         if (!runtime_options.debug_collision_only) {
@@ -2234,7 +2235,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
             if (render_skinned_avatar) {
                 const RenderMesh p2_model = selected_player_model->build_render_mesh(
                     local_player_secondary_animation,
-                    local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
+                    local_player_secondary.transform.position,
                     local_player_secondary.transform.rotation,
                     player_color_from_id(local_player_secondary.network_id));
                 append_mesh(scene.debug_world, p2_model);
@@ -2244,7 +2245,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
                     selected_player_model->append_debug_skeleton(
                         scene.debug_world,
                         local_player_secondary_animation,
-                        local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
+                        local_player_secondary.transform.position,
                         local_player_secondary.transform.rotation,
                         glm::vec3(0.86f, 0.92f, 1.0f),
                         0.010f);
@@ -2256,7 +2257,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
                     SkeletalAnimator::append_debug_skeleton(
                         scene.debug_world,
                         p2_pose,
-                        local_player_secondary.transform.position + glm::vec3(0.0f, p2_shape.bob, 0.0f),
+                        local_player_secondary.transform.position,
                         local_player_secondary.transform.rotation,
                         glm::vec3(0.86f, 0.92f, 1.0f),
                         0.010f);
@@ -2310,7 +2311,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
         const glm::vec3 remote_base = glm::vec3(render_player.position.x, remote_y, render_player.position.z);
         if (!render_skinned_avatar || collision_debug_enabled || runtime_options.devhud) {
             RenderMesh remote_capsule = build_debug_capsule_mesh(
-                remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
+                remote_base,
                 remote_shape.radius,
                 remote_shape.height,
                 player_color_from_id(player_id));
@@ -2319,7 +2320,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
         if (render_skinned_avatar) {
             const RenderMesh remote_model = selected_player_model->build_render_mesh(
                 render_player.animation_runtime,
-                remote_base + glm::vec3(0.0f, remote_shape.bob, 0.0f),
+                remote_base,
                 render_player.orientation,
                 player_color_from_id(player_id) * glm::vec3(1.08f, 1.08f, 1.08f));
             append_mesh(scene.debug_world, remote_model);

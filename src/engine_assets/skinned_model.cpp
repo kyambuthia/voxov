@@ -174,10 +174,10 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
         model_axis_correction = glm::angleAxis(-1.57079632679f, glm::vec3(1.0f, 0.0f, 0.0f));
         // CesiumMan comes in facing +X after Z-up to Y-up conversion; rotate into engine +Z.
         model_facing_correction = glm::angleAxis(-1.57079632679f, glm::vec3(0.0f, 1.0f, 0.0f));
-        model_ground_lift = -bounds_min.z + 0.08f;
+        model_ground_lift = -bounds_min.z + 0.02f;
     } else {
         model_facing_correction = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-        model_ground_lift = -bounds_min.y + 0.08f;
+        model_ground_lift = -bounds_min.y + 0.02f;
     }
     constexpr float k_target_height = 1.7f;
     model_scale = k_target_height / source_height;

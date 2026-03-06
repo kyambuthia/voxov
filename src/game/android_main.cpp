@@ -541,6 +541,23 @@ struct AndroidRenderer {
         int bottom = 0;
     };
 
+    struct UiMenuLayout {
+        UiRect panel{};
+        int outer_inset = 18;
+        int inner_inset = 22;
+        int title_y = 0;
+        int guide_y = 0;
+        int guide_step = 24;
+        int row_start_y = 0;
+        int row_h = 64;
+        int row_gap = 10;
+        int status_y = 0;
+        float title_px = 3.0f;
+        float guide_px = 2.4f;
+        float item_px = 2.7f;
+        float status_px = 2.0f;
+    };
+
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLSurface surface = EGL_NO_SURFACE;
     EGLContext context = EGL_NO_CONTEXT;
@@ -849,6 +866,43 @@ struct AndroidRenderer {
         w = std::min(w, avail_w);
         h = std::min(h, avail_h);
         return UiRect{x, y, w, h};
+    }
+
+    UiMenuLayout menu_layout(const GuiMenuView &menu_view) const {
+        UiMenuLayout layout{};
+        layout.panel = menu_panel_rect();
+        const int shortest_edge = std::max(1, std::min(width, height));
+        layout.outer_inset = std::max(14, std::min(22, shortest_edge / 42));
+        layout.inner_inset = layout.outer_inset + 4;
+        layout.title_px = std::clamp(static_cast<float>(shortest_edge) / 280.0f, 2.6f, 3.2f);
+        layout.guide_px = std::clamp(layout.title_px - 0.5f, 2.1f, 2.6f);
+        layout.item_px = std::clamp(layout.title_px - 0.2f, 2.3f, 3.0f);
+        layout.status_px = std::clamp(layout.title_px - 0.8f, 1.9f, 2.3f);
+
+        const int title_block_h = std::max(26, std::min(40, layout.panel.h / 9));
+        layout.title_y = layout.panel.y + layout.outer_inset;
+
+        const int guide_count = static_cast<int>(menu_view.guide_lines.size());
+        layout.guide_step = std::max(20, std::min(28, layout.panel.h / 20));
+        const int guide_block_h = guide_count > 0 ? (guide_count * layout.guide_step + layout.outer_inset / 2) : 0;
+        layout.guide_y = layout.title_y + title_block_h;
+
+        const int status_block_h = menu_view.status.empty()
+            ? 0
+            : std::max(22, std::min(34, layout.panel.h / 11));
+
+        const int row_count = std::max(1, static_cast<int>(menu_view.items.size()));
+        layout.row_gap = std::max(8, std::min(14, layout.panel.h / 44));
+        const int rows_top = layout.guide_y + guide_block_h;
+        const int rows_bottom = layout.panel.y + layout.panel.h - layout.outer_inset - status_block_h;
+        const int usable_rows_h = std::max(
+            row_count * 36,
+            rows_bottom - rows_top - std::max(0, row_count - 1) * layout.row_gap);
+        const int target_row_h = (gui_menu.page_id() == GuiMenu::Page::Main) ? 84 : 70;
+        layout.row_h = std::clamp(usable_rows_h / row_count, 38, target_row_h);
+        layout.row_start_y = rows_top;
+        layout.status_y = rows_bottom + std::max(8, layout.outer_inset / 2);
+        return layout;
     }
 
     UiRect jump_button_rect() const {
@@ -1854,7 +1908,9 @@ struct AndroidRenderer {
         }
 
         if (gui_menu.open()) {
-            const UiRect panel = menu_panel_rect();
+            const GuiMenuView menu_view = gui_menu.build_view(devhud, noclip, multiplayer_hint);
+            const UiMenuLayout layout = menu_layout(menu_view);
+            const UiRect panel = layout.panel;
             const int panel_x = panel.x;
             const int panel_y = panel.y;
             const int panel_w = panel.w;
@@ -1862,17 +1918,15 @@ struct AndroidRenderer {
             draw_rect(panel_x, panel_y, panel_w, panel_h, 0.06f, 0.08f, 0.12f);
             draw_rect(panel_x + 4, panel_y + 4, panel_w - 8, panel_h - 8, 0.09f, 0.11f, 0.16f);
 
-            const int row_count = gui_menu.count();
-            const int row_h = (gui_menu.page_id() == GuiMenu::Page::Main) ? 84 : 70;
-            const int row_gap = 12;
+            const int row_count = static_cast<int>(menu_view.items.size());
             for (int i = 0; i < row_count; ++i) {
-                const int row_y = panel_y + 24 + i * (row_h + row_gap);
+                const int row_y = layout.row_start_y + i * (layout.row_h + layout.row_gap);
                 const bool selected = (i == gui_menu.selected());
                 if (selected) {
-                    draw_rect(panel_x + 14, row_y, panel_w - 28, row_h, 0.24f, 0.35f, 0.50f);
-                    draw_rect(panel_x + 18, row_y + 4, panel_w - 36, row_h - 8, 0.16f, 0.25f, 0.36f);
+                    draw_rect(panel_x + layout.outer_inset - 4, row_y, panel_w - (layout.outer_inset - 4) * 2, layout.row_h, 0.24f, 0.35f, 0.50f);
+                    draw_rect(panel_x + layout.inner_inset, row_y + 4, panel_w - layout.inner_inset * 2, layout.row_h - 8, 0.16f, 0.25f, 0.36f);
                 } else {
-                    draw_rect(panel_x + 16, row_y + 4, panel_w - 32, row_h - 8, 0.11f, 0.16f, 0.24f);
+                    draw_rect(panel_x + layout.inner_inset, row_y + 4, panel_w - layout.inner_inset * 2, layout.row_h - 8, 0.11f, 0.16f, 0.24f);
                 }
             }
         }
@@ -1939,35 +1993,34 @@ struct AndroidRenderer {
             };
 
             if (gui_menu.open()) {
-                const UiRect panel = menu_panel_rect();
+                const UiMenuLayout layout = menu_layout(menu_view);
+                const UiRect panel = layout.panel;
                 const int panel_x = panel.x;
                 const int panel_y = panel.y;
                 const int panel_w = panel.w;
-                const int row_h = (gui_menu.page_id() == GuiMenu::Page::Main) ? 84 : 70;
-                const int row_gap = 12;
                 const int row_count = static_cast<int>(menu_view.items.size());
                 append_text(
                     menu_view.title,
-                    static_cast<float>(panel_x + 22),
-                    static_cast<float>(panel_y + 6),
-                    3.2f,
+                    static_cast<float>(panel_x + layout.inner_inset),
+                    static_cast<float>(layout.title_y),
+                    layout.title_px,
                     glm::vec3(0.96f, 0.98f, 1.0f));
 
                 for (size_t i = 0; i < menu_view.guide_lines.size(); ++i) {
                     append_text(
                         menu_view.guide_lines[i],
-                        static_cast<float>(panel_x + 22),
-                        static_cast<float>(panel_y + 58 + static_cast<int>(i) * 26),
-                        2.6f,
+                        static_cast<float>(panel_x + layout.inner_inset),
+                        static_cast<float>(layout.guide_y + static_cast<int>(i) * layout.guide_step),
+                        layout.guide_px,
                         glm::vec3(0.92f, 0.95f, 0.99f));
                 }
 
                 for (int i = 0; i < row_count; ++i) {
                     const UiRect row_rect{
-                        panel_x + 18,
-                        panel_y + 24 + i * (row_h + row_gap),
-                        panel_w - 36,
-                        row_h - 8};
+                        panel_x + layout.inner_inset,
+                        layout.row_start_y + i * (layout.row_h + layout.row_gap),
+                        panel_w - layout.inner_inset * 2,
+                        layout.row_h - 8};
                     std::string label = menu_view.items[static_cast<size_t>(i)];
                     if (label.empty()) {
                         continue;
@@ -1975,15 +2028,15 @@ struct AndroidRenderer {
                     if (i == menu_view.selected) {
                         label = "> " + label;
                     }
-                    append_centered(row_rect, label, 2.9f, glm::vec3(0.95f, 0.98f, 1.0f));
+                    append_centered(row_rect, label, layout.item_px, glm::vec3(0.95f, 0.98f, 1.0f));
                 }
 
                 if (!menu_view.status.empty()) {
                     append_text(
                         "STATUS: " + menu_view.status,
-                        static_cast<float>(panel_x + 22),
-                        static_cast<float>(panel_y + 24 + row_count * (row_h + row_gap) + 10),
-                        2.2f,
+                        static_cast<float>(panel_x + layout.inner_inset),
+                        static_cast<float>(layout.status_y),
+                        layout.status_px,
                         glm::vec3(0.85f, 0.9f, 0.98f));
                 }
             } else if (gameplay_started) {
@@ -2181,7 +2234,9 @@ struct AndroidRenderer {
                 }
             }
             if (gui_menu.open()) {
-                const UiRect panel = menu_panel_rect();
+                const GuiMenuView menu_view = gui_menu.build_view(devhud, noclip, multiplayer_hint);
+                const UiMenuLayout layout = menu_layout(menu_view);
+                const UiRect panel = layout.panel;
                 const int panel_x = panel.x;
                 const int panel_y = panel.y;
                 const int panel_w = panel.w;
@@ -2190,17 +2245,14 @@ struct AndroidRenderer {
                     (x >= static_cast<float>(panel_x) && x <= static_cast<float>(panel_x + panel_w) &&
                      y >= static_cast<float>(panel_y) && y <= static_cast<float>(panel_y + panel_h));
                 if (inside_panel) {
-                    const int row_h = (gui_menu.page_id() == GuiMenu::Page::Main) ? 84 : 70;
-                    const int row_gap = 12;
-                    const int row_start_y = panel_y + 24;
-                    const int row_count = gui_menu.count();
-                    const float local_y = y - static_cast<float>(row_start_y);
+                    const int row_count = static_cast<int>(menu_view.items.size());
+                    const float local_y = y - static_cast<float>(layout.row_start_y);
                     if (local_y >= 0.0f) {
-                        const float row_span = static_cast<float>(row_h + row_gap);
+                        const float row_span = static_cast<float>(layout.row_h + layout.row_gap);
                         const int tapped_row = static_cast<int>(local_y / row_span);
                         if (tapped_row >= 0 && tapped_row < row_count) {
                             const float in_row_y = local_y - static_cast<float>(tapped_row) * row_span;
-                            if (in_row_y <= static_cast<float>(row_h)) {
+                            if (in_row_y <= static_cast<float>(layout.row_h)) {
                                 gui_menu.set_selected(tapped_row);
                                 pending_menu_select = true;
                                 return 1;

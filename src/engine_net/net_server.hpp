@@ -33,6 +33,9 @@ private:
     };
 
     int32_t chunk_key(NetChunkCoord coord) const;
+    NetSessionInfo make_session_info() const;
+    void send_session_info(_ENetPeer *peer);
+    void broadcast_session_info();
     bool should_replicate_player_state(const ClientState &observer, const ClientState &subject) const;
     void send_chunk_state(_ENetPeer *peer, ClientState &state, NetChunkCoord coord, uint32_t version);
     void simulate_client_tick(ClientState &state);

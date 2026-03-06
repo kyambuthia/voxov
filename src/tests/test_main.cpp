@@ -20,6 +20,7 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <algorithm>
 #include <vector>
 
@@ -80,6 +81,26 @@ void test_net_pod_serialization() {
     assert(std::fabs(out.x - in.x) < 0.0001f);
     assert(std::fabs(out.y - in.y) < 0.0001f);
     assert(std::fabs(out.z - in.z) < 0.0001f);
+}
+
+void test_session_info_serialization() {
+    NetSessionInfo in{};
+    net_copy_cstr(in.server_name, "VOXOV Host");
+    in.world_seed = 0x12345678u;
+    in.current_players = 3;
+    in.max_players = 32;
+    in.flags = net_session_flag(NetSessionFlags::LanAdvertised);
+
+    uint8_t buffer[sizeof(NetSessionInfo)]{};
+    assert(net_write_pod(buffer, sizeof(buffer), in));
+
+    NetSessionInfo out{};
+    assert(net_read_pod(buffer, sizeof(buffer), out));
+    assert(std::strcmp(out.server_name, "VOXOV Host") == 0);
+    assert(out.world_seed == in.world_seed);
+    assert(out.current_players == in.current_players);
+    assert(out.max_players == in.max_players);
+    assert(net_session_flag_set(out.flags, NetSessionFlags::LanAdvertised));
 }
 
 void test_net_header_validation() {
@@ -832,6 +853,7 @@ int main() {
     test_camera_vectors();
     test_camera_view_override_basis();
     test_net_pod_serialization();
+    test_session_info_serialization();
     test_net_header_validation();
     test_chunk_meshing();
     test_chunk_world_footprint();

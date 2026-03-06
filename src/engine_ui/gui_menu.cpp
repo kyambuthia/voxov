@@ -8,7 +8,7 @@ int GuiMenu::item_count() const {
     case MenuPage::Main:
         return 5;
     case MenuPage::Multiplayer:
-        return 5;
+        return 6;
     case MenuPage::Settings:
         return 4;
     case MenuPage::MultiplayerGuide:
@@ -115,10 +115,13 @@ void GuiMenu::activate_index(int index, bool devhud_enabled, bool noclip_enabled
             out_actions.close_menu = true;
             break;
         case 3:
+            out_actions.leave_session = true;
+            break;
+        case 4:
             page = MenuPage::MultiplayerGuide;
             selected_item = 0;
             break;
-        case 4:
+        case 5:
             page = MenuPage::Main;
             selected_item = 0;
             break;
@@ -222,7 +225,7 @@ void GuiMenu::set_selected(int index) {
     selected_item = std::clamp(index, 0, n - 1);
 }
 
-std::string GuiMenu::build_text(bool devhud_enabled, bool noclip_enabled, const std::string &multiplayer_hint) const {
+std::string GuiMenu::build_text(bool devhud_enabled, bool noclip_enabled, const GuiSessionContext &session) const {
     if (!is_open) {
         return std::string();
     }
@@ -242,19 +245,16 @@ std::string GuiMenu::build_text(bool devhud_enabled, bool noclip_enabled, const 
     }
 
     if (page == MenuPage::Multiplayer) {
-        std::snprintf(
-            buffer,
-            sizeof(buffer),
-            "MULTIPLAYER\n\n%s HOST THIS DEVICE\n%s HOST WI-FI GAME (INVITE)\n%s JOIN NEARBY WI-FI GAME\n%s HOW HOST/JOIN/INVITE WORKS\n%s BACK\n\nUP/DOWN + ENTER | ESC",
-            selected_item == 0 ? ">" : " ",
-            selected_item == 1 ? ">" : " ",
-            selected_item == 2 ? ">" : " ",
-            selected_item == 3 ? ">" : " ",
-            selected_item == 4 ? ">" : " ");
-        std::string out(buffer);
-        if (!multiplayer_hint.empty()) {
+        std::string out = "MULTIPLAYER\n\n";
+        for (int i = 0; i < item_count(); ++i) {
+            out += (selected_item == i ? "> " : "  ");
+            out += item_label(i, devhud_enabled, noclip_enabled, session);
+            out += "\n";
+        }
+        out += "\nUP/DOWN + ENTER | ESC";
+        if (!session.status.empty()) {
             out += "\n\nSTATUS: ";
-            out += multiplayer_hint;
+            out += session.status;
         }
         return out;
     }
@@ -265,9 +265,9 @@ std::string GuiMenu::build_text(bool devhud_enabled, bool noclip_enabled, const 
             sizeof(buffer),
             "HOST / JOIN / INVITE\n\n1. HOST WI-FI GAME to start a LAN session.\n2. Friends on same Wi-Fi tap JOIN NEARBY.\n3. INVITE TEXT: \"Open VOXOV > Multiplayer > Join Nearby\"\n4. If no host appears, ensure same Wi-Fi and retry.\n\nSELECT TO GO BACK");
         std::string out(buffer);
-        if (!multiplayer_hint.empty()) {
+        if (!session.status.empty()) {
             out += "\n\nSTATUS: ";
-            out += multiplayer_hint;
+            out += session.status;
         }
         return out;
     }
@@ -317,7 +317,7 @@ std::string GuiMenu::page_title() const {
     }
 }
 
-std::string GuiMenu::item_label(int index, bool devhud_enabled, bool noclip_enabled) const {
+std::string GuiMenu::item_label(int index, bool devhud_enabled, bool noclip_enabled, const GuiSessionContext &session) const {
     switch (page) {
     case MenuPage::Main:
         switch (index) {
@@ -330,11 +330,29 @@ std::string GuiMenu::item_label(int index, bool devhud_enabled, bool noclip_enab
         }
     case MenuPage::Multiplayer:
         switch (index) {
-        case 0: return "HOST THIS DEVICE";
-        case 1: return "HOST WI-FI GAME";
-        case 2: return "JOIN NEARBY WI-FI";
-        case 3: return "HOW HOST/JOIN WORKS";
-        case 4: return "BACK";
+        case 0: return session.hosting_local ? "HOST THIS DEVICE [ACTIVE]" : "HOST THIS DEVICE";
+        case 1: return session.hosting_lan ? "HOST WI-FI GAME [ACTIVE]" : "HOST WI-FI GAME";
+        case 2:
+            if (session.searching) {
+                return "JOIN NEARBY WI-FI [SEARCHING]";
+            }
+            if (session.connecting) {
+                return "JOIN NEARBY WI-FI [CONNECTING]";
+            }
+            if (session.connected) {
+                return "JOIN NEARBY WI-FI [CONNECTED]";
+            }
+            return "JOIN NEARBY WI-FI";
+        case 3:
+            if (session.searching || session.connecting) {
+                return "CANCEL SEARCH / CONNECT";
+            }
+            if (session.can_leave) {
+                return "LEAVE CURRENT SESSION";
+            }
+            return "CLEAR SESSION STATE";
+        case 4: return "HOW HOST/JOIN WORKS";
+        case 5: return "BACK";
         default: return std::string();
         }
     case MenuPage::Settings:
@@ -375,7 +393,7 @@ std::vector<std::string> GuiMenu::guide_lines() const {
         "4 RETRY IF HOST NOT LISTED"};
 }
 
-GuiMenuView GuiMenu::build_view(bool devhud_enabled, bool noclip_enabled, const std::string &multiplayer_hint) const {
+GuiMenuView GuiMenu::build_view(bool devhud_enabled, bool noclip_enabled, const GuiSessionContext &session) const {
     GuiMenuView view{};
     view.open = open();
     if (!view.open) {
@@ -384,11 +402,11 @@ GuiMenuView GuiMenu::build_view(bool devhud_enabled, bool noclip_enabled, const 
 
     view.selected = selected();
     view.title = page_title();
-    view.status = multiplayer_hint;
+    view.status = session.status;
     view.guide_lines = guide_lines();
     view.items.reserve(static_cast<size_t>(count()));
     for (int i = 0; i < count(); ++i) {
-        const std::string label = item_label(i, devhud_enabled, noclip_enabled);
+        const std::string label = item_label(i, devhud_enabled, noclip_enabled, session);
         if (!label.empty()) {
             view.items.push_back(label);
         }

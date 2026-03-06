@@ -47,6 +47,11 @@ struct ProtocolInfoPacket {
     NetProtocolInfo payload{};
 };
 
+struct SessionInfoPacket {
+    NetPacketHeader header{};
+    NetSessionInfo payload{};
+};
+
 struct PlayerStatePacket {
     NetPacketHeader header{};
     NetPlayerState state{};
@@ -103,6 +108,45 @@ glm::vec2 server_spawn_offset(uint32_t player_id) {
 
 int32_t NetServer::chunk_key(NetChunkCoord coord) const {
     return (static_cast<int32_t>(coord.x) << 16) ^ static_cast<uint16_t>(coord.z);
+}
+
+NetSessionInfo NetServer::make_session_info() const {
+    NetSessionInfo info{};
+    net_copy_cstr(info.server_name, local_only ? "VOXOV Local" : "VOXOV Host");
+    info.world_seed = k_voxov_flat_world_seed;
+    info.current_players = static_cast<uint16_t>(clients.size());
+    info.max_players = 32;
+    if (local_only) {
+        info.flags |= net_session_flag(NetSessionFlags::LoopbackOnly);
+    } else {
+        info.flags |= net_session_flag(NetSessionFlags::LanAdvertised);
+    }
+    return info;
+}
+
+void NetServer::send_session_info(ENetPeer *peer) {
+    if (!server || !peer) {
+        return;
+    }
+    SessionInfoPacket packet{};
+    packet.header = net_make_header(
+        NetMsgType::SessionInfo,
+        static_cast<uint16_t>(sizeof(packet.payload)),
+        next_packet_sequence++);
+    packet.payload = make_session_info();
+    ENetPacket *out = enet_packet_create(&packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE);
+    enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Reliable), out);
+    record_tx(sizeof(packet));
+}
+
+void NetServer::broadcast_session_info() {
+    if (!server || clients.empty()) {
+        return;
+    }
+    for (auto &[peer_ptr, state] : clients) {
+        (void)state;
+        send_session_info(peer_ptr);
+    }
 }
 
 bool NetServer::should_replicate_player_state(const ClientState &observer, const ClientState &subject) const {
@@ -449,6 +493,7 @@ void NetServer::pump() {
             ENetPacket *proto_packet = enet_packet_create(&proto, sizeof(proto), ENET_PACKET_FLAG_RELIABLE);
             enet_peer_send(event.peer, static_cast<uint8_t>(NetChannel::Reliable), proto_packet);
             record_tx(sizeof(proto));
+            broadcast_session_info();
             break;
         }
         case ENET_EVENT_TYPE_DISCONNECT:
@@ -457,6 +502,7 @@ void NetServer::pump() {
             if (it != clients.end()) {
                 const uint32_t removed_player_id = it->second.player_id;
                 clients.erase(it);
+                broadcast_session_info();
                 broadcast_player_remove(removed_player_id);
             }
             spdlog::info("NetServer: client disconnected, clients={}", clients.size());

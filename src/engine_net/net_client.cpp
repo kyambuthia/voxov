@@ -39,6 +39,11 @@ struct ProtocolInfoPacket {
     NetProtocolInfo payload{};
 };
 
+struct SessionInfoPacket {
+    NetPacketHeader header{};
+    NetSessionInfo payload{};
+};
+
 struct PlayerStatePacket {
     NetPacketHeader header{};
     NetPlayerState state{};
@@ -118,6 +123,7 @@ bool NetClient::init() {
         return false;
     }
     initialized = true;
+    state = NetClientConnectionState::Disconnected;
     next_packet_sequence = 1;
     debug_counters = DebugCounters{};
     refresh_debug_stats();
@@ -142,7 +148,12 @@ bool NetClient::connect(const char *host, uint16_t port) {
         return false;
     }
     connected = false;
+    state = NetClientConnectionState::Connecting;
     assigned_player_id = 0;
+    has_server_session_info = false;
+    server_session_info = NetSessionInfo{};
+    target_host = host;
+    target_port = port;
     spdlog::info("NetClient: connecting to {}:{}", host, port);
     return true;
 }
@@ -154,6 +165,16 @@ void NetClient::disconnect() {
         peer = nullptr;
     }
     connected = false;
+    state = NetClientConnectionState::Disconnected;
+    assigned_player_id = 0;
+    has_server_session_info = false;
+    server_session_info = NetSessionInfo{};
+    has_snapshot = false;
+    chunk_updates.clear();
+    replicated_players.clear();
+    replicated_player_sequences.clear();
+    target_host.clear();
+    target_port = 0;
 }
 
 void NetClient::shutdown() {
@@ -165,8 +186,13 @@ void NetClient::shutdown() {
     has_pending_interest = false;
     has_snapshot = false;
     server_protocol_info = NetProtocolInfo{};
+    has_server_session_info = false;
+    server_session_info = NetSessionInfo{};
     has_last_snapshot_sequence = false;
     last_snapshot_sequence = 0;
+    state = NetClientConnectionState::Disconnected;
+    target_host.clear();
+    target_port = 0;
     next_packet_sequence = 1;
     if (client) {
         enet_host_destroy(client);
@@ -189,6 +215,7 @@ void NetClient::pump() {
     while (enet_host_service(client, &event, 0) > 0) {
         if (event.type == ENET_EVENT_TYPE_CONNECT) {
             connected = true;
+            state = NetClientConnectionState::Connected;
             const ENetAddress &addr = event.peer->address;
             spdlog::info(
                 "NetClient: connected to {}.{}.{}.{}:{}",
@@ -215,14 +242,19 @@ void NetClient::pump() {
         if (event.type == ENET_EVENT_TYPE_DISCONNECT) {
             spdlog::warn("NetClient: disconnected from server");
             connected = false;
+            state = NetClientConnectionState::Disconnected;
             peer = nullptr;
             assigned_player_id = 0;
             replicated_players.clear();
             replicated_player_sequences.clear();
             has_snapshot = false;
             server_protocol_info = NetProtocolInfo{};
+            has_server_session_info = false;
+            server_session_info = NetSessionInfo{};
             has_last_snapshot_sequence = false;
             last_snapshot_sequence = 0;
+            target_host.clear();
+            target_port = 0;
             continue;
         }
 
@@ -291,6 +323,16 @@ void NetClient::pump() {
                             ProtocolInfoPacket packet{};
                             std::memcpy(&packet, event.packet->data, sizeof(packet));
                             server_protocol_info = packet.payload;
+                            recognized_message = true;
+                        }
+                        break;
+                    case NetMsgType::SessionInfo:
+                        if (header.payload_size == sizeof(NetSessionInfo) &&
+                            event.packet->dataLength == sizeof(SessionInfoPacket)) {
+                            SessionInfoPacket packet{};
+                            std::memcpy(&packet, event.packet->data, sizeof(packet));
+                            server_session_info = packet.payload;
+                            has_server_session_info = true;
                             recognized_message = true;
                         }
                         break;
@@ -382,12 +424,32 @@ NetProtocolInfo NetClient::protocol_info() const {
     return server_protocol_info;
 }
 
+bool NetClient::has_session_info() const {
+    return has_server_session_info;
+}
+
+NetSessionInfo NetClient::session_info() const {
+    return server_session_info;
+}
+
 bool NetClient::is_connected() const {
     return connected;
 }
 
 bool NetClient::is_initialized() const {
     return initialized && client != nullptr;
+}
+
+NetClientConnectionState NetClient::connection_state() const {
+    return state;
+}
+
+const std::string &NetClient::connect_target_host() const {
+    return target_host;
+}
+
+uint16_t NetClient::connect_target_port() const {
+    return target_port;
 }
 
 NetDebugStats NetClient::debug_stats() const {

@@ -11,12 +11,23 @@ struct GuiMenuActions {
     bool host_lan = false;
     bool join_local = false;
     bool join_nearby = false;
+    bool leave_session = false;
     bool toggle_devhud = false;
     bool toggle_noclip = false;
     bool reset_camera = false;
     bool close_menu = false;
     bool ui_move_sfx = false;
     bool ui_select_sfx = false;
+};
+
+struct GuiSessionContext {
+    bool connected = false;
+    bool connecting = false;
+    bool searching = false;
+    bool hosting_local = false;
+    bool hosting_lan = false;
+    bool can_leave = false;
+    std::string status;
 };
 
 struct GuiMenuView {
@@ -53,11 +64,21 @@ public:
     Character character() const;
     void set_character(Character character);
     void set_selected(int index);
-    std::string build_text(bool devhud_enabled, bool noclip_enabled, const std::string &multiplayer_hint = std::string()) const;
+    std::string build_text(
+        bool devhud_enabled,
+        bool noclip_enabled,
+        const GuiSessionContext &session = GuiSessionContext()) const;
     std::string page_title() const;
-    std::string item_label(int index, bool devhud_enabled, bool noclip_enabled) const;
+    std::string item_label(
+        int index,
+        bool devhud_enabled,
+        bool noclip_enabled,
+        const GuiSessionContext &session = GuiSessionContext()) const;
     std::vector<std::string> guide_lines() const;
-    GuiMenuView build_view(bool devhud_enabled, bool noclip_enabled, const std::string &multiplayer_hint = std::string()) const;
+    GuiMenuView build_view(
+        bool devhud_enabled,
+        bool noclip_enabled,
+        const GuiSessionContext &session = GuiSessionContext()) const;
 
 private:
     enum class MenuPage {

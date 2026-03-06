@@ -51,11 +51,12 @@ enum class NetMsgType : uint8_t {
     AssignPlayer = 5,
     PlayerState = 6,
     PlayerRemove = 7,
-    ProtocolInfo = 8
+    ProtocolInfo = 8,
+    SessionInfo = 9
 };
 
 constexpr uint32_t k_net_packet_magic = 0x564F5832u; // "VOX2"
-constexpr uint16_t k_net_protocol_version = 3u;
+constexpr uint16_t k_net_protocol_version = 4u;
 constexpr uint16_t k_net_max_payload_bytes = 2048u;
 
 enum class NetFeatureFlags : uint16_t {
@@ -70,6 +71,20 @@ inline uint16_t net_feature(NetFeatureFlags feature) {
 
 inline bool net_feature_set(uint16_t flags, NetFeatureFlags feature) {
     return (flags & net_feature(feature)) != 0;
+}
+
+enum class NetSessionFlags : uint8_t {
+    None = 0,
+    LoopbackOnly = 1u << 0u,
+    LanAdvertised = 1u << 1u
+};
+
+inline uint8_t net_session_flag(NetSessionFlags flag) {
+    return static_cast<uint8_t>(flag);
+}
+
+inline bool net_session_flag_set(uint8_t flags, NetSessionFlags flag) {
+    return (flags & net_session_flag(flag)) != 0;
 }
 
 #pragma pack(push, 1)
@@ -112,6 +127,15 @@ struct NetProtocolInfo {
     uint16_t feature_flags = 0;
     uint16_t server_tick_hz = 60;
     uint16_t reserved = 0;
+};
+
+struct NetSessionInfo {
+    char server_name[48]{};
+    uint64_t world_seed = 0;
+    uint16_t current_players = 0;
+    uint16_t max_players = 0;
+    uint8_t flags = 0;
+    uint8_t reserved[7]{};
 };
 
 struct NetPlayerState {
@@ -179,4 +203,13 @@ bool net_read_pod(const uint8_t *src, size_t src_size, T &out_value) {
     }
     std::memcpy(&out_value, src, sizeof(T));
     return true;
+}
+
+template <size_t N>
+void net_copy_cstr(char (&dst)[N], const char *src) {
+    std::memset(dst, 0, N);
+    if (!src || N == 0) {
+        return;
+    }
+    std::strncpy(dst, src, N - 1);
 }

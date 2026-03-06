@@ -18,6 +18,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstdint>
+#include <cstring>
 #include <filesystem>
 #include <string>
 #include <unordered_set>
@@ -147,6 +148,26 @@ glm::vec3 rotate_on_surface(const glm::vec3 &local, const SurfaceFrame &frame, f
 
 glm::vec3 player_color_from_id(uint32_t player_id) {
     return player_color_from_network_id(player_id);
+}
+
+std::string net_fixed_string(const char *data, size_t size) {
+    if (!data || size == 0) {
+        return std::string();
+    }
+    size_t len = 0;
+    while (len < size && data[len] != '\0') {
+        ++len;
+    }
+    return std::string(data, len);
+}
+
+std::string net_session_status_line(const NetSessionInfo &info) {
+    std::string name = net_fixed_string(info.server_name, sizeof(info.server_name));
+    if (name.empty()) {
+        name = "VOXOV Session";
+    }
+    const std::string mode = net_session_flag_set(info.flags, NetSessionFlags::LoopbackOnly) ? "LOCAL" : "WI-FI";
+    return name + " [" + std::to_string(info.current_players) + "/" + std::to_string(info.max_players) + "] " + mode;
 }
 
 const char *anim_state_name(PlayerAnimState state) {
@@ -463,6 +484,8 @@ void Engine::connect(const char *host, uint16_t port) {
     interest.center_z = 0;
     interest.radius = 2;
     net_client.set_chunk_interest(interest);
+    net_connect_elapsed = 0.0;
+    multiplayer_hint = std::string("Connecting to ") + (host ? host : "server") + ":" + std::to_string(port) + "...";
 }
 
 void Engine::start_local_server(uint16_t port, bool loopback_only) {
@@ -481,6 +504,29 @@ void Engine::start_local_server(uint16_t port, bool loopback_only) {
     local_server_loopback = loopback_only;
     local_server_running = true;
     spdlog::info("Started {} server on {}", loopback_only ? "local-only" : "LAN", port);
+}
+
+void Engine::stop_client_session() {
+    net_client.disconnect();
+    searching_nearby = false;
+    net_connect_elapsed = 0.0;
+    has_snapshot = false;
+    latest_snapshot = NetSnapshot{};
+    remote_players.clear();
+    remote_render_players.clear();
+    local_player.network_id = 1;
+    local_replication.network_id = 1;
+}
+
+void Engine::leave_session() {
+    stop_client_session();
+    lan_discovery.stop();
+    if (local_server_running) {
+        local_server.shutdown();
+        local_server_running = false;
+    }
+    local_server_loopback = true;
+    multiplayer_hint = "Left session.";
 }
 
 void Engine::set_input(const InputState &input_primary, const InputState &input_secondary, bool touch_mode) {
@@ -712,8 +758,12 @@ void Engine::process_menu_actions(const InputState &primary_input) {
     if (menu_actions.close_menu && !gameplay_started) {
         gameplay_started = true;
     }
+    if (menu_actions.leave_session) {
+        leave_session();
+    }
     if (menu_actions.host_local) {
         gameplay_started = true;
+        leave_session();
         start_local_server(7777, true);
         connect("127.0.0.1", 7777);
         lan_discovery.stop();
@@ -722,6 +772,7 @@ void Engine::process_menu_actions(const InputState &primary_input) {
     }
     if (menu_actions.host_lan) {
         gameplay_started = true;
+        leave_session();
         start_local_server(7777, false);
         connect("127.0.0.1", 7777);
         lan_discovery.start_host(7777, "VOXOV Host");
@@ -729,22 +780,58 @@ void Engine::process_menu_actions(const InputState &primary_input) {
         multiplayer_hint = "Hosting Wi-Fi game. Tell friends: Multiplayer > Join Nearby.";
     }
     if (menu_actions.join_local || menu_actions.join_nearby) {
+        stop_client_session();
+        if (local_server_running) {
+            local_server.shutdown();
+            local_server_running = false;
+            local_server_loopback = true;
+        }
+        lan_discovery.stop();
         lan_discovery.start_client();
         searching_nearby = true;
+        net_connect_elapsed = 0.0;
         multiplayer_hint = "Searching nearby Wi-Fi hosts...";
     }
     if (local_server_running && !local_server_loopback) {
         lan_discovery.pump();
     }
-    if (searching_nearby && !net_client.is_connected()) {
+    const NetClientConnectionState connection_state = net_client.connection_state();
+    if (connection_state == NetClientConnectionState::Connecting) {
+        net_connect_elapsed += last_frame_dt;
+        if (net_connect_elapsed >= 5.0) {
+            stop_client_session();
+            multiplayer_hint = "Connection timed out.";
+        }
+    } else {
+        net_connect_elapsed = 0.0;
+    }
+    if (connection_state != last_net_connection_state) {
+        if (connection_state == NetClientConnectionState::Connected) {
+            multiplayer_hint.clear();
+        } else if (last_net_connection_state == NetClientConnectionState::Connected &&
+                   multiplayer_hint != "Left session.") {
+            multiplayer_hint = "Disconnected from server.";
+        }
+        last_net_connection_state = connection_state;
+    }
+    if (searching_nearby && connection_state == NetClientConnectionState::Disconnected) {
         lan_discovery.pump();
         LanHostEntry host{};
         if (lan_discovery.pop_host(host)) {
-            connect(host.ip.c_str(), host.port);
-            searching_nearby = false;
-            multiplayer_hint = "Joining " + host.name + " (" + host.ip + ")";
+            if (net_client.connect(host.ip.c_str(), host.port)) {
+                NetChunkInterest interest{};
+                interest.center_x = 0;
+                interest.center_z = 0;
+                interest.radius = 2;
+                net_client.set_chunk_interest(interest);
+                searching_nearby = false;
+                net_connect_elapsed = 0.0;
+                multiplayer_hint = "Joining " + host.name + " (" + host.ip + ")";
+            } else {
+                multiplayer_hint = "Join failed. Retrying discovery...";
+            }
         }
-    } else if (searching_nearby && net_client.is_connected()) {
+    } else if (searching_nearby && connection_state == NetClientConnectionState::Connected) {
         searching_nearby = false;
     }
     if (menu_actions.toggle_devhud) {
@@ -758,6 +845,44 @@ void Engine::process_menu_actions(const InputState &primary_input) {
         local_player.camera_rig.pitch = -12.0f;
         local_player.camera_rig.distance = 5.0f;
     }
+}
+
+GuiSessionContext Engine::gui_session_context() const {
+    GuiSessionContext session{};
+    const NetClientConnectionState connection_state = net_client.connection_state();
+    session.connected = connection_state == NetClientConnectionState::Connected;
+    session.connecting = connection_state == NetClientConnectionState::Connecting;
+    session.searching = searching_nearby;
+    session.hosting_local = local_server_running && local_server_loopback;
+    session.hosting_lan = local_server_running && !local_server_loopback;
+    session.can_leave = session.connected || session.connecting || session.searching ||
+        session.hosting_local || session.hosting_lan;
+    session.status = multiplayer_status_text();
+    return session;
+}
+
+std::string Engine::multiplayer_status_text() const {
+    const NetClientConnectionState connection_state = net_client.connection_state();
+    if (connection_state == NetClientConnectionState::Connected) {
+        if (net_client.has_session_info()) {
+            return net_session_status_line(net_client.session_info());
+        }
+        return "Connected to game server.";
+    }
+    if (searching_nearby) {
+        return "Searching nearby Wi-Fi hosts...";
+    }
+    if (connection_state == NetClientConnectionState::Connecting) {
+        const std::string &target_host = net_client.connect_target_host();
+        if (!target_host.empty()) {
+            return "Connecting to " + target_host + ":" + std::to_string(net_client.connect_target_port()) + "...";
+        }
+        return "Connecting...";
+    }
+    if (local_server_running) {
+        return local_server_loopback ? "Hosting this device only." : "Hosting Wi-Fi game.";
+    }
+    return multiplayer_hint;
 }
 
 void Engine::update_remote_interpolation(double frame_dt) {
@@ -1589,7 +1714,7 @@ void Engine::refresh_overlay_text() {
 
     const bool menu_is_open = gui_menu.open();
     if (menu_is_open) {
-        const GuiMenuView menu_view = gui_menu.build_view(runtime_options.devhud, runtime_options.noclip, multiplayer_hint);
+        const GuiMenuView menu_view = gui_menu.build_view(runtime_options.devhud, runtime_options.noclip, gui_session_context());
 
         draw_panel(menu_panel, glm::vec3(0.05f, 0.07f, 0.10f), glm::vec3(0.09f, 0.11f, 0.16f));
 
@@ -1792,10 +1917,7 @@ void Engine::refresh_overlay_text() {
         }
     }
 
-    if (net_client.is_connected()) {
-        multiplayer_hint = "Connected to game server.";
-    }
-    const GuiMenuView menu_view = gui_menu.build_view(runtime_options.devhud, runtime_options.noclip, multiplayer_hint);
+    const GuiMenuView menu_view = gui_menu.build_view(runtime_options.devhud, runtime_options.noclip, gui_session_context());
     render_stats.menu_open = menu_view.open;
     render_stats.menu_selected = menu_view.selected;
     render_stats.menu_title = menu_view.title;

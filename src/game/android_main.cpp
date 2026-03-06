@@ -86,6 +86,26 @@ glm::vec3 player_color_from_id(uint32_t player_id) {
     return player_color_from_network_id(player_id);
 }
 
+std::string net_fixed_string(const char *data, size_t size) {
+    if (!data || size == 0) {
+        return std::string();
+    }
+    size_t len = 0;
+    while (len < size && data[len] != '\0') {
+        ++len;
+    }
+    return std::string(data, len);
+}
+
+std::string net_session_status_line(const NetSessionInfo &info) {
+    std::string name = net_fixed_string(info.server_name, sizeof(info.server_name));
+    if (name.empty()) {
+        name = "VOXOV Session";
+    }
+    const std::string mode = net_session_flag_set(info.flags, NetSessionFlags::LoopbackOnly) ? "LOCAL" : "WI-FI";
+    return name + " [" + std::to_string(info.current_players) + "/" + std::to_string(info.max_players) + "] " + mode;
+}
+
 GLuint compile_shader(GLenum type, const char *src) {
     GLuint shader = glCreateShader(type);
     glShaderSource(shader, 1, &src, nullptr);
@@ -635,6 +655,7 @@ struct AndroidRenderer {
     bool net_connected = false;
     bool net_connecting = false;
     double net_connect_elapsed = 0.0;
+    NetClientConnectionState last_net_connection_state = NetClientConnectionState::Disconnected;
     bool local_server_running = false;
     bool local_server_loopback = true;
     bool hosting_local = false;
@@ -1103,6 +1124,19 @@ struct AndroidRenderer {
         refresh_multicast_lock_state();
     }
 
+    void stop_session_transports() {
+        stop_client();
+        stop_local_server();
+        lan_discovery.stop();
+        searching_nearby = false;
+        refresh_multicast_lock_state();
+    }
+
+    void leave_session_secure() {
+        stop_session_transports();
+        multiplayer_hint = "Left session.";
+    }
+
     void shutdown_network() {
         stop_client();
         stop_local_server();
@@ -1145,19 +1179,16 @@ struct AndroidRenderer {
         if (!net_initialized) {
             return;
         }
-        if (!local_server_running) {
-            if (!local_server.init(kLocalPlayPort, true)) {
-                multiplayer_hint = "Failed to start local server.";
-                __android_log_print(ANDROID_LOG_ERROR, kLogTag, "Local loopback server start failed on %u", kLocalPlayPort);
-                return;
-            }
-            local_server_running = true;
-            local_server_loopback = true;
-            hosting_local = true;
-            __android_log_print(ANDROID_LOG_INFO, kLogTag, "Loopback-only local server started on %u", kLocalPlayPort);
+        stop_session_transports();
+        if (!local_server.init(kLocalPlayPort, true)) {
+            multiplayer_hint = "Failed to start local server.";
+            __android_log_print(ANDROID_LOG_ERROR, kLogTag, "Local loopback server start failed on %u", kLocalPlayPort);
+            return;
         }
-        lan_discovery.stop();
-        searching_nearby = false;
+        local_server_running = true;
+        local_server_loopback = true;
+        hosting_local = true;
+        __android_log_print(ANDROID_LOG_INFO, kLogTag, "Loopback-only local server started on %u", kLocalPlayPort);
         multiplayer_hint = "Hosting this device only.";
         refresh_multicast_lock_state();
         connect_local();
@@ -1168,18 +1199,15 @@ struct AndroidRenderer {
         if (!net_initialized) {
             return;
         }
-        if (!local_server_running || local_server_loopback) {
-            stop_local_server();
-            if (!local_server.init(kLocalPlayPort, false)) {
-                multiplayer_hint = "Failed to start Wi-Fi host.";
-                __android_log_print(ANDROID_LOG_ERROR, kLogTag, "LAN server start failed on %u", kLocalPlayPort);
-                return;
-            }
-            local_server_running = true;
-            local_server_loopback = false;
+        stop_session_transports();
+        if (!local_server.init(kLocalPlayPort, false)) {
+            multiplayer_hint = "Failed to start Wi-Fi host.";
+            __android_log_print(ANDROID_LOG_ERROR, kLogTag, "LAN server start failed on %u", kLocalPlayPort);
+            return;
         }
+        local_server_running = true;
+        local_server_loopback = false;
         lan_discovery.start_host(kLocalPlayPort, "VOXOV Host");
-        searching_nearby = false;
         multiplayer_hint = "Hosting Wi-Fi game. Friends tap Join Nearby.";
         refresh_multicast_lock_state();
         connect_local();
@@ -1190,10 +1218,49 @@ struct AndroidRenderer {
         if (!net_initialized) {
             return;
         }
+        stop_session_transports();
         lan_discovery.start_client();
         searching_nearby = true;
+        net_connect_elapsed = 0.0;
         multiplayer_hint = "Searching nearby Wi-Fi hosts...";
         refresh_multicast_lock_state();
+    }
+
+    std::string multiplayer_status_text() const {
+        const NetClientConnectionState connection_state = net_client.connection_state();
+        if (connection_state == NetClientConnectionState::Connected) {
+            if (net_client.has_session_info()) {
+                return net_session_status_line(net_client.session_info());
+            }
+            return "Connected to game server.";
+        }
+        if (searching_nearby) {
+            return "Searching nearby Wi-Fi hosts...";
+        }
+        if (connection_state == NetClientConnectionState::Connecting) {
+            const std::string &target_host = net_client.connect_target_host();
+            if (!target_host.empty()) {
+                return "Connecting to " + target_host + ":" + std::to_string(net_client.connect_target_port()) + "...";
+            }
+            return "Connecting...";
+        }
+        if (local_server_running) {
+            return local_server_loopback ? "Hosting this device only." : "Hosting Wi-Fi game.";
+        }
+        return multiplayer_hint;
+    }
+
+    GuiSessionContext session_context() const {
+        GuiSessionContext session{};
+        session.connected = net_connected;
+        session.connecting = net_connecting;
+        session.searching = searching_nearby;
+        session.hosting_local = local_server_running && local_server_loopback;
+        session.hosting_lan = local_server_running && !local_server_loopback;
+        session.can_leave = session.connected || session.connecting || session.searching ||
+            session.hosting_local || session.hosting_lan;
+        session.status = multiplayer_status_text();
+        return session;
     }
 
     void pump_network(double dt_seconds) {
@@ -1221,12 +1288,23 @@ struct AndroidRenderer {
             }
             __android_log_print(ANDROID_LOG_INFO, kLogTag, "NetClient state changed: connected=%d", net_connected ? 1 : 0);
         }
+        const NetClientConnectionState connection_state = net_client.connection_state();
+        if (connection_state != last_net_connection_state) {
+            if (connection_state == NetClientConnectionState::Connected) {
+                multiplayer_hint.clear();
+            } else if (last_net_connection_state == NetClientConnectionState::Connected &&
+                       multiplayer_hint != "Left session.") {
+                multiplayer_hint = "Disconnected from server.";
+            }
+            last_net_connection_state = connection_state;
+        }
 
         if (!net_connected && net_connecting) {
             net_connect_elapsed += dt_seconds;
             if (net_connect_elapsed >= kConnectTimeoutSeconds) {
                 __android_log_print(ANDROID_LOG_WARN, kLogTag, "NetClient connect timeout after %.2fs", net_connect_elapsed);
                 stop_client();
+                multiplayer_hint = "Connection timed out.";
             }
         }
 
@@ -1765,6 +1843,9 @@ struct AndroidRenderer {
             gameplay_started = true;
             join_nearby_secure();
         }
+        if (actions.leave_session) {
+            leave_session_secure();
+        }
         if (actions.reset_camera) {
             cam_yaw = 3.14159f;
             cam_pitch = -0.25f;
@@ -1778,7 +1859,7 @@ struct AndroidRenderer {
                                   menu_input.menu_down_pressed ||
                                   menu_input.menu_select_pressed;
         if (menu_changed) {
-            const std::string menu_text = gui_menu.build_text(devhud, noclip, multiplayer_hint);
+            const std::string menu_text = gui_menu.build_text(devhud, noclip, session_context());
             __android_log_print(
                 ANDROID_LOG_INFO,
                 kLogTag,
@@ -1975,7 +2056,7 @@ struct AndroidRenderer {
         }
 
         if (gui_menu.open()) {
-            const GuiMenuView menu_view = gui_menu.build_view(devhud, noclip, multiplayer_hint);
+            const GuiMenuView menu_view = gui_menu.build_view(devhud, noclip, session_context());
             const UiMenuLayout layout = menu_layout(menu_view);
             const UiRect panel = layout.panel;
             const int panel_x = panel.x;
@@ -2002,7 +2083,7 @@ struct AndroidRenderer {
 
         std::string ui_key;
         ui_key.reserve(256);
-        const GuiMenuView menu_view = gui_menu.build_view(devhud, noclip, multiplayer_hint);
+        const GuiMenuView menu_view = gui_menu.build_view(devhud, noclip, session_context());
         if (gui_menu.open()) {
             ui_key += "menu:";
             ui_key += std::to_string(static_cast<int>(gui_menu.page_id()));
@@ -2304,7 +2385,7 @@ struct AndroidRenderer {
                 }
             }
             if (gui_menu.open()) {
-                const GuiMenuView menu_view = gui_menu.build_view(devhud, noclip, multiplayer_hint);
+                const GuiMenuView menu_view = gui_menu.build_view(devhud, noclip, session_context());
                 const UiMenuLayout layout = menu_layout(menu_view);
                 const UiRect panel = layout.panel;
                 const int panel_x = panel.x;

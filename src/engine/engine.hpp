@@ -113,11 +113,15 @@ private:
     void update_third_person_camera(PlayerEntity &player, const glm::vec3 &render_position, Camera &out_camera);
     void sync_network_state(uint32_t sim_tick, const InputState &net_input);
     void start_local_server(uint16_t port, bool loopback_only);
+    void stop_client_session();
+    void leave_session();
     void record_prediction_history(uint32_t sim_tick, const InputState &step_input);
     void reconcile_local_player_from_snapshot(uint32_t current_sim_tick);
     void apply_runtime_toggles();
     void process_menu_actions(const InputState &primary_input);
     void update_remote_interpolation(double frame_dt);
+    GuiSessionContext gui_session_context() const;
+    std::string multiplayer_status_text() const;
 
     FixedStep fixed;
     Renderer renderer;
@@ -129,6 +133,8 @@ private:
     bool local_server_running = false;
     bool searching_nearby = false;
     std::string multiplayer_hint;
+    double net_connect_elapsed = 0.0;
+    NetClientConnectionState last_net_connection_state = NetClientConnectionState::Disconnected;
     bool gameplay_started = false;
 
     VoxelChunk world_chunk;

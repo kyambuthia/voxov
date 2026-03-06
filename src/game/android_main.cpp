@@ -558,6 +558,19 @@ struct AndroidRenderer {
         float status_px = 2.0f;
     };
 
+    struct UiTouchLayout {
+        bool tablet = false;
+        int menu_w = 112;
+        int menu_h = 56;
+        int action_w = 128;
+        int action_h = 88;
+        int action_gap = 12;
+        int menu_hit_margin = 16;
+        int action_hit_margin = 18;
+        float menu_label_px = 2.8f;
+        float action_label_px = 3.0f;
+    };
+
     EGLDisplay display = EGL_NO_DISPLAY;
     EGLSurface surface = EGL_NO_SURFACE;
     EGLContext context = EGL_NO_CONTEXT;
@@ -847,9 +860,10 @@ struct AndroidRenderer {
     }
 
     UiRect menu_button_rect() const {
+        const UiTouchLayout touch_layout_state = touch_layout();
         const UiSafeArea safe = ui_safe_area();
-        const int w = std::max(112, std::min(168, width / 6));
-        const int h = std::max(56, std::min(84, height / 11));
+        const int w = touch_layout_state.menu_w;
+        const int h = touch_layout_state.menu_h;
         return UiRect{safe.left, safe.top, w, h};
     }
 
@@ -905,23 +919,57 @@ struct AndroidRenderer {
         return layout;
     }
 
+    UiTouchLayout touch_layout() const {
+        UiTouchLayout layout{};
+        const int shortest_edge = std::max(1, std::min(width, height));
+        const int longest_edge = std::max(width, height);
+        layout.tablet = shortest_edge >= 900 || (shortest_edge >= 720 && longest_edge >= 1280);
+
+        if (layout.tablet) {
+            layout.menu_w = std::max(136, std::min(188, width / 7));
+            layout.menu_h = std::max(64, std::min(92, height / 12));
+            layout.action_w = std::max(148, std::min(230, width / 5));
+            layout.action_h = std::max(102, std::min(154, height / 6));
+            layout.action_gap = std::max(16, shortest_edge / 52);
+            layout.menu_hit_margin = std::max(18, shortest_edge / 72);
+            layout.action_hit_margin = std::max(22, shortest_edge / 56);
+            layout.menu_label_px = 3.0f;
+            layout.action_label_px = 3.3f;
+            return layout;
+        }
+
+        layout.menu_w = std::max(104, std::min(148, width / 5));
+        layout.menu_h = std::max(52, std::min(72, height / 13));
+        layout.action_w = std::max(108, std::min(178, width / 4));
+        layout.action_h = std::max(78, std::min(126, height / 7));
+        layout.action_gap = std::max(10, shortest_edge / 56);
+        layout.menu_hit_margin = std::max(14, shortest_edge / 80);
+        layout.action_hit_margin = std::max(18, shortest_edge / 62);
+        layout.menu_label_px = 2.6f;
+        layout.action_label_px = 2.9f;
+        return layout;
+    }
+
     UiRect jump_button_rect() const {
+        const UiTouchLayout touch_layout_state = touch_layout();
         const UiSafeArea safe = ui_safe_area();
-        const int w = std::max(118, std::min(206, width / 4));
-        const int h = std::max(86, std::min(144, height / 6));
+        const int w = touch_layout_state.action_w;
+        const int h = touch_layout_state.action_h;
         return UiRect{width - safe.right - w, height - safe.bottom - h, w, h};
     }
 
     UiRect sprint_button_rect() const {
+        const UiTouchLayout touch_layout_state = touch_layout();
         const UiRect jump = jump_button_rect();
-        const int gap = std::max(12, std::min(width, height) / 48);
+        const int gap = touch_layout_state.action_gap;
         const int left = std::max(ui_safe_area().left, jump.x - jump.w - gap);
         return UiRect{left, jump.y, jump.w, jump.h};
     }
 
     UiRect crouch_button_rect() const {
+        const UiTouchLayout touch_layout_state = touch_layout();
         const UiRect jump = jump_button_rect();
-        const int gap = std::max(12, std::min(width, height) / 48);
+        const int gap = touch_layout_state.action_gap;
         const int top = std::max(ui_safe_area().top, jump.y - jump.h - gap);
         return UiRect{jump.x, top, jump.w, jump.h};
     }
@@ -2040,10 +2088,11 @@ struct AndroidRenderer {
                         glm::vec3(0.85f, 0.9f, 0.98f));
                 }
             } else if (gameplay_started) {
-                append_centered(menu_button, "MENU", 2.8f, glm::vec3(0.93f, 0.95f, 0.99f));
-                append_centered(crouch_button_rect(), "CRAWL", 3.2f, glm::vec3(0.93f, 0.95f, 0.99f));
-                append_centered(jump_button_rect(), "JUMP", 3.2f, glm::vec3(0.93f, 0.95f, 0.99f));
-                append_centered(sprint_button_rect(), "SPRINT", 3.0f, glm::vec3(0.93f, 0.95f, 0.99f));
+                const UiTouchLayout touch_layout_state = touch_layout();
+                append_centered(menu_button, "MENU", touch_layout_state.menu_label_px, glm::vec3(0.93f, 0.95f, 0.99f));
+                append_centered(crouch_button_rect(), "CRAWL", touch_layout_state.action_label_px, glm::vec3(0.93f, 0.95f, 0.99f));
+                append_centered(jump_button_rect(), "JUMP", touch_layout_state.action_label_px, glm::vec3(0.93f, 0.95f, 0.99f));
+                append_centered(sprint_button_rect(), "SPRINT", touch_layout_state.action_label_px - 0.1f, glm::vec3(0.93f, 0.95f, 0.99f));
                 if (devhud) {
                     const UiRect panel = menu_panel_rect();
                     const NetDebugStats client_stats = net_client.debug_stats();
@@ -2208,7 +2257,8 @@ struct AndroidRenderer {
             const int32_t pointer_id = AMotionEvent_getPointerId(event, action_index);
             const float x = AMotionEvent_getX(event, action_index);
             const float y = AMotionEvent_getY(event, action_index);
-            if (rect_contains_margin(menu_button_rect(), x, y, 16.0f)) {
+            const UiTouchLayout touch_layout_state = touch_layout();
+            if (rect_contains_margin(menu_button_rect(), x, y, static_cast<float>(touch_layout_state.menu_hit_margin))) {
                 pending_menu_toggle = true;
                 return 1;
             }
@@ -2216,18 +2266,19 @@ struct AndroidRenderer {
                 const UiRect jump = jump_button_rect();
                 const UiRect sprint = sprint_button_rect();
                 const UiRect crouch = crouch_button_rect();
-                if (rect_contains_margin(jump, x, y, 18.0f) && touch.jump_pointer == -1) {
+                const float action_margin = static_cast<float>(touch_layout_state.action_hit_margin);
+                if (rect_contains_margin(jump, x, y, action_margin) && touch.jump_pointer == -1) {
                     touch.jump_pointer = pointer_id;
                     touch.jump_held = true;
                     touch.jump_pressed = true;
                     return 1;
                 }
-                if (rect_contains_margin(sprint, x, y, 18.0f) && touch.sprint_pointer == -1) {
+                if (rect_contains_margin(sprint, x, y, action_margin) && touch.sprint_pointer == -1) {
                     touch.sprint_pointer = pointer_id;
                     touch.sprint_held = true;
                     return 1;
                 }
-                if (rect_contains_margin(crouch, x, y, 18.0f) && touch.crouch_pointer == -1) {
+                if (rect_contains_margin(crouch, x, y, action_margin) && touch.crouch_pointer == -1) {
                     touch.crouch_pointer = pointer_id;
                     touch.crouch_held = true;
                     return 1;

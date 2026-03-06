@@ -45,6 +45,7 @@ constexpr float k_aircraft_body_height = 0.55f;
 constexpr uint32_t k_remote_interp_delay_ticks = 6;
 constexpr size_t k_remote_sample_history_max = 16;
 constexpr float k_minigame_interact_radius = 6.5f;
+constexpr float k_network_chunk_world_size = 16.0f;
 
 std::filesystem::path executable_directory() {
   namespace fs = std::filesystem;
@@ -534,6 +535,8 @@ void Engine::connect(const char *host, uint16_t port) {
   interest.center_z = 0;
   interest.radius = 2;
   net_client.set_chunk_interest(interest);
+  last_chunk_interest = interest;
+  has_last_chunk_interest = true;
   net_connect_elapsed = 0.0;
   multiplayer_hint = std::string("Connecting to ") + (host ? host : "server") +
                      ":" + std::to_string(port) + "...";
@@ -563,6 +566,7 @@ void Engine::stop_client_session() {
   net_client.disconnect();
   searching_nearby = false;
   net_connect_elapsed = 0.0;
+  has_last_chunk_interest = false;
   has_snapshot = false;
   latest_snapshot = NetSnapshot{};
   remote_players.clear();
@@ -889,6 +893,8 @@ void Engine::process_menu_actions(const InputState &primary_input) {
         interest.center_z = 0;
         interest.radius = 2;
         net_client.set_chunk_interest(interest);
+        last_chunk_interest = interest;
+        has_last_chunk_interest = true;
         searching_nearby = false;
         net_connect_elapsed = 0.0;
         multiplayer_hint = "Joining " + host.name + " (" + host.ip + ")";
@@ -1153,6 +1159,23 @@ void Engine::tick(double frame_dt) {
   render_stats.net_local_player_id = local_player.network_id;
   render_stats.net_remote_count =
       static_cast<uint32_t>(remote_render_players.size());
+
+  if (net_client.is_connected()) {
+    NetChunkInterest interest{};
+    interest.center_x = static_cast<int16_t>(std::floor(
+        local_player.transform.position.x / k_network_chunk_world_size));
+    interest.center_z = static_cast<int16_t>(std::floor(
+        local_player.transform.position.z / k_network_chunk_world_size));
+    interest.radius = 2;
+    if (!has_last_chunk_interest ||
+        interest.center_x != last_chunk_interest.center_x ||
+        interest.center_z != last_chunk_interest.center_z ||
+        interest.radius != last_chunk_interest.radius) {
+      net_client.set_chunk_interest(interest);
+      last_chunk_interest = interest;
+      has_last_chunk_interest = true;
+    }
+  }
 
   refresh_overlay_text();
   if (!runtime_options.debug_freeze || frozen_debug_world.vertices.empty()) {

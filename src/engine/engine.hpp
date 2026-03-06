@@ -174,6 +174,8 @@ private:
   bool remote_interp_tick_cursor_initialized = false;
   uint64_t last_overlay_state_hash = 0;
   bool has_overlay_state_hash = false;
+  NetChunkInterest last_chunk_interest{};
+  bool has_last_chunk_interest = false;
 
   NetSnapshot latest_snapshot{};
   bool has_snapshot = false;

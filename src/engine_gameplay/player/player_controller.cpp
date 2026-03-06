@@ -44,28 +44,17 @@ float rotate_towards_deg(float current_deg, float target_deg, float max_delta_de
     return current_deg + std::copysign(max_delta_deg, delta);
 }
 
-float move_towards(float current, float target, float max_delta) {
-    if (current < target) {
-        return std::min(current + max_delta, target);
+glm::vec3 move_towards_vec3(glm::vec3 current, glm::vec3 target, float max_delta) {
+    const glm::vec3 delta = target - current;
+    const float len = glm::length(delta);
+    if (len <= max_delta || len <= 1.0e-5f) {
+        return target;
     }
-    return std::max(current - max_delta, target);
-}
-
-glm::vec3 flat_dir_from_yaw(float yaw_deg) {
-    const float yaw_rad = to_radians(yaw_deg);
-    return glm::normalize(glm::vec3(std::sin(yaw_rad), 0.0f, std::cos(yaw_rad)));
+    return current + (delta / len) * max_delta;
 }
 
 float flat_length(glm::vec3 v) {
     return glm::length(glm::vec2(v.x, v.z));
-}
-
-glm::vec3 safe_normalize_flat(glm::vec3 v, glm::vec3 fallback) {
-    const float len = flat_length(v);
-    if (len <= 0.0001f) {
-        return fallback;
-    }
-    return glm::vec3(v.x / len, 0.0f, v.z / len);
 }
 
 int top_solid_y(const VoxelCollisionWorld &collision_world, int x, int z) {
@@ -75,6 +64,24 @@ int top_solid_y(const VoxelCollisionWorld &collision_world, int x, int z) {
         }
     }
     return -1;
+}
+
+float sample_surface_height(const VoxelCollisionWorld &collision_world, int x, int z) {
+    return static_cast<float>(top_solid_y(collision_world, x, z) + 1);
+}
+
+glm::vec3 estimate_ground_normal(const VoxelCollisionWorld &collision_world, glm::vec3 feet_position) {
+    const int x = static_cast<int>(std::floor(feet_position.x));
+    const int z = static_cast<int>(std::floor(feet_position.z));
+    const float h_l = sample_surface_height(collision_world, x - 1, z);
+    const float h_r = sample_surface_height(collision_world, x + 1, z);
+    const float h_d = sample_surface_height(collision_world, x, z - 1);
+    const float h_u = sample_surface_height(collision_world, x, z + 1);
+    glm::vec3 normal(h_l - h_r, 2.0f, h_d - h_u);
+    if (glm::length(normal) <= 1.0e-5f) {
+        return glm::vec3(0.0f, 1.0f, 0.0f);
+    }
+    return glm::normalize(normal);
 }
 
 bool has_flat_patch(const VoxelCollisionWorld &collision_world, int cx, int cz, int expected_top_y) {
@@ -134,175 +141,11 @@ glm::vec2 find_flat_spawn_xz(const VoxelCollisionWorld &collision_world, glm::ve
     return best;
 }
 
-float jump_velocity_for_height(const SkateTuningData &tuning) {
-    return std::sqrt(std::max(0.01f, 2.0f * tuning.gravity * tuning.ollie_height));
-}
-
-struct RailCandidate {
-    bool valid = false;
-    glm::vec3 anchor = glm::vec3(0.0f);
-    glm::vec3 axis = glm::vec3(0.0f, 0.0f, 1.0f);
-    float score = std::numeric_limits<float>::max();
-};
-
-bool top_open(const VoxelCollisionWorld &collision_world, int x, int y, int z) {
-    return !collision_world.is_solid_voxel(x, y + 1, z);
-}
-
-void consider_rail_candidate(
-    RailCandidate &best,
-    const VoxelCollisionWorld &collision_world,
-    glm::vec3 feet_position,
-    glm::vec3 preferred_axis,
-    int x,
-    int z,
-    bool along_x) {
-    const int y = top_solid_y(collision_world, x, z);
-    if (y < 0 || !top_open(collision_world, x, y, z)) {
-        return;
+void set_locomotion_state(PlayerEntity &player, PlayerLocomotionState next_state) {
+    if (player.locomotion.state != next_state) {
+        player.locomotion.state = next_state;
+        player.locomotion.state_timer = 0.0f;
     }
-
-    const int nx0 = along_x ? (x - 1) : x;
-    const int nz0 = along_x ? z : (z - 1);
-    const int nx1 = along_x ? (x + 1) : x;
-    const int nz1 = along_x ? z : (z + 1);
-    const int sx0 = along_x ? x : (x - 1);
-    const int sz0 = along_x ? (z - 1) : z;
-    const int sx1 = along_x ? x : (x + 1);
-    const int sz1 = along_x ? (z + 1) : z;
-
-    const int top0 = top_solid_y(collision_world, nx0, nz0);
-    const int top1 = top_solid_y(collision_world, nx1, nz1);
-    const bool connected = (top0 == y && top_open(collision_world, nx0, y, nz0)) ||
-                           (top1 == y && top_open(collision_world, nx1, y, nz1));
-    if (!connected) {
-        return;
-    }
-
-    const bool side_a_open = top_solid_y(collision_world, sx0, sz0) < y;
-    const bool side_b_open = top_solid_y(collision_world, sx1, sz1) < y;
-    if (!side_a_open && !side_b_open) {
-        return;
-    }
-
-    RailCandidate candidate{};
-    candidate.valid = true;
-    candidate.axis = along_x ? glm::vec3(1.0f, 0.0f, 0.0f) : glm::vec3(0.0f, 0.0f, 1.0f);
-    if (glm::dot(candidate.axis, preferred_axis) < 0.0f) {
-        candidate.axis *= -1.0f;
-    }
-    candidate.anchor = glm::vec3(
-        along_x ? feet_position.x : (static_cast<float>(x) + 0.5f),
-        static_cast<float>(y) + 1.02f,
-        along_x ? (static_cast<float>(z) + 0.5f) : feet_position.z);
-
-    const glm::vec3 snap_point(
-        along_x ? feet_position.x : candidate.anchor.x,
-        candidate.anchor.y,
-        along_x ? candidate.anchor.z : feet_position.z);
-    const float lateral_dist = glm::length(glm::vec2(snap_point.x - feet_position.x, snap_point.z - feet_position.z));
-    const float vertical_dist = std::fabs(candidate.anchor.y - feet_position.y);
-    const float alignment_bonus = 1.0f - std::clamp(std::fabs(glm::dot(glm::normalize(candidate.axis), glm::normalize(preferred_axis))), 0.0f, 1.0f);
-    candidate.score = lateral_dist + vertical_dist * 1.6f + alignment_bonus * 0.2f;
-
-    if (candidate.score < best.score) {
-        best = candidate;
-    }
-}
-
-RailCandidate find_best_rail_candidate(
-    const VoxelCollisionWorld &collision_world,
-    glm::vec3 feet_position,
-    glm::vec3 preferred_axis,
-    float snap_distance) {
-    RailCandidate best{};
-    const int min_x = std::max(1, static_cast<int>(std::floor(feet_position.x - snap_distance - 1.0f)));
-    const int max_x = std::min(VoxelChunk::CHUNK_X - 2, static_cast<int>(std::floor(feet_position.x + snap_distance + 1.0f)));
-    const int min_z = std::max(1, static_cast<int>(std::floor(feet_position.z - snap_distance - 1.0f)));
-    const int max_z = std::min(VoxelChunk::CHUNK_Z - 2, static_cast<int>(std::floor(feet_position.z + snap_distance + 1.0f)));
-    const glm::vec3 fallback_axis = safe_normalize_flat(preferred_axis, glm::vec3(0.0f, 0.0f, 1.0f));
-
-    for (int z = min_z; z <= max_z; ++z) {
-        for (int x = min_x; x <= max_x; ++x) {
-            consider_rail_candidate(best, collision_world, feet_position, fallback_axis, x, z, true);
-            consider_rail_candidate(best, collision_world, feet_position, fallback_axis, x, z, false);
-        }
-    }
-
-    if (!best.valid) {
-        return best;
-    }
-
-    const float lateral_dist = glm::length(glm::vec2(best.anchor.x - feet_position.x, best.anchor.z - feet_position.z));
-    const float vertical_dist = std::fabs(best.anchor.y - feet_position.y);
-    if (lateral_dist > snap_distance || vertical_dist > snap_distance * 0.7f) {
-        return RailCandidate{};
-    }
-    return best;
-}
-
-void set_movement_state(PlayerEntity &player, PlayerMovementState state, float timer = 0.0f) {
-    if (player.movement.state != state) {
-        player.movement.state = state;
-        player.movement.state_timer = timer;
-    } else {
-        player.movement.state_timer = std::max(player.movement.state_timer, timer);
-    }
-}
-
-void set_trick_state(PlayerEntity &player, PlayerTrickState state) {
-    if (player.trick.state != state) {
-        player.trick.state = state;
-        player.trick.state_timer = 0.0f;
-    }
-}
-
-void add_combo_score(PlayerEntity &player, int base_points) {
-    player.score.combo_active = true;
-    player.score.combo_timer = player.skate_tuning.combo_timeout;
-    player.score.combo_score += base_points * std::max(1, player.score.combo_multiplier);
-}
-
-void begin_combo_trick(PlayerEntity &player, PlayerTrickState trick_state, int base_points) {
-    if (player.trick.state != trick_state) {
-        player.trick.chain_count += 1;
-        player.score.combo_count += 1;
-        player.score.combo_multiplier = std::max(1, static_cast<int32_t>(player.score.combo_count));
-        set_trick_state(player, trick_state);
-        add_combo_score(player, base_points);
-    }
-}
-
-void reset_combo(PlayerEntity &player) {
-    player.score.combo_score = 0;
-    player.score.combo_multiplier = 1;
-    player.score.combo_count = 0;
-    player.score.combo_timer = 0.0f;
-    player.score.combo_active = false;
-}
-
-void bank_combo_if_ready(PlayerEntity &player) {
-    if (player.score.combo_active &&
-        player.score.combo_timer <= 0.0f &&
-        player.movement.state != PlayerMovementState::Airborne &&
-        player.movement.state != PlayerMovementState::ManualBalance &&
-        player.movement.state != PlayerMovementState::GrindBalance) {
-        player.score.total_score += player.score.combo_score;
-        reset_combo(player);
-        if (player.trick.state == PlayerTrickState::Landed) {
-            set_trick_state(player, PlayerTrickState::None);
-            player.trick.chain_count = 0;
-        }
-    }
-}
-
-void enter_bail(PlayerEntity &player) {
-    set_movement_state(player, PlayerMovementState::Bail, player.skate_tuning.bail_duration);
-    player.movement.balance = 0.0f;
-    player.movement.balance_impulse = 0.0f;
-    set_trick_state(player, PlayerTrickState::Bail);
-    player.trick.chain_count = 0;
-    reset_combo(player);
 }
 
 CapsuleResolveResult simulate_capsule(
@@ -310,8 +153,9 @@ CapsuleResolveResult simulate_capsule(
     const VoxelCollisionWorld &collision_world,
     glm::vec3 desired_flat_velocity,
     float dt) {
+    const LocomotionTuningData &tuning = player.locomotion_tuning;
     glm::vec3 next_pos = player.transform.position + desired_flat_velocity * dt;
-    next_pos.y += player.movement.vertical_velocity * dt;
+    next_pos.y += player.locomotion.vertical_velocity * dt;
 
     CapsuleResolveResult resolve = collision_world.resolve_capsule(
         next_pos,
@@ -322,9 +166,17 @@ CapsuleResolveResult simulate_capsule(
         1.2f);
 
     if (player.controller.grounded && flat_length(desired_flat_velocity) > 0.001f && resolve.had_collision) {
-        const float step_height = 0.65f;
-        glm::vec3 step_test = player.transform.position + desired_flat_velocity * dt;
-        step_test.y += step_height;
+        glm::vec3 step_lift = player.transform.position;
+        step_lift.y += tuning.step_offset;
+        CapsuleResolveResult step_lift_resolve = collision_world.resolve_capsule(
+            step_lift,
+            player.controller.capsuleRadius,
+            player.controller.capsuleHeight,
+            0.02f,
+            8,
+            1.2f);
+
+        glm::vec3 step_test = step_lift_resolve.position + desired_flat_velocity * dt;
 
         CapsuleResolveResult step_resolve = collision_world.resolve_capsule(
             step_test,
@@ -336,7 +188,7 @@ CapsuleResolveResult simulate_capsule(
 
         float step_hit_distance = 0.0f;
         const glm::vec3 step_origin = step_resolve.position + glm::vec3(0.0f, 0.12f, 0.0f);
-        if (collision_world.raycast(step_origin, glm::vec3(0.0f, -1.0f, 0.0f), step_height + 0.25f, step_hit_distance)) {
+        if (collision_world.raycast(step_origin, glm::vec3(0.0f, -1.0f, 0.0f), tuning.step_offset + 0.25f, step_hit_distance)) {
             step_resolve.position.y = step_origin.y - step_hit_distance + 0.02f;
             step_resolve.grounded = true;
         }
@@ -347,7 +199,9 @@ CapsuleResolveResult simulate_capsule(
         const float step_progress = glm::length(glm::vec2(
             step_resolve.position.x - player.transform.position.x,
             step_resolve.position.z - player.transform.position.z));
-        if (step_progress > base_progress + 0.01f) {
+        const float step_height_gain = step_resolve.position.y - player.transform.position.y;
+        if (step_progress > base_progress + 0.01f ||
+            (step_height_gain > 0.05f && step_progress > 0.01f)) {
             resolve = step_resolve;
         }
     }
@@ -355,111 +209,87 @@ CapsuleResolveResult simulate_capsule(
     return resolve;
 }
 
-PlayerAnimState map_animation_state(const PlayerEntity &player, const InputState &input, bool noclip, bool landed_this_frame) {
-    const float horizontal_speed = player.movement.forward_speed;
-    const bool moving = horizontal_speed > 0.2f || glm::length(input.move) > 0.12f;
+PlayerAnimState map_animation_state(const PlayerEntity &player, const InputState &input, bool grounded_last_frame) {
+    (void)grounded_last_frame;
+    const PlayerLocomotionState state = player.locomotion.state;
+    const float yaw_delta = player.locomotion.turn_delta_deg;
 
-    if (noclip) {
-        return moving ? PlayerAnimState::Cruise : PlayerAnimState::Idle;
-    }
-
-    if (player.anim_land_lock > 0.0f && player.controller.grounded) {
-        return PlayerAnimState::Land;
-    }
-    if (player.anim_ollie_lock > 0.0f) {
-        if (player.trick.state == PlayerTrickState::Kickflip) {
-            return PlayerAnimState::Kickflip;
+    switch (state) {
+    case PlayerLocomotionState::StartMove:
+        return PlayerAnimState::StartMove;
+    case PlayerLocomotionState::StopMove:
+        return PlayerAnimState::StopMove;
+    case PlayerLocomotionState::Walk:
+        return std::fabs(yaw_delta) > player.locomotion_tuning.moving_turn_threshold_deg
+            ? PlayerAnimState::MovingTurn
+            : PlayerAnimState::LocomotionWalk;
+    case PlayerLocomotionState::Run:
+        return std::fabs(yaw_delta) > player.locomotion_tuning.moving_turn_threshold_deg
+            ? PlayerAnimState::MovingTurn
+            : PlayerAnimState::LocomotionRun;
+    case PlayerLocomotionState::JumpStart:
+        return PlayerAnimState::JumpTakeoff;
+    case PlayerLocomotionState::AirborneRise:
+        return PlayerAnimState::JumpLoop;
+    case PlayerLocomotionState::AirborneFall:
+        return PlayerAnimState::FallLoop;
+    case PlayerLocomotionState::LandSoft:
+        return PlayerAnimState::LandSoft;
+    case PlayerLocomotionState::LandHard:
+        return PlayerAnimState::LandHard;
+    case PlayerLocomotionState::TurnInPlace:
+        return yaw_delta < 0.0f ? PlayerAnimState::TurnInPlaceLeft : PlayerAnimState::TurnInPlaceRight;
+    case PlayerLocomotionState::MovingTurn:
+        if (flat_length(player.locomotion.planar_velocity) < player.locomotion_tuning.walk_speed * 0.45f) {
+            return yaw_delta < 0.0f ? PlayerAnimState::PivotLeft : PlayerAnimState::PivotRight;
         }
-        if (player.trick.state == PlayerTrickState::ShoveIt) {
-            return PlayerAnimState::ShoveIt;
-        }
-        return PlayerAnimState::Ollie;
-    }
-
-    switch (player.movement.state) {
-    case PlayerMovementState::Bail:
-        return PlayerAnimState::Bail;
-    case PlayerMovementState::Recovery:
-        return landed_this_frame ? PlayerAnimState::Land : PlayerAnimState::Idle;
-    case PlayerMovementState::GrindBalance:
-        return player.movement.state_timer > 0.08f ? PlayerAnimState::GrindEnter : PlayerAnimState::GrindLoop;
-    case PlayerMovementState::ManualBalance:
-        return PlayerAnimState::Manual;
-    case PlayerMovementState::Airborne:
-        if (player.trick.state == PlayerTrickState::Kickflip) {
-            return PlayerAnimState::Kickflip;
-        }
-        if (player.trick.state == PlayerTrickState::ShoveIt) {
-            return PlayerAnimState::ShoveIt;
-        }
-        return player.trick.state == PlayerTrickState::Ollie ? PlayerAnimState::Ollie : PlayerAnimState::Airborne;
-    case PlayerMovementState::GroundSkating:
+        return PlayerAnimState::MovingTurn;
+    case PlayerLocomotionState::Slide:
+    case PlayerLocomotionState::Recovery:
+        return PlayerAnimState::Recovery;
+    case PlayerLocomotionState::Idle:
     default:
-        if (landed_this_frame) {
-            return PlayerAnimState::Land;
-        }
-        if (moving) {
-            const float turn_input = input.move.x;
-            if (input.sprint_held || horizontal_speed > player.skate_tuning.max_ground_speed * 0.82f) {
-                return PlayerAnimState::Push;
-            }
-            if (turn_input < -0.4f) {
-                return PlayerAnimState::TurnLeft;
-            }
-            if (turn_input > 0.4f) {
-                return PlayerAnimState::TurnRight;
-            }
-            return PlayerAnimState::Cruise;
+        if (std::fabs(yaw_delta) > player.locomotion_tuning.pivot_threshold_deg && std::fabs(input.look_delta.x) > 0.01f) {
+            return yaw_delta < 0.0f ? PlayerAnimState::TurnInPlaceLeft : PlayerAnimState::TurnInPlaceRight;
         }
         return PlayerAnimState::Idle;
     }
 }
 }
 
-const char *player_movement_state_name(PlayerMovementState state) {
+const char *player_locomotion_state_name(PlayerLocomotionState state) {
     switch (state) {
-    case PlayerMovementState::GroundSkating:
-        return "GROUND";
-    case PlayerMovementState::Airborne:
-        return "AIR";
-    case PlayerMovementState::ManualBalance:
-        return "MANUAL";
-    case PlayerMovementState::GrindBalance:
-        return "GRIND";
-    case PlayerMovementState::Bail:
-        return "BAIL";
-    case PlayerMovementState::Recovery:
-        return "RECOVER";
+    case PlayerLocomotionState::Idle:
+        return "IDLE";
+    case PlayerLocomotionState::StartMove:
+        return "START_MOVE";
+    case PlayerLocomotionState::Walk:
+        return "WALK";
+    case PlayerLocomotionState::Run:
+        return "RUN";
+    case PlayerLocomotionState::StopMove:
+        return "STOP_MOVE";
+    case PlayerLocomotionState::JumpStart:
+        return "JUMP_START";
+    case PlayerLocomotionState::AirborneRise:
+        return "AIR_RISE";
+    case PlayerLocomotionState::AirborneFall:
+        return "AIR_FALL";
+    case PlayerLocomotionState::LandSoft:
+        return "LAND_SOFT";
+    case PlayerLocomotionState::LandHard:
+        return "LAND_HARD";
+    case PlayerLocomotionState::TurnInPlace:
+        return "TURN_IN_PLACE";
+    case PlayerLocomotionState::MovingTurn:
+        return "MOVING_TURN";
+    case PlayerLocomotionState::Slide:
+        return "SLIDE";
+    case PlayerLocomotionState::Recovery:
+        return "RECOVERY";
     default:
         return "UNK";
     }
-}
-
-const char *player_trick_state_name(PlayerTrickState state) {
-    switch (state) {
-    case PlayerTrickState::None:
-        return "NONE";
-    case PlayerTrickState::Ollie:
-        return "OLLIE";
-    case PlayerTrickState::Kickflip:
-        return "KICKFLIP";
-    case PlayerTrickState::ShoveIt:
-        return "SHOVE_IT";
-    case PlayerTrickState::Manual:
-        return "MANUAL";
-    case PlayerTrickState::Grind:
-        return "GRIND";
-    case PlayerTrickState::Bail:
-        return "BAIL";
-    case PlayerTrickState::Landed:
-        return "LANDED";
-    default:
-        return "UNK";
-    }
-}
-
-const char *player_trick_note() {
-    return "placeholder flip/spin buckets; no stance-specific parser yet";
 }
 
 float player_anim_cycle_rate(PlayerAnimState state) {
@@ -488,9 +318,9 @@ PlayerEntity PlayerControllerSystem::spawn_player(const VoxelCollisionWorld &col
         player.controller.capsuleRadius,
         player.controller.capsuleHeight);
     player.transform.position.y += 0.05f;
-    player.movement.facing_yaw_deg = player.camera_rig.yaw;
-    player.movement.desired_yaw_deg = player.camera_rig.yaw;
-    player.transform.rotation = glm::angleAxis(to_radians(player.movement.facing_yaw_deg), glm::vec3(0.0f, 1.0f, 0.0f));
+    player.locomotion.facing_yaw_deg = player.camera_rig.yaw;
+    player.locomotion.desired_yaw_deg = player.camera_rig.yaw;
+    player.transform.rotation = glm::angleAxis(to_radians(player.locomotion.facing_yaw_deg), glm::vec3(0.0f, 1.0f, 0.0f));
     player.animation.state = player.anim_state;
     return player;
 }
@@ -532,292 +362,199 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
     float dt,
     bool noclip) {
     PlayerCollisionDebug debug{};
-    const SkateTuningData &tuning = player.skate_tuning;
+    LocomotionTuningData &tuning = player.locomotion_tuning;
+    PlayerLocomotionStateData &motion = player.locomotion;
     const MovementDebug movement_debug = compute_movement_vectors(player.camera_rig.yaw, input.move);
     glm::vec3 desired_move = movement_debug.desired;
-    const bool has_move_input = glm::length(desired_move) > 0.08f;
+    const float input_len = glm::length(glm::vec2(input.move.x, input.move.y));
+    motion.input_magnitude = std::clamp(input_len, 0.0f, 1.0f);
+    const bool has_move_input = motion.input_magnitude > tuning.input_deadzone;
     if (has_move_input) {
         desired_move = glm::normalize(desired_move);
-        player.movement.desired_yaw_deg = to_degrees(std::atan2(desired_move.x, desired_move.z));
+        motion.desired_yaw_deg = to_degrees(std::atan2(desired_move.x, desired_move.z));
+    }
+    motion.turn_delta_deg = angle_delta_deg(motion.facing_yaw_deg, has_move_input ? motion.desired_yaw_deg : player.camera_rig.yaw);
+
+    if (input.jump_pressed) {
+        motion.jump_buffer_timer = tuning.jump_buffer_time;
+    } else {
+        motion.jump_buffer_timer = std::max(0.0f, motion.jump_buffer_timer - dt);
     }
 
-    player.movement.just_landed = false;
-    player.movement.state_timer = std::max(0.0f, player.movement.state_timer - dt);
-    player.movement.rail_lock_timer = std::max(0.0f, player.movement.rail_lock_timer - dt);
-    player.trick.state_timer += dt;
-
-    if (player.score.combo_active) {
-        const bool chain_live =
-            player.movement.state == PlayerMovementState::Airborne ||
-            player.movement.state == PlayerMovementState::ManualBalance ||
-            player.movement.state == PlayerMovementState::GrindBalance;
-        if (chain_live) {
-            player.score.combo_timer = tuning.combo_timeout;
-        } else {
-            player.score.combo_timer = std::max(0.0f, player.score.combo_timer - dt);
-        }
-    }
+    motion.just_landed = false;
+    motion.state_timer += dt;
+    motion.landing_impact = 0.0f;
 
     const bool was_grounded = player.controller.grounded;
     if (was_grounded) {
-        player.movement.coyote_timer = tuning.coyote_time;
+        motion.coyote_timer = tuning.coyote_time;
     } else {
-        player.movement.coyote_timer = std::max(0.0f, player.movement.coyote_timer - dt);
+        motion.coyote_timer = std::max(0.0f, motion.coyote_timer - dt);
     }
 
     if (noclip) {
-        const float noclip_speed = tuning.max_ground_speed + (input.sprint_held ? tuning.push_speed_bonus : 0.0f);
+        const float noclip_speed = input.sprint_held ? tuning.run_speed : tuning.walk_speed;
         player.transform.position += (has_move_input ? desired_move : glm::vec3(0.0f)) * noclip_speed * dt;
         if (input.jump_held) {
             player.transform.position.y += noclip_speed * dt;
         }
         player.controller.grounded = false;
         player.controller.velocity = glm::vec3(0.0f);
-        set_movement_state(player, PlayerMovementState::Airborne);
+        motion.planar_velocity = glm::vec3(0.0f);
+        motion.move_speed = 0.0f;
+        set_locomotion_state(player, PlayerLocomotionState::AirborneFall);
         update_animation_state(player, input, dt, noclip, was_grounded);
-        bank_combo_if_ready(player);
         return debug;
     }
 
-    const float push_target_speed =
-        std::max(0.0f, input.move.y) * (tuning.max_ground_speed + (input.sprint_held ? tuning.push_speed_bonus : 0.0f));
-    const float facing_turn_rate =
-        (player.movement.state == PlayerMovementState::Airborne) ? tuning.air_turn_rate : tuning.turn_rate;
-
-    if (player.movement.state != PlayerMovementState::GrindBalance && has_move_input) {
-        player.movement.facing_yaw_deg = rotate_towards_deg(
-            player.movement.facing_yaw_deg,
-            player.movement.desired_yaw_deg,
+    const bool run_intent = input.sprint_held;
+    const float desired_speed = has_move_input ? (run_intent ? tuning.run_speed : tuning.walk_speed) * motion.input_magnitude : 0.0f;
+    const glm::vec3 desired_planar_velocity = has_move_input ? desired_move * desired_speed : glm::vec3(0.0f);
+    const float facing_turn_rate = was_grounded ? tuning.turn_rate : tuning.turn_rate * 0.75f;
+    if (has_move_input) {
+        motion.facing_yaw_deg = rotate_towards_deg(
+            motion.facing_yaw_deg,
+            motion.desired_yaw_deg,
             facing_turn_rate * dt);
+    } else if (was_grounded && std::fabs(angle_delta_deg(motion.facing_yaw_deg, player.camera_rig.yaw)) > tuning.pivot_threshold_deg) {
+        motion.facing_yaw_deg = rotate_towards_deg(motion.facing_yaw_deg, player.camera_rig.yaw, tuning.turn_rate * 0.55f * dt);
     }
+    motion.turn_delta_deg = angle_delta_deg(motion.facing_yaw_deg, has_move_input ? motion.desired_yaw_deg : player.camera_rig.yaw);
 
-    if (player.movement.state == PlayerMovementState::Bail) {
-        player.movement.forward_speed = move_towards(player.movement.forward_speed, 0.0f, tuning.braking * 0.6f * dt);
-        player.movement.vertical_velocity -= tuning.gravity * dt;
-    } else if (player.movement.state == PlayerMovementState::Recovery) {
-        player.movement.forward_speed = move_towards(player.movement.forward_speed, 0.0f, tuning.braking * dt);
-        if (!player.controller.grounded) {
-            player.movement.vertical_velocity -= tuning.gravity * dt;
-        }
-    } else if (player.movement.state == PlayerMovementState::GrindBalance) {
-        player.movement.forward_speed = std::max(player.movement.forward_speed, tuning.grind_min_speed);
-        player.movement.balance +=
-            (std::sin((player.trick.state_timer + static_cast<float>(player.network_id)) * 2.4f) * tuning.grind_balance_drift -
-             input.move.x * tuning.balance_input_gain) *
-            dt;
-        player.movement.balance = std::clamp(player.movement.balance, -1.4f, 1.4f);
-        if (std::fabs(player.movement.balance) >= 1.0f) {
-            enter_bail(player);
-        }
+    if (was_grounded) {
+        const float accel = has_move_input ? tuning.ground_accel : tuning.ground_decel;
+        motion.planar_velocity = move_towards_vec3(motion.planar_velocity, desired_planar_velocity, accel * dt);
     } else {
-        if (player.movement.state == PlayerMovementState::Airborne) {
-            const float air_target = std::max(player.movement.forward_speed, push_target_speed * 0.9f);
-            player.movement.forward_speed = move_towards(player.movement.forward_speed, air_target, tuning.air_control * dt);
-            player.movement.vertical_velocity -= tuning.gravity * dt;
-        } else {
-            float target_speed = push_target_speed;
-            float speed_rate = (target_speed > player.movement.forward_speed) ? tuning.accel : tuning.braking;
-            if (input.move.y < -0.05f) {
-                target_speed = 0.0f;
-                speed_rate = tuning.braking * (1.0f + std::fabs(input.move.y));
-            }
-            player.movement.forward_speed = move_towards(player.movement.forward_speed, target_speed, speed_rate * dt);
-        }
-
-        const bool can_manual =
-            input.crouch_held &&
-            player.controller.grounded &&
-            player.movement.forward_speed >= tuning.manual_min_speed &&
-            player.movement.state != PlayerMovementState::Airborne;
-        if (can_manual) {
-            if (player.movement.state != PlayerMovementState::ManualBalance) {
-                set_movement_state(player, PlayerMovementState::ManualBalance);
-                player.movement.balance = 0.0f;
-                begin_combo_trick(player, PlayerTrickState::Manual, 150);
-            }
-            player.movement.balance +=
-                (std::sin((player.trick.state_timer + static_cast<float>(player.network_id)) * 1.8f) * tuning.manual_balance_drift -
-                 input.move.x * tuning.balance_input_gain) *
-                dt;
-            player.movement.balance = std::clamp(player.movement.balance, -1.4f, 1.4f);
-            if (std::fabs(player.movement.balance) >= 1.0f) {
-                enter_bail(player);
-            }
-        } else if (player.movement.state == PlayerMovementState::ManualBalance) {
-            set_movement_state(player, PlayerMovementState::GroundSkating);
-            player.movement.balance = 0.0f;
-            set_trick_state(player, PlayerTrickState::Landed);
-        } else if (player.movement.state != PlayerMovementState::Airborne) {
-            set_movement_state(player, PlayerMovementState::GroundSkating);
+        motion.planar_velocity = move_towards_vec3(motion.planar_velocity, desired_planar_velocity, tuning.air_accel * dt);
+        motion.vertical_velocity -= tuning.gravity * (motion.vertical_velocity < 0.0f ? tuning.fall_multiplier : 1.0f) * dt;
+        if (!input.jump_held && motion.vertical_velocity > 0.0f) {
+            motion.vertical_velocity -= tuning.gravity * (tuning.jump_cut_gravity_multiplier - 1.0f) * dt;
+            motion.jump_cut_applied = true;
         }
     }
 
-    const bool wants_jump = input.jump_pressed;
-    const bool can_ground_jump =
-        player.movement.state != PlayerMovementState::Bail &&
-        player.movement.state != PlayerMovementState::Recovery &&
-        (player.controller.grounded || player.movement.coyote_timer > 0.0f);
-    if (wants_jump && can_ground_jump) {
-        set_movement_state(player, PlayerMovementState::Airborne);
-        player.movement.vertical_velocity = jump_velocity_for_height(tuning);
+    const bool can_jump =
+        motion.jump_buffer_timer > 0.0f &&
+        (was_grounded || motion.coyote_timer > 0.0f) &&
+        motion.state != PlayerLocomotionState::Recovery;
+    if (can_jump) {
+        motion.jump_buffer_timer = 0.0f;
+        motion.coyote_timer = 0.0f;
+        motion.vertical_velocity = tuning.jump_velocity;
+        motion.jump_cut_applied = false;
+        set_locomotion_state(player, PlayerLocomotionState::JumpStart);
         player.controller.grounded = false;
-        player.movement.coyote_timer = 0.0f;
-        player.anim_ollie_lock = 0.16f;
-        begin_combo_trick(player, PlayerTrickState::Ollie, 100);
-    } else if (wants_jump && player.movement.state == PlayerMovementState::GrindBalance) {
-        set_movement_state(player, PlayerMovementState::Airborne);
-        player.movement.vertical_velocity = jump_velocity_for_height(tuning) * 0.95f;
-        player.movement.rail_lock_timer = 0.0f;
-        player.anim_ollie_lock = 0.16f;
-        begin_combo_trick(player, PlayerTrickState::Ollie, 90);
     }
 
-    if (player.movement.state == PlayerMovementState::GrindBalance) {
-        player.transform.position += player.movement.rail_axis * player.movement.forward_speed * dt;
-        player.transform.position.y = player.movement.rail_anchor.y;
-        const RailCandidate rail = find_best_rail_candidate(
-            collision_world,
-            player.transform.position,
-            player.movement.rail_axis,
-            tuning.rail_snap_distance * 1.2f);
-        if (rail.valid) {
-            player.movement.rail_axis = rail.axis;
-            player.movement.rail_anchor = rail.anchor;
-            if (std::fabs(rail.axis.x) > 0.5f) {
-                player.transform.position.z = rail.anchor.z;
-            } else {
-                player.transform.position.x = rail.anchor.x;
-            }
-            player.transform.position.y = rail.anchor.y;
-        } else if (player.movement.rail_lock_timer <= 0.0f) {
-            set_movement_state(player, PlayerMovementState::Airborne);
-        }
-
-        player.controller.velocity = player.movement.rail_axis * player.movement.forward_speed;
-        player.controller.grounded = false;
-        player.transform.rotation = glm::angleAxis(
-            std::atan2(player.movement.rail_axis.x, player.movement.rail_axis.z),
-            glm::vec3(0.0f, 1.0f, 0.0f));
-        update_animation_state(player, input, dt, noclip, was_grounded);
-        bank_combo_if_ready(player);
-        return debug;
-    }
-
-    const glm::vec3 flat_forward = flat_dir_from_yaw(player.movement.facing_yaw_deg);
-    const glm::vec3 desired_flat_velocity = flat_forward * player.movement.forward_speed;
-    const float pre_solve_vertical_velocity = player.movement.vertical_velocity;
     const glm::vec3 start_position = player.transform.position;
-    CapsuleResolveResult resolve = simulate_capsule(player, collision_world, desired_flat_velocity, dt);
-
+    const float pre_solve_vertical = motion.vertical_velocity;
+    CapsuleResolveResult resolve = simulate_capsule(player, collision_world, motion.planar_velocity, dt);
     player.transform.position = resolve.position;
     player.controller.grounded = resolve.grounded;
-
-    if (!resolve.grounded &&
-        player.movement.state != PlayerMovementState::Airborne &&
-        player.movement.state != PlayerMovementState::Bail &&
-        player.movement.state != PlayerMovementState::Recovery) {
-        set_movement_state(player, PlayerMovementState::Airborne);
+    if (motion.state == PlayerLocomotionState::JumpStart && motion.vertical_velocity > 0.0f) {
+        player.controller.grounded = false;
+        resolve.grounded = false;
     }
 
-    if (!resolve.grounded && pre_solve_vertical_velocity <= 0.0f) {
+    motion.ground_normal = player.controller.grounded
+        ? estimate_ground_normal(collision_world, player.transform.position)
+        : glm::vec3(0.0f, 1.0f, 0.0f);
+    motion.slope_angle_deg = glm::degrees(std::acos(std::clamp(glm::dot(motion.ground_normal, glm::vec3(0.0f, 1.0f, 0.0f)), -1.0f, 1.0f)));
+    motion.stable_grounded = player.controller.grounded && motion.slope_angle_deg <= tuning.slope_limit_deg;
+    if (player.controller.grounded && !motion.stable_grounded) {
+        player.controller.grounded = false;
+        resolve.grounded = false;
+    }
+
+    if (!player.controller.grounded && pre_solve_vertical <= 0.0f) {
         float snap_hit_distance = 0.0f;
         const glm::vec3 snap_origin = player.transform.position + glm::vec3(0.0f, 0.10f, 0.0f);
-        if (collision_world.raycast(
-                snap_origin,
-                glm::vec3(0.0f, -1.0f, 0.0f),
-                std::max(0.12f, tuning.landing_forgiveness),
-                snap_hit_distance)) {
+        if (collision_world.raycast(snap_origin, glm::vec3(0.0f, -1.0f, 0.0f), tuning.ledge_snap_distance, snap_hit_distance)) {
             player.transform.position.y = snap_origin.y - snap_hit_distance + 0.02f;
             player.controller.grounded = true;
             resolve.grounded = true;
-            resolve.ground_ray_origin = snap_origin;
-            resolve.ground_ray_hit = player.transform.position;
         }
     }
 
-    if (!player.controller.grounded &&
-        player.movement.state == PlayerMovementState::Airborne &&
-        input.crouch_held &&
-        player.movement.forward_speed >= tuning.grind_min_speed) {
-        const RailCandidate rail = find_best_rail_candidate(
-            collision_world,
-            player.transform.position,
-            has_move_input ? desired_move : desired_flat_velocity,
-            tuning.rail_snap_distance);
-        if (rail.valid) {
-            set_movement_state(player, PlayerMovementState::GrindBalance, 0.18f);
-            player.movement.rail_axis = rail.axis;
-            player.movement.rail_anchor = rail.anchor;
-            player.movement.rail_lock_timer = 0.18f;
-            player.movement.balance = 0.0f;
-            player.transform.position.y = rail.anchor.y;
-            if (std::fabs(rail.axis.x) > 0.5f) {
-                player.transform.position.z = rail.anchor.z;
-            } else {
-                player.transform.position.x = rail.anchor.x;
-            }
-            begin_combo_trick(player, PlayerTrickState::Grind, 250);
-            player.controller.velocity = rail.axis * player.movement.forward_speed;
-            player.controller.grounded = false;
-            player.transform.rotation = glm::angleAxis(
-                std::atan2(rail.axis.x, rail.axis.z),
-                glm::vec3(0.0f, 1.0f, 0.0f));
-            update_animation_state(player, input, dt, noclip, was_grounded);
-            bank_combo_if_ready(player);
-            return debug;
-        }
+    if (player.controller.grounded && !was_grounded && motion.jump_buffer_timer > 0.0f) {
+        motion.jump_buffer_timer = 0.0f;
+        motion.coyote_timer = 0.0f;
+        motion.vertical_velocity = tuning.jump_velocity;
+        motion.jump_cut_applied = false;
+        player.controller.grounded = false;
+        resolve.grounded = false;
+        set_locomotion_state(player, PlayerLocomotionState::JumpStart);
     }
 
     const glm::vec3 actual_velocity = (player.transform.position - start_position) / std::max(0.0001f, dt);
+    motion.planar_velocity = glm::vec3(actual_velocity.x, 0.0f, actual_velocity.z);
+    motion.move_speed = flat_length(motion.planar_velocity);
     player.controller.velocity = actual_velocity;
-    player.controller.velocity.y = player.movement.vertical_velocity;
+    player.controller.velocity.y = motion.vertical_velocity;
 
     if (player.controller.grounded) {
-        player.movement.forward_speed = std::max(0.0f, glm::dot(glm::vec3(actual_velocity.x, 0.0f, actual_velocity.z), flat_forward));
-        if (pre_solve_vertical_velocity < -tuning.hard_landing_speed) {
-            enter_bail(player);
-        } else if (!was_grounded ||
-                   player.movement.state == PlayerMovementState::Airborne ||
-                   player.trick.state == PlayerTrickState::Ollie ||
-                   player.trick.state == PlayerTrickState::Grind ||
-                   player.trick.state == PlayerTrickState::Kickflip ||
-                   player.trick.state == PlayerTrickState::ShoveIt) {
-            player.movement.just_landed = true;
-            player.movement.balance = 0.0f;
-            player.movement.vertical_velocity = 0.0f;
-            player.anim_land_lock = 0.14f;
-            if (player.movement.state != PlayerMovementState::Bail && player.movement.state != PlayerMovementState::Recovery) {
-                set_movement_state(
-                    player,
-                    input.crouch_held && player.movement.forward_speed >= tuning.manual_min_speed
-                        ? PlayerMovementState::ManualBalance
-                        : PlayerMovementState::GroundSkating);
-            }
-            if (player.trick.state != PlayerTrickState::Bail) {
-                set_trick_state(player, PlayerTrickState::Landed);
-                add_combo_score(player, 75);
-            }
-        } else {
-            player.movement.vertical_velocity = 0.0f;
-            if (player.movement.state == PlayerMovementState::Airborne) {
-                set_movement_state(player, PlayerMovementState::GroundSkating);
-            }
+        motion.vertical_velocity = 0.0f;
+        if (!was_grounded) {
+            motion.just_landed = true;
+            motion.landing_impact = std::fabs(pre_solve_vertical);
+            set_locomotion_state(
+                player,
+                motion.landing_impact >= tuning.landing_hard_threshold
+                    ? PlayerLocomotionState::LandHard
+                    : PlayerLocomotionState::LandSoft);
+        } else if (motion.state == PlayerLocomotionState::JumpStart ||
+                   motion.state == PlayerLocomotionState::AirborneRise ||
+                   motion.state == PlayerLocomotionState::AirborneFall) {
+            set_locomotion_state(player, PlayerLocomotionState::LandSoft);
+        } else if (motion.state == PlayerLocomotionState::LandSoft && motion.state_timer >= 0.10f) {
+            set_locomotion_state(player, PlayerLocomotionState::Idle);
+        } else if (motion.state == PlayerLocomotionState::LandHard && motion.state_timer >= tuning.recovery_duration) {
+            set_locomotion_state(player, PlayerLocomotionState::Recovery);
+        } else if (motion.state == PlayerLocomotionState::Recovery && motion.state_timer >= tuning.recovery_duration) {
+            set_locomotion_state(player, PlayerLocomotionState::Idle);
         }
     } else {
-        if (player.movement.state != PlayerMovementState::Bail && player.movement.state != PlayerMovementState::Recovery) {
-            set_movement_state(player, PlayerMovementState::Airborne);
+        if (motion.vertical_velocity > 0.0f) {
+            if (motion.state != PlayerLocomotionState::JumpStart && motion.state_timer > tuning.jump_start_duration) {
+                set_locomotion_state(player, PlayerLocomotionState::AirborneRise);
+            }
+        } else {
+            set_locomotion_state(player, PlayerLocomotionState::AirborneFall);
         }
-        player.controller.velocity.y = player.movement.vertical_velocity;
     }
 
-    if (player.movement.state == PlayerMovementState::Bail && player.controller.grounded && player.movement.state_timer <= 0.0f) {
-        set_movement_state(player, PlayerMovementState::Recovery, tuning.recovery_duration);
-        player.movement.vertical_velocity = 0.0f;
-    } else if (player.movement.state == PlayerMovementState::Recovery && player.movement.state_timer <= 0.0f) {
-        set_movement_state(player, player.controller.grounded ? PlayerMovementState::GroundSkating : PlayerMovementState::Airborne);
+    if (player.controller.grounded) {
+        if ((motion.state == PlayerLocomotionState::LandSoft && motion.state_timer < 0.12f) ||
+            (motion.state == PlayerLocomotionState::LandHard && motion.state_timer < tuning.recovery_duration) ||
+            motion.state == PlayerLocomotionState::Recovery) {
+            // Keep one-shot recovery states until their timers expire.
+        } else if (!has_move_input && motion.move_speed <= 0.05f) {
+            if (std::fabs(motion.turn_delta_deg) > tuning.pivot_threshold_deg && std::fabs(input.look_delta.x) > 0.01f) {
+                set_locomotion_state(player, PlayerLocomotionState::TurnInPlace);
+            } else {
+                set_locomotion_state(player, PlayerLocomotionState::Idle);
+            }
+        } else if (!has_move_input) {
+            set_locomotion_state(player, PlayerLocomotionState::StopMove);
+        } else if (motion.move_speed <= 0.35f && motion.state == PlayerLocomotionState::Idle) {
+            set_locomotion_state(player, PlayerLocomotionState::StartMove);
+        } else if (std::fabs(motion.turn_delta_deg) > tuning.pivot_threshold_deg && motion.move_speed < tuning.walk_speed * 0.45f) {
+            set_locomotion_state(player, PlayerLocomotionState::MovingTurn);
+        } else if (std::fabs(motion.turn_delta_deg) > tuning.moving_turn_threshold_deg && motion.move_speed >= tuning.walk_speed * 0.45f) {
+            set_locomotion_state(player, PlayerLocomotionState::MovingTurn);
+        } else {
+            set_locomotion_state(player, run_intent ? PlayerLocomotionState::Run : PlayerLocomotionState::Walk);
+        }
     }
 
-    player.transform.rotation = glm::angleAxis(to_radians(player.movement.facing_yaw_deg), glm::vec3(0.0f, 1.0f, 0.0f));
+    player.transform.rotation = glm::angleAxis(to_radians(motion.facing_yaw_deg), glm::vec3(0.0f, 1.0f, 0.0f));
+
+    player.procedural.spine_lean = std::clamp(motion.move_speed / std::max(0.1f, tuning.run_speed), 0.0f, 1.0f) * 0.25f;
+    player.procedural.turn_bank = std::clamp(motion.turn_delta_deg / 90.0f, -1.0f, 1.0f) * (player.controller.grounded ? 0.18f : 0.08f);
+    player.procedural.landing_compression = motion.just_landed
+        ? std::clamp(motion.landing_impact / std::max(0.1f, tuning.landing_hard_threshold), 0.0f, 1.0f)
+        : std::max(0.0f, player.procedural.landing_compression - dt * 4.0f);
+    player.procedural.jump_anticipation = (motion.state == PlayerLocomotionState::JumpStart) ? 1.0f : std::max(0.0f, player.procedural.jump_anticipation - dt * 6.0f);
 
     debug.had_collision = resolve.had_collision;
     debug.contact_normal = resolve.contact_normal;
@@ -828,7 +565,6 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
     debug.overlapped_voxels = resolve.overlapped_voxels;
 
     update_animation_state(player, input, dt, noclip, was_grounded);
-    bank_combo_if_ready(player);
     return debug;
 }
 
@@ -838,14 +574,8 @@ void PlayerControllerSystem::update_animation_state(
     float dt,
     bool noclip,
     bool was_grounded) {
-    const float horizontal_speed = player.movement.forward_speed;
-    const float speed_ratio = std::clamp(horizontal_speed / std::max(0.001f, player.skate_tuning.max_ground_speed), 0.0f, 1.2f);
     const bool landed_this_frame = !noclip && player.controller.grounded && !was_grounded;
-
-    player.anim_land_lock = std::max(0.0f, player.anim_land_lock - dt);
-    player.anim_ollie_lock = std::max(0.0f, player.anim_ollie_lock - dt);
-
-    const PlayerAnimState next_state = map_animation_state(player, input, noclip, landed_this_frame);
+    const PlayerAnimState next_state = map_animation_state(player, input, landed_this_frame);
     const PlayerAnimState prev_state = player.anim_state;
     player.anim_state = next_state;
     player.animation.state = next_state;
@@ -877,8 +607,12 @@ void PlayerControllerSystem::update_animation_state(
     }
 
     float target_blend = player_anim_blend_target(next_state);
-    if (next_state == PlayerAnimState::Cruise || next_state == PlayerAnimState::Push) {
-        target_blend = std::clamp(target_blend * (0.45f + speed_ratio * 0.8f), 0.0f, 1.0f);
+    if (next_state == PlayerAnimState::LocomotionWalk || next_state == PlayerAnimState::LocomotionRun || next_state == PlayerAnimState::MovingTurn) {
+        const float speed_ratio = std::clamp(
+            player.locomotion.move_speed / std::max(0.001f, player.locomotion_tuning.run_speed),
+            0.0f,
+            1.0f);
+        target_blend = std::clamp(target_blend * (0.35f + speed_ratio * 0.9f), 0.0f, 1.0f);
     }
     const float blend_step = std::clamp(10.0f * dt, 0.0f, 1.0f);
     player.anim_blend += (target_blend - player.anim_blend) * blend_step;

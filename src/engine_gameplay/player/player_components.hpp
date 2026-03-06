@@ -16,8 +16,8 @@ struct TransformComponent {
 struct CharacterController {
     float capsuleRadius = 0.35f;
     float capsuleHeight = 1.8f;
-    float walkSpeed = 4.0f;
-    float sprintSpeed = 7.2f;
+    float walkSpeed = 3.2f;
+    float sprintSpeed = 5.8f;
     float crawlSpeed = 2.2f;
     float jumpVelocity = 5.5f;
     float gravity = -19.62f;
@@ -26,65 +26,69 @@ struct CharacterController {
     glm::vec3 velocity = glm::vec3(0.0f);
 };
 
-enum class PlayerMovementState : uint8_t {
-    GroundSkating = 0,
-    Airborne = 1,
-    ManualBalance = 2,
-    GrindBalance = 3,
-    Bail = 4,
-    Recovery = 5
+enum class PlayerLocomotionState : uint8_t {
+    Idle = 0,
+    StartMove,
+    Walk,
+    Run,
+    StopMove,
+    JumpStart,
+    AirborneRise,
+    AirborneFall,
+    LandSoft,
+    LandHard,
+    TurnInPlace,
+    MovingTurn,
+    Slide,
+    Recovery
 };
 
-enum class PlayerTrickState : uint8_t {
-    None = 0,
-    Ollie = 1,
-    Kickflip = 2,
-    ShoveIt = 3,
-    Manual = 4,
-    Grind = 5,
-    Bail = 6,
-    Landed = 7
-};
-
-struct SkateTuningData {
-    float accel = 28.0f;
-    float turn_rate = 360.0f;
-    float ollie_height = 1.15f;
+struct LocomotionTuningData {
+    float walk_speed = 3.2f;
+    float run_speed = 5.8f;
+    float ground_accel = 28.0f;
+    float ground_decel = 32.0f;
+    float air_accel = 9.0f;
+    float turn_rate = 540.0f;
     float gravity = 24.0f;
+    float fall_multiplier = 1.25f;
+    float jump_velocity = 6.0f;
+    float jump_cut_gravity_multiplier = 2.1f;
     float coyote_time = 0.10f;
-    float landing_forgiveness = 0.24f;
-    float rail_snap_distance = 0.85f;
-    float combo_timeout = 1.75f;
-    float max_ground_speed = 8.4f;
-    float push_speed_bonus = 1.4f;
-    float braking = 34.0f;
-    float air_turn_rate = 240.0f;
-    float air_control = 7.5f;
-    float manual_balance_drift = 0.55f;
-    float grind_balance_drift = 0.72f;
-    float balance_input_gain = 1.45f;
-    float bail_duration = 0.55f;
-    float recovery_duration = 0.45f;
-    float manual_min_speed = 2.0f;
-    float grind_min_speed = 3.0f;
-    float hard_landing_speed = 12.5f;
+    float jump_buffer_time = 0.12f;
+    float step_offset = 0.65f;
+    float slope_limit_deg = 52.0f;
+    float ledge_snap_distance = 0.24f;
+    float landing_soft_threshold = 7.5f;
+    float landing_hard_threshold = 11.0f;
+    float recovery_duration = 0.26f;
+    float pivot_threshold_deg = 80.0f;
+    float moving_turn_threshold_deg = 30.0f;
+    float input_deadzone = 0.14f;
+    float run_input_threshold = 0.85f;
+    float jump_start_duration = 0.10f;
+    float start_move_duration = 0.10f;
+    float stop_move_duration = 0.12f;
 };
 
-struct PlayerMovementStateData {
-    PlayerMovementState state = PlayerMovementState::GroundSkating;
-    float forward_speed = 0.0f;
+struct PlayerLocomotionStateData {
+    PlayerLocomotionState state = PlayerLocomotionState::Idle;
+    glm::vec3 planar_velocity = glm::vec3(0.0f);
+    glm::vec3 ground_normal = glm::vec3(0.0f, 1.0f, 0.0f);
+    float move_speed = 0.0f;
     float vertical_velocity = 0.0f;
     float facing_yaw_deg = 180.0f;
     float desired_yaw_deg = 180.0f;
     float state_timer = 0.0f;
     float coyote_timer = 0.0f;
-    float landing_timer = 0.0f;
-    float balance = 0.0f;
-    float balance_impulse = 0.0f;
-    float rail_lock_timer = 0.0f;
-    glm::vec3 rail_anchor = glm::vec3(0.0f);
-    glm::vec3 rail_axis = glm::vec3(0.0f, 0.0f, 1.0f);
+    float jump_buffer_timer = 0.0f;
+    float slope_angle_deg = 0.0f;
+    float input_magnitude = 0.0f;
+    float turn_delta_deg = 0.0f;
+    float landing_impact = 0.0f;
+    bool stable_grounded = false;
     bool just_landed = false;
+    bool jump_cut_applied = false;
 };
 
 struct PlayerAnimationStateData {
@@ -93,36 +97,13 @@ struct PlayerAnimationStateData {
     float blend = 0.0f;
 };
 
-struct PlayerTrickStateData {
-    PlayerTrickState state = PlayerTrickState::None;
-    float state_timer = 0.0f;
-    uint32_t chain_count = 0;
-    bool note_placeholder_logic = true;
+struct PlayerProceduralStateData {
+    float spine_lean = 0.0f;
+    float turn_bank = 0.0f;
+    float landing_compression = 0.0f;
+    float jump_anticipation = 0.0f;
+    float upper_body_overlay = 0.0f;
 };
-
-struct PlayerScoreStateData {
-    int32_t total_score = 0;
-    int32_t combo_score = 0;
-    int32_t combo_multiplier = 1;
-    uint32_t combo_count = 0;
-    float combo_timer = 0.0f;
-    bool combo_active = false;
-};
-
-struct SkateBoardState {
-    glm::vec3 local_offset = glm::vec3(0.0f, 0.14f, 0.0f);
-    glm::vec3 half_extents = glm::vec3(0.14f, 0.03f, 0.46f);
-    glm::vec3 deck_color = glm::vec3(0.18f, 0.12f, 0.08f);
-    float wheel_radius = 0.055f;
-    float wheel_track = 0.13f;
-    float wheel_base = 0.27f;
-};
-
-using SkateMovementState = PlayerMovementState;
-using SkateTrickState = PlayerTrickState;
-using SkateTuning = SkateTuningData;
-using SkateScoreState = PlayerScoreStateData;
-using SkateboardState = SkateBoardState;
 
 struct CameraRig {
     float yaw = 180.0f;
@@ -135,6 +116,8 @@ struct CameraRig {
     float sensitivityTouch = 120.0f;
     float pitchMinDeg = -75.0f;
     float pitchMaxDeg = 25.0f;
+    float follow_lag = 0.0f;
+    float jump_distance_bias = 0.3f;
 };
 
 struct PlayerEntity {
@@ -142,12 +125,10 @@ struct PlayerEntity {
     TransformComponent transform{};
     CharacterController controller{};
     CameraRig camera_rig{};
-    SkateTuningData skate_tuning{};
-    PlayerMovementStateData movement{};
+    LocomotionTuningData locomotion_tuning{};
+    PlayerLocomotionStateData locomotion{};
     PlayerAnimationStateData animation{};
-    PlayerTrickStateData trick{};
-    PlayerScoreStateData score{};
-    SkateBoardState board{};
+    PlayerProceduralStateData procedural{};
     PlayerAnimState anim_state = PlayerAnimState::Idle;
     PlayerAnimState anim_previous_state = PlayerAnimState::Idle;
     float anim_phase = 0.0f;
@@ -156,8 +137,6 @@ struct PlayerEntity {
     float anim_state_time = 0.0f;
     float anim_transition_time = 0.0f;
     float anim_transition_duration = 0.0f;
-    float anim_ollie_lock = 0.0f;
-    float anim_land_lock = 0.0f;
     PlayerAnimEventType last_anim_event = PlayerAnimEventType::None;
 };
 

@@ -86,7 +86,7 @@ int main(int argc, char **argv) {
     bool debug_collision_only = false;
     bool debug_freeze = false;
     bool vehicle_sandbox = false;
-    bool spherical_planet = true;
+    bool spherical_planet = false;
     bool start_fullscreen = false;
     int window_width = 1280;
     int window_height = 720;

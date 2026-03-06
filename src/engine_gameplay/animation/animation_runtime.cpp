@@ -251,9 +251,13 @@ ResolvedPlayerAnimationGraph resolve_player_animation_graph(const std::vector<An
                 break;
             }
         }
-        if (resolved.clip_index < 0 && !clips.empty() && resolved.definition.state != PlayerAnimState::Idle) {
-            resolved.clip_index = 0;
-            resolved.resolved_clip_name = clips[0].name;
+        if (resolved.clip_index < 0 && !clips.empty()) {
+            const bool single_clip_fallback = clips.size() == 1;
+            const bool non_idle_fallback = resolved.definition.state != PlayerAnimState::Idle;
+            if (single_clip_fallback || non_idle_fallback) {
+                resolved.clip_index = 0;
+                resolved.resolved_clip_name = clips[0].name;
+            }
         }
     }
 
@@ -332,9 +336,14 @@ PlayerAnimationSample sample_player_animation(
 
     std::vector<AnimationTransform> active_pose;
     std::vector<AnimationTransform> source_pose;
-    sample_clip_pose(skeleton, active_clip, phase_radians, active_pose);
+    const bool hold_placeholder_idle =
+        resolved && resolved->placeholder && state == PlayerAnimState::Idle;
+    const bool hold_placeholder_source_idle =
+        source_resolved && source_resolved->placeholder && source_state == PlayerAnimState::Idle;
+
+    sample_clip_pose(skeleton, active_clip, hold_placeholder_idle ? 0.0f : phase_radians, active_pose);
     if (transition_alpha < 0.999f && source_state != state) {
-        sample_clip_pose(skeleton, from_clip, source_phase_radians, source_pose);
+        sample_clip_pose(skeleton, from_clip, hold_placeholder_source_idle ? 0.0f : source_phase_radians, source_pose);
         out.local_pose.resize(active_pose.size());
         for (size_t i = 0; i < active_pose.size(); ++i) {
             out.local_pose[i] = animation_blend_transform(source_pose[i], active_pose[i], transition_alpha);

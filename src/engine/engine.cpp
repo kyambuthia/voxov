@@ -1208,7 +1208,25 @@ void Engine::build_static_scene() {
 
   scene = RenderScene{};
   scene.opaque_meshes.push_back(world_chunk.build_sky_placeholder(240.0f));
-  scene.opaque_meshes.push_back(world_chunk.build_naive_mesh());
+  if (runtime_options.spherical_planet) {
+    scene.opaque_meshes.push_back(world_chunk.build_naive_mesh());
+  } else {
+    constexpr int k_render_chunk_radius = 1;
+    for (int chunk_z = -k_render_chunk_radius; chunk_z <= k_render_chunk_radius;
+         ++chunk_z) {
+      for (int chunk_x = -k_render_chunk_radius;
+           chunk_x <= k_render_chunk_radius; ++chunk_x) {
+        VoxelChunk render_chunk{};
+        generate_flat_world_locomotion_chunk(
+            render_chunk, k_voxov_flat_world_seed, chunk_x, chunk_z);
+        const glm::vec3 chunk_origin(
+            static_cast<float>(chunk_x * VoxelChunk::CHUNK_X), 0.0f,
+            static_cast<float>(chunk_z * VoxelChunk::CHUNK_Z));
+        scene.opaque_meshes.push_back(
+            render_chunk.build_naive_mesh(chunk_origin));
+      }
+    }
+  }
   scene.debug_grid = world_chunk.build_debug_grid(160.0f, 1.0f);
 
   const glm::vec2 center(static_cast<float>(VoxelChunk::CHUNK_X) * 0.5f,

@@ -561,8 +561,6 @@ struct AndroidRenderer {
     float player_anim_phase = 0.0f;
     float player_anim_blend = 0.0f;
     glm::quat player_anim_orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-    SkinnedModel fox_player_model{};
-    bool has_fox_player_model = false;
     SkinnedModel humanoid_player_model{};
     bool has_humanoid_player_model = false;
 
@@ -1024,9 +1022,7 @@ struct AndroidRenderer {
         destroy_mesh(capsule_gpu);
         capsule_mesh = RenderMesh{};
         const SkinnedModel *selected_player_model = nullptr;
-        if (gui_menu.character() == GuiMenu::Character::Fox && has_fox_player_model) {
-            selected_player_model = &fox_player_model;
-        } else if (gui_menu.character() == GuiMenu::Character::Humanoid && has_humanoid_player_model) {
+        if (gui_menu.character() == GuiMenu::Character::Humanoid && has_humanoid_player_model) {
             selected_player_model = &humanoid_player_model;
         }
         const bool render_skinned_avatar = selected_player_model != nullptr;
@@ -1071,28 +1067,29 @@ struct AndroidRenderer {
             float height = player_capsule_height;
             float bob = 0.0f;
             switch (remote.anim_state) {
-            case static_cast<uint8_t>(PlayerAnimState::Cruise):
-            case static_cast<uint8_t>(PlayerAnimState::TurnLeft):
-            case static_cast<uint8_t>(PlayerAnimState::TurnRight):
+            case static_cast<uint8_t>(PlayerAnimState::StartMove):
+            case static_cast<uint8_t>(PlayerAnimState::LocomotionWalk):
+            case static_cast<uint8_t>(PlayerAnimState::PivotLeft):
+            case static_cast<uint8_t>(PlayerAnimState::PivotRight):
+            case static_cast<uint8_t>(PlayerAnimState::TurnInPlaceLeft):
+            case static_cast<uint8_t>(PlayerAnimState::TurnInPlaceRight):
+            case static_cast<uint8_t>(PlayerAnimState::MovingTurn):
                 bob = 0.05f * std::fabs(std::sin(remote.anim_phase));
                 break;
-            case static_cast<uint8_t>(PlayerAnimState::Push):
+            case static_cast<uint8_t>(PlayerAnimState::LocomotionRun):
                 bob = 0.09f * std::fabs(std::sin(remote.anim_phase));
                 break;
-            case static_cast<uint8_t>(PlayerAnimState::Manual):
-            case static_cast<uint8_t>(PlayerAnimState::GrindEnter):
-            case static_cast<uint8_t>(PlayerAnimState::GrindLoop):
-            case static_cast<uint8_t>(PlayerAnimState::GrindExit):
-            case static_cast<uint8_t>(PlayerAnimState::Bail):
+            case static_cast<uint8_t>(PlayerAnimState::StopMove):
+            case static_cast<uint8_t>(PlayerAnimState::Recovery):
                 height *= 0.55f;
                 radius *= 1.08f;
                 bob = 0.02f * std::fabs(std::sin(remote.anim_phase * 0.8f));
                 break;
-            case static_cast<uint8_t>(PlayerAnimState::Ollie):
-            case static_cast<uint8_t>(PlayerAnimState::Kickflip):
-            case static_cast<uint8_t>(PlayerAnimState::ShoveIt):
-            case static_cast<uint8_t>(PlayerAnimState::Airborne):
-            case static_cast<uint8_t>(PlayerAnimState::Land):
+            case static_cast<uint8_t>(PlayerAnimState::JumpTakeoff):
+            case static_cast<uint8_t>(PlayerAnimState::JumpLoop):
+            case static_cast<uint8_t>(PlayerAnimState::FallLoop):
+            case static_cast<uint8_t>(PlayerAnimState::LandSoft):
+            case static_cast<uint8_t>(PlayerAnimState::LandHard):
                 bob = 0.06f * std::sin(remote.anim_phase * 0.65f);
                 break;
             default:
@@ -1285,7 +1282,6 @@ struct AndroidRenderer {
         player_anim_phase = 0.0f;
         player_anim_blend = 0.0f;
         player_anim_orientation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
-        has_fox_player_model = false;
         has_humanoid_player_model = false;
         {
             auto load_android_model = [&](const char *asset_name, SkinnedModel &out_model, bool &out_loaded, const char *label) {
@@ -1308,8 +1304,6 @@ struct AndroidRenderer {
                 }
                 __android_log_print(ANDROID_LOG_WARN, kLogTag, "%s model load failed on Android: %s", label, load_error.c_str());
             };
-
-            load_android_model("Fox.glb", fox_player_model, has_fox_player_model, "fox");
             load_android_model("CesiumMan.glb", humanoid_player_model, has_humanoid_player_model, "humanoid");
         }
         capsule_mesh = RenderMesh{};
@@ -1524,15 +1518,9 @@ struct AndroidRenderer {
         const bool moving = glm::length(touch.left_value) > 0.12f;
         PlayerAnimState next_state = PlayerAnimState::Idle;
         if (!noclip && !player_grounded) {
-            next_state = PlayerAnimState::Airborne;
+            next_state = player_vertical_velocity >= 0.0f ? PlayerAnimState::JumpLoop : PlayerAnimState::FallLoop;
         } else if (moving) {
-            if (touch.crouch_held) {
-                next_state = PlayerAnimState::Manual;
-            } else if (touch.sprint_held) {
-                next_state = PlayerAnimState::Push;
-            } else {
-                next_state = PlayerAnimState::Cruise;
-            }
+            next_state = touch.sprint_held ? PlayerAnimState::LocomotionRun : PlayerAnimState::LocomotionWalk;
         }
         player_anim_state = next_state;
         player_anim_phase += player_anim_cycle_rate(player_anim_state) * static_cast<float>(dt_seconds);

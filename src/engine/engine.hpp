@@ -93,11 +93,17 @@ private:
     glm::vec3 position = glm::vec3(0.0f);
     float interact_radius = 2.6f;
   };
+  struct ObjectiveNode {
+    glm::vec3 position = glm::vec3(0.0f);
+    float interact_radius = 2.4f;
+    bool activated = false;
+  };
   enum class ReconcileMode : uint8_t { Off = 0, Threshold = 1, Snap = 2 };
 
   void build_static_scene();
   void handle_vehicle_interaction(const InputState &input);
   void handle_aircraft_interaction(const InputState &input);
+  void handle_objective_interaction(const InputState &input);
   void handle_minigame_interaction(const InputState &input);
   void update_active_minigame(const InputState &input, float dt);
   void update_vehicle_sim(const InputState &input, float dt);
@@ -204,10 +210,18 @@ private:
   VehicleControlInput last_vehicle_control{};
   AircraftControlInput last_aircraft_control{};
   std::vector<MiniGameHotspot> minigame_hotspots;
+  std::vector<ObjectiveNode> objective_nodes;
   int nearby_minigame_hotspot = -1;
   int active_minigame_hotspot = -1;
   MiniGameState active_minigame{};
   std::string minigame_hint;
+  int nearby_objective_node = -1;
+  int activated_objective_count = 0;
+  bool extraction_unlocked = false;
+  bool objective_round_complete = false;
+  glm::vec3 extraction_zone_position = glm::vec3(0.0f);
+  float extraction_zone_radius = 3.2f;
+  std::string objective_hint;
   glm::vec3 spherical_planet_center = glm::vec3(0.0f);
   float spherical_planet_radius = 0.0f;
 };

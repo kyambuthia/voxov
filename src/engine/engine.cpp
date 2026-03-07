@@ -999,6 +999,7 @@ void Engine::tick(double frame_dt) {
     gameplay_input_secondary = gameplay_input;
   }
 
+  handle_objective_interaction(gameplay_input);
   handle_minigame_interaction(gameplay_input);
   if (!active_minigame.active) {
     handle_vehicle_interaction(gameplay_input);
@@ -1332,6 +1333,39 @@ void Engine::build_static_scene() {
     spawn_hotspot(MiniGameType::TicTacToe,
                   glm::vec3(center.x, 0.0f, center.y - 16.0f));
   }
+
+  objective_nodes.clear();
+  activated_objective_count = 0;
+  extraction_unlocked = false;
+  objective_round_complete = false;
+  nearby_objective_node = -1;
+  objective_hint.clear();
+  extraction_zone_position = glm::vec3(center.x, 0.0f, center.y + 18.0f);
+  extraction_zone_position.y =
+      collision_world.find_spawn_height(
+          glm::vec2(extraction_zone_position.x, extraction_zone_position.z),
+          0.45f, 1.8f) +
+      0.05f;
+
+  const auto spawn_objective_node = [&](const glm::vec3 &base) {
+    ObjectiveNode node{};
+    node.position = base;
+    node.position.y = collision_world.find_spawn_height(
+                          glm::vec2(base.x, base.z), 0.45f, 1.8f) +
+                      0.05f;
+    node.interact_radius = 2.6f;
+    node.activated = false;
+    objective_nodes.push_back(node);
+  };
+  if (runtime_options.spherical_planet) {
+    spawn_objective_node(glm::vec3(center.x - 12.0f, 0.0f, center.y - 10.0f));
+    spawn_objective_node(glm::vec3(center.x + 14.0f, 0.0f, center.y - 4.0f));
+    spawn_objective_node(glm::vec3(center.x + 2.0f, 0.0f, center.y + 14.0f));
+  } else {
+    spawn_objective_node(glm::vec3(center.x - 14.0f, 0.0f, center.y - 10.0f));
+    spawn_objective_node(glm::vec3(center.x + 13.0f, 0.0f, center.y - 6.0f));
+    spawn_objective_node(glm::vec3(center.x + 4.0f, 0.0f, center.y + 15.0f));
+  }
 }
 
 void Engine::update_third_person_camera(PlayerEntity &player,
@@ -1531,6 +1565,73 @@ void Engine::handle_aircraft_interaction(const InputState &input) {
     local_player.camera_rig.yaw = glm::degrees(aircraft.yaw);
     local_player.controller.velocity = glm::vec3(0.0f);
     local_player.controller.grounded = false;
+  }
+}
+
+void Engine::handle_objective_interaction(const InputState &input) {
+  nearby_objective_node = -1;
+  objective_hint.clear();
+
+  if (!gameplay_started || gui_menu.open()) {
+    return;
+  }
+  if (active_minigame.active) {
+    return;
+  }
+
+  if (objective_round_complete) {
+    objective_hint = "Round complete. Re-open from the menu to run again.";
+    return;
+  }
+
+  if (extraction_unlocked) {
+    const float extraction_distance = glm::length(glm::vec2(
+        local_player.transform.position.x - extraction_zone_position.x,
+        local_player.transform.position.z - extraction_zone_position.z));
+    objective_hint = "All nodes active. Reach extraction.";
+    if (extraction_distance <= extraction_zone_radius) {
+      objective_round_complete = true;
+      objective_hint = "Extraction complete. Objective loop cleared.";
+    }
+    return;
+  }
+
+  float best_distance = 1e9f;
+  int best_index = -1;
+  for (size_t i = 0; i < objective_nodes.size(); ++i) {
+    const ObjectiveNode &node = objective_nodes[i];
+    if (node.activated) {
+      continue;
+    }
+    const float distance = glm::length(
+        glm::vec2(local_player.transform.position.x - node.position.x,
+                  local_player.transform.position.z - node.position.z));
+    if (distance <= node.interact_radius && distance < best_distance) {
+      best_distance = distance;
+      best_index = static_cast<int>(i);
+    }
+  }
+
+  nearby_objective_node = best_index;
+  if (best_index >= 0) {
+    objective_hint = "Press F or E to activate objective node";
+    if (input.interact_pressed) {
+      ObjectiveNode &node = objective_nodes[static_cast<size_t>(best_index)];
+      node.activated = true;
+      activated_objective_count += 1;
+      objective_hint = "Objective node activated.";
+      if (activated_objective_count >=
+          static_cast<int>(objective_nodes.size())) {
+        extraction_unlocked = true;
+        objective_hint = "All nodes active. Return to extraction.";
+      }
+    }
+  } else {
+    objective_hint =
+        "Activate " +
+        std::to_string(std::max(0, static_cast<int>(objective_nodes.size()) -
+                                       activated_objective_count)) +
+        " remaining node(s).";
   }
 }
 
@@ -1885,7 +1986,16 @@ void Engine::refresh_overlay_text() {
   std::string minigame_objective;
   std::string minigame_controls;
   std::string hotspot_text;
+  std::string objective_status;
   float minigame_progress = 0.0f;
+
+  objective_status = "OBJECTIVES " + std::to_string(activated_objective_count) +
+                     "/" + std::to_string(objective_nodes.size());
+  if (objective_round_complete) {
+    objective_status += " [COMPLETE]";
+  } else if (extraction_unlocked) {
+    objective_status += " [EXTRACT]";
+  }
 
   if (!menu_view.open &&
       (active_minigame.active || nearby_minigame_hotspot >= 0)) {
@@ -1962,6 +2072,10 @@ void Engine::refresh_overlay_text() {
   hash_value(overlay_state_hash, active_minigame.completed);
   hash_value(overlay_state_hash, active_minigame.type);
   hash_value(overlay_state_hash, minigame_progress);
+  hash_value(overlay_state_hash, nearby_objective_node);
+  hash_value(overlay_state_hash, activated_objective_count);
+  hash_value(overlay_state_hash, extraction_unlocked);
+  hash_value(overlay_state_hash, objective_round_complete);
   hash_string(overlay_state_hash, menu_view.title);
   hash_string(overlay_state_hash, menu_view.status);
   for (const std::string &line : menu_view.items) {
@@ -1976,6 +2090,8 @@ void Engine::refresh_overlay_text() {
   hash_string(overlay_state_hash, minigame_objective);
   hash_string(overlay_state_hash, minigame_controls);
   hash_string(overlay_state_hash, hotspot_text);
+  hash_string(overlay_state_hash, objective_hint);
+  hash_string(overlay_state_hash, objective_status);
 
   if (!runtime_options.devhud && has_overlay_state_hash &&
       overlay_state_hash == last_overlay_state_hash) {
@@ -2023,6 +2139,8 @@ void Engine::refresh_overlay_text() {
   const ScreenPanel devhud_panel{safe_left - 0.02f, safe_top, 0.14f, 0.12f};
   const ScreenPanel minigame_panel{0.30f, safe_top, safe_right, 0.70f};
   const ScreenPanel hotspot_panel{0.46f, -0.73f, safe_right, safe_bottom};
+  const ScreenPanel objective_panel{safe_left - 0.02f, -0.56f, 0.22f,
+                                    safe_bottom};
 
   if (menu_view.open) {
     draw_panel(menu_panel, glm::vec3(0.05f, 0.07f, 0.10f),
@@ -2198,6 +2316,23 @@ void Engine::refresh_overlay_text() {
                   build_screen_text_mesh(hotspot_text, hotspot_panel.x0 + 0.04f,
                                          hotspot_panel.y0 - 0.05f, 0.0050f,
                                          glm::vec3(0.91f, 0.96f, 1.0f)));
+    }
+  }
+
+  if (!menu_view.open) {
+    draw_panel(objective_panel, glm::vec3(0.04f, 0.06f, 0.08f),
+               glm::vec3(0.08f, 0.10f, 0.13f));
+    append_mesh(scene.debug_screen,
+                build_screen_text_mesh(objective_status,
+                                       objective_panel.x0 + 0.04f,
+                                       objective_panel.y0 - 0.05f, 0.0050f,
+                                       glm::vec3(0.95f, 0.97f, 1.0f)));
+    if (!objective_hint.empty()) {
+      append_mesh(scene.debug_screen,
+                  build_screen_text_mesh(objective_hint,
+                                         objective_panel.x0 + 0.04f,
+                                         objective_panel.y0 - 0.11f, 0.0045f,
+                                         glm::vec3(0.84f, 0.90f, 0.98f)));
     }
   }
 }
@@ -2387,6 +2522,37 @@ void Engine::rebuild_dynamic_debug_mesh() {
                   build_debug_sphere_mesh(hotspot.position + up * 0.15f,
                                           selected ? 0.17f : 0.12f,
                                           color * glm::vec3(1.1f)));
+    }
+
+    for (size_t i = 0; i < objective_nodes.size(); ++i) {
+      const ObjectiveNode &node = objective_nodes[i];
+      const bool selected = static_cast<int>(i) == nearby_objective_node;
+      const glm::vec3 color = node.activated ? glm::vec3(0.18f, 0.82f, 0.36f)
+                                             : glm::vec3(0.95f, 0.72f, 0.24f);
+      append_mesh(
+          scene.debug_world,
+          build_debug_line_mesh(node.position + glm::vec3(0.0f, 0.1f, 0.0f),
+                                node.position + glm::vec3(0.0f, 2.6f, 0.0f),
+                                selected ? 0.08f : 0.05f, color));
+      append_mesh(
+          scene.debug_world,
+          build_debug_sphere_mesh(node.position + glm::vec3(0.0f, 2.9f, 0.0f),
+                                  selected ? 0.30f : 0.22f, color));
+    }
+
+    if (extraction_unlocked || objective_round_complete) {
+      const glm::vec3 extraction_color = objective_round_complete
+                                             ? glm::vec3(0.22f, 0.95f, 0.48f)
+                                             : glm::vec3(0.24f, 0.72f, 0.98f);
+      append_mesh(scene.debug_world,
+                  build_debug_sphere_mesh(extraction_zone_position,
+                                          extraction_zone_radius * 0.42f,
+                                          extraction_color));
+      append_mesh(scene.debug_world,
+                  build_debug_line_mesh(extraction_zone_position,
+                                        extraction_zone_position +
+                                            glm::vec3(0.0f, 3.0f, 0.0f),
+                                        0.06f, extraction_color));
     }
 
     if (active_minigame.active && active_minigame_hotspot >= 0 &&

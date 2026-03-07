@@ -83,9 +83,56 @@ void sculpt_locomotion_course(VoxelChunk &chunk, int32_t chunk_x,
   }
 }
 
+void sculpt_chunk_landmark(VoxelChunk &chunk, uint64_t world_seed,
+                           int32_t chunk_x, int32_t chunk_z) {
+  if (chunk_x == 0 && chunk_z == 0) {
+    return;
+  }
+  if ((std::abs(chunk_x) + std::abs(chunk_z)) < 2) {
+    return;
+  }
+
+  const WorldGenerator generator(world_seed);
+  const uint64_t seed = generator.chunk_seed({chunk_x, chunk_z});
+  if ((seed & 0x1u) == 0u) {
+    return;
+  }
+
+  const int center_x = 18 + static_cast<int>((seed >> 8u) % 28u);
+  const int center_z = 18 + static_cast<int>((seed >> 16u) % 28u);
+  const int pedestal_top = 7 + static_cast<int>((seed >> 24u) % 3u);
+  const int tower_top = std::min(VoxelChunk::CHUNK_Y - 2, pedestal_top + 6);
+
+  for (int z = center_z - 3; z <= center_z + 3; ++z) {
+    for (int x = center_x - 3; x <= center_x + 3; ++x) {
+      for (int y = pedestal_top + 1; y < VoxelChunk::CHUNK_Y; ++y) {
+        chunk.set_solid(x, y, z, false);
+      }
+      for (int y = 0; y <= pedestal_top; ++y) {
+        chunk.set_solid(x, y, z, true);
+      }
+    }
+  }
+
+  for (int z = center_z - 1; z <= center_z + 1; ++z) {
+    for (int x = center_x - 1; x <= center_x + 1; ++x) {
+      for (int y = pedestal_top + 1; y <= tower_top; ++y) {
+        chunk.set_solid(x, y, z, true);
+      }
+    }
+  }
+
+  for (int z = center_z - 2; z <= center_z + 2; ++z) {
+    for (int x = center_x - 2; x <= center_x + 2; ++x) {
+      chunk.set_solid(x, tower_top + 1, z, true);
+    }
+  }
+}
+
 void generate_flat_world_locomotion_chunk(VoxelChunk &chunk,
                                           uint64_t world_seed, int32_t chunk_x,
                                           int32_t chunk_z) {
   chunk.generate_heightmap_terrain_seeded(world_seed, chunk_x, chunk_z);
   sculpt_locomotion_course(chunk, chunk_x, chunk_z);
+  sculpt_chunk_landmark(chunk, world_seed, chunk_x, chunk_z);
 }

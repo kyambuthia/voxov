@@ -408,6 +408,9 @@ glm::ivec2 tetris_visual_cell(int shape, int rot, int i) {
 void Engine::init(void *window_handle, RenderBackendType backend_type,
                   const EngineRuntimeOptions &options) {
   runtime_options = options;
+  spdlog::info("Engine init: backend={} save_path={}",
+               backend_type == RenderBackendType::OpenGL ? "OpenGL" : "Vulkan",
+               session_state_path().generic_string());
   gui_menu.set_character(GuiMenu::Character::Capsule);
 
   EnginePhysicsSettings settings{};

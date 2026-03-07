@@ -9,6 +9,7 @@
 #include <filesystem>
 #include <fstream>
 #include <set>
+#include <sstream>
 #include <stdexcept>
 #include <vector>
 
@@ -98,7 +99,15 @@ read_file_with_fallback(const std::vector<std::string> &candidates) {
     return buffer;
   }
 
-  throw std::runtime_error("failed to open shader from known paths");
+  std::ostringstream message;
+  message << "failed to open shader from known paths: ";
+  for (size_t i = 0; i < candidates.size(); ++i) {
+    if (i > 0) {
+      message << ", ";
+    }
+    message << candidates[i];
+  }
+  throw std::runtime_error(message.str());
 }
 } // namespace
 

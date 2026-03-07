@@ -60,9 +60,7 @@ cmake --build build/desktop/main --parallel
 
 ## Showcase
 ### Current Android Gameplay
-Click the preview to open the small MP4 recording.
-
-[![VOXOV Android Gameplay Video Preview](docs/media/voxov_android_gameplay_01.jpg)](docs/media/voxov_android_gameplay.mp4)
+![VOXOV Android Gameplay GIF](docs/media/voxov_android_gameplay.gif)
 
 | Android Screenshot 1 | Android Screenshot 2 |
 | --- | --- |

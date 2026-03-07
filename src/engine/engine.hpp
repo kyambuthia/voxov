@@ -105,6 +105,8 @@ private:
   void handle_aircraft_interaction(const InputState &input);
   void handle_objective_interaction(const InputState &input);
   void handle_minigame_interaction(const InputState &input);
+  void load_persistent_session_state();
+  void save_persistent_session_state() const;
   void update_active_minigame(const InputState &input, float dt);
   void update_vehicle_sim(const InputState &input, float dt);
   void update_aircraft_sim(const InputState &input, float dt);

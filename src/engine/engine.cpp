@@ -20,6 +20,7 @@
 #include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <fstream>
 #include <string>
 #include <unordered_set>
 #if defined(_WIN32)
@@ -46,6 +47,16 @@ constexpr uint32_t k_remote_interp_delay_ticks = 6;
 constexpr size_t k_remote_sample_history_max = 16;
 constexpr float k_minigame_interact_radius = 6.5f;
 constexpr float k_network_chunk_world_size = 16.0f;
+constexpr uint64_t k_session_state_magic = 0x564F585356303031ull;
+
+struct SavedSessionState {
+  uint64_t magic = k_session_state_magic;
+  uint64_t world_seed = k_voxov_flat_world_seed;
+  uint8_t objective_count = 0;
+  uint8_t activated_mask = 0;
+  uint8_t extraction_unlocked = 0;
+  uint8_t objective_round_complete = 0;
+};
 
 std::filesystem::path executable_directory() {
   namespace fs = std::filesystem;
@@ -75,6 +86,10 @@ std::filesystem::path executable_directory() {
 #else
   return fs::path(".");
 #endif
+}
+
+std::filesystem::path session_state_path() {
+  return executable_directory() / "save" / "voxov_session_state.bin";
 }
 
 std::vector<std::string> candidate_model_paths(const char *subdir,
@@ -411,6 +426,7 @@ void Engine::init(void *window_handle, RenderBackendType backend_type,
   ui_audio.init();
 
   build_static_scene();
+  load_persistent_session_state();
   local_player = PlayerControllerSystem::spawn_player(collision_world);
   if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
     const float spawn_radius =
@@ -594,6 +610,7 @@ void Engine::set_input(const InputState &input_primary,
 }
 
 void Engine::shutdown() {
+  save_persistent_session_state();
   lan_discovery.stop();
   if (local_server_running) {
     local_server.shutdown();
@@ -1368,6 +1385,54 @@ void Engine::build_static_scene() {
   }
 }
 
+void Engine::load_persistent_session_state() {
+  const std::filesystem::path path = session_state_path();
+  std::ifstream in(path, std::ios::binary);
+  if (!in.is_open()) {
+    return;
+  }
+
+  SavedSessionState state{};
+  in.read(reinterpret_cast<char *>(&state), sizeof(state));
+  if (!in || state.magic != k_session_state_magic ||
+      state.world_seed != k_voxov_flat_world_seed) {
+    return;
+  }
+
+  activated_objective_count = 0;
+  for (size_t i = 0; i < objective_nodes.size(); ++i) {
+    const bool activated =
+        (state.activated_mask & static_cast<uint8_t>(1u << i)) != 0;
+    objective_nodes[i].activated = activated;
+    activated_objective_count += activated ? 1 : 0;
+  }
+  extraction_unlocked = state.extraction_unlocked != 0;
+  objective_round_complete = state.objective_round_complete != 0;
+}
+
+void Engine::save_persistent_session_state() const {
+  const std::filesystem::path path = session_state_path();
+  std::error_code ec;
+  std::filesystem::create_directories(path.parent_path(), ec);
+
+  SavedSessionState state{};
+  state.objective_count =
+      static_cast<uint8_t>(std::min<size_t>(objective_nodes.size(), 8));
+  for (size_t i = 0; i < objective_nodes.size() && i < 8; ++i) {
+    if (objective_nodes[i].activated) {
+      state.activated_mask |= static_cast<uint8_t>(1u << i);
+    }
+  }
+  state.extraction_unlocked = extraction_unlocked ? 1 : 0;
+  state.objective_round_complete = objective_round_complete ? 1 : 0;
+
+  std::ofstream out(path, std::ios::binary | std::ios::trunc);
+  if (!out.is_open()) {
+    return;
+  }
+  out.write(reinterpret_cast<const char *>(&state), sizeof(state));
+}
+
 void Engine::update_third_person_camera(PlayerEntity &player,
                                         Camera &out_camera) {
   update_third_person_camera(player, player.transform.position, out_camera);
@@ -1592,6 +1657,7 @@ void Engine::handle_objective_interaction(const InputState &input) {
     if (extraction_distance <= extraction_zone_radius) {
       objective_round_complete = true;
       objective_hint = "Extraction complete. Objective loop cleared.";
+      save_persistent_session_state();
     }
     return;
   }
@@ -1625,6 +1691,7 @@ void Engine::handle_objective_interaction(const InputState &input) {
         extraction_unlocked = true;
         objective_hint = "All nodes active. Return to extraction.";
       }
+      save_persistent_session_state();
     }
   } else {
     objective_hint =

@@ -199,6 +199,10 @@ std::string net_session_status_line(const NetSessionInfo &info) {
 constexpr uint64_t k_hash_offset = 1469598103934665603ull;
 constexpr uint64_t k_hash_prime = 1099511628211ull;
 
+int32_t render_chunk_key(NetChunkCoord coord) {
+  return (static_cast<int32_t>(coord.x) << 16) ^ static_cast<uint16_t>(coord.z);
+}
+
 void hash_bytes(uint64_t &hash, const void *data, size_t size) {
   const uint8_t *bytes = static_cast<const uint8_t *>(data);
   for (size_t i = 0; i < size; ++i) {
@@ -592,6 +596,22 @@ void Engine::stop_client_session() {
   remote_render_players.clear();
   local_player.network_id = 1;
   local_replication.network_id = 1;
+  if (!runtime_options.spherical_planet) {
+    streamed_chunks.clear();
+    constexpr int k_render_chunk_radius = 1;
+    for (int chunk_z = -k_render_chunk_radius; chunk_z <= k_render_chunk_radius;
+         ++chunk_z) {
+      for (int chunk_x = -k_render_chunk_radius;
+           chunk_x <= k_render_chunk_radius; ++chunk_x) {
+        NetChunkCoord coord{};
+        coord.x = static_cast<int16_t>(chunk_x);
+        coord.z = static_cast<int16_t>(chunk_z);
+        streamed_chunks[render_chunk_key(coord)] = StreamedChunk{coord, 1};
+      }
+    }
+    rebuild_streamed_chunk_scene();
+    renderer.upload_scene(scene);
+  }
 }
 
 void Engine::leave_session() {
@@ -1181,6 +1201,8 @@ void Engine::tick(double frame_dt) {
   render_stats.net_remote_count =
       static_cast<uint32_t>(remote_render_players.size());
 
+  const bool scene_changed = consume_chunk_stream_updates();
+
   if (net_client.is_connected()) {
     NetChunkInterest interest{};
     interest.center_x = static_cast<int16_t>(std::floor(
@@ -1207,7 +1229,12 @@ void Engine::tick(double frame_dt) {
   } else {
     scene.debug_world = frozen_debug_world;
   }
-  renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
+  if (scene_changed) {
+    rebuild_streamed_chunk_scene();
+    renderer.upload_scene(scene);
+  } else {
+    renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
+  }
 
   RenderFrameContext ctx{};
   ctx.frame_index = frame_index++;
@@ -1232,6 +1259,75 @@ void Engine::tick(double frame_dt) {
 
 const RenderStats &Engine::stats() const { return render_stats; }
 
+bool Engine::consume_chunk_stream_updates() {
+  bool changed = false;
+  NetChunkState update{};
+  while (net_client.poll_chunk_state(update)) {
+    const int32_t key = render_chunk_key(update.coord);
+    auto it = streamed_chunks.find(key);
+    if (it != streamed_chunks.end() && it->second.version == update.version) {
+      continue;
+    }
+    streamed_chunks[key] = StreamedChunk{update.coord, update.version};
+    changed = true;
+  }
+
+  if (!runtime_options.spherical_planet && has_last_chunk_interest) {
+    std::vector<int32_t> stale_keys;
+    stale_keys.reserve(streamed_chunks.size());
+    for (const auto &[key, chunk] : streamed_chunks) {
+      const int32_t dx = std::abs(static_cast<int32_t>(chunk.coord.x) -
+                                  last_chunk_interest.center_x);
+      const int32_t dz = std::abs(static_cast<int32_t>(chunk.coord.z) -
+                                  last_chunk_interest.center_z);
+      if (dx > static_cast<int32_t>(last_chunk_interest.radius) ||
+          dz > static_cast<int32_t>(last_chunk_interest.radius)) {
+        stale_keys.push_back(key);
+      }
+    }
+    for (int32_t key : stale_keys) {
+      streamed_chunks.erase(key);
+      changed = true;
+    }
+  }
+
+  return changed;
+}
+
+void Engine::rebuild_streamed_chunk_scene() {
+  scene.opaque_meshes.clear();
+  scene.opaque_meshes.push_back(world_chunk.build_sky_placeholder(240.0f));
+  if (runtime_options.spherical_planet) {
+    scene.opaque_meshes.push_back(world_chunk.build_naive_mesh());
+    return;
+  }
+
+  std::vector<NetChunkCoord> coords;
+  coords.reserve(streamed_chunks.size());
+  for (const auto &[key, chunk] : streamed_chunks) {
+    (void)key;
+    coords.push_back(chunk.coord);
+  }
+  std::sort(coords.begin(), coords.end(),
+            [](const NetChunkCoord &a, const NetChunkCoord &b) {
+              if (a.z != b.z) {
+                return a.z < b.z;
+              }
+              return a.x < b.x;
+            });
+
+  for (const NetChunkCoord &coord : coords) {
+    VoxelChunk render_chunk{};
+    generate_flat_world_locomotion_chunk(render_chunk, k_voxov_flat_world_seed,
+                                         coord.x, coord.z);
+    const glm::vec3 chunk_origin(
+        static_cast<float>(coord.x) * static_cast<float>(VoxelChunk::CHUNK_X),
+        0.0f,
+        static_cast<float>(coord.z) * static_cast<float>(VoxelChunk::CHUNK_Z));
+    scene.opaque_meshes.push_back(render_chunk.build_naive_mesh(chunk_origin));
+  }
+}
+
 void Engine::build_static_scene() {
   if (runtime_options.spherical_planet) {
     world_chunk.generate_spherical_planet_seeded(k_voxov_flat_world_seed);
@@ -1251,26 +1347,21 @@ void Engine::build_static_scene() {
   collision_world = VoxelCollisionWorld(&world_chunk);
 
   scene = RenderScene{};
-  scene.opaque_meshes.push_back(world_chunk.build_sky_placeholder(240.0f));
-  if (runtime_options.spherical_planet) {
-    scene.opaque_meshes.push_back(world_chunk.build_naive_mesh());
-  } else {
+  streamed_chunks.clear();
+  if (!runtime_options.spherical_planet) {
     constexpr int k_render_chunk_radius = 1;
     for (int chunk_z = -k_render_chunk_radius; chunk_z <= k_render_chunk_radius;
          ++chunk_z) {
       for (int chunk_x = -k_render_chunk_radius;
            chunk_x <= k_render_chunk_radius; ++chunk_x) {
-        VoxelChunk render_chunk{};
-        generate_flat_world_locomotion_chunk(
-            render_chunk, k_voxov_flat_world_seed, chunk_x, chunk_z);
-        const glm::vec3 chunk_origin(
-            static_cast<float>(chunk_x * VoxelChunk::CHUNK_X), 0.0f,
-            static_cast<float>(chunk_z * VoxelChunk::CHUNK_Z));
-        scene.opaque_meshes.push_back(
-            render_chunk.build_naive_mesh(chunk_origin));
+        NetChunkCoord coord{};
+        coord.x = static_cast<int16_t>(chunk_x);
+        coord.z = static_cast<int16_t>(chunk_z);
+        streamed_chunks[render_chunk_key(coord)] = StreamedChunk{coord, 1};
       }
     }
   }
+  rebuild_streamed_chunk_scene();
   scene.debug_grid = world_chunk.build_debug_grid(160.0f, 1.0f);
 
   const glm::vec2 center(static_cast<float>(VoxelChunk::CHUNK_X) * 0.5f,

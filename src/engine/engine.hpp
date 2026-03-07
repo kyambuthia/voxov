@@ -98,9 +98,15 @@ private:
     float interact_radius = 2.4f;
     bool activated = false;
   };
+  struct StreamedChunk {
+    NetChunkCoord coord{};
+    uint32_t version = 0;
+  };
   enum class ReconcileMode : uint8_t { Off = 0, Threshold = 1, Snap = 2 };
 
   void build_static_scene();
+  bool consume_chunk_stream_updates();
+  void rebuild_streamed_chunk_scene();
   void handle_vehicle_interaction(const InputState &input);
   void handle_aircraft_interaction(const InputState &input);
   void handle_objective_interaction(const InputState &input);
@@ -149,6 +155,7 @@ private:
 
   VoxelChunk world_chunk;
   VoxelCollisionWorld collision_world{nullptr};
+  std::unordered_map<int32_t, StreamedChunk> streamed_chunks;
 
   Camera camera;
   Camera secondary_camera;

@@ -174,6 +174,14 @@ void test_chunk_meshing() {
   assert(!mesh.vertices.empty());
   assert(!mesh.indices.empty());
   assert(mesh.indices.size() % 3 == 0);
+  bool has_surface_normal = false;
+  for (const RenderVertex &vertex : mesh.vertices) {
+    if (glm::length(vertex.normal) > 0.5f) {
+      has_surface_normal = true;
+      break;
+    }
+  }
+  assert(has_surface_normal);
 }
 
 void test_chunk_world_footprint() {

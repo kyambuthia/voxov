@@ -26,6 +26,9 @@ struct GlRenderVertex {
   float cr;
   float cg;
   float cb;
+  float nx;
+  float ny;
+  float nz;
 };
 
 uint64_t mesh_content_hash(const RenderMesh &mesh) {
@@ -154,10 +157,13 @@ bool GLRenderer::init_pipeline() {
         #version 130
         in vec3 a_pos;
         in vec3 a_color;
+        in vec3 a_normal;
         uniform mat4 u_mvp;
         out vec3 v_color;
+        out vec3 v_normal;
         void main() {
             v_color = a_color;
+            v_normal = a_normal;
             gl_Position = u_mvp * vec4(a_pos, 1.0);
         }
     )";
@@ -165,9 +171,17 @@ bool GLRenderer::init_pipeline() {
   static const char *k_fs = R"(
         #version 130
         in vec3 v_color;
+        in vec3 v_normal;
         out vec4 frag_color;
         void main() {
-            frag_color = vec4(v_color, 1.0);
+            float lit = 1.0;
+            float normal_len2 = dot(v_normal, v_normal);
+            if (normal_len2 > 0.001) {
+                vec3 n = normalize(v_normal);
+                vec3 light_dir = normalize(vec3(0.35, 0.82, 0.24));
+                lit = 0.35 + max(dot(n, light_dir), 0.0) * 0.65;
+            }
+            frag_color = vec4(v_color * lit, 1.0);
         }
     )";
 
@@ -197,6 +211,7 @@ bool GLRenderer::init_pipeline() {
   glAttachShader(program, fs);
   glBindAttribLocation(program, 0, "a_pos");
   glBindAttribLocation(program, 1, "a_color");
+  glBindAttribLocation(program, 2, "a_normal");
   glLinkProgram(program);
   glDeleteShader(vs);
   glDeleteShader(fs);
@@ -206,6 +221,7 @@ bool GLRenderer::init_pipeline() {
   g_attach_shader(program, fs);
   g_bind_attrib_location(program, 0, "a_pos");
   g_bind_attrib_location(program, 1, "a_color");
+  g_bind_attrib_location(program, 2, "a_normal");
   g_link_program(program);
   g_delete_shader(vs);
   g_delete_shader(fs);
@@ -383,7 +399,8 @@ void GLRenderer::upload_mesh(UploadedMesh &mesh, const RenderMesh &source) {
   vertices.reserve(source.vertices.size());
   for (const RenderVertex &v : source.vertices) {
     vertices.push_back({v.position.x, v.position.y, v.position.z, v.color.r,
-                        v.color.g, v.color.b});
+                        v.color.g, v.color.b, v.normal.x, v.normal.y,
+                        v.normal.z});
   }
 
 #if defined(__APPLE__)
@@ -431,11 +448,15 @@ void GLRenderer::draw_mesh(const UploadedMesh &mesh,
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.index_buffer);
   glEnableVertexAttribArray(0);
   glEnableVertexAttribArray(1);
+  glEnableVertexAttribArray(2);
   glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(GlRenderVertex),
                         reinterpret_cast<const void *>(0));
   glVertexAttribPointer(
       1, 3, GL_FLOAT, GL_FALSE, sizeof(GlRenderVertex),
       reinterpret_cast<const void *>(offsetof(GlRenderVertex, cr)));
+  glVertexAttribPointer(
+      2, 3, GL_FLOAT, GL_FALSE, sizeof(GlRenderVertex),
+      reinterpret_cast<const void *>(offsetof(GlRenderVertex, nx)));
 #else
   g_use_program(program);
   g_uniform_matrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
@@ -443,11 +464,15 @@ void GLRenderer::draw_mesh(const UploadedMesh &mesh,
   g_bind_buffer(GL_ELEMENT_ARRAY_BUFFER, mesh.index_buffer);
   g_enable_vertex_attrib_array(0);
   g_enable_vertex_attrib_array(1);
+  g_enable_vertex_attrib_array(2);
   g_vertex_attrib_pointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(GlRenderVertex),
                           reinterpret_cast<const void *>(0));
   g_vertex_attrib_pointer(
       1, 3, GL_FLOAT, GL_FALSE, sizeof(GlRenderVertex),
       reinterpret_cast<const void *>(offsetof(GlRenderVertex, cr)));
+  g_vertex_attrib_pointer(
+      2, 3, GL_FLOAT, GL_FALSE, sizeof(GlRenderVertex),
+      reinterpret_cast<const void *>(offsetof(GlRenderVertex, nx)));
 #endif
 
   glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.index_count),
@@ -456,12 +481,14 @@ void GLRenderer::draw_mesh(const UploadedMesh &mesh,
 #if defined(__APPLE__)
   glDisableVertexAttribArray(0);
   glDisableVertexAttribArray(1);
+  glDisableVertexAttribArray(2);
   glBindBuffer(GL_ARRAY_BUFFER, 0);
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
   glUseProgram(0);
 #else
   g_disable_vertex_attrib_array(0);
   g_disable_vertex_attrib_array(1);
+  g_disable_vertex_attrib_array(2);
   g_bind_buffer(GL_ARRAY_BUFFER, 0);
   g_bind_buffer(GL_ELEMENT_ARRAY_BUFFER, 0);
   g_use_program(0);

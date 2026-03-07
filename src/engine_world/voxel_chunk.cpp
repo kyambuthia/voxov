@@ -28,10 +28,12 @@ void append_greedy_quad(RenderMesh &mesh, const glm::vec3 &origin,
     p3 = origin + glm::vec3(base + du);
   }
 
-  mesh.vertices.push_back({p0, color});
-  mesh.vertices.push_back({p1, color});
-  mesh.vertices.push_back({p2, color});
-  mesh.vertices.push_back({p3, color});
+  const glm::vec3 normal =
+      positive_face ? glm::normalize(glm::vec3(q)) : -glm::normalize(glm::vec3(q));
+  mesh.vertices.push_back({p0, color, normal});
+  mesh.vertices.push_back({p1, color, normal});
+  mesh.vertices.push_back({p2, color, normal});
+  mesh.vertices.push_back({p3, color, normal});
   mesh.indices.insert(mesh.indices.end(), {start, start + 1, start + 2, start,
                                            start + 2, start + 3});
 }

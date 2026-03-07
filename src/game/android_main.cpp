@@ -109,18 +109,29 @@ GLuint create_program() {
     static const char *kVs = R"(
         attribute vec3 aPos;
         attribute vec3 aColor;
+        attribute vec3 aNormal;
         uniform mat4 uMVP;
         varying vec3 vColor;
+        varying vec3 vNormal;
         void main() {
             vColor = aColor;
+            vNormal = aNormal;
             gl_Position = uMVP * vec4(aPos, 1.0);
         }
     )";
     static const char *kFs = R"(
         precision mediump float;
         varying vec3 vColor;
+        varying vec3 vNormal;
         void main() {
-            gl_FragColor = vec4(vColor, 1.0);
+            float lit = 1.0;
+            float normalLen2 = dot(vNormal, vNormal);
+            if (normalLen2 > 0.001) {
+                vec3 n = normalize(vNormal);
+                vec3 lightDir = normalize(vec3(0.35, 0.82, 0.24));
+                lit = 0.35 + max(dot(n, lightDir), 0.0) * 0.65;
+            }
+            gl_FragColor = vec4(vColor * lit, 1.0);
         }
     )";
 
@@ -141,6 +152,7 @@ GLuint create_program() {
     glAttachShader(program, fs);
     glBindAttribLocation(program, 0, "aPos");
     glBindAttribLocation(program, 1, "aColor");
+    glBindAttribLocation(program, 2, "aNormal");
     glLinkProgram(program);
     glDeleteShader(vs);
     glDeleteShader(fs);
@@ -2014,11 +2026,14 @@ struct AndroidRenderer {
         glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.ibo);
         glEnableVertexAttribArray(0);
         glEnableVertexAttribArray(1);
+        glEnableVertexAttribArray(2);
         glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(RenderVertex), reinterpret_cast<void *>(offsetof(RenderVertex, position)));
         glVertexAttribPointer(1, 3, GL_FLOAT, GL_FALSE, sizeof(RenderVertex), reinterpret_cast<void *>(offsetof(RenderVertex, color)));
+        glVertexAttribPointer(2, 3, GL_FLOAT, GL_FALSE, sizeof(RenderVertex), reinterpret_cast<void *>(offsetof(RenderVertex, normal)));
         glDrawElements(GL_TRIANGLES, mesh.index_count, mesh.index_type, nullptr);
         glDisableVertexAttribArray(0);
         glDisableVertexAttribArray(1);
+        glDisableVertexAttribArray(2);
     }
 
     void draw_ui_overlay() {

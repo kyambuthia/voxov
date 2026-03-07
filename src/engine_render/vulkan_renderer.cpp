@@ -838,7 +838,7 @@ void VulkanRenderer::create_pipeline() {
   binding.stride = sizeof(RenderVertex);
   binding.inputRate = VK_VERTEX_INPUT_RATE_VERTEX;
 
-  std::array<VkVertexInputAttributeDescription, 2> attributes{};
+  std::array<VkVertexInputAttributeDescription, 3> attributes{};
   attributes[0].binding = 0;
   attributes[0].location = 0;
   attributes[0].format = VK_FORMAT_R32G32B32_SFLOAT;
@@ -847,6 +847,10 @@ void VulkanRenderer::create_pipeline() {
   attributes[1].location = 1;
   attributes[1].format = VK_FORMAT_R32G32B32_SFLOAT;
   attributes[1].offset = offsetof(RenderVertex, color);
+  attributes[2].binding = 0;
+  attributes[2].location = 2;
+  attributes[2].format = VK_FORMAT_R32G32B32_SFLOAT;
+  attributes[2].offset = offsetof(RenderVertex, normal);
 
   VkPipelineVertexInputStateCreateInfo vertex_input{};
   vertex_input.sType =

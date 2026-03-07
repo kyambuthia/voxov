@@ -4,6 +4,7 @@
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_gameplay/player/player_visuals.hpp"
 #include "engine_net/remote_interp.hpp"
+#include "engine_net/net_runtime_shared.hpp"
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
@@ -170,30 +171,6 @@ glm::vec3 rotate_on_surface(const glm::vec3 &local, const SurfaceFrame &frame,
 
 glm::vec3 player_color_from_id(uint32_t player_id) {
   return player_color_from_network_id(player_id);
-}
-
-std::string net_fixed_string(const char *data, size_t size) {
-  if (!data || size == 0) {
-    return std::string();
-  }
-  size_t len = 0;
-  while (len < size && data[len] != '\0') {
-    ++len;
-  }
-  return std::string(data, len);
-}
-
-std::string net_session_status_line(const NetSessionInfo &info) {
-  std::string name =
-      net_fixed_string(info.server_name, sizeof(info.server_name));
-  if (name.empty()) {
-    name = "VOXOV Session";
-  }
-  const std::string mode =
-      net_session_flag_set(info.flags, NetSessionFlags::LoopbackOnly) ? "LOCAL"
-                                                                      : "WI-FI";
-  return name + " [" + std::to_string(info.current_players) + "/" +
-         std::to_string(info.max_players) + "] " + mode;
 }
 
 constexpr uint64_t k_hash_offset = 1469598103934665603ull;
@@ -606,7 +583,8 @@ void Engine::stop_client_session() {
         NetChunkCoord coord{};
         coord.x = static_cast<int16_t>(chunk_x);
         coord.z = static_cast<int16_t>(chunk_z);
-        streamed_chunks[render_chunk_key(coord)] = StreamedChunk{coord, 1};
+        streamed_chunks[render_chunk_key(coord)] =
+            StreamedChunk{net_make_flat_chunk_state(coord)};
       }
     }
     rebuild_streamed_chunk_scene();
@@ -1265,10 +1243,11 @@ bool Engine::consume_chunk_stream_updates() {
   while (net_client.poll_chunk_state(update)) {
     const int32_t key = render_chunk_key(update.coord);
     auto it = streamed_chunks.find(key);
-    if (it != streamed_chunks.end() && it->second.version == update.version) {
+    if (it != streamed_chunks.end() &&
+        net_chunk_state_matches(it->second.state, update)) {
       continue;
     }
-    streamed_chunks[key] = StreamedChunk{update.coord, update.version};
+    streamed_chunks[key] = StreamedChunk{update};
     changed = true;
   }
 
@@ -1276,9 +1255,9 @@ bool Engine::consume_chunk_stream_updates() {
     std::vector<int32_t> stale_keys;
     stale_keys.reserve(streamed_chunks.size());
     for (const auto &[key, chunk] : streamed_chunks) {
-      const int32_t dx = std::abs(static_cast<int32_t>(chunk.coord.x) -
+      const int32_t dx = std::abs(static_cast<int32_t>(chunk.state.coord.x) -
                                   last_chunk_interest.center_x);
-      const int32_t dz = std::abs(static_cast<int32_t>(chunk.coord.z) -
+      const int32_t dz = std::abs(static_cast<int32_t>(chunk.state.coord.z) -
                                   last_chunk_interest.center_z);
       if (dx > static_cast<int32_t>(last_chunk_interest.radius) ||
           dz > static_cast<int32_t>(last_chunk_interest.radius)) {
@@ -1306,7 +1285,7 @@ void Engine::rebuild_streamed_chunk_scene() {
   coords.reserve(streamed_chunks.size());
   for (const auto &[key, chunk] : streamed_chunks) {
     (void)key;
-    coords.push_back(chunk.coord);
+    coords.push_back(chunk.state.coord);
   }
   std::sort(coords.begin(), coords.end(),
             [](const NetChunkCoord &a, const NetChunkCoord &b) {
@@ -1318,8 +1297,9 @@ void Engine::rebuild_streamed_chunk_scene() {
 
   for (const NetChunkCoord &coord : coords) {
     VoxelChunk render_chunk{};
-    generate_flat_world_locomotion_chunk(render_chunk, k_voxov_flat_world_seed,
-                                         coord.x, coord.z);
+    const StreamedChunk &streamed_chunk =
+        streamed_chunks.at(render_chunk_key(coord));
+    net_generate_chunk_from_state(render_chunk, streamed_chunk.state);
     const glm::vec3 chunk_origin(
         static_cast<float>(coord.x) * static_cast<float>(VoxelChunk::CHUNK_X),
         0.0f,
@@ -1357,7 +1337,8 @@ void Engine::build_static_scene() {
         NetChunkCoord coord{};
         coord.x = static_cast<int16_t>(chunk_x);
         coord.z = static_cast<int16_t>(chunk_z);
-        streamed_chunks[render_chunk_key(coord)] = StreamedChunk{coord, 1};
+        streamed_chunks[render_chunk_key(coord)] =
+            StreamedChunk{net_make_flat_chunk_state(coord)};
       }
     }
   }

@@ -99,8 +99,7 @@ private:
     bool activated = false;
   };
   struct StreamedChunk {
-    NetChunkCoord coord{};
-    uint32_t version = 0;
+    NetChunkState state{};
   };
   enum class ReconcileMode : uint8_t { Off = 0, Threshold = 1, Snap = 2 };
 

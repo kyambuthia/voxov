@@ -14,6 +14,7 @@
 #include "engine_net/net_client.hpp"
 #include "engine_net/lan_discovery.hpp"
 #include "engine_net/remote_interp.hpp"
+#include "engine_net/net_runtime_shared.hpp"
 #include "engine_net/net_server.hpp"
 #include "engine_world/world_gen.hpp"
 
@@ -84,26 +85,6 @@ const char *egl_error_to_string(EGLint err) {
 
 glm::vec3 player_color_from_id(uint32_t player_id) {
     return player_color_from_network_id(player_id);
-}
-
-std::string net_fixed_string(const char *data, size_t size) {
-    if (!data || size == 0) {
-        return std::string();
-    }
-    size_t len = 0;
-    while (len < size && data[len] != '\0') {
-        ++len;
-    }
-    return std::string(data, len);
-}
-
-std::string net_session_status_line(const NetSessionInfo &info) {
-    std::string name = net_fixed_string(info.server_name, sizeof(info.server_name));
-    if (name.empty()) {
-        name = "VOXOV Session";
-    }
-    const std::string mode = net_session_flag_set(info.flags, NetSessionFlags::LoopbackOnly) ? "LOCAL" : "WI-FI";
-    return name + " [" + std::to_string(info.current_players) + "/" + std::to_string(info.max_players) + "] " + mode;
 }
 
 GLuint compile_shader(GLenum type, const char *src) {
@@ -612,6 +593,7 @@ struct AndroidRenderer {
     GpuMesh ui_text_gpu{};
 
     VoxelChunk world{};
+    NetChunkState streamed_world_state = net_make_flat_chunk_state(NetChunkCoord{});
     RenderMesh terrain_mesh{};
     RenderMesh grid_mesh{};
     RenderMesh capsule_mesh{};
@@ -1121,6 +1103,7 @@ struct AndroidRenderer {
         net_target_valid = false;
         net_local_player_id = 0;
         remote_render_players.clear();
+        reset_streamed_world_state();
         refresh_multicast_lock_state();
     }
 
@@ -1372,6 +1355,19 @@ struct AndroidRenderer {
             net_local_player_id = assigned_id;
         }
 
+        NetChunkState chunk_state{};
+        while (net_client.poll_chunk_state(chunk_state)) {
+            if (apply_streamed_world_state(chunk_state)) {
+                __android_log_print(
+                    ANDROID_LOG_INFO,
+                    kLogTag,
+                    "Applied streamed chunk state seed=%llu version=%u type=%u",
+                    static_cast<unsigned long long>(chunk_state.world_seed),
+                    chunk_state.version,
+                    static_cast<unsigned>(chunk_state.content_type));
+            }
+        }
+
         std::unordered_set<uint32_t> seen_remote_ids;
         for (const auto &[player_id, state] : net_client.player_states()) {
             if (net_local_player_id != 0 && player_id == net_local_player_id) {
@@ -1443,6 +1439,45 @@ struct AndroidRenderer {
             program = 0;
         }
         u_mvp = -1;
+    }
+
+    void rebuild_world_meshes() {
+        destroy_mesh(terrain_gpu);
+        destroy_mesh(grid_gpu);
+        net_generate_chunk_from_state(world, streamed_world_state);
+        collision_world = VoxelCollisionWorld(&world);
+        player_feet_position.y = collision_world.find_spawn_height(
+            glm::vec2(player_feet_position.x, player_feet_position.z),
+            player_capsule_radius,
+            player_capsule_height) +
+            0.05f;
+        player_vertical_velocity = 0.0f;
+        player_grounded = false;
+        terrain_mesh = world.build_naive_mesh();
+        grid_mesh = world.build_debug_grid(64.0f, 1.0f);
+        terrain_gpu = upload_mesh(terrain_mesh);
+        grid_gpu = upload_mesh(grid_mesh);
+    }
+
+    bool apply_streamed_world_state(const NetChunkState &state) {
+        if (state.coord.x != 0 || state.coord.z != 0) {
+            return false;
+        }
+        if (net_chunk_state_matches(streamed_world_state, state)) {
+            return false;
+        }
+        streamed_world_state = state;
+        if (can_render()) {
+            rebuild_world_meshes();
+        }
+        return true;
+    }
+
+    void reset_streamed_world_state() {
+        streamed_world_state = net_make_flat_chunk_state(NetChunkCoord{});
+        if (can_render()) {
+            rebuild_world_meshes();
+        }
     }
 
     void rebuild_player_visual_mesh() {
@@ -1697,17 +1732,8 @@ struct AndroidRenderer {
         init_audio_if_needed();
         u_mvp = glGetUniformLocation(program, "uMVP");
 
-        generate_flat_world_locomotion_chunk(world);
-        collision_world = VoxelCollisionWorld(&world);
-        player_feet_position.y = collision_world.find_spawn_height(
-            glm::vec2(player_feet_position.x, player_feet_position.z),
-            player_capsule_radius,
-            player_capsule_height) +
-            0.05f;
-        player_vertical_velocity = 0.0f;
-        player_grounded = false;
-        terrain_mesh = world.build_naive_mesh();
-        grid_mesh = world.build_debug_grid(64.0f, 1.0f);
+        streamed_world_state = net_make_flat_chunk_state(NetChunkCoord{});
+        rebuild_world_meshes();
         player_anim_state = PlayerAnimState::Idle;
         player_anim_phase = 0.0f;
         player_anim_blend = 0.0f;

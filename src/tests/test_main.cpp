@@ -2,6 +2,7 @@
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net/net_common.hpp"
+#include "engine_net/net_runtime_shared.hpp"
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_physics/vehicle/aircraft_controller.hpp"
 #include "engine_physics/vehicle/ground_vehicle_controller.hpp"
@@ -102,6 +103,43 @@ void test_session_info_serialization() {
   assert(out.current_players == in.current_players);
   assert(out.max_players == in.max_players);
   assert(net_session_flag_set(out.flags, NetSessionFlags::LanAdvertised));
+}
+
+void test_chunk_state_serialization() {
+  NetChunkState in{};
+  in.coord.x = 3;
+  in.coord.z = -2;
+  in.version = 17;
+  in.world_seed = 0xD00DFEEDu;
+  in.content_type = static_cast<uint8_t>(NetChunkContentType::ProceduralFlat);
+
+  uint8_t buffer[sizeof(NetChunkState)]{};
+  assert(net_write_pod(buffer, sizeof(buffer), in));
+
+  NetChunkState out{};
+  assert(net_read_pod(buffer, sizeof(buffer), out));
+  assert(out.coord.x == in.coord.x);
+  assert(out.coord.z == in.coord.z);
+  assert(out.version == in.version);
+  assert(out.world_seed == in.world_seed);
+  assert(out.content_type == in.content_type);
+}
+
+void test_chunk_runtime_helpers() {
+  NetChunkCoord origin{};
+  const NetChunkState flat = net_make_flat_chunk_state(origin, 9, 1234u);
+  const NetChunkState same = net_make_flat_chunk_state(origin, 9, 1234u);
+  const NetChunkState different = net_make_flat_chunk_state(origin, 10, 1234u);
+
+  assert(net_chunk_state_matches(flat, same));
+  assert(!net_chunk_state_matches(flat, different));
+
+  NetSessionInfo info{};
+  net_copy_cstr(info.server_name, "LAN Session");
+  info.current_players = 2;
+  info.max_players = 8;
+  info.flags = net_session_flag(NetSessionFlags::LanAdvertised);
+  assert(net_session_status_line(info) == "LAN Session [2/8] WI-FI");
 }
 
 void test_net_header_validation() {
@@ -928,6 +966,8 @@ int main() {
   test_camera_view_override_basis();
   test_net_pod_serialization();
   test_session_info_serialization();
+  test_chunk_state_serialization();
+  test_chunk_runtime_helpers();
   test_net_header_validation();
   test_chunk_meshing();
   test_chunk_world_footprint();

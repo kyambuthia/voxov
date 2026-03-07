@@ -25,7 +25,7 @@ cd VOXOV-0.0.26-linux-x86_64
 
 ## About VOXOV
 VOXOV is a cross-platform multiplayer co-op voxel game currently in active development.
-The project targets desktop, mobile, and console-class platforms from a shared codebase.
+The project currently ships an integrated desktop runtime, a separate Android runtime, and an experimental web target from one shared codebase.
 
 ## Setup From Source
 - Clone the repository with submodules:

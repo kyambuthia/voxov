@@ -1,12 +1,16 @@
 # VOXOV Active Targets
 
-This repository currently ships these primary runtime entrypoints:
+This repository currently ships these runtime entrypoints:
 
 - Desktop: `src/game/main.cpp` (`voxov`)
 - Android: `src/game/android_main.cpp` (`voxov_android`)
-- Web: `src/game/web_main.cpp` (`voxov_web`)
+- Web preview: `src/game/web_main.cpp` (`voxov_web`)
 
-The repository also compiles non-shipping platform scaffolds:
+Only desktop is currently the fully integrated shared-engine runtime.
+
+Android remains a separate runtime path and Web remains a preview/bootstrap target.
+
+The repository also contains non-shipping platform scaffolds that are disabled by default:
 
 - iOS backend scaffold: `src/platform/ios_platform.cpp`
 - Console backend scaffold: `src/platform/console_platform.cpp`

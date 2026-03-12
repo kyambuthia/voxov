@@ -45,6 +45,7 @@ if(ANDROID)
     add_library(voxov_android SHARED
         src/game/android_main.cpp
         src/engine_runtime/runtime_session_controller.cpp
+        src/platform/platform_services.cpp
         src/platform/android_platform.cpp
         src/platform/android/input_android.cpp
         src/engine_assets/cgltf_impl.cpp
@@ -253,6 +254,7 @@ endif()
 add_library(engine STATIC
     src/engine/engine.cpp
     src/engine_runtime/runtime_session_controller.cpp
+    src/platform/platform_services.cpp
     src/engine_assets/cgltf_impl.cpp
     src/engine_assets/skinned_model.cpp
     src/engine_audio/ui_audio.cpp

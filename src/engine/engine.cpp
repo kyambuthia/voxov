@@ -15,7 +15,6 @@
 #include <glm/gtx/quaternion.hpp>
 
 #include <algorithm>
-#include <array>
 #include <cmath>
 #include <cstdint>
 #include <cstdio>
@@ -24,13 +23,6 @@
 #include <fstream>
 #include <string>
 #include <unordered_set>
-#if defined(_WIN32)
-#include <windows.h>
-#elif defined(__linux__)
-#include <unistd.h>
-#elif defined(__APPLE__)
-#include <mach-o/dyld.h>
-#endif
 
 namespace {
 using PerfClock = std::chrono::steady_clock;
@@ -60,72 +52,6 @@ struct SavedSessionState {
   uint8_t extraction_unlocked = 0;
   uint8_t objective_round_complete = 0;
 };
-
-std::filesystem::path executable_directory() {
-  namespace fs = std::filesystem;
-#if defined(_WIN32)
-  std::array<char, 4096> path{};
-  const unsigned long len = GetModuleFileNameA(
-      nullptr, path.data(), static_cast<unsigned long>(path.size()));
-  if (len > 0 && len < path.size()) {
-    return fs::path(std::string(path.data(), len)).parent_path();
-  }
-  return fs::path(".");
-#elif defined(__linux__)
-  std::array<char, 4096> path{};
-  const ssize_t len = readlink("/proc/self/exe", path.data(), path.size() - 1);
-  if (len > 0) {
-    path[static_cast<size_t>(len)] = '\0';
-    return fs::path(path.data()).parent_path();
-  }
-  return fs::path(".");
-#elif defined(__APPLE__)
-  std::array<char, 4096> path{};
-  uint32_t size = static_cast<uint32_t>(path.size());
-  if (_NSGetExecutablePath(path.data(), &size) == 0) {
-    return fs::path(path.data()).parent_path();
-  }
-  return fs::path(".");
-#else
-  return fs::path(".");
-#endif
-}
-
-std::filesystem::path session_state_path() {
-  return executable_directory() / "save" / "voxov_session_state.bin";
-}
-
-std::vector<std::string> candidate_model_paths(const char *subdir,
-                                               const char *model_filename) {
-  namespace fs = std::filesystem;
-  std::vector<std::string> out;
-  out.reserve(20);
-  if (!subdir || *subdir == '\0' || !model_filename ||
-      *model_filename == '\0') {
-    return out;
-  }
-  const std::string rel =
-      std::string("assets/models/") + subdir + "/" + model_filename;
-
-  // Search from current working directory and a few parent levels so
-  // desktop launches from build trees can still resolve repo assets.
-  fs::path prefix(".");
-  for (int i = 0; i < 6; ++i) {
-    fs::path candidate = prefix / rel;
-    out.push_back(candidate.generic_string());
-    prefix /= "..";
-  }
-
-  // Also resolve relative to executable dir for packaged installs.
-  fs::path exe_prefix = executable_directory();
-  for (int i = 0; i < 6; ++i) {
-    fs::path candidate = exe_prefix / rel;
-    out.push_back(candidate.generic_string());
-    exe_prefix /= "..";
-  }
-
-  return out;
-}
 
 glm::vec3 rotate_y(const glm::vec3 &v, float yaw_radians) {
   const float c = std::cos(yaw_radians);
@@ -298,10 +224,14 @@ AnimatedCapsuleShape animated_shape(uint8_t anim_state, float anim_phase,
   return out;
 }
 
-bool try_load_character_model(SkinnedModel &model, const char *label,
+bool try_load_character_model(const PlatformServices &platform_services,
+                              SkinnedModel &model, const char *label,
                               const char *filename, bool &out_loaded) {
   std::string load_error;
-  for (const std::string &path : candidate_model_paths("player", filename)) {
+  const std::string relative_path =
+      std::string("assets/models/player/") + filename;
+  for (const std::string &path :
+       platform_services.candidate_asset_paths(relative_path)) {
     if (model.load_from_glb(path, load_error)) {
       out_loaded = true;
       spdlog::info("Loaded {} player model from {}", label, path);
@@ -405,11 +335,12 @@ glm::ivec2 tetris_visual_cell(int shape, int rot, int i) {
 
 void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
   runtime_options = options;
+  platform_services = PlatformServices::desktop_default();
   session_controller.set_devhud_enabled(runtime_options.devhud);
   session_controller.set_noclip_enabled(runtime_options.noclip);
   session_controller.set_gameplay_started(false);
   spdlog::info("Engine init: backend=OpenGL save_path={}",
-               session_state_path().generic_string());
+               platform_services.session_state_path().generic_string());
   gui_menu.set_character(GuiMenu::Character::Capsule);
 
   EnginePhysicsSettings settings{};
@@ -520,8 +451,8 @@ void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
                local_player.transform.position.y,
                local_player.transform.position.z);
 
-  try_load_character_model(humanoid_player_model, "humanoid", "CesiumMan.glb",
-                           has_humanoid_player_model);
+  try_load_character_model(platform_services, humanoid_player_model, "humanoid",
+                           "CesiumMan.glb", has_humanoid_player_model);
 
   try {
     renderer.init(window_handle);
@@ -1470,7 +1401,7 @@ void Engine::build_static_scene() {
 }
 
 void Engine::load_persistent_session_state() {
-  const std::filesystem::path path = session_state_path();
+  const std::filesystem::path path = platform_services.session_state_path();
   std::ifstream in(path, std::ios::binary);
   if (!in.is_open()) {
     return;
@@ -1495,7 +1426,7 @@ void Engine::load_persistent_session_state() {
 }
 
 void Engine::save_persistent_session_state() const {
-  const std::filesystem::path path = session_state_path();
+  const std::filesystem::path path = platform_services.session_state_path();
   std::error_code ec;
   std::filesystem::create_directories(path.parent_path(), ec);
 

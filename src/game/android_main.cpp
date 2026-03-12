@@ -18,6 +18,7 @@
 #include "engine_net/net_runtime_shared.hpp"
 #include "engine_net/net_server.hpp"
 #include "engine_world/world_gen.hpp"
+#include "platform/platform_services.hpp"
 
 #include <android/input.h>
 #include <android/log.h>
@@ -36,11 +37,11 @@
 #include <cstring>
 #include <ctime>
 #include <deque>
+#include <filesystem>
 #include <string>
 #include <unordered_map>
 #include <unordered_set>
 #include <vector>
-#include <fstream>
 
 #include <glm/glm.hpp>
 #include <glm/gtc/matrix_transform.hpp>
@@ -633,6 +634,7 @@ struct AndroidRenderer {
     TouchState touch{};
     GuiMenu gui_menu{};
     RuntimeSessionController session_controller{};
+    PlatformServices platform_services{};
     UiAudio ui_audio{};
     bool audio_ready = false;
     bool menu_open_prev = false;
@@ -1040,16 +1042,14 @@ struct AndroidRenderer {
             return false;
         }
 
-        const char *leaf = std::strrchr(asset_path, '/');
-        leaf = (leaf && *(leaf + 1) != '\0') ? (leaf + 1) : asset_path;
-        out_path = std::string(app->activity->internalDataPath) + "/" + leaf;
-        std::ofstream out(out_path, std::ios::binary | std::ios::trunc);
-        if (!out.is_open()) {
+        const std::filesystem::path extracted_path =
+            platform_services.temp_asset_path(asset_path);
+        if (!platform_services.write_binary_file(
+                extracted_path, data.data(), data.size())) {
             return false;
         }
-        out.write(reinterpret_cast<const char *>(data.data()), static_cast<std::streamsize>(data.size()));
-        out.close();
-        return out.good();
+        out_path = extracted_path.generic_string();
+        return true;
     }
 
     void init_audio_if_needed() {
@@ -1621,6 +1621,8 @@ struct AndroidRenderer {
             return false;
         }
         this->app = app;
+        platform_services = PlatformServices::android(
+            app->activity ? app->activity->internalDataPath : nullptr);
         multicast_lock.set_activity(app);
 
         display = eglGetDisplay(EGL_DEFAULT_DISPLAY);
@@ -1738,9 +1740,12 @@ struct AndroidRenderer {
                 if (extract_asset_to_file(asset_path.c_str(), extracted_path)) {
                     model_paths.push_back(extracted_path);
                 }
-                model_paths.push_back(std::string("assets/models/player/") + asset_name);
-                model_paths.push_back(std::string("../assets/models/player/") + asset_name);
-                model_paths.push_back(std::string("/data/local/tmp/voxov/assets/models/player/") + asset_name);
+                const std::string relative_asset_path =
+                    std::string("assets/models/player/") + asset_name;
+                for (const std::string &path :
+                     platform_services.candidate_asset_paths(relative_asset_path)) {
+                    model_paths.push_back(path);
+                }
                 for (const std::string &path : model_paths) {
                     if (out_model.load_from_glb(path, load_error)) {
                         out_loaded = true;

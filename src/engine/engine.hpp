@@ -22,6 +22,7 @@
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
 #include "platform/platform.hpp"
+#include "platform/platform_services.hpp"
 
 #include <array>
 #include <deque>
@@ -139,6 +140,7 @@ private:
 
   FixedStep fixed;
   Renderer renderer;
+  PlatformServices platform_services;
   PhysicsWorld physics;
   NetClient net_client;
   LanDiscovery lan_discovery;

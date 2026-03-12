@@ -1,84 +1,97 @@
-# Build Targets
+# Platform Support
 
-VOXOV targets cross-platform shipping from one architecture:
+This document describes the repository as it exists today, not the long-term target vision.
 
-- Desktop: Linux/Windows/macOS
-- Mobile: Android/iOS
-- Consoles: PlayStation/Xbox/Nintendo platform targets
+## Status Matrix
 
-All generated outputs must live under `./build/<target>/...`.
+| Platform | Status | Runtime Path | Verification |
+| --- | --- | --- | --- |
+| Linux desktop | Supported | Shared desktop runtime (`src/game/main.cpp` + `src/engine/*`) | CI build + tests + release bundle validation |
+| Windows desktop | Supported for release packaging | Shared desktop runtime | Release packaging and startup smoke test; Vulkan currently disabled in release builds |
+| macOS desktop | Goal / unverified | Intended shared desktop runtime | No active CI coverage in this repo |
+| Android | Active target, separate runtime | `src/game/android_main.cpp` | Release APK build and artifact validation; no automated device smoke test |
+| Web | Preview | `src/game/web_main.cpp` | Buildable, but no CI/runtime parity validation |
+| iOS | Scaffold | `src/platform/ios_platform.cpp` | Placeholder only |
+| Consoles | Scaffold | `src/platform/console_platform.cpp` | Placeholder only |
+| XR | Scaffold | `src/engine_xr/xr_session.cpp` | Placeholder only |
 
-## Desktop (Windows/Linux/macOS)
+## Desktop
 
-Configure + build:
+Configure and build:
 
 ```bash
 cmake -S . -B ./build/desktop/main -DVOXOV_BUILD_TESTS=ON
 cmake --build ./build/desktop/main --parallel
 ```
 
-Run Vulkan backend:
+Run Vulkan:
 
 ```bash
 ./build/desktop/main/bin/voxov --renderer vulkan
 ```
 
-Run OpenGL backend:
+Run OpenGL:
 
 ```bash
 ./build/desktop/main/bin/voxov --renderer gl
 ```
 
-Run headless authoritative server:
+Run local client + server:
 
 ```bash
-./build/desktop/main/bin/voxov --headless-server
+./build/desktop/main/bin/voxov --server
 ```
 
-LAN replication demo:
+Run dedicated server mode:
 
 ```bash
-# server host
 ./build/desktop/main/bin/voxov --headless-server --port 7777
-
-# client 1
-./build/desktop/main/bin/voxov --renderer vulkan --connect <SERVER_LAN_IP> --port 7777 --devhud
-
-# client 2
-./build/desktop/main/bin/voxov --renderer gl --connect <SERVER_LAN_IP> --port 7777 --devhud
 ```
+
+Notes:
+
+- `--headless-server` is currently a mode of the desktop client executable, not a separate `voxov_server` binary.
+- `ctest` requires a build configured with `-DVOXOV_BUILD_TESTS=ON`.
 
 ## Android
 
-Android has a dedicated native runtime target when `ANDROID=ON`:
+Android is not just a stub, but it is not yet the same runtime path as desktop.
 
-- Target: `voxov_android` (shared library)
+- Native target: `voxov_android`
 - Entry point: `src/game/android_main.cpp`
-- Packaging/build flow: Gradle app module under `android/`
+- Packaging flow: Gradle app under `android/`
 
-See `docs/ANDROID.md` for Gradle + native CMake details.
+Build via Gradle:
+
+```bash
+gradle -p android :app:assembleDebug
+```
+
+See `docs/ANDROID.md` for NDK and APK details.
 
 ## Web
 
-Web preview target (Emscripten):
+Web is a preview path used for lightweight runtime bring-up, menu flow, and transport-hook experimentation.
+
+Configure:
 
 ```bash
 EM_CACHE=./build/web/cache emcmake cmake -S . -B ./build/web/main -G Ninja
+```
+
+Build:
+
+```bash
 EM_CACHE=./build/web/cache cmake --build ./build/web/main --parallel
 ```
 
-Output:
+Expected outputs:
 
 - `./build/web/main/bin/voxov_web.html`
 - `./build/web/main/bin/voxov_web.js`
 - `./build/web/main/bin/voxov_web.wasm`
 
-## iOS (planned scaffold)
+## Platform Selection Notes
 
-- `src/platform/ios_platform.cpp` compiles as a lifecycle/event scaffold.
-- Full runtime integration is still planned work.
-
-## Consoles (planned scaffold)
-
-- `src/platform/console_platform.cpp` compiles as a placeholder backend.
-- Platform certification and memory-profile work is deferred.
+- Android and Web targets are selected by the active toolchain (`ANDROID` or `EMSCRIPTEN`), not by desktop build flags alone.
+- The repo still contains target-selection and platform-status docs that describe the long-term vision; use this file plus `docs/ACTIVE_TARGETS.md` as the ground truth for current support levels.

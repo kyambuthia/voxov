@@ -104,7 +104,8 @@ private:
   enum class ReconcileMode : uint8_t { Off = 0, Threshold = 1, Snap = 2 };
 
   void build_static_scene();
-  bool consume_chunk_stream_updates();
+  bool consume_chunk_stream_updates(uint32_t &out_packet_count,
+                                    uint32_t &out_change_count);
   void rebuild_streamed_chunk_scene();
   void handle_vehicle_interaction(const InputState &input);
   void handle_aircraft_interaction(const InputState &input);

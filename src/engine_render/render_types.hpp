@@ -27,9 +27,16 @@ struct RenderScene {
 struct RenderStats {
     double fps = 0.0;
     double cpu_ms = 0.0;
+    double frame_ms = 0.0;
+    double fixed_cpu_ms = 0.0;
+    double render_cpu_ms = 0.0;
     bool net_connected = false;
     uint32_t net_local_player_id = 0;
     uint32_t net_remote_count = 0;
+    uint32_t fixed_steps = 0;
+    uint32_t chunk_packets = 0;
+    uint32_t chunk_changes = 0;
+    uint32_t streamed_chunk_count = 0;
     bool menu_open = false;
     int menu_selected = 0;
     std::string menu_title;

@@ -33,6 +33,8 @@
 #endif
 
 namespace {
+using PerfClock = std::chrono::steady_clock;
+
 constexpr float k_vehicle_body_half_length = 1.35f;
 constexpr float k_vehicle_body_half_width = 0.8f;
 constexpr float k_vehicle_body_height = 0.65f;
@@ -175,6 +177,21 @@ glm::vec3 player_color_from_id(uint32_t player_id) {
 
 constexpr uint64_t k_hash_offset = 1469598103934665603ull;
 constexpr uint64_t k_hash_prime = 1099511628211ull;
+
+double elapsed_ms(const PerfClock::time_point &start,
+                  const PerfClock::time_point &end) {
+  return std::chrono::duration<double, std::milli>(end - start).count();
+}
+
+double smooth_metric(double current, double sample, double alpha = 0.25) {
+  if (sample < 0.0) {
+    sample = 0.0;
+  }
+  if (current <= 0.0) {
+    return sample;
+  }
+  return current + (sample - current) * alpha;
+}
 
 int32_t render_chunk_key(NetChunkCoord coord) {
   return (static_cast<int32_t>(coord.x) << 16) ^ static_cast<uint16_t>(coord.z);
@@ -997,6 +1014,7 @@ void Engine::update_remote_interpolation(double frame_dt) {
 }
 
 void Engine::tick(double frame_dt) {
+  const PerfClock::time_point frame_cpu_start = PerfClock::now();
   last_frame_dt = frame_dt;
 
   apply_runtime_toggles();
@@ -1035,6 +1053,8 @@ void Engine::tick(double frame_dt) {
 
   fixed.accumulator += frame_dt;
   bool jump_consumed = false;
+  uint32_t fixed_steps_this_frame = 0;
+  const PerfClock::time_point fixed_cpu_start = PerfClock::now();
 
   while (fixed.accumulator >= fixed.fixed_dt) {
     if (local_server_running) {
@@ -1092,7 +1112,13 @@ void Engine::tick(double frame_dt) {
     physics.step(static_cast<float>(fixed.fixed_dt));
     fixed.accumulator -= fixed.fixed_dt;
     fixed.tick++;
+    fixed_steps_this_frame++;
   }
+
+  const double fixed_cpu_ms =
+      fixed_steps_this_frame > 0
+          ? elapsed_ms(fixed_cpu_start, PerfClock::now())
+          : 0.0;
 
   input_state.jump_pressed = false;
   input_state.interact_pressed = false;
@@ -1115,8 +1141,6 @@ void Engine::tick(double frame_dt) {
   fps_frames++;
   if (fps_accumulator >= 0.3) {
     render_stats.fps = static_cast<double>(fps_frames) / fps_accumulator;
-    render_stats.cpu_ms =
-        (fps_accumulator * 1000.0) / static_cast<double>(fps_frames);
     fps_accumulator = 0.0;
     fps_frames = 0;
   }
@@ -1178,8 +1202,20 @@ void Engine::tick(double frame_dt) {
   render_stats.net_local_player_id = local_player.network_id;
   render_stats.net_remote_count =
       static_cast<uint32_t>(remote_render_players.size());
+  render_stats.frame_ms =
+      smooth_metric(render_stats.frame_ms, last_frame_dt * 1000.0, 0.20);
+  render_stats.fixed_cpu_ms =
+      smooth_metric(render_stats.fixed_cpu_ms, fixed_cpu_ms, 0.25);
+  render_stats.fixed_steps = fixed_steps_this_frame;
 
-  const bool scene_changed = consume_chunk_stream_updates();
+  uint32_t chunk_packets_this_frame = 0;
+  uint32_t chunk_changes_this_frame = 0;
+  const bool scene_changed = consume_chunk_stream_updates(
+      chunk_packets_this_frame, chunk_changes_this_frame);
+  render_stats.chunk_packets = chunk_packets_this_frame;
+  render_stats.chunk_changes = chunk_changes_this_frame;
+  render_stats.streamed_chunk_count =
+      static_cast<uint32_t>(streamed_chunks.size());
 
   if (net_client.is_connected()) {
     NetChunkInterest interest{};
@@ -1231,16 +1267,27 @@ void Engine::tick(double frame_dt) {
   }
   ctx.debug_xray =
       runtime_options.debug_collision && runtime_options.debug_xray;
+  const PerfClock::time_point render_cpu_start = PerfClock::now();
   renderer.begin_frame(ctx, render_stats);
   renderer.end_frame();
+
+  const double render_cpu_ms = elapsed_ms(render_cpu_start, PerfClock::now());
+  const double frame_cpu_ms = elapsed_ms(frame_cpu_start, PerfClock::now());
+  render_stats.render_cpu_ms =
+      smooth_metric(render_stats.render_cpu_ms, render_cpu_ms, 0.25);
+  render_stats.cpu_ms = smooth_metric(render_stats.cpu_ms, frame_cpu_ms, 0.25);
 }
 
 const RenderStats &Engine::stats() const { return render_stats; }
 
-bool Engine::consume_chunk_stream_updates() {
+bool Engine::consume_chunk_stream_updates(uint32_t &out_packet_count,
+                                         uint32_t &out_change_count) {
+  out_packet_count = 0;
+  out_change_count = 0;
   bool changed = false;
   NetChunkState update{};
   while (net_client.poll_chunk_state(update)) {
+    out_packet_count += 1;
     const int32_t key = render_chunk_key(update.coord);
     auto it = streamed_chunks.find(key);
     if (it != streamed_chunks.end() &&
@@ -1249,6 +1296,7 @@ bool Engine::consume_chunk_stream_updates() {
     }
     streamed_chunks[key] = StreamedChunk{update};
     changed = true;
+    out_change_count += 1;
   }
 
   if (!runtime_options.spherical_planet && has_last_chunk_interest) {
@@ -1267,6 +1315,7 @@ bool Engine::consume_chunk_stream_updates() {
     for (int32_t key : stale_keys) {
       streamed_chunks.erase(key);
       changed = true;
+      out_change_count += 1;
     }
   }
 
@@ -2328,7 +2377,7 @@ void Engine::refresh_overlay_text() {
                                          glm::vec3(0.88f, 0.93f, 0.99f)));
     }
   } else if (runtime_options.devhud) {
-    char text[1024]{};
+    char text[1280]{};
     const float vehicle_distance =
         k_vehicle_feature_enabled
             ? glm::length(local_player.transform.position - vehicle.position)
@@ -2342,16 +2391,20 @@ void Engine::refresh_overlay_text() {
         local_server_running ? local_server.debug_stats() : NetDebugStats{};
     std::snprintf(
         text, sizeof(text),
-        "FPS %.1f DT %.3f FIX %.3f\nP %.1f %.1f %.1f V %.1f %.1f %.1f G "
-        "%d\nPEN %.3f N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB "
-        "%d LOCK %d LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps "
+        "FPS %.1f FT %.2f CPU %.2f RND %.2f\nFIX dt %.3f CPU %.2f x%u STR in "
+        "%u chg %u live %u\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f "
+        "N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d "
+        "LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps "
         "%u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst "
         "%u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nLOCO %s SPD "
         "%.2f GND %d SLP %.1f CYO %.2f BUF %.2f\nANIM %s BL %.2f PH %.2f X "
         "%.2f EVT %s\nPROC lean %.2f bank %.2f land %.2f jump %.2f\nVEH %s "
         "DIST %.1f C[th %.2f br %.2f st %.2f hb %.2f]\nAIR %s SPD %.1f DIST "
         "%.1f C[th %.2f y %.2f p %.2f r %.2f]",
-        render_stats.fps, last_frame_dt, fixed.fixed_dt,
+        render_stats.fps, render_stats.frame_ms, render_stats.cpu_ms,
+        render_stats.render_cpu_ms, fixed.fixed_dt, render_stats.fixed_cpu_ms,
+        render_stats.fixed_steps, render_stats.chunk_packets,
+        render_stats.chunk_changes, render_stats.streamed_chunk_count,
         local_player.transform.position.x, local_player.transform.position.y,
         local_player.transform.position.z, local_player.controller.velocity.x,
         local_player.controller.velocity.y, local_player.controller.velocity.z,

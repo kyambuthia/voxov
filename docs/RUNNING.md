@@ -14,36 +14,81 @@ OpenGL:
 ./build/desktop/main/bin/voxov --renderer gl
 ```
 
-Window size and mode:
+Window mode and size:
 
 ```bash
-./build/desktop/main/bin/voxov --renderer vulkan --windowed --width 1600 --height 900
-./build/desktop/main/bin/voxov --renderer vulkan --fullscreen
+./build/desktop/main/bin/voxov --windowed --width 1600 --height 900
+./build/desktop/main/bin/voxov --fullscreen
 ```
 
-Runtime toggle:
+Connect to a server:
 
-- Press `F11` to toggle fullscreen/windowed.
-- Press `Esc` to release mouse capture (so you can move/resize windows).
-- Right-click in the game window to recapture mouse look.
+```bash
+./build/desktop/main/bin/voxov --connect 127.0.0.1 --port 7777 --devhud
+```
 
-Combined client + server in one process:
+Host in one process:
 
 ```bash
 ./build/desktop/main/bin/voxov --server
 ```
 
-Headless dedicated server:
+Headless server:
 
 ```bash
 ./build/desktop/main/bin/voxov --headless-server --port 7777
 ```
 
-## Testing
+## Useful Runtime Flags
+
+- `--renderer vulkan|gl`
+- `--physics jolt|avbd`
+- `--devhud`
+- `--noclip`
+- `--splitscreen`
+- `--debug-collision`
+- `--debug-xray`
+- `--debug-collision-only`
+- `--debug-freeze`
+- `--vehicle-sandbox`
+- `--spherical-planet`
+- `--flat-world`
+- `--fullscreen`
+- `--windowed`
+- `--width <pixels>`
+- `--height <pixels>`
+- `--connect <host>`
+- `--port <port>`
+- `--server`
+- `--headless-server`
+
+## Desktop Hotkeys
+
+- `F11` toggle fullscreen
+- `Esc` release mouse capture
+- Right-click recapture mouse look
+- `F1` toggle collision debug draw
+- `F2` toggle xray debug draw
+- `F3` toggle collision-only debug draw
+- `F4` freeze/unfreeze current debug frame
+- `F5` cycle reconcile mode
+
+## Tests
+
+Build tests first:
+
+```bash
+cmake -S . -B build/desktop/main -DVOXOV_BUILD_TESTS=ON
+cmake --build build/desktop/main --parallel
+```
+
+Run:
 
 ```bash
 ctest --test-dir build/desktop/main --output-on-failure
 ```
+
+The network stress test binds loopback ports, so it may fail inside restrictive sandboxes even when the project is healthy.
 
 ## Asset Cooker
 
@@ -55,5 +100,6 @@ ctest --test-dir build/desktop/main --output-on-failure
 ## Related Docs
 
 - Setup/build details: `docs/SETUP.md`
-- Networking bring-up: `docs/NETWORKING.md`
-- Debugging and tooling: `docs/DEBUGGING.md`
+- Platform support: `docs/BUILD_PLATFORMS.md`
+- Networking details: `docs/NETWORKING.md`
+- Release workflow: `docs/RELEASES.md`

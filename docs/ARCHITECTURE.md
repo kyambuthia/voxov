@@ -1,95 +1,82 @@
-# VOXOV Architecture (Genesis Baseline)
+# VOXOV Architecture
 
-## Architecture Tenet: True Cross-Platform
+This document describes the architecture that is implemented today.
 
-VOXOV must ship from one shared codebase across:
+## Runtime Matrix
 
-- Desktop: Linux, Windows, macOS
-- Mobile: Android, iOS
-- Consoles: PlayStation/Xbox/Nintendo platform targets
-- XR/AR headsets: Quest/Oculus, PC VR headsets, Apple Vision Pro
+- Desktop: primary integrated runtime in `src/game/main.cpp`, backed by `Engine`
+- Android: separate native runtime in `src/game/android_main.cpp`
+- Web: preview runtime in `src/game/web_main.cpp`
+- iOS, console, and XR: scaffolds only, disabled by default
 
-Design implications:
+The important distinction is that VOXOV is a shared codebase, but not yet a single shared runtime architecture across every target.
 
-- Platform code stays behind `platform/*` interfaces; engine/game logic remains platform-agnostic.
-- Rendering abstraction supports backend/platform surface differences without gameplay forks.
-- Input, file IO, threading, timing, networking, and save paths use engine abstractions, not ad-hoc platform calls.
-- New engine systems are accepted only if they can map to all target platform classes or include a documented fallback path.
+## Desktop Runtime
 
-## XR/AR Tenet
+The desktop target is the cleanest path in the repository:
 
-XR/AR is a first-class platform target, not a post-port.
+1. `src/game/main.cpp` parses CLI flags and creates `DesktopPlatform`
+2. `Engine` owns the frame loop, fixed-step simulation, renderer, physics, and networking
+3. `Renderer` selects Vulkan or OpenGL backends
+4. Shared gameplay, world, and network code lives under `src/engine_*`
 
-- Quest/Oculus and PC VR target an OpenXR path.
-- Apple Vision Pro targets a visionOS-specific path.
-- Gameplay/simulation remains shared and headset-agnostic.
-- XR-specific logic lives in platform/render/input layers (stereo views, pose tracking, motion controllers, frame timing).
-- Comfort and frame pacing are mandatory quality gates for headset builds.
+Core module boundaries:
 
-## Gameplay Tenet: Multi-Modal Traversal
+- `engine_core/*`: timing and low-level helpers
+- `engine_math/*`: camera and transforms
+- `engine_render/*`: render abstractions plus Vulkan/OpenGL backends
+- `engine_world/*`: voxel terrain and collision helpers
+- `engine_physics/*`: physics backends and vehicle helpers
+- `engine_net/*`: ENet client/server and LAN discovery
+- `engine_ui/*`: in-game menu flow
+- `engine_gameplay/*`: player, animation, minigames, and related gameplay code
 
-Core gameplay must support seamless traversal via:
+## Target-Specific Paths
 
-- Walking on terrain
-- Driving land vehicles (cars)
-- Flying aircraft both within a planet and between planets
+### Android
 
-Design implications:
+Android shares some lower-level modules such as world, gameplay, networking, and UI code, but it does not reuse the desktop `Engine` orchestration layer. The Android target runs its own native loop, rendering path, menu state, and networking/session flow.
 
-- Movement/controller architecture must support mode switching without duplicating netcode or camera stacks.
-- Physics uses a shared authority model with mode-specific tuning (capsule, wheeled, aircraft) under one replication protocol.
-- Streaming and LOD systems must prioritize content along current traversal velocity (ground and high-speed flight profiles).
+### Web
 
-Current execution note:
+The Web target is a lightweight preview. It currently implements a minimal local movement loop, menu handling, and optional JavaScript transport hooks rather than the full desktop runtime.
 
-- During multiplayer hardening phases, on-foot traversal is the default runtime path and vehicle/aircraft gameplay is intentionally gated/deferred.
+### Legacy and Future Scaffolds
 
-## Runtime layers
+The repository still contains:
 
-- `platform/*`: window/context/input/time abstraction
-- `engine_core/*`: timing/jobs/memory
-- `engine_math/*`: transforms + camera
-- `engine_world/*`: voxel data + chunk meshing
-- `engine_render/*`: renderer API + Vulkan/GL backends
-- `engine_xr/*`: XR session, stereo camera state, action bindings, and compositor-facing frame flow
-- `engine_ui/*`: renderer-agnostic in-game GUI/menu state
-- `engine_net/*`: ENet transport + channels + replication primitives
-- `engine_physics/*`: Jolt world step
-- `engine/*`: orchestration and fixed-timestep loop
-- `game/main.cpp`: app bootstrap and CLI
+- legacy SDL/Vulkan demo sources under `src/main.cpp`, `src/game.cpp`, `src/renderer/*`, and `src/world/*`
+- future scaffolds for iOS, console, and XR
 
-Current scaffold note:
+These paths are useful reference material, but they are not the main shipping runtime.
 
-- `src/engine_xr/xr_session.*` is present as the baseline XR session scaffold.
+## What Is Designed Well
 
-## Frame flow
+- The repository already has sensible module folders under `src/engine_*`
+- The desktop runtime keeps rendering behind a backend abstraction
+- Build outputs, tests, and release packaging are clearly represented in CMake and GitHub Actions
+- Platform ambition is documented separately from the code, rather than being hidden in random source files
 
-1. Platform polls input/events.
-2. Engine advances fixed simulation tick(s).
-3. Net client sends input, receives snapshot/chunk updates.
-4. Renderer draws uploaded scene with active backend.
-5. Debug stats (FPS/CPU ms) are updated each frame.
+## Current Design Liabilities
 
-## Scene baseline
+### 1. `Engine` is too broad
 
-- voxel terrain chunk (naive mesh)
-- sky/atmosphere placeholder mesh
-- debug ground grid mesh
-- third-person player capsule + camera rig (yaw/pitch orbit, distance clamp, occlusion test)
-- vehicle and aircraft placeholder actors for traversal mode integration
-- in-world debug overlays (dev HUD text + debug capsules/markers)
+`Engine` currently owns rendering, physics, local and remote player state, networking, UI, persistence, objectives, minigames, vehicle state, and split-screen flow. That makes the desktop runtime hard to test and hard to reuse from other targets.
 
-## Networking baseline
+### 2. Cross-platform behavior is only partially shared
 
-- authoritative server mode
-- reliable and unreliable channels
-- player assignment + per-player state replication (server -> all clients)
-- chunk interest request and chunk state response
+Android and Web both bypass the desktop orchestration layer. That means gameplay, networking, and menu behavior can drift across targets even when they nominally ship from one repository.
 
-## Diagnostics baseline
+### 3. The platform story is more aspirational than integrated
 
-- Vulkan validation layers + debug callback
-- headless server mode
-- `--devhud` structured runtime telemetry for input/camera/collision/network
-- `--noclip` debug-only comparison mode
-- unit tests: camera math, net serialization, chunk meshing
+The repo contains iOS, console, and XR scaffolds, but only desktop is a fully integrated shared-engine runtime today. Planning docs should reflect that distinction clearly.
+
+## Architectural Direction
+
+The next architectural milestone should not be "add more platforms." It should be:
+
+1. Extract shared session/gameplay/network subsystems from `Engine`
+2. Reuse them from Android before expanding target scope
+3. Keep Web intentionally small until a real shared runtime path exists
+
+For execution priorities, see `docs/ROADMAP.md`.

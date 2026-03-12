@@ -22,7 +22,7 @@ sudo apt-get install -y \
 ## 2. Clone
 
 ```bash
-git clone --recurse-submodules github.com/kyambuthia/voxov.git
+git clone --recurse-submodules https://github.com/kyambuthia/voxov.git
 cd voxov
 git submodule update --init --recursive
 ```
@@ -39,9 +39,17 @@ cmake --build build/desktop/main --parallel
 Useful configure flags:
 
 - `-DVOXOV_BUILD_TESTS=ON`
-- `-DVOXOV_ENABLE_ANDROID_BACKEND=ON`
-- `-DVOXOV_ENABLE_WEB_BACKEND=ON`
+- `-DVOXOV_ENABLE_VULKAN=OFF` if you want an OpenGL-only desktop build
+- `-DVOXOV_ENABLE_XR=ON` to compile the XR scaffold
+- `-DVOXOV_ENABLE_IOS_BACKEND=ON` to compile the iOS scaffold
+- `-DVOXOV_ENABLE_CONSOLE_BACKEND=ON` to compile the console scaffold
+- `-DVOXOV_BUILD_LEGACY_DEMOS=ON` to expose the legacy SDL/Vulkan sources in the build graph
 - `-DUSE_AVX2=OFF -DUSE_F16C=OFF -DUSE_FMADD=OFF -DUSE_LZCNT=OFF` for older CPUs that crash with illegal-instruction.
+
+Notes:
+
+- Android and Web builds are selected by the toolchain (`ANDROID` or `EMSCRIPTEN`), not by a normal desktop configure flag.
+- Desktop is the main integrated runtime. Android and Web use separate runtime paths today.
 
 ## 4. Run
 
@@ -90,6 +98,8 @@ Hotkeys:
 
 ## 6. Tests
 
+Build tests are only generated if the configure step used `-DVOXOV_BUILD_TESTS=ON`.
+
 ```bash
 ctest --test-dir build/desktop/main --output-on-failure
 ```
@@ -125,6 +135,10 @@ scripts\clean_build.bat
 
 For release tags and downloadable binaries, see `docs/RELEASES.md`.
 
-## 10. Android
+## 10. Roadmap
+
+For current architectural priorities and platform sequencing, see `docs/ROADMAP.md`.
+
+## 11. Android
 
 For Android NDK/Android Studio bring-up and build steps, see `docs/ANDROID.md`.

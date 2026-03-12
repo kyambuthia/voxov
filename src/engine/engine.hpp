@@ -10,6 +10,7 @@
 #include "engine_input/input_state.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_runtime/runtime_session_controller.hpp"
+#include "engine_runtime/runtime_world_state.hpp"
 #include "engine_net/lan_discovery.hpp"
 #include "engine_net/net_client.hpp"
 #include "engine_net/net_server.hpp"
@@ -94,26 +95,13 @@ private:
     glm::vec3 position = glm::vec3(0.0f);
     float interact_radius = 2.6f;
   };
-  struct ObjectiveNode {
-    glm::vec3 position = glm::vec3(0.0f);
-    float interact_radius = 2.4f;
-    bool activated = false;
-  };
-  struct StreamedChunk {
-    NetChunkState state{};
-  };
   enum class ReconcileMode : uint8_t { Off = 0, Threshold = 1, Snap = 2 };
 
   void build_static_scene();
-  bool consume_chunk_stream_updates(uint32_t &out_packet_count,
-                                    uint32_t &out_change_count);
-  void rebuild_streamed_chunk_scene();
   void handle_vehicle_interaction(const InputState &input);
   void handle_aircraft_interaction(const InputState &input);
   void handle_objective_interaction(const InputState &input);
   void handle_minigame_interaction(const InputState &input);
-  void load_persistent_session_state();
-  void save_persistent_session_state() const;
   void update_active_minigame(const InputState &input, float dt);
   void update_vehicle_sim(const InputState &input, float dt);
   void update_aircraft_sim(const InputState &input, float dt);
@@ -155,7 +143,7 @@ private:
 
   VoxelChunk world_chunk;
   VoxelCollisionWorld collision_world{nullptr};
-  std::unordered_map<int32_t, StreamedChunk> streamed_chunks;
+  RuntimeWorldState world_state;
 
   Camera camera;
   Camera secondary_camera;
@@ -220,18 +208,8 @@ private:
   VehicleControlInput last_vehicle_control{};
   AircraftControlInput last_aircraft_control{};
   std::vector<MiniGameHotspot> minigame_hotspots;
-  std::vector<ObjectiveNode> objective_nodes;
   int nearby_minigame_hotspot = -1;
   int active_minigame_hotspot = -1;
   MiniGameState active_minigame{};
   std::string minigame_hint;
-  int nearby_objective_node = -1;
-  int activated_objective_count = 0;
-  bool extraction_unlocked = false;
-  bool objective_round_complete = false;
-  glm::vec3 extraction_zone_position = glm::vec3(0.0f);
-  float extraction_zone_radius = 3.2f;
-  std::string objective_hint;
-  glm::vec3 spherical_planet_center = glm::vec3(0.0f);
-  float spherical_planet_radius = 0.0f;
 };

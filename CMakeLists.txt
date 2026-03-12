@@ -254,6 +254,7 @@ endif()
 add_library(engine STATIC
     src/engine/engine.cpp
     src/engine_runtime/runtime_session_controller.cpp
+    src/engine_runtime/runtime_world_state.cpp
     src/platform/platform_services.cpp
     src/engine_assets/cgltf_impl.cpp
     src/engine_assets/skinned_model.cpp

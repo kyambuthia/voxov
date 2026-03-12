@@ -8,7 +8,6 @@
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
-#include "engine_world/world_gen.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -19,8 +18,6 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
-#include <filesystem>
-#include <fstream>
 #include <string>
 #include <unordered_set>
 
@@ -42,16 +39,6 @@ constexpr uint32_t k_remote_interp_delay_ticks = 6;
 constexpr size_t k_remote_sample_history_max = 16;
 constexpr float k_minigame_interact_radius = 6.5f;
 constexpr float k_network_chunk_world_size = 16.0f;
-constexpr uint64_t k_session_state_magic = 0x564F585356303031ull;
-
-struct SavedSessionState {
-  uint64_t magic = k_session_state_magic;
-  uint64_t world_seed = k_voxov_flat_world_seed;
-  uint8_t objective_count = 0;
-  uint8_t activated_mask = 0;
-  uint8_t extraction_unlocked = 0;
-  uint8_t objective_round_complete = 0;
-};
 
 glm::vec3 rotate_y(const glm::vec3 &v, float yaw_radians) {
   const float c = std::cos(yaw_radians);
@@ -117,10 +104,6 @@ double smooth_metric(double current, double sample, double alpha = 0.25) {
     return sample;
   }
   return current + (sample - current) * alpha;
-}
-
-int32_t render_chunk_key(NetChunkCoord coord) {
-  return (static_cast<int32_t>(coord.x) << 16) ^ static_cast<uint16_t>(coord.z);
 }
 
 void hash_bytes(uint64_t &hash, const void *data, size_t size) {
@@ -359,13 +342,15 @@ void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
   ui_audio.init();
 
   build_static_scene();
-  load_persistent_session_state();
+  world_state.load_persistent_state(platform_services);
   local_player = PlayerControllerSystem::spawn_player(collision_world);
-  if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
-    const float spawn_radius =
-        spherical_planet_radius + local_player.controller.capsuleHeight * 0.52f;
+  if (runtime_options.spherical_planet &&
+      world_state.spherical_planet_radius > 0.0f) {
+    const float spawn_radius = world_state.spherical_planet_radius +
+                               local_player.controller.capsuleHeight * 0.52f;
     local_player.transform.position =
-        spherical_planet_center + glm::vec3(0.0f, spawn_radius, 0.0f);
+        world_state.spherical_planet_center +
+        glm::vec3(0.0f, spawn_radius, 0.0f);
     local_player.transform.rotation = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     local_player.controller.velocity = glm::vec3(0.0f);
     local_player.controller.grounded = true;
@@ -379,17 +364,19 @@ void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
   vehicle.yaw = 0.3f;
   vehicle.speed = 0.0f;
   vehicle.occupied = false;
-  if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
-    const glm::vec3 spawn_up = glm::normalize(local_player.transform.position -
-                                              spherical_planet_center);
+  if (runtime_options.spherical_planet &&
+      world_state.spherical_planet_radius > 0.0f) {
+    const glm::vec3 spawn_up =
+        glm::normalize(local_player.transform.position -
+                       world_state.spherical_planet_center);
     const SurfaceFrame spawn_frame = make_surface_frame(spawn_up);
     const glm::vec3 vehicle_seed = local_player.transform.position +
                                    spawn_frame.east * 3.5f +
                                    spawn_frame.north * 1.5f;
     const glm::vec3 vehicle_dir =
-        glm::normalize(vehicle_seed - spherical_planet_center);
-    vehicle.position = spherical_planet_center +
-                       vehicle_dir * (spherical_planet_radius +
+        glm::normalize(vehicle_seed - world_state.spherical_planet_center);
+    vehicle.position = world_state.spherical_planet_center +
+                       vehicle_dir * (world_state.spherical_planet_radius +
                                       k_vehicle_wheel_radius + 0.06f);
     vehicle.yaw = std::atan2(spawn_frame.north.x, spawn_frame.north.z);
   } else if (k_vehicle_feature_enabled) {
@@ -405,17 +392,20 @@ void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
   aircraft.speed = 0.0f;
   aircraft.throttle_cmd = 0.0f;
   aircraft.occupied = false;
-  if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
-    const glm::vec3 spawn_up = glm::normalize(local_player.transform.position -
-                                              spherical_planet_center);
+  if (runtime_options.spherical_planet &&
+      world_state.spherical_planet_radius > 0.0f) {
+    const glm::vec3 spawn_up =
+        glm::normalize(local_player.transform.position -
+                       world_state.spherical_planet_center);
     const SurfaceFrame spawn_frame = make_surface_frame(spawn_up);
     const glm::vec3 aircraft_seed = local_player.transform.position -
                                     spawn_frame.east * 5.0f -
                                     spawn_frame.north * 4.0f;
     const glm::vec3 aircraft_dir =
-        glm::normalize(aircraft_seed - spherical_planet_center);
-    aircraft.position = spherical_planet_center +
-                        aircraft_dir * (spherical_planet_radius + 1.8f);
+        glm::normalize(aircraft_seed - world_state.spherical_planet_center);
+    aircraft.position = world_state.spherical_planet_center +
+                        aircraft_dir * (world_state.spherical_planet_radius +
+                                        1.8f);
     aircraft.yaw = std::atan2(-spawn_frame.north.x, -spawn_frame.north.z);
   } else {
     aircraft.position.y =
@@ -522,23 +512,10 @@ void Engine::stop_client_session() {
   remote_render_players.clear();
   local_player.network_id = 1;
   local_replication.network_id = 1;
-  if (!runtime_options.spherical_planet) {
-    streamed_chunks.clear();
-    constexpr int k_render_chunk_radius = 1;
-    for (int chunk_z = -k_render_chunk_radius; chunk_z <= k_render_chunk_radius;
-         ++chunk_z) {
-      for (int chunk_x = -k_render_chunk_radius;
-           chunk_x <= k_render_chunk_radius; ++chunk_x) {
-        NetChunkCoord coord{};
-        coord.x = static_cast<int16_t>(chunk_x);
-        coord.z = static_cast<int16_t>(chunk_z);
-        streamed_chunks[render_chunk_key(coord)] =
-            StreamedChunk{net_make_flat_chunk_state(coord)};
-      }
-    }
-    rebuild_streamed_chunk_scene();
-    renderer.upload_scene(scene);
-  }
+  world_state.reset_streamed_chunks(runtime_options.spherical_planet);
+  world_state.rebuild_streamed_chunk_scene(world_chunk, scene,
+                                           runtime_options.spherical_planet);
+  renderer.upload_scene(scene);
 }
 
 void Engine::leave_session() {
@@ -560,7 +537,7 @@ void Engine::set_input(const InputState &input_primary,
 }
 
 void Engine::shutdown() {
-  save_persistent_session_state();
+  world_state.save_persistent_state(platform_services);
   lan_discovery.stop();
   if (local_server_running) {
     local_server.shutdown();
@@ -968,7 +945,7 @@ void Engine::tick(double frame_dt) {
     } else if (vehicle.occupied || aircraft.occupied) {
       last_collision_debug = PlayerCollisionDebug{};
     } else if (runtime_options.spherical_planet &&
-               spherical_planet_radius > 0.0f) {
+               world_state.spherical_planet_radius > 0.0f) {
       update_spherical_player_sim(step_input,
                                   static_cast<float>(fixed.fixed_dt));
       last_collision_debug = PlayerCollisionDebug{};
@@ -1101,12 +1078,14 @@ void Engine::tick(double frame_dt) {
 
   uint32_t chunk_packets_this_frame = 0;
   uint32_t chunk_changes_this_frame = 0;
-  const bool scene_changed = consume_chunk_stream_updates(
-      chunk_packets_this_frame, chunk_changes_this_frame);
+  const bool scene_changed = world_state.consume_chunk_stream_updates(
+      net_client, last_chunk_interest, has_last_chunk_interest,
+      runtime_options.spherical_planet, chunk_packets_this_frame,
+      chunk_changes_this_frame);
   render_stats.chunk_packets = chunk_packets_this_frame;
   render_stats.chunk_changes = chunk_changes_this_frame;
   render_stats.streamed_chunk_count =
-      static_cast<uint32_t>(streamed_chunks.size());
+      static_cast<uint32_t>(world_state.streamed_chunks.size());
 
   if (net_client.is_connected()) {
     NetChunkInterest interest{};
@@ -1135,7 +1114,8 @@ void Engine::tick(double frame_dt) {
     scene.debug_world = frozen_debug_world;
   }
   if (scene_changed) {
-    rebuild_streamed_chunk_scene();
+    world_state.rebuild_streamed_chunk_scene(world_chunk, scene,
+                                             runtime_options.spherical_planet);
     renderer.upload_scene(scene);
   } else {
     renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
@@ -1171,119 +1151,9 @@ void Engine::tick(double frame_dt) {
 
 const RenderStats &Engine::stats() const { return render_stats; }
 
-bool Engine::consume_chunk_stream_updates(uint32_t &out_packet_count,
-                                         uint32_t &out_change_count) {
-  out_packet_count = 0;
-  out_change_count = 0;
-  bool changed = false;
-  NetChunkState update{};
-  while (net_client.poll_chunk_state(update)) {
-    out_packet_count += 1;
-    const int32_t key = render_chunk_key(update.coord);
-    auto it = streamed_chunks.find(key);
-    if (it != streamed_chunks.end() &&
-        net_chunk_state_matches(it->second.state, update)) {
-      continue;
-    }
-    streamed_chunks[key] = StreamedChunk{update};
-    changed = true;
-    out_change_count += 1;
-  }
-
-  if (!runtime_options.spherical_planet && has_last_chunk_interest) {
-    std::vector<int32_t> stale_keys;
-    stale_keys.reserve(streamed_chunks.size());
-    for (const auto &[key, chunk] : streamed_chunks) {
-      const int32_t dx = std::abs(static_cast<int32_t>(chunk.state.coord.x) -
-                                  last_chunk_interest.center_x);
-      const int32_t dz = std::abs(static_cast<int32_t>(chunk.state.coord.z) -
-                                  last_chunk_interest.center_z);
-      if (dx > static_cast<int32_t>(last_chunk_interest.radius) ||
-          dz > static_cast<int32_t>(last_chunk_interest.radius)) {
-        stale_keys.push_back(key);
-      }
-    }
-    for (int32_t key : stale_keys) {
-      streamed_chunks.erase(key);
-      changed = true;
-      out_change_count += 1;
-    }
-  }
-
-  return changed;
-}
-
-void Engine::rebuild_streamed_chunk_scene() {
-  scene.opaque_meshes.clear();
-  scene.opaque_meshes.push_back(world_chunk.build_sky_placeholder(240.0f));
-  if (runtime_options.spherical_planet) {
-    scene.opaque_meshes.push_back(world_chunk.build_naive_mesh());
-    return;
-  }
-
-  std::vector<NetChunkCoord> coords;
-  coords.reserve(streamed_chunks.size());
-  for (const auto &[key, chunk] : streamed_chunks) {
-    (void)key;
-    coords.push_back(chunk.state.coord);
-  }
-  std::sort(coords.begin(), coords.end(),
-            [](const NetChunkCoord &a, const NetChunkCoord &b) {
-              if (a.z != b.z) {
-                return a.z < b.z;
-              }
-              return a.x < b.x;
-            });
-
-  for (const NetChunkCoord &coord : coords) {
-    VoxelChunk render_chunk{};
-    const StreamedChunk &streamed_chunk =
-        streamed_chunks.at(render_chunk_key(coord));
-    net_generate_chunk_from_state(render_chunk, streamed_chunk.state);
-    const glm::vec3 chunk_origin(
-        static_cast<float>(coord.x) * static_cast<float>(VoxelChunk::CHUNK_X),
-        0.0f,
-        static_cast<float>(coord.z) * static_cast<float>(VoxelChunk::CHUNK_Z));
-    scene.opaque_meshes.push_back(render_chunk.build_naive_mesh(chunk_origin));
-  }
-}
-
 void Engine::build_static_scene() {
-  if (runtime_options.spherical_planet) {
-    world_chunk.generate_spherical_planet_seeded(k_voxov_flat_world_seed);
-    spherical_planet_center =
-        glm::vec3(static_cast<float>(VoxelChunk::CHUNK_X - 1) * 0.5f,
-                  static_cast<float>(VoxelChunk::CHUNK_Y - 1) * 0.42f,
-                  static_cast<float>(VoxelChunk::CHUNK_Z - 1) * 0.5f);
-    spherical_planet_radius =
-        static_cast<float>(std::min(
-            {VoxelChunk::CHUNK_X, VoxelChunk::CHUNK_Y, VoxelChunk::CHUNK_Z})) *
-        0.34f;
-  } else {
-    generate_flat_world_locomotion_chunk(world_chunk);
-    spherical_planet_center = glm::vec3(0.0f);
-    spherical_planet_radius = 0.0f;
-  }
-  collision_world = VoxelCollisionWorld(&world_chunk);
-
-  scene = RenderScene{};
-  streamed_chunks.clear();
-  if (!runtime_options.spherical_planet) {
-    constexpr int k_render_chunk_radius = 1;
-    for (int chunk_z = -k_render_chunk_radius; chunk_z <= k_render_chunk_radius;
-         ++chunk_z) {
-      for (int chunk_x = -k_render_chunk_radius;
-           chunk_x <= k_render_chunk_radius; ++chunk_x) {
-        NetChunkCoord coord{};
-        coord.x = static_cast<int16_t>(chunk_x);
-        coord.z = static_cast<int16_t>(chunk_z);
-        streamed_chunks[render_chunk_key(coord)] =
-            StreamedChunk{net_make_flat_chunk_state(coord)};
-      }
-    }
-  }
-  rebuild_streamed_chunk_scene();
-  scene.debug_grid = world_chunk.build_debug_grid(160.0f, 1.0f);
+  world_state.initialize(runtime_options.spherical_planet, world_chunk,
+                         collision_world, scene);
 
   const glm::vec2 center(static_cast<float>(VoxelChunk::CHUNK_X) * 0.5f,
                          static_cast<float>(VoxelChunk::CHUNK_Z) * 0.5f);
@@ -1327,12 +1197,15 @@ void Engine::build_static_scene() {
                                              const glm::vec3 &dir_raw) {
       const glm::vec3 dir = glm::normalize(dir_raw);
       const glm::vec3 ray_start =
-          spherical_planet_center + dir * (spherical_planet_radius * 2.6f);
+          world_state.spherical_planet_center +
+          dir * (world_state.spherical_planet_radius * 2.6f);
       float hit_dist = 0.0f;
       glm::vec3 position =
-          spherical_planet_center + dir * (spherical_planet_radius + 0.12f);
-      if (collision_world.raycast(ray_start, -dir,
-                                  spherical_planet_radius * 3.2f, hit_dist)) {
+          world_state.spherical_planet_center +
+          dir * (world_state.spherical_planet_radius + 0.12f);
+      if (collision_world.raycast(
+              ray_start, -dir, world_state.spherical_planet_radius * 3.2f,
+              hit_dist)) {
         position = ray_start - dir * hit_dist + dir * 0.14f;
       }
 
@@ -1365,87 +1238,6 @@ void Engine::build_static_scene() {
     spawn_hotspot(MiniGameType::TicTacToe,
                   glm::vec3(center.x, 0.0f, center.y - 16.0f));
   }
-
-  objective_nodes.clear();
-  activated_objective_count = 0;
-  extraction_unlocked = false;
-  objective_round_complete = false;
-  nearby_objective_node = -1;
-  objective_hint.clear();
-  extraction_zone_position = glm::vec3(center.x, 0.0f, center.y + 18.0f);
-  extraction_zone_position.y =
-      collision_world.find_spawn_height(
-          glm::vec2(extraction_zone_position.x, extraction_zone_position.z),
-          0.45f, 1.8f) +
-      0.05f;
-
-  const auto spawn_objective_node = [&](const glm::vec3 &base) {
-    ObjectiveNode node{};
-    node.position = base;
-    node.position.y = collision_world.find_spawn_height(
-                          glm::vec2(base.x, base.z), 0.45f, 1.8f) +
-                      0.05f;
-    node.interact_radius = 2.6f;
-    node.activated = false;
-    objective_nodes.push_back(node);
-  };
-  if (runtime_options.spherical_planet) {
-    spawn_objective_node(glm::vec3(center.x - 12.0f, 0.0f, center.y - 10.0f));
-    spawn_objective_node(glm::vec3(center.x + 14.0f, 0.0f, center.y - 4.0f));
-    spawn_objective_node(glm::vec3(center.x + 2.0f, 0.0f, center.y + 14.0f));
-  } else {
-    spawn_objective_node(glm::vec3(center.x - 14.0f, 0.0f, center.y - 10.0f));
-    spawn_objective_node(glm::vec3(center.x + 13.0f, 0.0f, center.y - 6.0f));
-    spawn_objective_node(glm::vec3(center.x + 4.0f, 0.0f, center.y + 15.0f));
-  }
-}
-
-void Engine::load_persistent_session_state() {
-  const std::filesystem::path path = platform_services.session_state_path();
-  std::ifstream in(path, std::ios::binary);
-  if (!in.is_open()) {
-    return;
-  }
-
-  SavedSessionState state{};
-  in.read(reinterpret_cast<char *>(&state), sizeof(state));
-  if (!in || state.magic != k_session_state_magic ||
-      state.world_seed != k_voxov_flat_world_seed) {
-    return;
-  }
-
-  activated_objective_count = 0;
-  for (size_t i = 0; i < objective_nodes.size(); ++i) {
-    const bool activated =
-        (state.activated_mask & static_cast<uint8_t>(1u << i)) != 0;
-    objective_nodes[i].activated = activated;
-    activated_objective_count += activated ? 1 : 0;
-  }
-  extraction_unlocked = state.extraction_unlocked != 0;
-  objective_round_complete = state.objective_round_complete != 0;
-}
-
-void Engine::save_persistent_session_state() const {
-  const std::filesystem::path path = platform_services.session_state_path();
-  std::error_code ec;
-  std::filesystem::create_directories(path.parent_path(), ec);
-
-  SavedSessionState state{};
-  state.objective_count =
-      static_cast<uint8_t>(std::min<size_t>(objective_nodes.size(), 8));
-  for (size_t i = 0; i < objective_nodes.size() && i < 8; ++i) {
-    if (objective_nodes[i].activated) {
-      state.activated_mask |= static_cast<uint8_t>(1u << i);
-    }
-  }
-  state.extraction_unlocked = extraction_unlocked ? 1 : 0;
-  state.objective_round_complete = objective_round_complete ? 1 : 0;
-
-  std::ofstream out(path, std::ios::binary | std::ios::trunc);
-  if (!out.is_open()) {
-    return;
-  }
-  out.write(reinterpret_cast<const char *>(&state), sizeof(state));
 }
 
 void Engine::update_third_person_camera(PlayerEntity &player,
@@ -1456,8 +1248,10 @@ void Engine::update_third_person_camera(PlayerEntity &player,
 void Engine::update_third_person_camera(PlayerEntity &player,
                                         const glm::vec3 &render_position,
                                         Camera &out_camera) {
-  if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
-    const glm::vec3 to_player = render_position - spherical_planet_center;
+  if (runtime_options.spherical_planet &&
+      world_state.spherical_planet_radius > 0.0f) {
+    const glm::vec3 to_player =
+        render_position - world_state.spherical_planet_center;
     const glm::vec3 local_up = (glm::length(to_player) > 0.001f)
                                    ? glm::normalize(to_player)
                                    : glm::vec3(0.0f, 1.0f, 0.0f);
@@ -1516,9 +1310,10 @@ void Engine::update_third_person_camera(PlayerEntity &player,
 }
 
 glm::vec3 Engine::vehicle_seat_world_position() const {
-  if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+  if (runtime_options.spherical_planet &&
+      world_state.spherical_planet_radius > 0.0f) {
     const glm::vec3 up =
-        glm::normalize(vehicle.position - spherical_planet_center);
+        glm::normalize(vehicle.position - world_state.spherical_planet_center);
     return vehicle.position + up * (k_vehicle_body_height + 0.5f);
   }
   return vehicle.position +
@@ -1527,9 +1322,10 @@ glm::vec3 Engine::vehicle_seat_world_position() const {
 }
 
 glm::vec3 Engine::aircraft_seat_world_position() const {
-  if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+  if (runtime_options.spherical_planet &&
+      world_state.spherical_planet_radius > 0.0f) {
     const glm::vec3 up =
-        glm::normalize(aircraft.position - spherical_planet_center);
+        glm::normalize(aircraft.position - world_state.spherical_planet_center);
     return aircraft.position + up * 0.8f;
   }
   return aircraft.position +
@@ -1551,17 +1347,18 @@ void Engine::handle_vehicle_interaction(const InputState &input) {
 
   if (vehicle.occupied) {
     vehicle.occupied = false;
-    if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+    if (runtime_options.spherical_planet &&
+        world_state.spherical_planet_radius > 0.0f) {
       const glm::vec3 up =
-          glm::normalize(vehicle.position - spherical_planet_center);
+          glm::normalize(vehicle.position - world_state.spherical_planet_center);
       const SurfaceFrame frame = make_surface_frame(up);
       glm::vec3 exit_candidate = vehicle.position - frame.east * 1.8f;
       glm::vec3 exit_dir =
-          glm::normalize(exit_candidate - spherical_planet_center);
-      const float shell_radius = spherical_planet_radius +
+          glm::normalize(exit_candidate - world_state.spherical_planet_center);
+      const float shell_radius = world_state.spherical_planet_radius +
                                  local_player.controller.capsuleHeight * 0.52f;
       local_player.transform.position =
-          spherical_planet_center + exit_dir * shell_radius;
+          world_state.spherical_planet_center + exit_dir * shell_radius;
     } else {
       const glm::vec3 exit_candidate =
           vehicle.position +
@@ -1608,18 +1405,20 @@ void Engine::handle_aircraft_interaction(const InputState &input) {
   if (aircraft.occupied) {
     aircraft.occupied = false;
     aircraft.throttle_cmd = 0.0f;
-    if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+    if (runtime_options.spherical_planet &&
+        world_state.spherical_planet_radius > 0.0f) {
       const glm::vec3 up =
-          glm::normalize(aircraft.position - spherical_planet_center);
+          glm::normalize(aircraft.position -
+                         world_state.spherical_planet_center);
       const SurfaceFrame frame = make_surface_frame(up);
       glm::vec3 exit_candidate =
           aircraft.position - frame.east * 2.4f - frame.north * 0.9f;
       glm::vec3 exit_dir =
-          glm::normalize(exit_candidate - spherical_planet_center);
-      const float shell_radius = spherical_planet_radius +
+          glm::normalize(exit_candidate - world_state.spherical_planet_center);
+      const float shell_radius = world_state.spherical_planet_radius +
                                  local_player.controller.capsuleHeight * 0.52f;
       local_player.transform.position =
-          spherical_planet_center + exit_dir * shell_radius;
+          world_state.spherical_planet_center + exit_dir * shell_radius;
     } else {
       const glm::vec3 exit_candidate =
           aircraft.position +
@@ -1651,8 +1450,8 @@ void Engine::handle_aircraft_interaction(const InputState &input) {
 }
 
 void Engine::handle_objective_interaction(const InputState &input) {
-  nearby_objective_node = -1;
-  objective_hint.clear();
+  world_state.nearby_objective_node = -1;
+  world_state.objective_hint.clear();
 
   if (!session_controller.gameplay_started() || gui_menu.open()) {
     return;
@@ -1661,28 +1460,31 @@ void Engine::handle_objective_interaction(const InputState &input) {
     return;
   }
 
-  if (objective_round_complete) {
-    objective_hint = "Round complete. Re-open from the menu to run again.";
+  if (world_state.objective_round_complete) {
+    world_state.objective_hint =
+        "Round complete. Re-open from the menu to run again.";
     return;
   }
 
-  if (extraction_unlocked) {
+  if (world_state.extraction_unlocked) {
     const float extraction_distance = glm::length(glm::vec2(
-        local_player.transform.position.x - extraction_zone_position.x,
-        local_player.transform.position.z - extraction_zone_position.z));
-    objective_hint = "All nodes active. Reach extraction.";
-    if (extraction_distance <= extraction_zone_radius) {
-      objective_round_complete = true;
-      objective_hint = "Extraction complete. Objective loop cleared.";
-      save_persistent_session_state();
+        local_player.transform.position.x - world_state.extraction_zone_position.x,
+        local_player.transform.position.z -
+            world_state.extraction_zone_position.z));
+    world_state.objective_hint = "All nodes active. Reach extraction.";
+    if (extraction_distance <= world_state.extraction_zone_radius) {
+      world_state.objective_round_complete = true;
+      world_state.objective_hint =
+          "Extraction complete. Objective loop cleared.";
+      world_state.save_persistent_state(platform_services);
     }
     return;
   }
 
   float best_distance = 1e9f;
   int best_index = -1;
-  for (size_t i = 0; i < objective_nodes.size(); ++i) {
-    const ObjectiveNode &node = objective_nodes[i];
+  for (size_t i = 0; i < world_state.objective_nodes.size(); ++i) {
+    const auto &node = world_state.objective_nodes[i];
     if (node.activated) {
       continue;
     }
@@ -1695,26 +1497,27 @@ void Engine::handle_objective_interaction(const InputState &input) {
     }
   }
 
-  nearby_objective_node = best_index;
+  world_state.nearby_objective_node = best_index;
   if (best_index >= 0) {
-    objective_hint = "Press F or E to activate objective node";
+    world_state.objective_hint = "Press F or E to activate objective node";
     if (input.interact_pressed) {
-      ObjectiveNode &node = objective_nodes[static_cast<size_t>(best_index)];
+      auto &node = world_state.objective_nodes[static_cast<size_t>(best_index)];
       node.activated = true;
-      activated_objective_count += 1;
-      objective_hint = "Objective node activated.";
-      if (activated_objective_count >=
-          static_cast<int>(objective_nodes.size())) {
-        extraction_unlocked = true;
-        objective_hint = "All nodes active. Return to extraction.";
+      world_state.activated_objective_count += 1;
+      world_state.objective_hint = "Objective node activated.";
+      if (world_state.activated_objective_count >=
+          static_cast<int>(world_state.objective_nodes.size())) {
+        world_state.extraction_unlocked = true;
+        world_state.objective_hint = "All nodes active. Return to extraction.";
       }
-      save_persistent_session_state();
+      world_state.save_persistent_state(platform_services);
     }
   } else {
-    objective_hint =
+    world_state.objective_hint =
         "Activate " +
-        std::to_string(std::max(0, static_cast<int>(objective_nodes.size()) -
-                                       activated_objective_count)) +
+        std::to_string(
+            std::max(0, static_cast<int>(world_state.objective_nodes.size()) -
+                            world_state.activated_objective_count)) +
         " remaining node(s).";
   }
 }
@@ -1796,13 +1599,14 @@ void Engine::update_active_minigame(const InputState &input, float dt) {
 
   const MiniGameHotspot &hotspot =
       minigame_hotspots[static_cast<size_t>(active_minigame_hotspot)];
-  if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+  if (runtime_options.spherical_planet &&
+      world_state.spherical_planet_radius > 0.0f) {
     const glm::vec3 up =
-        glm::normalize(hotspot.position - spherical_planet_center);
-    const float shell_radius =
-        spherical_planet_radius + local_player.controller.capsuleHeight * 0.52f;
+        glm::normalize(hotspot.position - world_state.spherical_planet_center);
+    const float shell_radius = world_state.spherical_planet_radius +
+                               local_player.controller.capsuleHeight * 0.52f;
     local_player.transform.position =
-        spherical_planet_center + up * shell_radius;
+        world_state.spherical_planet_center + up * shell_radius;
     const float yaw = local_player.camera_rig.yaw * 0.01745329251994329577f;
     const SurfaceFrame frame = make_surface_frame(up);
     glm::vec3 forward = glm::normalize(frame.north * std::cos(yaw) +
@@ -1969,13 +1773,13 @@ void Engine::update_aircraft_sim(const InputState &input, float dt) {
 }
 
 void Engine::update_spherical_player_sim(const InputState &input, float dt) {
-  if (dt <= 0.0f || spherical_planet_radius <= 0.0f) {
+  if (dt <= 0.0f || world_state.spherical_planet_radius <= 0.0f) {
     return;
   }
   const bool was_grounded = local_player.controller.grounded;
 
   const glm::vec3 to_player =
-      local_player.transform.position - spherical_planet_center;
+      local_player.transform.position - world_state.spherical_planet_center;
   const float dist = std::max(glm::length(to_player), 0.001f);
   const glm::vec3 up = to_player / dist;
 
@@ -2017,14 +1821,14 @@ void Engine::update_spherical_player_sim(const InputState &input, float dt) {
   local_player.transform.position += local_player.controller.velocity * dt;
 
   const glm::vec3 to_updated =
-      local_player.transform.position - spherical_planet_center;
+      local_player.transform.position - world_state.spherical_planet_center;
   const float updated_dist = std::max(glm::length(to_updated), 0.001f);
   const glm::vec3 updated_up = to_updated / updated_dist;
-  const float shell_radius =
-      spherical_planet_radius + local_player.controller.capsuleHeight * 0.52f;
+  const float shell_radius = world_state.spherical_planet_radius +
+                             local_player.controller.capsuleHeight * 0.52f;
   if (updated_dist < shell_radius + 0.08f) {
     local_player.transform.position =
-        spherical_planet_center + updated_up * shell_radius;
+        world_state.spherical_planet_center + updated_up * shell_radius;
     const float inward_speed =
         glm::dot(local_player.controller.velocity, updated_up);
     if (inward_speed < 0.0f) {
@@ -2074,11 +1878,12 @@ void Engine::refresh_overlay_text() {
   std::string objective_status;
   float minigame_progress = 0.0f;
 
-  objective_status = "OBJECTIVES " + std::to_string(activated_objective_count) +
-                     "/" + std::to_string(objective_nodes.size());
-  if (objective_round_complete) {
+  objective_status =
+      "OBJECTIVES " + std::to_string(world_state.activated_objective_count) +
+      "/" + std::to_string(world_state.objective_nodes.size());
+  if (world_state.objective_round_complete) {
     objective_status += " [COMPLETE]";
-  } else if (extraction_unlocked) {
+  } else if (world_state.extraction_unlocked) {
     objective_status += " [EXTRACT]";
   }
 
@@ -2157,10 +1962,10 @@ void Engine::refresh_overlay_text() {
   hash_value(overlay_state_hash, active_minigame.completed);
   hash_value(overlay_state_hash, active_minigame.type);
   hash_value(overlay_state_hash, minigame_progress);
-  hash_value(overlay_state_hash, nearby_objective_node);
-  hash_value(overlay_state_hash, activated_objective_count);
-  hash_value(overlay_state_hash, extraction_unlocked);
-  hash_value(overlay_state_hash, objective_round_complete);
+  hash_value(overlay_state_hash, world_state.nearby_objective_node);
+  hash_value(overlay_state_hash, world_state.activated_objective_count);
+  hash_value(overlay_state_hash, world_state.extraction_unlocked);
+  hash_value(overlay_state_hash, world_state.objective_round_complete);
   hash_string(overlay_state_hash, menu_view.title);
   hash_string(overlay_state_hash, menu_view.status);
   for (const std::string &line : menu_view.items) {
@@ -2175,7 +1980,7 @@ void Engine::refresh_overlay_text() {
   hash_string(overlay_state_hash, minigame_objective);
   hash_string(overlay_state_hash, minigame_controls);
   hash_string(overlay_state_hash, hotspot_text);
-  hash_string(overlay_state_hash, objective_hint);
+  hash_string(overlay_state_hash, world_state.objective_hint);
   hash_string(overlay_state_hash, objective_status);
 
   if (!runtime_options.devhud && has_overlay_state_hash &&
@@ -2416,9 +2221,9 @@ void Engine::refresh_overlay_text() {
                                        objective_panel.x0 + 0.04f,
                                        objective_panel.y0 - 0.05f, 0.0050f,
                                        glm::vec3(0.95f, 0.97f, 1.0f)));
-    if (!objective_hint.empty()) {
+    if (!world_state.objective_hint.empty()) {
       append_mesh(scene.debug_screen,
-                  build_screen_text_mesh(objective_hint,
+                  build_screen_text_mesh(world_state.objective_hint,
                                          objective_panel.x0 + 0.04f,
                                          objective_panel.y0 - 0.11f, 0.0045f,
                                          glm::vec3(0.84f, 0.90f, 0.98f)));
@@ -2597,8 +2402,10 @@ void Engine::rebuild_dynamic_debug_mesh() {
       const bool selected = static_cast<int>(i) == nearby_minigame_hotspot ||
                             static_cast<int>(i) == active_minigame_hotspot;
       glm::vec3 up(0.0f, 1.0f, 0.0f);
-      if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
-        up = glm::normalize(hotspot.position - spherical_planet_center);
+      if (runtime_options.spherical_planet &&
+          world_state.spherical_planet_radius > 0.0f) {
+        up = glm::normalize(hotspot.position -
+                            world_state.spherical_planet_center);
       }
       append_mesh(scene.debug_world,
                   build_debug_line_mesh(hotspot.position + up * 0.2f,
@@ -2613,9 +2420,10 @@ void Engine::rebuild_dynamic_debug_mesh() {
                                           color * glm::vec3(1.1f)));
     }
 
-    for (size_t i = 0; i < objective_nodes.size(); ++i) {
-      const ObjectiveNode &node = objective_nodes[i];
-      const bool selected = static_cast<int>(i) == nearby_objective_node;
+    for (size_t i = 0; i < world_state.objective_nodes.size(); ++i) {
+      const auto &node = world_state.objective_nodes[i];
+      const bool selected =
+          static_cast<int>(i) == world_state.nearby_objective_node;
       const glm::vec3 color = node.activated ? glm::vec3(0.18f, 0.82f, 0.36f)
                                              : glm::vec3(0.95f, 0.72f, 0.24f);
       append_mesh(
@@ -2629,17 +2437,19 @@ void Engine::rebuild_dynamic_debug_mesh() {
                                   selected ? 0.30f : 0.22f, color));
     }
 
-    if (extraction_unlocked || objective_round_complete) {
-      const glm::vec3 extraction_color = objective_round_complete
+    if (world_state.extraction_unlocked ||
+        world_state.objective_round_complete) {
+      const glm::vec3 extraction_color = world_state.objective_round_complete
                                              ? glm::vec3(0.22f, 0.95f, 0.48f)
                                              : glm::vec3(0.24f, 0.72f, 0.98f);
       append_mesh(scene.debug_world,
-                  build_debug_sphere_mesh(extraction_zone_position,
-                                          extraction_zone_radius * 0.42f,
+                  build_debug_sphere_mesh(world_state.extraction_zone_position,
+                                          world_state.extraction_zone_radius *
+                                              0.42f,
                                           extraction_color));
       append_mesh(scene.debug_world,
-                  build_debug_line_mesh(extraction_zone_position,
-                                        extraction_zone_position +
+                  build_debug_line_mesh(world_state.extraction_zone_position,
+                                        world_state.extraction_zone_position +
                                             glm::vec3(0.0f, 3.0f, 0.0f),
                                         0.06f, extraction_color));
     }
@@ -2653,9 +2463,11 @@ void Engine::rebuild_dynamic_debug_mesh() {
           rotate_y(glm::vec3(0.0f, 1.28f, 2.35f), board_yaw);
       SurfaceFrame board_frame{};
       bool use_surface_frame = false;
-      if (runtime_options.spherical_planet && spherical_planet_radius > 0.0f) {
+      if (runtime_options.spherical_planet &&
+          world_state.spherical_planet_radius > 0.0f) {
         const glm::vec3 up =
-            local_player.transform.position - spherical_planet_center;
+            local_player.transform.position -
+            world_state.spherical_planet_center;
         board_frame = make_surface_frame(up);
         board_origin = local_player.transform.position +
                        rotate_on_surface(glm::vec3(0.0f, 1.28f, 2.35f),

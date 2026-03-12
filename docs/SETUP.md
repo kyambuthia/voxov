@@ -4,7 +4,6 @@
 
 - CMake `>=3.16`
 - C++23 compiler (`g++`, `clang++`, or MSVC)
-- Vulkan SDK (must include `glslc`)
 - OpenGL development libraries
 - Git with submodule support
 
@@ -14,7 +13,7 @@ Linux (Debian/Ubuntu baseline):
 sudo apt-get update
 sudo apt-get install -y \
   build-essential cmake ninja-build \
-  glslc libvulkan-dev libgl1-mesa-dev \
+  libgl1-mesa-dev \
   libwayland-dev libx11-dev libxcursor-dev \
   libxi-dev libxinerama-dev libxkbcommon-dev libxrandr-dev
 ```
@@ -39,7 +38,6 @@ cmake --build build/desktop/main --parallel
 Useful configure flags:
 
 - `-DVOXOV_BUILD_TESTS=ON`
-- `-DVOXOV_ENABLE_VULKAN=OFF` if you want an OpenGL-only desktop build
 - `-DVOXOV_ENABLE_XR=ON` to compile the XR scaffold
 - `-DVOXOV_ENABLE_IOS_BACKEND=ON` to compile the iOS scaffold
 - `-DVOXOV_ENABLE_CONSOLE_BACKEND=ON` to compile the console scaffold
@@ -49,20 +47,15 @@ Useful configure flags:
 Notes:
 
 - Android and Web builds are selected by the toolchain (`ANDROID` or `EMSCRIPTEN`), not by a normal desktop configure flag.
-- Desktop is the main integrated runtime. Android and Web use separate runtime paths today.
+- Desktop is the main integrated runtime and now uses an OpenGL-first renderer aligned to a GLES3/WebGL2-class feature budget.
+- Android and Web use separate runtime paths today.
 
 ## 4. Run
 
-Vulkan:
+Desktop:
 
 ```bash
-./build/desktop/main/bin/voxov --renderer vulkan
-```
-
-OpenGL:
-
-```bash
-./build/desktop/main/bin/voxov --renderer gl
+./build/desktop/main/bin/voxov
 ```
 
 Headless authoritative server:

@@ -42,8 +42,7 @@ struct EngineRuntimeOptions {
 
 class Engine {
 public:
-  void init(void *window_handle, RenderBackendType backend_type,
-            const EngineRuntimeOptions &options);
+  void init(void *window_handle, const EngineRuntimeOptions &options);
   void connect(const char *host, uint16_t port);
   void shutdown();
   void tick(double frame_dt);

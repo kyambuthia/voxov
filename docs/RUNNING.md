@@ -2,16 +2,10 @@
 
 ## Desktop Runtime
 
-Vulkan:
+Desktop:
 
 ```bash
-./build/desktop/main/bin/voxov --renderer vulkan
-```
-
-OpenGL:
-
-```bash
-./build/desktop/main/bin/voxov --renderer gl
+./build/desktop/main/bin/voxov
 ```
 
 Window mode and size:
@@ -41,7 +35,6 @@ Headless server:
 
 ## Useful Runtime Flags
 
-- `--renderer vulkan|gl`
 - `--physics jolt|avbd`
 - `--devhud`
 - `--noclip`
@@ -61,6 +54,11 @@ Headless server:
 - `--port <port>`
 - `--server`
 - `--headless-server`
+
+Notes:
+
+- Desktop now uses the OpenGL renderer by default.
+- `--renderer gl` is still accepted as a compatibility alias, but it is no longer required.
 
 ## Desktop Hotkeys
 

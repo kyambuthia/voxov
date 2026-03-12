@@ -16,7 +16,7 @@ VOXOV currently uses an authoritative server model over ENet.
 - Headless dedicated server:
   - `./build/desktop/main/bin/voxov --headless-server --port 7777`
 - Client connect:
-  - `./build/desktop/main/bin/voxov --connect <SERVER_IP> --port 7777 --renderer vulkan`
+  - `./build/desktop/main/bin/voxov --connect <SERVER_IP> --port 7777`
 
 ## LAN Bring-up (2-3 machines)
 
@@ -29,13 +29,13 @@ Server machine:
 Client machine A:
 
 ```bash
-./build/desktop/main/bin/voxov --renderer vulkan --connect <SERVER_LAN_IP> --port 7777 --devhud
+./build/desktop/main/bin/voxov --connect <SERVER_LAN_IP> --port 7777 --devhud
 ```
 
 Client machine B:
 
 ```bash
-./build/desktop/main/bin/voxov --renderer gl --connect <SERVER_LAN_IP> --port 7777 --devhud
+./build/desktop/main/bin/voxov --connect <SERVER_LAN_IP> --port 7777 --devhud
 ```
 
 ## Validation Checklist
@@ -71,8 +71,8 @@ See:
   - check assignment logs and `REM` value
   - ensure both clients are connected to same server endpoint
 - High jitter:
-  - compare Vulkan vs OpenGL client paths
   - keep `--devhud` enabled and inspect `dt`, `fixed_dt`, and remote count
+  - compare frame time, render time, and fixed-step spikes across machines
 
 ## Notes
 

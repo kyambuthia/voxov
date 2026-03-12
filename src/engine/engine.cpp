@@ -403,11 +403,9 @@ glm::ivec2 tetris_visual_cell(int shape, int rot, int i) {
 }
 } // namespace
 
-void Engine::init(void *window_handle, RenderBackendType backend_type,
-                  const EngineRuntimeOptions &options) {
+void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
   runtime_options = options;
-  spdlog::info("Engine init: backend={} save_path={}",
-               backend_type == RenderBackendType::OpenGL ? "OpenGL" : "Vulkan",
+  spdlog::info("Engine init: backend=OpenGL save_path={}",
                session_state_path().generic_string());
   gui_menu.set_character(GuiMenu::Character::Capsule);
 
@@ -523,7 +521,7 @@ void Engine::init(void *window_handle, RenderBackendType backend_type,
                            has_humanoid_player_model);
 
   try {
-    renderer.init(window_handle, backend_type);
+    renderer.init(window_handle);
     renderer.upload_scene(scene);
     renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
   } catch (const std::exception &e) {

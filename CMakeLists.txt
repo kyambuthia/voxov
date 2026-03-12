@@ -2,7 +2,7 @@ cmake_minimum_required(VERSION 3.16.0)
 
 project(voxov
     VERSION 1.0.0
-    DESCRIPTION "Voxov - A Vulkan-based application"
+    DESCRIPTION "Voxov - An OpenGL-first application"
     LANGUAGES C CXX
 )
 
@@ -26,7 +26,6 @@ option(VOXOV_ENABLE_WEB_BACKEND "Compile Web platform backend skeleton" ON)
 option(VOXOV_ENABLE_IOS_BACKEND "Compile iOS platform backend scaffold" OFF)
 option(VOXOV_ENABLE_CONSOLE_BACKEND "Compile console platform backend scaffold" OFF)
 option(VOXOV_ENABLE_XR "Compile XR session scaffold" OFF)
-option(VOXOV_ENABLE_VULKAN "Enable Vulkan backend and shader toolchain requirements" ON)
 
 if(ANDROID)
     message(STATUS "Configuring VOXOV for Android")
@@ -156,27 +155,7 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/fmt" EXCLUDE_FROM_ALL)
 add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/spdlog" EXCLUDE_FROM_ALL)
 
 # Find packages
-if(VOXOV_ENABLE_VULKAN)
-    find_package(Vulkan REQUIRED)
-endif()
 find_package(OpenGL REQUIRED)
-
-set(VOXOV_SHADER_COMPILER "")
-set(VOXOV_SHADER_COMPILER_ARGS "")
-if(VOXOV_ENABLE_VULKAN)
-    if(TARGET Vulkan::glslc)
-        set(VOXOV_SHADER_COMPILER Vulkan::glslc)
-        set(VOXOV_SHADER_COMPILER_ARGS "")
-    else()
-        find_program(VOXOV_GLSLANG_VALIDATOR glslangValidator)
-        if(VOXOV_GLSLANG_VALIDATOR)
-            set(VOXOV_SHADER_COMPILER "${VOXOV_GLSLANG_VALIDATOR}")
-            set(VOXOV_SHADER_COMPILER_ARGS -V)
-        else()
-            message(FATAL_ERROR "No shader compiler found. Install glslc or glslangValidator.")
-        endif()
-    endif()
-endif()
 
 add_library(imgui STATIC
     dependencies/imgui/imgui.cpp
@@ -187,19 +166,11 @@ add_library(imgui STATIC
     dependencies/imgui/backends/imgui_impl_glfw.cpp
     dependencies/imgui/backends/imgui_impl_opengl3.cpp
 )
-if(VOXOV_ENABLE_VULKAN)
-    target_sources(imgui PRIVATE
-        dependencies/imgui/backends/imgui_impl_vulkan.cpp
-    )
-endif()
 target_include_directories(imgui PUBLIC
     dependencies/imgui
     dependencies/imgui/backends
 )
 target_link_libraries(imgui PUBLIC glfw OpenGL::GL)
-if(VOXOV_ENABLE_VULKAN)
-    target_link_libraries(imgui PUBLIC Vulkan::Vulkan)
-endif()
 
 add_library(engine_core STATIC
     src/engine_core/timing.cpp
@@ -244,18 +215,8 @@ add_library(engine_render STATIC
     src/engine_render/debug_text.cpp
     src/engine_render/debug_draw/debug_draw.cpp
 )
-if(VOXOV_ENABLE_VULKAN)
-    target_sources(engine_render PRIVATE src/engine_render/vulkan_renderer.cpp)
-endif()
 target_include_directories(engine_render PUBLIC src)
-target_include_directories(engine_render PUBLIC ${CMAKE_SOURCE_DIR}/dependencies/VulkanMemoryAllocator/include)
 target_link_libraries(engine_render PUBLIC OpenGL::GL glfw glm::glm fmt::fmt spdlog::spdlog imgui)
-if(VOXOV_ENABLE_VULKAN)
-    target_link_libraries(engine_render PUBLIC Vulkan::Vulkan)
-    target_compile_definitions(engine_render PUBLIC VOXOV_ENABLE_VULKAN=1)
-else()
-    target_compile_definitions(engine_render PUBLIC VOXOV_ENABLE_VULKAN=0)
-endif()
 
 add_library(engine_physics STATIC
     src/engine_physics/avbd_solver.cpp
@@ -335,55 +296,6 @@ target_link_libraries(voxov PRIVATE
     glfw
     OpenGL::GL
 )
-if(VOXOV_ENABLE_VULKAN)
-    target_link_libraries(voxov PRIVATE Vulkan::Vulkan)
-endif()
-
-# Shader compilation for game
-if(VOXOV_ENABLE_VULKAN)
-    set(VOXOV_GAME_SHADER_OUTPUTS
-        ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
-        ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv
-        ${CMAKE_CURRENT_BINARY_DIR}/stylized_lighting.frag.spv
-        ${CMAKE_CURRENT_BINARY_DIR}/palette_dither.frag.spv
-        ${CMAKE_CURRENT_BINARY_DIR}/fullscreen.vert.spv
-    )
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
-        COMMAND ${VOXOV_SHADER_COMPILER} ${VOXOV_SHADER_COMPILER_ARGS} ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.vert -o ${CMAKE_CURRENT_BINARY_DIR}/triangle.vert.spv
-        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.vert
-        VERBATIM
-    )
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv
-        COMMAND ${VOXOV_SHADER_COMPILER} ${VOXOV_SHADER_COMPILER_ARGS} ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.frag -o ${CMAKE_CURRENT_BINARY_DIR}/triangle.frag.spv
-        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/triangle.frag
-        VERBATIM
-    )
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/stylized_lighting.frag.spv
-        COMMAND ${VOXOV_SHADER_COMPILER} ${VOXOV_SHADER_COMPILER_ARGS} ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/stylized_lighting.frag -o ${CMAKE_CURRENT_BINARY_DIR}/stylized_lighting.frag.spv
-        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/stylized_lighting.frag
-        VERBATIM
-    )
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/palette_dither.frag.spv
-        COMMAND ${VOXOV_SHADER_COMPILER} ${VOXOV_SHADER_COMPILER_ARGS} ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/palette_dither.frag -o ${CMAKE_CURRENT_BINARY_DIR}/palette_dither.frag.spv
-        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/palette_dither.frag
-        VERBATIM
-    )
-    add_custom_command(
-        OUTPUT ${CMAKE_CURRENT_BINARY_DIR}/fullscreen.vert.spv
-        COMMAND ${VOXOV_SHADER_COMPILER} ${VOXOV_SHADER_COMPILER_ARGS} ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/fullscreen.vert -o ${CMAKE_CURRENT_BINARY_DIR}/fullscreen.vert.spv
-        DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/src/engine_render/shaders/fullscreen.vert
-        VERBATIM
-    )
-    add_custom_target(game_shaders ALL
-        DEPENDS
-        ${VOXOV_GAME_SHADER_OUTPUTS}
-    )
-    add_dependencies(voxov game_shaders)
-endif()
 
 add_executable(voxov_asset_cooker
     src/tools/asset_cooker.cpp
@@ -433,12 +345,6 @@ install(TARGETS voxov
 
 if(MINGW AND VOXOV_MINGW_RUNTIME_DLLS)
     install(FILES ${VOXOV_MINGW_RUNTIME_DLLS}
-        DESTINATION bin
-    )
-endif()
-
-if(VOXOV_ENABLE_VULKAN)
-    install(FILES ${VOXOV_GAME_SHADER_OUTPUTS}
         DESTINATION bin
     )
 endif()

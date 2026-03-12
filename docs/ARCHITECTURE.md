@@ -17,14 +17,14 @@ The desktop target is the cleanest path in the repository:
 
 1. `src/game/main.cpp` parses CLI flags and creates `DesktopPlatform`
 2. `Engine` owns the frame loop, fixed-step simulation, renderer, physics, and networking
-3. `Renderer` selects Vulkan or OpenGL backends
+3. `Renderer` currently targets a single OpenGL desktop backend and keeps the render contract aligned with GLES3/WebGL2-class limits
 4. Shared gameplay, world, and network code lives under `src/engine_*`
 
 Core module boundaries:
 
 - `engine_core/*`: timing and low-level helpers
 - `engine_math/*`: camera and transforms
-- `engine_render/*`: render abstractions plus Vulkan/OpenGL backends
+- `engine_render/*`: render abstractions plus the active OpenGL backend
 - `engine_world/*`: voxel terrain and collision helpers
 - `engine_physics/*`: physics backends and vehicle helpers
 - `engine_net/*`: ENet client/server and LAN discovery
@@ -53,7 +53,7 @@ These paths are useful reference material, but they are not the main shipping ru
 ## What Is Designed Well
 
 - The repository already has sensible module folders under `src/engine_*`
-- The desktop runtime keeps rendering behind a backend abstraction
+- The desktop runtime keeps rendering behind a backend abstraction even after converging on one backend
 - Build outputs, tests, and release packaging are clearly represented in CMake and GitHub Actions
 - Platform ambition is documented separately from the code, rather than being hidden in random source files
 
@@ -75,8 +75,9 @@ The repo contains iOS, console, and XR scaffolds, but only desktop is a fully in
 
 The next architectural milestone should not be "add more platforms." It should be:
 
-1. Extract shared session/gameplay/network subsystems from `Engine`
-2. Reuse them from Android before expanding target scope
-3. Keep Web intentionally small until a real shared runtime path exists
+1. Keep the desktop renderer constrained to a mobile-friendly GLES3/WebGL2-class feature set
+2. Extract shared session/gameplay/network subsystems from `Engine`
+3. Reuse them from Android before expanding target scope
+4. Keep Web intentionally small until a real shared runtime path exists
 
 For execution priorities, see `docs/ROADMAP.md`.

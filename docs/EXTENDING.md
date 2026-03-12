@@ -4,9 +4,9 @@
 
 1. Add shared data in `src/engine_render/render_types.hpp`.
 2. Update `IRenderBackend` in `src/engine_render/render_backend.hpp` only if the feature needs backend API changes.
-3. Implement in Vulkan backend (`src/engine_render/vulkan_renderer.cpp`).
-4. Mirror behavior in GL backend (`src/engine_render/gl_renderer.cpp`) or provide a fallback path.
-5. Validate with `--renderer vulkan` and `--renderer gl`.
+3. Implement in the desktop GL backend (`src/engine_render/gl_renderer.cpp`).
+4. Keep the feature inside the GLES3/WebGL2-class capability budget used by the project.
+5. Validate in the desktop runtime, then check Android/Web paths if the feature affects shared render contracts.
 
 ## Add a replicated component
 

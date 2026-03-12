@@ -24,7 +24,7 @@ glm::mat4 Camera::view() const {
 
 glm::mat4 Camera::projection(float aspect_ratio) const {
     glm::mat4 p = glm::perspective(fov_y_radians, aspect_ratio, z_near, z_far);
-    p[1][1] *= -1.0f; // Vulkan clip-space Y inversion.
+    p[1][1] *= -1.0f; // Match the clip-space convention used by the active runtimes.
     return p;
 }
 

@@ -24,13 +24,10 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
-            curl \
             cmake \
             ninja-build \
             xvfb \
-            glslc \
             libgl1-mesa-dev \
-            libvulkan-dev \
             libwayland-dev \
             libx11-dev \
             libxcursor-dev \
@@ -38,18 +35,6 @@ jobs:
             libxinerama-dev \
             libxkbcommon-dev \
             libxrandr-dev
-
-      - name: Install DXC
-        run: |
-          DXC_VERSION="v1.8.2505.1"
-          DXC_ARCHIVE="linux_dxc_2025_07_14.x86_64.tar.gz"
-          curl -L -o "${DXC_ARCHIVE}" "https://github.com/microsoft/DirectXShaderCompiler/releases/download/${DXC_VERSION}/${DXC_ARCHIVE}"
-          tar -xzf "${DXC_ARCHIVE}"
-          sudo install -m 0755 bin/dxc /usr/local/bin/dxc
-          sudo install -m 0644 lib/libdxcompiler.so /usr/local/lib/libdxcompiler.so
-          sudo install -m 0644 lib/libdxil.so /usr/local/lib/libdxil.so
-          sudo ldconfig
-          sudo ln -sf /usr/local/bin/dxc /bin/dxc
 
       - name: Configure
         run: |
@@ -70,15 +55,11 @@ jobs:
           mkdir -p "${ASSET_DIR}/assets"
           cp build/desktop/release-linux/bin/voxov "${ASSET_DIR}/"
           chmod +x "${ASSET_DIR}/voxov"
-          cp build/desktop/release-linux/*.spv "${ASSET_DIR}/" 2>/dev/null || true
-          cp /usr/local/lib/libdxcompiler.so "${ASSET_DIR}/" 2>/dev/null || true
-          cp /usr/local/lib/libdxil.so "${ASSET_DIR}/" 2>/dev/null || true
           cp -R assets/fonts "${ASSET_DIR}/assets/"
           cat > "${ASSET_DIR}/run.sh" << 'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
           SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
-          export LD_LIBRARY_PATH="${SCRIPT_DIR}:${LD_LIBRARY_PATH:-}"
           exec "${SCRIPT_DIR}/voxov" "$@"
           EOF
           chmod +x "${ASSET_DIR}/run.sh"
@@ -92,18 +73,14 @@ jobs:
           tar -xzf "${ASSET_TGZ}" -C smoke-linux
           test -x "smoke-linux/${ASSET_DIR}/voxov"
           test -x "smoke-linux/${ASSET_DIR}/run.sh"
-          test -f "smoke-linux/${ASSET_DIR}/triangle.vert.spv"
-          test -f "smoke-linux/${ASSET_DIR}/triangle.frag.spv"
           test -f "smoke-linux/${ASSET_DIR}/assets/fonts/IBMPlexMono-Regular.ttf"
-          test -f "smoke-linux/${ASSET_DIR}/libdxcompiler.so"
-          test -f "smoke-linux/${ASSET_DIR}/libdxil.so"
           ldd "smoke-linux/${ASSET_DIR}/voxov" | tee /tmp/voxov-linux-ldd.txt
           if grep -q "not found" /tmp/voxov-linux-ldd.txt; then
             echo "Unresolved runtime dependency in linux bundle"
             exit 1
           fi
           set +e
-          timeout 10s xvfb-run -a "smoke-linux/${ASSET_DIR}/run.sh" --renderer gl >/tmp/voxov-linux-smoke.log 2>&1
+          timeout 10s xvfb-run -a "smoke-linux/${ASSET_DIR}/run.sh" >/tmp/voxov-linux-smoke.log 2>&1
           smoke_rc=$?
           set -e
           if [ "$smoke_rc" -ne 0 ] && [ "$smoke_rc" -ne 124 ]; then
@@ -127,23 +104,12 @@ jobs:
         with:
           submodules: recursive
 
-      - name: Install DXC
-        shell: powershell
-        run: |
-          $DXC_VERSION = "v1.8.2505.1"
-          $DXC_ARCHIVE = "dxc_2025_07_14.zip"
-          $URL = "https://github.com/microsoft/DirectXShaderCompiler/releases/download/$DXC_VERSION/$DXC_ARCHIVE"
-          Invoke-WebRequest -Uri $URL -OutFile $DXC_ARCHIVE
-          Expand-Archive -Path $DXC_ARCHIVE -DestinationPath dxc -Force
-          "$PWD\dxc\bin\x64" | Out-File -FilePath $env:GITHUB_PATH -Encoding utf8 -Append
-
       - name: Configure
         shell: powershell
         run: |
           cmake -S . -B build/desktop/release-windows -G Ninja `
             -DCMAKE_BUILD_TYPE=Release `
             -DVOXOV_BUILD_TESTS=OFF `
-            -DVOXOV_ENABLE_VULKAN=OFF `
             -DENABLE_ALL_WARNINGS=OFF `
             -DJPH_USE_DX12=OFF `
             -DJPH_USE_DXC=OFF `
@@ -162,7 +128,6 @@ jobs:
           New-Item -ItemType Directory -Force -Path "$AssetDir/assets" | Out-Null
           Copy-Item "build/desktop/release-windows/bin/voxov.exe" "$AssetDir/" -Force
           Copy-Item "build/desktop/release-windows/bin/*.dll" "$AssetDir/" -ErrorAction SilentlyContinue
-          Copy-Item "build/desktop/release-windows/*.spv" "$AssetDir/" -ErrorAction SilentlyContinue
           Copy-Item "assets/fonts" "$AssetDir/assets/" -Recurse -Force
           $AssetZip = "$AssetDir.zip"
           Compress-Archive -Path "$AssetDir/*" -DestinationPath $AssetZip -Force

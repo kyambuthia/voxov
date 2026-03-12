@@ -37,5 +37,5 @@ Collision visualization:
 
 ## Dear ImGui
 
-- Dear ImGui is integrated in both renderer paths.
-- OpenGL and Vulkan show an in-game `VOXOV Debug` panel with runtime metrics and debug hotkey reminders.
+- Dear ImGui is integrated in the shared desktop renderer.
+- The desktop `VOXOV Debug` panel shows runtime metrics and debug hotkey reminders.

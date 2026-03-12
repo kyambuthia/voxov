@@ -59,4 +59,4 @@ Then open:
    - `Module.__voxovNetJoin()`
    - `Module.__voxovNetSendLocal(x,y,z,yaw)`
    - `Module.__voxovNetRemoteCount()`
-2. Full renderer parity with desktop Vulkan/OpenGL remains future work.
+2. Full gameplay/runtime parity with the desktop OpenGL-first runtime remains future work.

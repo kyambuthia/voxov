@@ -1,21 +1,10 @@
 #include "engine_render/renderer.hpp"
 #include "engine_render/gl_renderer.hpp"
-#if VOXOV_ENABLE_VULKAN
-#include "engine_render/vulkan_renderer.hpp"
-#endif
 
 #include <memory>
 
-void Renderer::init(void *window_handle, RenderBackendType backend_type) {
-    if (backend_type == RenderBackendType::OpenGL) {
-        backend = std::make_unique<GLRenderer>();
-    } else {
-#if VOXOV_ENABLE_VULKAN
-        backend = std::make_unique<VulkanRenderer>();
-#else
-        backend = std::make_unique<GLRenderer>();
-#endif
-    }
+void Renderer::init(void *window_handle) {
+    backend = std::make_unique<GLRenderer>();
     backend->init(window_handle);
 }
 

@@ -28,9 +28,9 @@ Release workflow validates startup from packaged artifact form before publishing
 Linux bundle checks include:
 
 - executable + launcher script present
-- required shader/runtime files present
+- required runtime files present
 - unresolved `ldd` dependencies rejected
-- startup smoke test (`xvfb-run ... --renderer gl`) must not hard-fail
+- startup smoke test (`xvfb-run ...`) must not hard-fail
 
 Windows bundle checks include:
 
@@ -72,4 +72,4 @@ git push origin v0.0.1
   - `USE_F16C=OFF`
   - `USE_FMADD=OFF`
   - `USE_LZCNT=OFF`
-- Windows release profile currently builds with Vulkan disabled for stability.
+- Linux and Windows release bundles now use the same OpenGL-first desktop runtime.

@@ -20,12 +20,9 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             build-essential \
-            curl \
             cmake \
             ninja-build \
-            glslc \
             libgl1-mesa-dev \
-            libvulkan-dev \
             libwayland-dev \
             libx11-dev \
             libxcursor-dev \
@@ -33,18 +30,6 @@ jobs:
             libxinerama-dev \
             libxkbcommon-dev \
             libxrandr-dev
-
-      - name: Install DXC
-        run: |
-          DXC_VERSION="v1.8.2505.1"
-          DXC_ARCHIVE="linux_dxc_2025_07_14.x86_64.tar.gz"
-          curl -L -o "${DXC_ARCHIVE}" "https://github.com/microsoft/DirectXShaderCompiler/releases/download/${DXC_VERSION}/${DXC_ARCHIVE}"
-          tar -xzf "${DXC_ARCHIVE}"
-          sudo install -m 0755 bin/dxc /usr/local/bin/dxc
-          sudo install -m 0644 lib/libdxcompiler.so /usr/local/lib/libdxcompiler.so
-          sudo install -m 0644 lib/libdxil.so /usr/local/lib/libdxil.so
-          sudo ldconfig
-          sudo ln -sf /usr/local/bin/dxc /bin/dxc
 
       - name: Configure
         run: cmake -S . -B build/desktop/ci -G Ninja -DVOXOV_BUILD_TESTS=ON

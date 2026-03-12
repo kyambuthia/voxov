@@ -39,7 +39,7 @@ cmake --build build/desktop/main --parallel
 Run:
 
 ```bash
-./build/desktop/main/bin/voxov --renderer vulkan
+./build/desktop/main/bin/voxov
 ```
 
 Tests:
@@ -55,7 +55,7 @@ ctest --test-dir build/desktop/main --output-on-failure
 - `src/game/android_main.cpp` and `src/game/web_main.cpp` are separate platform-specific runtime paths.
 - Core third-party dependencies are GLFW, ENet, Jolt Physics, Dear ImGui, GLM, fmt, and spdlog.
 
-The codebase is designed reasonably well for a fast-moving prototype: the renderer has a clean backend seam, the build graph is split into engine modules, and CI validates packaged artifacts. The main design debt is architectural drift between the desktop runtime and the Android/Web runtimes, plus a large `Engine` orchestration layer that owns too many responsibilities.
+The codebase is designed reasonably well for a fast-moving prototype: the desktop renderer is now aligned to an OpenGL-first, GLES3/WebGL2-class target, the build graph is split into engine modules, and CI validates packaged artifacts. The main design debt is architectural drift between the desktop runtime and the Android/Web runtimes, plus a large `Engine` orchestration layer that owns too many responsibilities.
 
 ## Docs
 

@@ -7,16 +7,12 @@ bool DesktopPlatform::init(const PlatformCreateInfo &create_info) {
         return false;
     }
 
-    if (create_info.backend == RenderBackendType::Vulkan) {
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_NO_API);
-    } else {
-        glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
-        glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
+    glfwWindowHint(GLFW_CLIENT_API, GLFW_OPENGL_API);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MAJOR, 3);
+    glfwWindowHint(GLFW_CONTEXT_VERSION_MINOR, 0);
 #ifdef __APPLE__
-        glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
+    glfwWindowHint(GLFW_OPENGL_FORWARD_COMPAT, GLFW_TRUE);
 #endif
-    }
 
     window = glfwCreateWindow(create_info.width, create_info.height, create_info.title, nullptr, nullptr);
     if (!window) {
@@ -33,10 +29,8 @@ bool DesktopPlatform::init(const PlatformCreateInfo &create_info) {
         set_fullscreen(true);
     }
 
-    if (create_info.backend == RenderBackendType::OpenGL) {
-        glfwMakeContextCurrent(window);
-        glfwSwapInterval(1);
-    }
+    glfwMakeContextCurrent(window);
+    glfwSwapInterval(1);
 
     return true;
 }

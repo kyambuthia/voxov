@@ -92,7 +92,6 @@ int main(int argc, char **argv) {
     int window_height = 720;
     const char *connect_host = nullptr;
     uint16_t connect_port = 7777;
-    RenderBackendType backend = RenderBackendType::Vulkan;
     PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
 
     for (int i = 1; i < argc; ++i) {
@@ -107,10 +106,12 @@ int main(int argc, char **argv) {
             connect_port = static_cast<uint16_t>(std::strtoul(argv[++i], nullptr, 10));
         } else if (std::strcmp(argv[i], "--renderer") == 0 && i + 1 < argc) {
             const char *renderer_name = argv[++i];
-            if (std::strcmp(renderer_name, "gl") == 0 || std::strcmp(renderer_name, "opengl") == 0) {
-                backend = RenderBackendType::OpenGL;
-            } else {
-                backend = RenderBackendType::Vulkan;
+            if (std::strcmp(renderer_name, "gl") != 0 &&
+                std::strcmp(renderer_name, "opengl") != 0) {
+                std::fprintf(stderr,
+                             "Ignoring unsupported renderer '%s'; desktop now "
+                             "uses OpenGL only.\n",
+                             renderer_name);
             }
         } else if (std::strcmp(argv[i], "--physics") == 0 && i + 1 < argc) {
             const char *physics_name = argv[++i];
@@ -188,7 +189,7 @@ int main(int argc, char **argv) {
     create_info.width = (window_width > 0) ? window_width : 1280;
     create_info.height = (window_height > 0) ? window_height : 720;
     create_info.fullscreen = start_fullscreen;
-    create_info.backend = backend;
+    create_info.backend = RenderBackendType::OpenGL;
 
     if (!platform.init(create_info)) {
         std::fprintf(stderr, "Platform init failed\n");
@@ -211,7 +212,7 @@ int main(int argc, char **argv) {
         options.vehicle_sandbox = vehicle_sandbox;
         options.spherical_planet = spherical_planet;
         options.physics_backend = physics_backend;
-        engine.init(platform.native_window(), backend, options);
+        engine.init(platform.native_window(), options);
     } catch (const std::exception &e) {
         std::fprintf(stderr, "Engine init failed: %s\n", e.what());
         platform.shutdown();

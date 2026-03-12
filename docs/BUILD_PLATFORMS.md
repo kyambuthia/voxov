@@ -7,7 +7,7 @@ This document describes the repository as it exists today, not the long-term tar
 | Platform | Status | Runtime Path | Verification |
 | --- | --- | --- | --- |
 | Linux desktop | Supported | Shared desktop runtime (`src/game/main.cpp` + `src/engine/*`) | CI build + tests + release bundle validation |
-| Windows desktop | Supported for release packaging | Shared desktop runtime | Release packaging and startup smoke test; Vulkan currently disabled in release builds |
+| Windows desktop | Supported for release packaging | Shared desktop runtime | Release packaging and startup smoke test |
 | macOS desktop | Goal / unverified | Intended shared desktop runtime | No active CI coverage in this repo |
 | Android | Active target, separate runtime | `src/game/android_main.cpp` | Release APK build and artifact validation; no automated device smoke test |
 | Web | Preview | `src/game/web_main.cpp` | Buildable, but no CI/runtime parity validation |
@@ -24,16 +24,10 @@ cmake -S . -B ./build/desktop/main -DVOXOV_BUILD_TESTS=ON
 cmake --build ./build/desktop/main --parallel
 ```
 
-Run Vulkan:
+Run desktop:
 
 ```bash
-./build/desktop/main/bin/voxov --renderer vulkan
-```
-
-Run OpenGL:
-
-```bash
-./build/desktop/main/bin/voxov --renderer gl
+./build/desktop/main/bin/voxov
 ```
 
 Run local client + server:
@@ -50,6 +44,7 @@ Run dedicated server mode:
 
 Notes:
 
+- Desktop is now OpenGL-only and is intended to stay inside a GLES3/WebGL2-class rendering budget.
 - `--headless-server` is currently a mode of the desktop client executable, not a separate `voxov_server` binary.
 - `ctest` requires a build configured with `-DVOXOV_BUILD_TESTS=ON`.
 

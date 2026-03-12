@@ -5,7 +5,6 @@
 struct GLFWwindow;
 
 enum class RenderBackendType {
-    Vulkan,
     OpenGL
 };
 
@@ -14,7 +13,7 @@ struct PlatformCreateInfo {
     int width = 1280;
     int height = 720;
     bool fullscreen = false;
-    RenderBackendType backend = RenderBackendType::Vulkan;
+    RenderBackendType backend = RenderBackendType::OpenGL;
 };
 
 class DesktopPlatform {

@@ -7,7 +7,7 @@
 
 class Renderer {
 public:
-    void init(void *window_handle, RenderBackendType backend_type);
+    void init(void *window_handle);
     void shutdown();
     void upload_scene(const RenderScene &scene);
     void update_dynamic_meshes(const RenderMesh &debug_world, const RenderMesh &debug_screen);

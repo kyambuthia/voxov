@@ -9,6 +9,7 @@
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_input/input_state.hpp"
 #include "engine_math/camera.hpp"
+#include "engine_runtime/runtime_session_controller.hpp"
 #include "engine_net/lan_discovery.hpp"
 #include "engine_net/net_client.hpp"
 #include "engine_net/net_server.hpp"
@@ -133,9 +134,8 @@ private:
   void reconcile_local_player_from_snapshot(uint32_t current_sim_tick);
   void apply_runtime_toggles();
   void process_menu_actions(const InputState &primary_input);
+  RuntimeSessionSnapshot session_snapshot() const;
   void update_remote_interpolation(double frame_dt);
-  GuiSessionContext gui_session_context() const;
-  std::string multiplayer_status_text() const;
 
   FixedStep fixed;
   Renderer renderer;
@@ -150,7 +150,6 @@ private:
   double net_connect_elapsed = 0.0;
   NetClientConnectionState last_net_connection_state =
       NetClientConnectionState::Disconnected;
-  bool gameplay_started = false;
 
   VoxelChunk world_chunk;
   VoxelCollisionWorld collision_world{nullptr};
@@ -172,6 +171,7 @@ private:
   InputState input_state_secondary{};
   bool touch_input_mode = false;
   GuiMenu gui_menu;
+  RuntimeSessionController session_controller;
   UiAudio ui_audio;
   SkinnedModel humanoid_player_model;
   bool has_humanoid_player_model = false;

@@ -1,4 +1,5 @@
 #include "engine_input/input_state.hpp"
+#include "engine_runtime/runtime_session_controller.hpp"
 #include "engine_ui/gui_menu.hpp"
 
 #include <GLES3/gl3.h>
@@ -51,10 +52,9 @@ struct WebAppState {
     EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context = 0;
     float t = 0.0f;
     GuiMenu menu{};
-    bool devhud = false;
-    bool noclip = false;
-    bool gameplay_started = false;
-    bool hosting = false;
+    RuntimeSessionController session_controller{};
+    bool hosting_local = false;
+    bool hosting_lan = false;
     bool joined = false;
     int remote_count = 0;
 
@@ -105,7 +105,7 @@ void update_web_overlay(const std::string &text) {
 }
 
 void simulate_local_player(WebAppState &state, const InputState &input, float dt) {
-    if (state.menu.open() || !state.gameplay_started) {
+    if (state.menu.open() || !state.session_controller.gameplay_started()) {
         state.vx *= 0.9f;
         state.vz *= 0.9f;
         return;
@@ -135,21 +135,31 @@ void simulate_local_player(WebAppState &state, const InputState &input, float dt
 }
 
 std::string build_overlay_text(const WebAppState &state) {
-    if (state.menu.open()) {
-        std::string hint;
-        if (!web_net_available()) {
-            hint = "Web net API not attached. Running local sim only.";
-        } else if (state.hosting) {
-            hint = "Web host active.";
-        } else if (state.joined) {
-            hint = "Connected to web host.";
-        } else {
-            hint = "Select Host/Join to use web transport hooks.";
-        }
-        return state.menu.build_text(state.devhud, state.noclip, hint);
+    RuntimeSessionSnapshot snapshot{};
+    snapshot.connection_state =
+        state.joined && !state.hosting_local && !state.hosting_lan
+            ? NetClientConnectionState::Connected
+            : NetClientConnectionState::Disconnected;
+    snapshot.hosting_local = state.hosting_local;
+    snapshot.hosting_lan = state.hosting_lan;
+    if (!web_net_available()) {
+        snapshot.status_hint = "Web net API not attached. Running local sim only.";
+    } else if (state.hosting_local || state.hosting_lan) {
+        snapshot.status_hint = "Web host active.";
+    } else if (state.joined) {
+        snapshot.status_hint = "Connected to web host.";
+    } else {
+        snapshot.status_hint = "Select Host/Join to use web transport hooks.";
     }
 
-    if (!state.devhud) {
+    if (state.menu.open()) {
+        return state.menu.build_text(
+            state.session_controller.devhud_enabled(),
+            state.session_controller.noclip_enabled(),
+            state.session_controller.build_session_context(snapshot));
+    }
+
+    if (!state.session_controller.devhud_enabled()) {
         return {};
     }
 
@@ -176,27 +186,31 @@ void tick(void *arg) {
     state->t += dt;
 
     const InputState input = poll_web_input();
-    GuiMenuActions actions{};
-    state->menu.handle_input(input, state->devhud, state->noclip, actions);
-    if (actions.start_game || actions.close_menu) {
-        state->gameplay_started = true;
-    }
-    if (actions.toggle_devhud) {
-        state->devhud = !state->devhud;
-    }
-    if (actions.toggle_noclip) {
-        state->noclip = !state->noclip;
-    }
-    if (actions.host_local || actions.host_lan) {
-        state->hosting = true;
-        state->joined = true;
-        web_net_host();
-    }
-    if (actions.join_local || actions.join_nearby) {
-        state->hosting = false;
-        state->joined = true;
-        web_net_join();
-    }
+    const RuntimeSessionMenuCallbacks callbacks{
+        .leave_session = [state]() {
+            state->hosting_local = false;
+            state->hosting_lan = false;
+            state->joined = false;
+        },
+        .host_local = [state]() {
+            state->hosting_local = true;
+            state->hosting_lan = false;
+            state->joined = true;
+            web_net_host();
+        },
+        .host_lan = [state]() {
+            state->hosting_local = false;
+            state->hosting_lan = true;
+            state->joined = true;
+            web_net_host();
+        },
+        .join_nearby = [state]() {
+            state->hosting_local = false;
+            state->hosting_lan = false;
+            state->joined = true;
+            web_net_join();
+        }};
+    (void)state->session_controller.handle_menu_input(input, state->menu, callbacks);
 
     simulate_local_player(*state, input, dt);
     web_net_send_local(state->x, state->y, state->z, state->yaw);

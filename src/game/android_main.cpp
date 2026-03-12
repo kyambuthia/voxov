@@ -8,6 +8,7 @@
 #define GLM_ENABLE_EXPERIMENTAL
 #endif
 #include "engine_render/debug_draw/debug_draw.hpp"
+#include "engine_runtime/runtime_session_controller.hpp"
 #include "engine_ui/gui_menu.hpp"
 #include "engine_input/input_state.hpp"
 #include "engine_audio/ui_audio.hpp"
@@ -631,12 +632,10 @@ struct AndroidRenderer {
     float cam_pitch = -0.25f;
     TouchState touch{};
     GuiMenu gui_menu{};
+    RuntimeSessionController session_controller{};
     UiAudio ui_audio{};
     bool audio_ready = false;
     bool menu_open_prev = false;
-    bool devhud = false;
-    bool noclip = false;
-    bool gameplay_started = false;
     bool pending_menu_toggle = false;
     bool pending_menu_up = false;
     bool pending_menu_down = false;
@@ -1221,41 +1220,20 @@ struct AndroidRenderer {
         refresh_multicast_lock_state();
     }
 
-    std::string multiplayer_status_text() const {
-        const NetClientConnectionState connection_state = net_client.connection_state();
-        if (connection_state == NetClientConnectionState::Connected) {
-            if (net_client.has_session_info()) {
-                return net_session_status_line(net_client.session_info());
-            }
-            return "Connected to game server.";
+    RuntimeSessionSnapshot session_snapshot() const {
+        RuntimeSessionSnapshot snapshot{};
+        snapshot.connection_state = net_client.connection_state();
+        snapshot.searching_nearby = searching_nearby;
+        snapshot.hosting_local = local_server_running && local_server_loopback;
+        snapshot.hosting_lan = local_server_running && !local_server_loopback;
+        snapshot.has_session_info = net_client.has_session_info();
+        if (snapshot.has_session_info) {
+            snapshot.session_info = net_client.session_info();
         }
-        if (searching_nearby) {
-            return "Searching nearby Wi-Fi hosts...";
-        }
-        if (connection_state == NetClientConnectionState::Connecting) {
-            const std::string &target_host = net_client.connect_target_host();
-            if (!target_host.empty()) {
-                return "Connecting to " + target_host + ":" + std::to_string(net_client.connect_target_port()) + "...";
-            }
-            return "Connecting...";
-        }
-        if (local_server_running) {
-            return local_server_loopback ? "Hosting this device only." : "Hosting Wi-Fi game.";
-        }
-        return multiplayer_hint;
-    }
-
-    GuiSessionContext session_context() const {
-        GuiSessionContext session{};
-        session.connected = net_connected;
-        session.connecting = net_connecting;
-        session.searching = searching_nearby;
-        session.hosting_local = local_server_running && local_server_loopback;
-        session.hosting_lan = local_server_running && !local_server_loopback;
-        session.can_leave = session.connected || session.connecting || session.searching ||
-            session.hosting_local || session.hosting_lan;
-        session.status = multiplayer_status_text();
-        return session;
+        snapshot.connect_target_host = net_client.connect_target_host();
+        snapshot.connect_target_port = net_client.connect_target_port();
+        snapshot.status_hint = multiplayer_hint;
+        return snapshot;
     }
 
     void pump_network(double dt_seconds) {
@@ -1518,7 +1496,7 @@ struct AndroidRenderer {
                 glm::vec3(0.95f, 0.5f, 0.2f));
         }
 
-        if (devhud && render_skinned_avatar) {
+        if (session_controller.devhud_enabled() && render_skinned_avatar) {
             RenderMesh debug_capsule = build_debug_capsule_mesh(
                 glm::vec3(0.0f),
                 player_capsule_radius,
@@ -1845,46 +1823,21 @@ struct AndroidRenderer {
         pending_menu_down = false;
         pending_menu_select = false;
 
-        GuiMenuActions actions{};
-        gui_menu.handle_input(menu_input, devhud, noclip, actions);
-        if (actions.ui_move_sfx && audio_ready) {
+        const RuntimeSessionMenuCallbacks callbacks{
+            .leave_session = [this]() { leave_session_secure(); },
+            .host_local = [this]() { host_local_secure(); },
+            .host_lan = [this]() { host_lan_secure(); },
+            .join_nearby = [this]() { join_nearby_secure(); },
+        };
+        const RuntimeMenuResult menu_result =
+            session_controller.handle_menu_input(menu_input, gui_menu, callbacks);
+        if (menu_result.ui_move_sfx && audio_ready) {
             ui_audio.play_move();
         }
-        if (actions.ui_select_sfx && audio_ready) {
+        if (menu_result.ui_select_sfx && audio_ready) {
             ui_audio.play_click();
         }
-        if (actions.toggle_devhud) {
-            devhud = !devhud;
-        }
-        if (actions.toggle_noclip) {
-            noclip = !noclip;
-        }
-        if (actions.start_game) {
-            gameplay_started = true;
-        }
-        if (actions.close_menu && !gameplay_started) {
-            gameplay_started = true;
-        }
-        if (actions.host_local) {
-            gameplay_started = true;
-            host_local_secure();
-        }
-        if (actions.join_local) {
-            gameplay_started = true;
-            join_nearby_secure();
-        }
-        if (actions.host_lan) {
-            gameplay_started = true;
-            host_lan_secure();
-        }
-        if (actions.join_nearby) {
-            gameplay_started = true;
-            join_nearby_secure();
-        }
-        if (actions.leave_session) {
-            leave_session_secure();
-        }
-        if (actions.reset_camera) {
+        if (menu_result.reset_camera_requested) {
             cam_yaw = 3.14159f;
             cam_pitch = -0.25f;
             camera_distance = 5.0f;
@@ -1897,21 +1850,24 @@ struct AndroidRenderer {
                                   menu_input.menu_down_pressed ||
                                   menu_input.menu_select_pressed;
         if (menu_changed) {
-            const std::string menu_text = gui_menu.build_text(devhud, noclip, session_context());
+            const std::string menu_text = gui_menu.build_text(
+                session_controller.devhud_enabled(),
+                session_controller.noclip_enabled(),
+                session_controller.build_session_context(session_snapshot()));
             __android_log_print(
                 ANDROID_LOG_INFO,
                 kLogTag,
                 "GUI state: open=%d devhud=%d noclip=%d menu=\"%s\"",
                 menu_open ? 1 : 0,
-                devhud ? 1 : 0,
-                noclip ? 1 : 0,
+                session_controller.devhud_enabled() ? 1 : 0,
+                session_controller.noclip_enabled() ? 1 : 0,
                 menu_text.c_str());
         }
         menu_open_prev = menu_open;
     }
 
     void update_player_and_camera(double dt_seconds) {
-        if (!gameplay_started) {
+        if (!session_controller.gameplay_started()) {
             clear_touch_actions(false);
         }
         const float look_scale = 0.0035f;
@@ -1946,7 +1902,7 @@ struct AndroidRenderer {
             }
             const float follow = std::clamp(static_cast<float>(dt_seconds) * 14.0f, 0.0f, 1.0f);
             player_feet_position = glm::mix(player_feet_position, net_target_position, follow);
-        } else if (noclip) {
+        } else if (session_controller.noclip_enabled()) {
             player_feet_position += move_delta;
             if (touch.jump_held) {
                 player_feet_position.y += speed * static_cast<float>(dt_seconds);
@@ -1989,7 +1945,7 @@ struct AndroidRenderer {
 
         const bool moving = glm::length(touch.left_value) > 0.12f;
         PlayerAnimState next_state = PlayerAnimState::Idle;
-        if (!noclip && !player_grounded) {
+        if (!session_controller.noclip_enabled() && !player_grounded) {
             next_state = player_vertical_velocity >= 0.0f ? PlayerAnimState::JumpLoop : PlayerAnimState::FallLoop;
         } else if (moving) {
             next_state = touch.sprint_held ? PlayerAnimState::LocomotionRun : PlayerAnimState::LocomotionWalk;
@@ -2066,7 +2022,7 @@ struct AndroidRenderer {
         draw_rect(menu_button.x - 4, menu_button.y - 4, menu_button.w + 8, menu_button.h + 8, 0.18f, 0.24f, 0.32f);
         draw_rect(menu_button.x, menu_button.y, menu_button.w, menu_button.h, 0.12f, 0.17f, 0.24f);
 
-        if (!gui_menu.open() && gameplay_started) {
+        if (!gui_menu.open() && session_controller.gameplay_started()) {
             const UiRect jump = jump_button_rect();
             const UiRect sprint = sprint_button_rect();
             const UiRect crouch = crouch_button_rect();
@@ -2097,7 +2053,10 @@ struct AndroidRenderer {
         }
 
         if (gui_menu.open()) {
-            const GuiMenuView menu_view = gui_menu.build_view(devhud, noclip, session_context());
+            const GuiMenuView menu_view = gui_menu.build_view(
+                session_controller.devhud_enabled(),
+                session_controller.noclip_enabled(),
+                session_controller.build_session_context(session_snapshot()));
             const UiMenuLayout layout = menu_layout(menu_view);
             const UiRect panel = layout.panel;
             const int panel_x = panel.x;
@@ -2124,7 +2083,10 @@ struct AndroidRenderer {
 
         std::string ui_key;
         ui_key.reserve(256);
-        const GuiMenuView menu_view = gui_menu.build_view(devhud, noclip, session_context());
+        const GuiMenuView menu_view = gui_menu.build_view(
+            session_controller.devhud_enabled(),
+            session_controller.noclip_enabled(),
+            session_controller.build_session_context(session_snapshot()));
         if (gui_menu.open()) {
             ui_key += "menu:";
             ui_key += std::to_string(static_cast<int>(gui_menu.page_id()));
@@ -2136,12 +2098,12 @@ struct AndroidRenderer {
             ui_key += std::to_string(width);
             ui_key += "x";
             ui_key += std::to_string(height);
-        } else if (gameplay_started) {
+        } else if (session_controller.gameplay_started()) {
             ui_key = "hud_controls";
             ui_key += std::to_string(width);
             ui_key += "x";
             ui_key += std::to_string(height);
-            if (devhud) {
+            if (session_controller.devhud_enabled()) {
                 const NetDebugStats client_stats = net_client.debug_stats();
                 const NetDebugStats server_stats = local_server_running ? local_server.debug_stats() : NetDebugStats{};
                 ui_key += ":dev:";
@@ -2228,13 +2190,13 @@ struct AndroidRenderer {
                         layout.status_px,
                         glm::vec3(0.85f, 0.9f, 0.98f));
                 }
-            } else if (gameplay_started) {
+            } else if (session_controller.gameplay_started()) {
                 const UiTouchLayout touch_layout_state = touch_layout();
                 append_centered(menu_button, "MENU", touch_layout_state.menu_label_px, glm::vec3(0.93f, 0.95f, 0.99f));
                 append_centered(crouch_button_rect(), "CRAWL", touch_layout_state.action_label_px, glm::vec3(0.93f, 0.95f, 0.99f));
                 append_centered(jump_button_rect(), "JUMP", touch_layout_state.action_label_px, glm::vec3(0.93f, 0.95f, 0.99f));
                 append_centered(sprint_button_rect(), "SPRINT", touch_layout_state.action_label_px - 0.1f, glm::vec3(0.93f, 0.95f, 0.99f));
-                if (devhud) {
+                if (session_controller.devhud_enabled()) {
                     const UiRect panel = menu_panel_rect();
                     const NetDebugStats client_stats = net_client.debug_stats();
                     const NetDebugStats server_stats = local_server_running ? local_server.debug_stats() : NetDebugStats{};
@@ -2403,7 +2365,7 @@ struct AndroidRenderer {
                 pending_menu_toggle = true;
                 return 1;
             }
-            if (!gui_menu.open() && gameplay_started) {
+            if (!gui_menu.open() && session_controller.gameplay_started()) {
                 const UiRect jump = jump_button_rect();
                 const UiRect sprint = sprint_button_rect();
                 const UiRect crouch = crouch_button_rect();
@@ -2426,7 +2388,10 @@ struct AndroidRenderer {
                 }
             }
             if (gui_menu.open()) {
-                const GuiMenuView menu_view = gui_menu.build_view(devhud, noclip, session_context());
+                const GuiMenuView menu_view = gui_menu.build_view(
+                    session_controller.devhud_enabled(),
+                    session_controller.noclip_enabled(),
+                    session_controller.build_session_context(session_snapshot()));
                 const UiMenuLayout layout = menu_layout(menu_view);
                 const UiRect panel = layout.panel;
                 const int panel_x = panel.x;

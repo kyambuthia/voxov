@@ -44,6 +44,7 @@ if(ANDROID)
 
     add_library(voxov_android SHARED
         src/game/android_main.cpp
+        src/engine_runtime/runtime_session_controller.cpp
         src/platform/android_platform.cpp
         src/platform/android/input_android.cpp
         src/engine_assets/cgltf_impl.cpp
@@ -106,6 +107,7 @@ if(EMSCRIPTEN)
 
     add_executable(voxov_web
         src/game/web_main.cpp
+        src/engine_runtime/runtime_session_controller.cpp
         src/platform/web_platform.cpp
         src/engine_ui/gui_menu.cpp
     )
@@ -250,6 +252,7 @@ endif()
 
 add_library(engine STATIC
     src/engine/engine.cpp
+    src/engine_runtime/runtime_session_controller.cpp
     src/engine_assets/cgltf_impl.cpp
     src/engine_assets/skinned_model.cpp
     src/engine_audio/ui_audio.cpp

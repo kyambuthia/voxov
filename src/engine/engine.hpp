@@ -8,6 +8,7 @@
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_input/input_state.hpp"
 #include "engine_math/camera.hpp"
+#include "engine_presentation/hud_composer.hpp"
 #include "engine_presentation/presentation_snapshot.hpp"
 #include "engine_runtime/runtime_game_session.hpp"
 #include "engine_runtime/runtime_session_controller.hpp"
@@ -165,6 +166,7 @@ private:
   bool touch_input_mode = false;
   GuiMenu gui_menu;
   RuntimeSessionController session_controller;
+  HudComposer hud_composer;
   UiAudio ui_audio;
   SkinnedModel humanoid_player_model;
   bool has_humanoid_player_model = false;
@@ -179,8 +181,6 @@ private:
   double last_frame_dt = 0.0;
   double remote_interp_tick_cursor = 0.0;
   bool remote_interp_tick_cursor_initialized = false;
-  uint64_t last_overlay_state_hash = 0;
-  bool has_overlay_state_hash = false;
   NetChunkInterest last_chunk_interest{};
   bool has_last_chunk_interest = false;
 

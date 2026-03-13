@@ -24,7 +24,6 @@ struct RuntimeHudSnapshot {
     bool show_hotspot_panel = false;
     bool show_objective_panel = true;
     float minigame_progress = 0.0f;
-    uint64_t state_hash = 0;
     std::string devhud_text;
     std::string minigame_title;
     std::string minigame_status;

@@ -253,6 +253,7 @@ endif()
 
 add_library(engine STATIC
     src/engine/engine.cpp
+    src/engine_runtime/runtime_game_session.cpp
     src/engine_runtime/runtime_session_controller.cpp
     src/engine_runtime/runtime_world_state.cpp
     src/platform/platform_services.cpp

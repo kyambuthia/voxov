@@ -2,13 +2,13 @@
 
 #include "engine_assets/skinned_model.hpp"
 #include "engine_audio/ui_audio.hpp"
-#include "engine_core/timing.hpp"
 #include "engine_gameplay/animation/animation_runtime.hpp"
 #include "engine_gameplay/minigames/minigames.hpp"
 #include "engine_gameplay/player/player_components.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_input/input_state.hpp"
 #include "engine_math/camera.hpp"
+#include "engine_runtime/runtime_game_session.hpp"
 #include "engine_runtime/runtime_session_controller.hpp"
 #include "engine_runtime/runtime_world_state.hpp"
 #include "engine_net/lan_discovery.hpp"
@@ -126,9 +126,9 @@ private:
   RuntimeSessionSnapshot session_snapshot() const;
   void update_remote_interpolation(double frame_dt);
 
-  FixedStep fixed;
   Renderer renderer;
   PlatformServices platform_services;
+  RuntimeGameSession game_session;
   PhysicsWorld physics;
   NetClient net_client;
   LanDiscovery lan_discovery;

@@ -319,6 +319,7 @@ glm::ivec2 tetris_visual_cell(int shape, int rot, int i) {
 void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
   runtime_options = options;
   platform_services = PlatformServices::desktop_default();
+  game_session.reset();
   session_controller.set_devhud_enabled(runtime_options.devhud);
   session_controller.set_noclip_enabled(runtime_options.noclip);
   session_controller.set_gameplay_started(false);
@@ -632,6 +633,7 @@ void Engine::reconcile_local_player_from_snapshot(uint32_t current_sim_tick) {
     if (!entry.valid || entry.tick != tick) {
       break;
     }
+    const FixedStep &fixed = game_session.fixed_step();
     (void)PlayerControllerSystem::simulate_fixed(
         local_player, entry.input, collision_world,
         static_cast<float>(fixed.fixed_dt), runtime_options.noclip);
@@ -866,6 +868,7 @@ RuntimeSessionSnapshot Engine::session_snapshot() const {
 }
 
 void Engine::update_remote_interpolation(double frame_dt) {
+  const FixedStep &fixed = game_session.fixed_step();
   net_remote_interpolate(remote_render_players, remote_interp_tick_cursor,
                          remote_interp_tick_cursor_initialized, frame_dt,
                          fixed.fixed_dt, k_remote_interp_delay_ticks);
@@ -883,6 +886,7 @@ void Engine::update_remote_interpolation(double frame_dt) {
 
 void Engine::tick(double frame_dt) {
   const PerfClock::time_point frame_cpu_start = PerfClock::now();
+  const FixedStep &fixed = game_session.fixed_step();
   last_frame_dt = frame_dt;
 
   apply_runtime_toggles();
@@ -919,74 +923,70 @@ void Engine::tick(double frame_dt) {
                                               static_cast<float>(frame_dt));
   }
 
-  fixed.accumulator += frame_dt;
   bool jump_consumed = false;
-  uint32_t fixed_steps_this_frame = 0;
-  const PerfClock::time_point fixed_cpu_start = PerfClock::now();
+  const RuntimeGameSessionCallbacks callbacks{
+      .pump_server = [this]() {
+        if (local_server_running) {
+          local_server.pump();
+        }
+      },
+      .simulate_step =
+          [this, &gameplay_input, &gameplay_input_secondary,
+           &jump_consumed](const RuntimeGameSessionStepContext &step) {
+            local_player_prev_position = local_player.transform.position;
+            InputState step_input = gameplay_input;
+            if (jump_consumed) {
+              step_input.jump_pressed = false;
+            }
+            if (active_minigame.active) {
+              update_active_minigame(step_input, step.dt);
+              last_collision_debug = PlayerCollisionDebug{};
+            } else {
+              update_vehicle_sim(step_input, step.dt);
+              update_aircraft_sim(step_input, step.dt);
+            }
+            if (active_minigame.active) {
+              last_collision_debug = PlayerCollisionDebug{};
+            } else if (vehicle.occupied || aircraft.occupied) {
+              last_collision_debug = PlayerCollisionDebug{};
+            } else if (runtime_options.spherical_planet &&
+                       world_state.spherical_planet_radius > 0.0f) {
+              update_spherical_player_sim(step_input, step.dt);
+              last_collision_debug = PlayerCollisionDebug{};
+            } else {
+              last_collision_debug = PlayerControllerSystem::simulate_fixed(
+                  local_player, step_input, collision_world, step.dt,
+                  runtime_options.noclip);
+            }
 
-  while (fixed.accumulator >= fixed.fixed_dt) {
-    if (local_server_running) {
-      local_server.pump();
-    }
-    local_player_prev_position = local_player.transform.position;
-    InputState step_input = gameplay_input;
-    if (jump_consumed) {
-      step_input.jump_pressed = false;
-    }
-    if (active_minigame.active) {
-      update_active_minigame(step_input, static_cast<float>(fixed.fixed_dt));
-      last_collision_debug = PlayerCollisionDebug{};
-    } else {
-      update_vehicle_sim(step_input, static_cast<float>(fixed.fixed_dt));
-      update_aircraft_sim(step_input, static_cast<float>(fixed.fixed_dt));
-    }
-    if (active_minigame.active) {
-      last_collision_debug = PlayerCollisionDebug{};
-    } else if (vehicle.occupied || aircraft.occupied) {
-      last_collision_debug = PlayerCollisionDebug{};
-    } else if (runtime_options.spherical_planet &&
-               world_state.spherical_planet_radius > 0.0f) {
-      update_spherical_player_sim(step_input,
-                                  static_cast<float>(fixed.fixed_dt));
-      last_collision_debug = PlayerCollisionDebug{};
-    } else {
-      last_collision_debug = PlayerControllerSystem::simulate_fixed(
-          local_player, step_input, collision_world,
-          static_cast<float>(fixed.fixed_dt), runtime_options.noclip);
-    }
+            if (runtime_options.splitscreen) {
+              local_player_secondary_prev_position =
+                  local_player_secondary.transform.position;
+              InputState step_input_secondary = gameplay_input_secondary;
+              last_collision_debug_secondary =
+                  PlayerControllerSystem::simulate_fixed(
+                      local_player_secondary, step_input_secondary,
+                      collision_world, step.dt, runtime_options.noclip);
+            }
+            sync_local_animation_runtime(local_player, local_player_animation,
+                                         step.dt);
+            if (runtime_options.splitscreen) {
+              sync_local_animation_runtime(local_player_secondary,
+                                           local_player_secondary_animation,
+                                           step.dt);
+            }
+            jump_consumed = jump_consumed || input_state.jump_pressed;
 
-    if (runtime_options.splitscreen) {
-      local_player_secondary_prev_position =
-          local_player_secondary.transform.position;
-      InputState step_input_secondary = gameplay_input_secondary;
-      last_collision_debug_secondary = PlayerControllerSystem::simulate_fixed(
-          local_player_secondary, step_input_secondary, collision_world,
-          static_cast<float>(fixed.fixed_dt), runtime_options.noclip);
-    }
-    sync_local_animation_runtime(local_player, local_player_animation,
-                                 static_cast<float>(fixed.fixed_dt));
-    if (runtime_options.splitscreen) {
-      sync_local_animation_runtime(local_player_secondary,
-                                   local_player_secondary_animation,
-                                   static_cast<float>(fixed.fixed_dt));
-    }
-    jump_consumed = jump_consumed || input_state.jump_pressed;
+            sync_network_state(static_cast<uint32_t>(step.tick), step_input);
 
-    sync_network_state(static_cast<uint32_t>(fixed.tick), step_input);
+            local_replication.position = local_player.transform.position;
+            local_replication.velocity = local_player.controller.velocity;
 
-    local_replication.position = local_player.transform.position;
-    local_replication.velocity = local_player.controller.velocity;
-
-    physics.step(static_cast<float>(fixed.fixed_dt));
-    fixed.accumulator -= fixed.fixed_dt;
-    fixed.tick++;
-    fixed_steps_this_frame++;
-  }
-
-  const double fixed_cpu_ms =
-      fixed_steps_this_frame > 0
-          ? elapsed_ms(fixed_cpu_start, PerfClock::now())
-          : 0.0;
+            physics.step(step.dt);
+          }};
+  game_session.advance(frame_dt, callbacks);
+  const double fixed_cpu_ms = game_session.fixed_cpu_ms();
+  const uint32_t fixed_steps_this_frame = game_session.fixed_steps_last_frame();
 
   input_state.jump_pressed = false;
   input_state.interact_pressed = false;
@@ -1577,6 +1577,7 @@ void Engine::handle_minigame_interaction(const InputState &input) {
     minigame_hint =
         std::string("Press F or E to play ") + minigame_name(hotspot.type);
     if (input.interact_pressed) {
+      const FixedStep &fixed = game_session.fixed_step();
       minigame_begin(
           active_minigame, hotspot.type,
           static_cast<uint32_t>(fixed.tick +
@@ -1859,6 +1860,7 @@ void Engine::update_spherical_player_sim(const InputState &input, float dt) {
 }
 
 void Engine::refresh_overlay_text() {
+  const FixedStep &fixed = game_session.fixed_step();
   const GuiMenuView menu_view = gui_menu.build_view(
       runtime_options.devhud, runtime_options.noclip,
       session_controller.build_session_context(session_snapshot()));

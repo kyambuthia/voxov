@@ -1,9 +1,6 @@
 #include "engine_net/net_server.hpp"
+#include "engine_server/server_session.hpp"
 #include "engine_net/net_runtime_shared.hpp"
-#include "engine_gameplay/animation/player_animation_graph.hpp"
-#include "engine_gameplay/player/player_controller.hpp"
-#include "engine_input/input_state.hpp"
-#include "engine_world/world_gen.hpp"
 
 #include <enet/enet.h>
 #include <spdlog/spdlog.h>
@@ -13,8 +10,6 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
-
-#include <glm/gtx/quaternion.hpp>
 
 namespace {
 #pragma pack(push, 1)
@@ -64,7 +59,6 @@ struct PlayerRemovePacket {
 };
 #pragma pack(pop)
 
-constexpr float kServerTickDt = 1.0f / 60.0f;
 constexpr double kServerSimTickMs = 1000.0 / 60.0;
 constexpr uint64_t kSnapshotSendIntervalMs = 33;
 constexpr uint64_t kPlayerBroadcastIntervalMs = 33;
@@ -76,63 +70,24 @@ uint64_t now_ms() {
       std::chrono::duration_cast<std::chrono::milliseconds>(now).count());
 }
 
-void sync_net_player_state_from_entity(const PlayerEntity &player,
-                                       uint32_t player_id, uint32_t server_tick,
-                                       NetPlayerState &state) {
-  state.player_id = player_id;
-  state.tick = server_tick;
-  state.x = player.transform.position.x;
-  state.y = player.transform.position.y;
-  state.z = player.transform.position.z;
-  state.vx = player.controller.velocity.x;
-  state.vy = player.controller.velocity.y;
-  state.vz = player.controller.velocity.z;
-  state.anim_state = static_cast<uint8_t>(player.anim_state);
-  state.anim_phase = player.anim_phase;
-  state.anim_blend = player.anim_blend;
-}
-
-glm::vec2 server_spawn_offset(uint32_t player_id) {
-  switch (player_id % 4u) {
-  case 1u:
-    return glm::vec2(-1.5f, 0.0f);
-  case 2u:
-    return glm::vec2(1.5f, 0.0f);
-  case 3u:
-    return glm::vec2(0.0f, 1.5f);
-  default:
-    return glm::vec2(0.0f, -1.5f);
-  }
+int32_t chunk_key(NetChunkCoord coord) {
+  return (static_cast<int32_t>(coord.x) << 16) ^ static_cast<uint16_t>(coord.z);
 }
 } // namespace
 
-int32_t NetServer::chunk_key(NetChunkCoord coord) const {
-  return (static_cast<int32_t>(coord.x) << 16) ^ static_cast<uint16_t>(coord.z);
-}
+NetServer::NetServer() = default;
 
-NetSessionInfo NetServer::make_session_info() const {
-  NetSessionInfo info{};
-  net_copy_cstr(info.server_name, local_only ? "VOXOV Local" : "VOXOV Host");
-  info.world_seed = k_voxov_flat_world_seed;
-  info.current_players = static_cast<uint16_t>(clients.size());
-  info.max_players = 32;
-  if (local_only) {
-    info.flags |= net_session_flag(NetSessionFlags::LoopbackOnly);
-  } else {
-    info.flags |= net_session_flag(NetSessionFlags::LanAdvertised);
-  }
-  return info;
-}
+NetServer::~NetServer() { shutdown(); }
 
 void NetServer::send_session_info(ENetPeer *peer) {
-  if (!server || !peer) {
+  if (!server || !peer || !session) {
     return;
   }
   SessionInfoPacket packet{};
   packet.header = net_make_header(NetMsgType::SessionInfo,
                                   static_cast<uint16_t>(sizeof(packet.payload)),
                                   next_packet_sequence++);
-  packet.payload = make_session_info();
+  packet.payload = session->make_session_info(local_only);
   ENetPacket *out =
       enet_packet_create(&packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE);
   enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Reliable), out);
@@ -140,52 +95,18 @@ void NetServer::send_session_info(ENetPeer *peer) {
 }
 
 void NetServer::broadcast_session_info() {
-  if (!server || clients.empty()) {
+  if (!server || !session || session->clients().empty()) {
     return;
   }
-  for (auto &[peer_ptr, state] : clients) {
+  for (auto &[peer_ptr, state] : session->clients()) {
     (void)state;
     send_session_info(peer_ptr);
   }
 }
 
-bool NetServer::should_replicate_player_state(
-    const ClientState &observer, const ClientState &subject) const {
-  if (observer.player_id == 0 || subject.player_id == 0) {
-    return false;
-  }
-  if (observer.player_id == subject.player_id) {
-    return false;
-  }
-
-  // Keep replication aligned with chunk-interest requests so distant players
-  // don't consume bandwidth in large sessions.
-  constexpr float k_chunk_world_size = 16.0f;
-  const int32_t subject_chunk_x =
-      static_cast<int32_t>(std::floor(subject.state.x / k_chunk_world_size));
-  const int32_t subject_chunk_z =
-      static_cast<int32_t>(std::floor(subject.state.z / k_chunk_world_size));
-  const int32_t dx_chunks =
-      std::abs(subject_chunk_x - observer.interest.center_x);
-  const int32_t dz_chunks =
-      std::abs(subject_chunk_z - observer.interest.center_z);
-  const int32_t allowed_chunk_delta =
-      static_cast<int32_t>(observer.interest.radius) + 1;
-  if (dx_chunks <= allowed_chunk_delta && dz_chunks <= allowed_chunk_delta) {
-    return true;
-  }
-
-  const float dx = subject.state.x - observer.state.x;
-  const float dz = subject.state.z - observer.state.z;
-  const float max_distance =
-      std::max(48.0f, (static_cast<float>(observer.interest.radius) + 1.0f) *
-                          k_chunk_world_size * 1.5f);
-  return ((dx * dx) + (dz * dz)) <= (max_distance * max_distance);
-}
-
-void NetServer::send_chunk_state(ENetPeer *peer, ClientState &state,
+void NetServer::send_chunk_state(ENetPeer *peer, ServerClientState &state,
                                  NetChunkCoord coord, uint32_t version) {
-  const int32_t key = chunk_key(coord);
+  const int32_t key = ::chunk_key(coord);
   auto it = state.sent_chunks.find(key);
   if (it != state.sent_chunks.end() && it->second == version) {
     return;
@@ -204,40 +125,8 @@ void NetServer::send_chunk_state(ENetPeer *peer, ClientState &state,
   state.sent_chunks[key] = version;
 }
 
-void NetServer::simulate_client_tick(ClientState &state) {
-  InputState input{};
-  input.move.x = state.last_input.move_x;
-  input.move.y = state.last_input.move_y;
-  input.jump_held =
-      net_flag_set(state.last_input.action_flags, NetInputFlags::JumpHeld);
-  input.jump_pressed =
-      net_flag_set(state.last_input.action_flags, NetInputFlags::JumpPressed);
-  input.sprint_held =
-      net_flag_set(state.last_input.action_flags, NetInputFlags::SprintHeld);
-  input.crouch_held =
-      net_flag_set(state.last_input.action_flags, NetInputFlags::CrouchHeld);
-  if (input.jump_pressed) {
-    state.last_input.action_flags &=
-        static_cast<uint8_t>(~net_flag(NetInputFlags::JumpPressed));
-  }
-  state.player.camera_rig.yaw = state.last_input.camera_yaw_deg;
-
-  (void)PlayerControllerSystem::simulate_fixed(
-      state.player, input, collision_world, kServerTickDt, false);
-  sync_net_player_state_from_entity(state.player, state.player_id,
-                                    server_sim_tick, state.state);
-}
-
-void NetServer::simulate_fixed_tick() {
-  server_sim_tick += 1;
-  for (auto &[peer_ptr, state] : clients) {
-    (void)peer_ptr;
-    simulate_client_tick(state);
-  }
-}
-
 void NetServer::send_snapshots() {
-  if (!server || clients.empty()) {
+  if (!server || !session || session->clients().empty()) {
     return;
   }
   const uint64_t now = now_ms();
@@ -247,7 +136,7 @@ void NetServer::send_snapshots() {
   }
   last_snapshot_send_ms = now;
 
-  for (auto &[peer_ptr, state] : clients) {
+  for (auto &[peer_ptr, state] : session->clients()) {
     SnapshotPacket snap{};
     snap.header = net_make_header(NetMsgType::Snapshot,
                                   static_cast<uint16_t>(sizeof(snap.snapshot)),
@@ -269,6 +158,9 @@ void NetServer::send_snapshots() {
 }
 
 void NetServer::broadcast_player_states() {
+  if (!session) {
+    return;
+  }
   const uint64_t now = now_ms();
   if (last_player_broadcast_ms != 0 &&
       (now - last_player_broadcast_ms) < kPlayerBroadcastIntervalMs) {
@@ -276,11 +168,11 @@ void NetServer::broadcast_player_states() {
   }
   last_player_broadcast_ms = now;
 
-  for (auto &[subject_peer, subject] : clients) {
+  for (auto &[subject_peer, subject] : session->clients()) {
     (void)subject_peer;
     const uint32_t state_sequence = subject.next_player_state_sequence++;
-    for (auto &[observer_peer, observer] : clients) {
-      if (!should_replicate_player_state(observer, subject)) {
+    for (auto &[observer_peer, observer] : session->clients()) {
+      if (!session->should_replicate_player_state(observer, subject)) {
         continue;
       }
       PlayerStatePacket packet{};
@@ -300,7 +192,7 @@ void NetServer::broadcast_player_states() {
 }
 
 void NetServer::broadcast_player_remove(uint32_t player_id) {
-  if (!server || player_id == 0) {
+  if (!server || !session || player_id == 0) {
     return;
   }
   PlayerRemovePacket packet{};
@@ -311,7 +203,7 @@ void NetServer::broadcast_player_remove(uint32_t player_id) {
   ENetPacket *out =
       enet_packet_create(&packet, sizeof(packet), ENET_PACKET_FLAG_RELIABLE);
   enet_host_broadcast(server, static_cast<uint8_t>(NetChannel::Reliable), out);
-  record_tx(sizeof(packet), static_cast<uint32_t>(clients.size()));
+  record_tx(sizeof(packet), static_cast<uint32_t>(session->clients().size()));
 }
 
 void NetServer::record_tx(size_t bytes, uint32_t packet_count) {
@@ -399,22 +291,19 @@ bool NetServer::init(uint16_t port, bool loopback_only) {
   }
   last_player_broadcast_ms = 0;
   next_packet_sequence = 1;
-  server_sim_tick = 0;
   last_pump_ms = 0;
   sim_accumulator_ms = 0.0;
   last_snapshot_send_ms = 0;
-  generate_flat_world_locomotion_chunk(world_chunk);
-  collision_world = VoxelCollisionWorld(&world_chunk);
+  session = std::make_unique<ServerSession>();
   debug_counters = DebugCounters{};
   refresh_debug_stats();
   return true;
 }
 
 void NetServer::shutdown() {
-  clients.clear();
-  collision_world = VoxelCollisionWorld(nullptr);
-  world_chunk = VoxelChunk{};
-  server_sim_tick = 0;
+  if (session) {
+    session->reset();
+  }
   last_pump_ms = 0;
   sim_accumulator_ms = 0.0;
   last_snapshot_send_ms = 0;
@@ -428,6 +317,7 @@ void NetServer::shutdown() {
     enet_deinitialize();
     initialized = false;
   }
+  session.reset();
   debug_counters = DebugCounters{};
 }
 
@@ -452,8 +342,6 @@ void NetServer::pump() {
   while (enet_host_service(server, &event, 0) > 0) {
     switch (event.type) {
     case ENET_EVENT_TYPE_CONNECT: {
-      ClientState state{};
-      state.player_id = next_player_id++;
       if (local_only) {
         char ip_buffer[64]{};
         if (enet_address_get_host_ip(&event.peer->address, ip_buffer,
@@ -470,29 +358,13 @@ void NetServer::pump() {
           break;
         }
       }
-      state.player = PlayerControllerSystem::spawn_player(collision_world);
-      state.player.network_id = state.player_id;
-      const glm::vec2 spawn_offset = server_spawn_offset(state.player_id);
-      state.player.transform.position.x += spawn_offset.x;
-      state.player.transform.position.z += spawn_offset.y;
-      state.player.transform.position.y =
-          collision_world.find_spawn_height(
-              glm::vec2(state.player.transform.position.x,
-                        state.player.transform.position.z),
-              state.player.controller.capsuleRadius,
-              state.player.controller.capsuleHeight) +
-          0.05f;
-      state.player.locomotion.facing_yaw_deg = state.player.camera_rig.yaw;
-      state.player.locomotion.desired_yaw_deg = state.player.camera_rig.yaw;
-      state.player.transform.rotation =
-          glm::angleAxis(state.player.camera_rig.yaw * 0.01745329251994329577f,
-                         glm::vec3(0.0f, 1.0f, 0.0f));
-      sync_net_player_state_from_entity(state.player, state.player_id,
-                                        server_sim_tick, state.state);
-      clients[event.peer] = state;
+      if (!session) {
+        break;
+      }
+      ServerClientState &state = session->connect_client(event.peer);
       spdlog::info(
           "NetServer: client connected, assigned player_id={}, clients={}",
-          state.player_id, clients.size());
+          state.player_id, session->clients().size());
 
       AssignPlayerPacket assign{};
       assign.header =
@@ -524,28 +396,32 @@ void NetServer::pump() {
       break;
     }
     case ENET_EVENT_TYPE_DISCONNECT: {
-      const auto it = clients.find(event.peer);
-      if (it != clients.end()) {
-        const uint32_t removed_player_id = it->second.player_id;
-        clients.erase(it);
+      if (session) {
+        const std::optional<uint32_t> removed_player_id =
+            session->disconnect_client(event.peer);
         broadcast_session_info();
-        broadcast_player_remove(removed_player_id);
+        if (removed_player_id.has_value()) {
+          broadcast_player_remove(*removed_player_id);
+        }
       }
       spdlog::info("NetServer: client disconnected, clients={}",
-                   clients.size());
+                   session ? session->clients().size() : 0u);
       break;
     }
     case ENET_EVENT_TYPE_RECEIVE: {
       record_rx(event.packet->dataLength);
       bool recognized_message = false;
-      auto it = clients.find(event.peer);
-      if (it == clients.end()) {
+      if (!session) {
         debug_counters.invalid_packets_total += 1;
         enet_packet_destroy(event.packet);
         break;
       }
-
-      ClientState &state = it->second;
+      ServerClientState *state = session->find_client(event.peer);
+      if (!state) {
+        debug_counters.invalid_packets_total += 1;
+        enet_packet_destroy(event.packet);
+        break;
+      }
 
       if (event.packet->dataLength >= sizeof(NetPacketHeader)) {
         NetPacketHeader header{};
@@ -560,7 +436,7 @@ void NetServer::pump() {
               InputPacket packet{};
               std::memcpy(&packet, event.packet->data, sizeof(packet));
               recognized_message = true;
-              state.last_input = packet.input;
+              state->last_input = packet.input;
             }
             break;
           case NetMsgType::ChunkInterest:
@@ -570,15 +446,18 @@ void NetServer::pump() {
               std::memcpy(&interest_packet, event.packet->data,
                           sizeof(interest_packet));
               recognized_message = true;
-              state.interest = interest_packet.interest;
-              for (int dz = -state.interest.radius; dz <= state.interest.radius;
+              state->interest = interest_packet.interest;
+              for (int dz = -state->interest.radius;
+                   dz <= state->interest.radius;
                    ++dz) {
-                for (int dx = -state.interest.radius;
-                     dx <= state.interest.radius; ++dx) {
+                for (int dx = -state->interest.radius;
+                     dx <= state->interest.radius; ++dx) {
                   NetChunkCoord coord{};
-                  coord.x = static_cast<int16_t>(state.interest.center_x + dx);
-                  coord.z = static_cast<int16_t>(state.interest.center_z + dz);
-                  send_chunk_state(event.peer, state, coord, 1);
+                  coord.x =
+                      static_cast<int16_t>(state->interest.center_x + dx);
+                  coord.z =
+                      static_cast<int16_t>(state->interest.center_z + dz);
+                  send_chunk_state(event.peer, *state, coord, 1);
                 }
               }
             }
@@ -603,7 +482,9 @@ void NetServer::pump() {
   int catchup_ticks = 0;
   while (sim_accumulator_ms >= kServerSimTickMs &&
          catchup_ticks < kMaxCatchupTicksPerPump) {
-    simulate_fixed_tick();
+    if (session) {
+      session->simulate_fixed_tick();
+    }
     sim_accumulator_ms -= kServerSimTickMs;
     ++catchup_ticks;
   }

@@ -237,16 +237,22 @@ add_library(engine_physics STATIC
 target_include_directories(engine_physics PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/JoltPhysics)
 target_link_libraries(engine_physics PUBLIC Jolt fmt::fmt spdlog::spdlog)
 
-add_library(engine_net STATIC
-    src/engine_net/net_client.cpp
-    src/engine_net/net_server.cpp
-    src/engine_net/lan_discovery.cpp
+add_library(engine_server STATIC
+    src/engine_server/server_session.cpp
     src/engine_gameplay/animation/player_animation_graph.cpp
     src/engine_gameplay/animation/player_animation_types.cpp
     src/engine_gameplay/player/player_controller.cpp
 )
+target_include_directories(engine_server PUBLIC src)
+target_link_libraries(engine_server PUBLIC engine_world engine_math glm::glm)
+
+add_library(engine_net STATIC
+    src/engine_net/net_client.cpp
+    src/engine_net/net_server.cpp
+    src/engine_net/lan_discovery.cpp
+)
 target_include_directories(engine_net PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/enet/include)
-target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog engine_world engine_math glm::glm)
+target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog engine_server engine_world engine_math glm::glm)
 if(WIN32)
     target_link_libraries(engine_net PUBLIC ws2_32)
 endif()
@@ -304,6 +310,12 @@ target_link_libraries(voxov PRIVATE
     OpenGL::GL
 )
 
+add_executable(voxov_server
+    src/game/server_main.cpp
+)
+target_include_directories(voxov_server PRIVATE src)
+target_link_libraries(voxov_server PRIVATE engine_net)
+
 add_executable(voxov_asset_cooker
     src/tools/asset_cooker.cpp
     src/engine_assets/cooked_asset.cpp
@@ -344,7 +356,7 @@ if(MINGW)
 endif()
 
 # Installation
-install(TARGETS voxov
+install(TARGETS voxov voxov_server
     RUNTIME DESTINATION bin
     LIBRARY DESTINATION lib
     ARCHIVE DESTINATION lib

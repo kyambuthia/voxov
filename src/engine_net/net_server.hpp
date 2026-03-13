@@ -1,19 +1,23 @@
 #pragma once
 
-#include "engine_gameplay/player/player_components.hpp"
 #include "engine_net/net_common.hpp"
-#include "engine_world/physics/voxel_collision.hpp"
-#include "engine_world/voxel_chunk.hpp"
 
-#include <cstddef>
 #include <cstdint>
-#include <unordered_map>
+#include <memory>
 
 struct _ENetHost;
 struct _ENetPeer;
+class ServerSession;
+struct ServerClientState;
 
 class NetServer {
 public:
+    NetServer();
+    ~NetServer();
+
+    NetServer(const NetServer &) = delete;
+    NetServer &operator=(const NetServer &) = delete;
+
     bool init(uint16_t port, bool loopback_only = false);
     void shutdown();
     void pump();
@@ -21,25 +25,13 @@ public:
     NetDebugStats debug_stats() const;
 
 private:
-    struct ClientState {
-        uint32_t player_id = 0;
-        uint32_t next_player_state_sequence = 1;
-        uint32_t next_snapshot_sequence = 1;
-        PlayerEntity player{};
-        NetPlayerState state{};
-        NetTickInput last_input{};
-        NetChunkInterest interest{};
-        std::unordered_map<int32_t, uint32_t> sent_chunks;
-    };
-
-    int32_t chunk_key(NetChunkCoord coord) const;
-    NetSessionInfo make_session_info() const;
     void send_session_info(_ENetPeer *peer);
     void broadcast_session_info();
-    bool should_replicate_player_state(const ClientState &observer, const ClientState &subject) const;
-    void send_chunk_state(_ENetPeer *peer, ClientState &state, NetChunkCoord coord, uint32_t version);
-    void simulate_client_tick(ClientState &state);
-    void simulate_fixed_tick();
+    void send_chunk_state(
+        _ENetPeer *peer,
+        ServerClientState &state,
+        NetChunkCoord coord,
+        uint32_t version);
     void send_snapshots();
     void broadcast_player_states();
     void broadcast_player_remove(uint32_t player_id);
@@ -66,12 +58,8 @@ private:
     bool initialized = false;
     bool local_only = false;
     _ENetHost *server = nullptr;
-    std::unordered_map<_ENetPeer *, ClientState> clients;
-    VoxelChunk world_chunk{};
-    VoxelCollisionWorld collision_world{nullptr};
-    uint32_t next_player_id = 1;
+    std::unique_ptr<ServerSession> session;
     uint32_t next_packet_sequence = 1;
-    uint32_t server_sim_tick = 0;
     uint64_t last_pump_ms = 0;
     double sim_accumulator_ms = 0.0;
     uint64_t last_snapshot_send_ms = 0;

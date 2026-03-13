@@ -8,6 +8,7 @@
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_input/input_state.hpp"
 #include "engine_math/camera.hpp"
+#include "engine_presentation/presentation_snapshot.hpp"
 #include "engine_runtime/runtime_game_session.hpp"
 #include "engine_runtime/runtime_session_controller.hpp"
 #include "engine_runtime/runtime_world_state.hpp"
@@ -124,6 +125,8 @@ private:
   void apply_runtime_toggles();
   void process_menu_actions(const InputState &primary_input);
   RuntimeSessionSnapshot session_snapshot() const;
+  RuntimeHudSnapshot build_hud_snapshot() const;
+  RuntimeDebugSceneSnapshot build_debug_scene_snapshot() const;
   void update_remote_interpolation(double frame_dt);
 
   Renderer renderer;

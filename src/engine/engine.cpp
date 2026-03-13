@@ -1859,80 +1859,80 @@ void Engine::update_spherical_player_sim(const InputState &input, float dt) {
                                                  was_grounded);
 }
 
-void Engine::refresh_overlay_text() {
+RuntimeHudSnapshot Engine::build_hud_snapshot() const {
   const FixedStep &fixed = game_session.fixed_step();
-  const GuiMenuView menu_view = gui_menu.build_view(
+
+  RuntimeHudSnapshot snapshot{};
+  snapshot.devhud_enabled = runtime_options.devhud;
+  snapshot.menu_view = gui_menu.build_view(
       runtime_options.devhud, runtime_options.noclip,
       session_controller.build_session_context(session_snapshot()));
-  render_stats.menu_open = menu_view.open;
-  render_stats.menu_selected = menu_view.selected;
-  render_stats.menu_title = menu_view.title;
-  render_stats.menu_items = menu_view.items;
-  render_stats.menu_guide = menu_view.guide_lines;
-  render_stats.menu_status = menu_view.status;
-  render_stats.menu_text.clear();
+  snapshot.show_objective_panel = !snapshot.menu_view.open;
 
-  std::string minigame_title;
-  std::string minigame_status;
-  std::string minigame_objective;
-  std::string minigame_controls;
-  std::string hotspot_text;
-  std::string objective_status;
-  float minigame_progress = 0.0f;
-
-  objective_status =
+  snapshot.objective_status =
       "OBJECTIVES " + std::to_string(world_state.activated_objective_count) +
       "/" + std::to_string(world_state.objective_nodes.size());
   if (world_state.objective_round_complete) {
-    objective_status += " [COMPLETE]";
+    snapshot.objective_status += " [COMPLETE]";
   } else if (world_state.extraction_unlocked) {
-    objective_status += " [EXTRACT]";
+    snapshot.objective_status += " [EXTRACT]";
   }
+  snapshot.objective_hint = world_state.objective_hint;
 
-  if (!menu_view.open &&
+  if (!snapshot.menu_view.open &&
       (active_minigame.active || nearby_minigame_hotspot >= 0)) {
     if (active_minigame.active) {
-      minigame_title = minigame_name(active_minigame.type);
-      minigame_status = minigame_status_text(active_minigame);
-      minigame_objective = "OBJECTIVE";
-      minigame_controls = "WASD move  SPACE/F/E action  C/CTRL exit";
-      minigame_progress = 0.0f;
+      snapshot.show_minigame_panel = true;
+      snapshot.minigame_title = minigame_name(active_minigame.type);
+      snapshot.minigame_status = minigame_status_text(active_minigame);
+      snapshot.minigame_objective = "OBJECTIVE";
+      snapshot.minigame_controls = "WASD move  SPACE/F/E action  C/CTRL exit";
+      snapshot.minigame_hint = minigame_hint;
+      snapshot.minigame_progress = 0.0f;
 
       switch (active_minigame.type) {
       case MiniGameType::Snake:
-        minigame_objective = "OBJECTIVE: Reach length 24 without colliding";
-        minigame_controls = "WASD steer snake  C/CTRL exit";
-        minigame_progress =
-            std::clamp(static_cast<float>(active_minigame.snake.length) / 24.0f,
-                       0.0f, 1.0f);
+        snapshot.minigame_objective =
+            "OBJECTIVE: Reach length 24 without colliding";
+        snapshot.minigame_controls = "WASD steer snake  C/CTRL exit";
+        snapshot.minigame_progress = std::clamp(
+            static_cast<float>(active_minigame.snake.length) / 24.0f, 0.0f,
+            1.0f);
         break;
       case MiniGameType::Golf: {
-        minigame_objective = "OBJECTIVE: Sink the ball in fewer strokes";
-        minigame_controls = "A/D aim  W/S power  SPACE/F/E swing  C/CTRL exit";
+        snapshot.minigame_objective =
+            "OBJECTIVE: Sink the ball in fewer strokes";
+        snapshot.minigame_controls =
+            "A/D aim  W/S power  SPACE/F/E swing  C/CTRL exit";
         const float dist =
             glm::length(active_minigame.golf.hole - active_minigame.golf.ball);
-        minigame_progress = std::clamp(1.0f - (dist / 9.5f), 0.0f, 1.0f);
+        snapshot.minigame_progress =
+            std::clamp(1.0f - (dist / 9.5f), 0.0f, 1.0f);
         break;
       }
       case MiniGameType::Tetris:
-        minigame_objective = "OBJECTIVE: Reach score 1200 before topping out";
-        minigame_controls = "A/D move  SPACE rotate  S soft drop  C/CTRL exit";
-        minigame_progress = std::clamp(
+        snapshot.minigame_objective =
+            "OBJECTIVE: Reach score 1200 before topping out";
+        snapshot.minigame_controls =
+            "A/D move  SPACE rotate  S soft drop  C/CTRL exit";
+        snapshot.minigame_progress = std::clamp(
             static_cast<float>(active_minigame.score) / 1200.0f, 0.0f, 1.0f);
         break;
       case MiniGameType::Racing:
-        minigame_objective = "OBJECTIVE: Complete 3 laps";
-        minigame_controls = "W/S throttle  A/D steer  C/CTRL exit";
-        minigame_progress =
+        snapshot.minigame_objective = "OBJECTIVE: Complete 3 laps";
+        snapshot.minigame_controls = "W/S throttle  A/D steer  C/CTRL exit";
+        snapshot.minigame_progress =
             std::clamp((static_cast<float>(active_minigame.racing.lap) +
                         active_minigame.racing.track_progress / 65.0f) /
                            3.0f,
                        0.0f, 1.0f);
         break;
       case MiniGameType::TicTacToe:
-        minigame_objective = "OBJECTIVE: Align 3 marks before the AI";
-        minigame_controls = "WASD move cursor  SPACE/F/E place  C/CTRL exit";
-        minigame_progress = std::clamp(
+        snapshot.minigame_objective =
+            "OBJECTIVE: Align 3 marks before the AI";
+        snapshot.minigame_controls =
+            "WASD move cursor  SPACE/F/E place  C/CTRL exit";
+        snapshot.minigame_progress = std::clamp(
             static_cast<float>(active_minigame.tictactoe.turns) / 9.0f, 0.0f,
             1.0f);
         break;
@@ -1941,57 +1941,230 @@ void Engine::refresh_overlay_text() {
       }
 
       if (active_minigame.completed) {
-        minigame_controls = "Press F/E to leave";
-        minigame_progress = 1.0f;
+        snapshot.minigame_controls = "Press F/E to leave";
+        snapshot.minigame_progress = 1.0f;
       }
     } else {
-      hotspot_text = "MINIGAME HOTSPOT";
+      snapshot.show_hotspot_panel = true;
+      snapshot.hotspot_text = "MINIGAME HOTSPOT";
       if (!minigame_hint.empty()) {
-        hotspot_text += "\n";
-        hotspot_text += minigame_hint;
+        snapshot.hotspot_text += "\n";
+        snapshot.hotspot_text += minigame_hint;
       }
-      hotspot_text += "\nPress F or E to start";
+      snapshot.hotspot_text += "\nPress F or E to start";
     }
   }
 
+  if (runtime_options.devhud) {
+    char text[1280]{};
+    const float vehicle_distance =
+        k_vehicle_feature_enabled
+            ? glm::length(local_player.transform.position - vehicle.position)
+            : 0.0f;
+    const float aircraft_distance =
+        k_vehicle_feature_enabled
+            ? glm::length(local_player.transform.position - aircraft.position)
+            : 0.0f;
+    const NetDebugStats client_net_stats = net_client.debug_stats();
+    const NetDebugStats server_net_stats =
+        local_server_running ? local_server.debug_stats() : NetDebugStats{};
+    std::snprintf(
+        text, sizeof(text),
+        "FPS %.1f FT %.2f CPU %.2f RND %.2f\nFIX dt %.3f CPU %.2f x%u STR in "
+        "%u chg %u live %u\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f "
+        "N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d "
+        "LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps "
+        "%u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst "
+        "%u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nLOCO %s SPD "
+        "%.2f GND %d SLP %.1f CYO %.2f BUF %.2f\nANIM %s BL %.2f PH %.2f X "
+        "%.2f EVT %s\nPROC lean %.2f bank %.2f land %.2f jump %.2f\nVEH %s "
+        "DIST %.1f C[th %.2f br %.2f st %.2f hb %.2f]\nAIR %s SPD %.1f DIST "
+        "%.1f C[th %.2f y %.2f p %.2f r %.2f]",
+        render_stats.fps, render_stats.frame_ms, render_stats.cpu_ms,
+        render_stats.render_cpu_ms, fixed.fixed_dt, render_stats.fixed_cpu_ms,
+        render_stats.fixed_steps, render_stats.chunk_packets,
+        render_stats.chunk_changes, render_stats.streamed_chunk_count,
+        local_player.transform.position.x, local_player.transform.position.y,
+        local_player.transform.position.z, local_player.controller.velocity.x,
+        local_player.controller.velocity.y, local_player.controller.velocity.z,
+        local_player.controller.grounded ? 1 : 0,
+        last_collision_debug.penetration_correction,
+        last_collision_debug.contact_normal.x,
+        last_collision_debug.contact_normal.y,
+        last_collision_debug.contact_normal.z, local_player.camera_rig.yaw,
+        local_player.camera_rig.pitch, input_state.look_delta.x,
+        input_state.look_delta.y, input_state.rmb_down ? 1 : 0,
+        input_state.pointer_locked ? 1 : 0, input_state.look_enabled ? 1 : 0,
+        static_cast<int>(remote_render_players.size()),
+        render_stats.net_connected ? 1 : 0, render_stats.net_local_player_id,
+        client_net_stats.tx_packets_per_sec,
+        client_net_stats.rx_packets_per_sec, client_net_stats.tx_bytes_per_sec,
+        client_net_stats.rx_bytes_per_sec,
+        static_cast<unsigned long long>(client_net_stats.invalid_packets_total),
+        local_server_running ? 1 : 0, server_net_stats.tx_packets_per_sec,
+        server_net_stats.rx_packets_per_sec, server_net_stats.tx_bytes_per_sec,
+        server_net_stats.rx_bytes_per_sec,
+        server_net_stats.snapshots_sent_per_sec,
+        server_net_stats.player_state_broadcasts_per_sec,
+        reconcile_mode_name(static_cast<uint8_t>(reconcile_mode)),
+        last_reconcile_pos_error, last_reconcile_snapshot_tick,
+        last_reconcile_snapshot_sequence, reconcile_replay_ticks,
+        static_cast<unsigned long long>(reconcile_corrections),
+        player_locomotion_state_name(local_player.locomotion.state),
+        local_player.locomotion.move_speed,
+        local_player.locomotion.stable_grounded ? 1 : 0,
+        local_player.locomotion.slope_angle_deg,
+        local_player.locomotion.coyote_timer,
+        local_player.locomotion.jump_buffer_timer,
+        anim_state_name(local_player.anim_state), local_player.anim_blend,
+        local_player.anim_phase, local_player_animation.transition_alpha(),
+        player_anim_event_name(local_player.last_anim_event),
+        local_player.procedural.spine_lean, local_player.procedural.turn_bank,
+        local_player.procedural.landing_compression,
+        local_player.procedural.jump_anticipation,
+        k_vehicle_feature_enabled ? (vehicle.occupied ? "ONBOARD" : "ON FOOT")
+                                  : "DISABLED",
+        vehicle_distance, last_vehicle_control.throttle,
+        last_vehicle_control.brake, last_vehicle_control.steer,
+        last_vehicle_control.handbrake,
+        k_vehicle_feature_enabled ? (aircraft.occupied ? "ONBOARD" : "ON FOOT")
+                                  : "DISABLED",
+        aircraft.speed, aircraft_distance, last_aircraft_control.throttle,
+        last_aircraft_control.yaw, last_aircraft_control.pitch,
+        last_aircraft_control.roll);
+    snapshot.devhud_text = text;
+  }
+
   uint64_t overlay_state_hash = k_hash_offset;
-  hash_value(overlay_state_hash, menu_view.open);
-  hash_value(overlay_state_hash, menu_view.selected);
+  hash_value(overlay_state_hash, snapshot.menu_view.open);
+  hash_value(overlay_state_hash, snapshot.menu_view.selected);
   hash_value(overlay_state_hash, runtime_options.devhud);
   hash_value(overlay_state_hash, runtime_options.noclip);
   hash_value(overlay_state_hash, nearby_minigame_hotspot);
   hash_value(overlay_state_hash, active_minigame.active);
   hash_value(overlay_state_hash, active_minigame.completed);
   hash_value(overlay_state_hash, active_minigame.type);
-  hash_value(overlay_state_hash, minigame_progress);
+  hash_value(overlay_state_hash, snapshot.minigame_progress);
   hash_value(overlay_state_hash, world_state.nearby_objective_node);
   hash_value(overlay_state_hash, world_state.activated_objective_count);
   hash_value(overlay_state_hash, world_state.extraction_unlocked);
   hash_value(overlay_state_hash, world_state.objective_round_complete);
-  hash_string(overlay_state_hash, menu_view.title);
-  hash_string(overlay_state_hash, menu_view.status);
-  for (const std::string &line : menu_view.items) {
+  hash_string(overlay_state_hash, snapshot.menu_view.title);
+  hash_string(overlay_state_hash, snapshot.menu_view.status);
+  for (const std::string &line : snapshot.menu_view.items) {
     hash_string(overlay_state_hash, line);
   }
-  for (const std::string &line : menu_view.guide_lines) {
+  for (const std::string &line : snapshot.menu_view.guide_lines) {
     hash_string(overlay_state_hash, line);
   }
-  hash_string(overlay_state_hash, minigame_hint);
-  hash_string(overlay_state_hash, minigame_title);
-  hash_string(overlay_state_hash, minigame_status);
-  hash_string(overlay_state_hash, minigame_objective);
-  hash_string(overlay_state_hash, minigame_controls);
-  hash_string(overlay_state_hash, hotspot_text);
-  hash_string(overlay_state_hash, world_state.objective_hint);
-  hash_string(overlay_state_hash, objective_status);
+  hash_string(overlay_state_hash, snapshot.minigame_hint);
+  hash_string(overlay_state_hash, snapshot.minigame_title);
+  hash_string(overlay_state_hash, snapshot.minigame_status);
+  hash_string(overlay_state_hash, snapshot.minigame_objective);
+  hash_string(overlay_state_hash, snapshot.minigame_controls);
+  hash_string(overlay_state_hash, snapshot.hotspot_text);
+  hash_string(overlay_state_hash, snapshot.objective_hint);
+  hash_string(overlay_state_hash, snapshot.objective_status);
+  snapshot.state_hash = overlay_state_hash;
+  return snapshot;
+}
 
-  if (!runtime_options.devhud && has_overlay_state_hash &&
-      overlay_state_hash == last_overlay_state_hash) {
+RuntimeDebugSceneSnapshot Engine::build_debug_scene_snapshot() const {
+  RuntimeDebugSceneSnapshot snapshot{};
+  snapshot.collision_debug_enabled = runtime_options.debug_collision;
+  snapshot.debug_collision_only = runtime_options.debug_collision_only;
+  snapshot.devhud_enabled = runtime_options.devhud;
+  snapshot.splitscreen = runtime_options.splitscreen;
+  snapshot.spherical_planet = runtime_options.spherical_planet;
+  snapshot.render_skeleton_only =
+      gui_menu.character() == GuiMenu::Character::Skeleton;
+  if (gui_menu.character() == GuiMenu::Character::Humanoid &&
+      has_humanoid_player_model) {
+    snapshot.selected_player_model = &humanoid_player_model;
+  }
+
+  snapshot.collision_world = &collision_world;
+  snapshot.local_player = &local_player;
+  snapshot.local_player_animation = &local_player_animation;
+  if (runtime_options.splitscreen) {
+    snapshot.local_player_secondary = &local_player_secondary;
+    snapshot.local_player_secondary_animation = &local_player_secondary_animation;
+  }
+  snapshot.last_collision_debug = last_collision_debug;
+  snapshot.vehicle = RuntimeVehicleDebugSnapshot{
+      .controller = &vehicle.controller,
+      .position = vehicle.position,
+      .yaw = vehicle.yaw,
+      .occupied = vehicle.occupied,
+  };
+  snapshot.aircraft = RuntimeAircraftDebugSnapshot{
+      .position = aircraft.position,
+      .yaw = aircraft.yaw,
+      .occupied = aircraft.occupied,
+  };
+  snapshot.spherical_planet_center = world_state.spherical_planet_center;
+  snapshot.spherical_planet_radius = world_state.spherical_planet_radius;
+  snapshot.extraction_unlocked = world_state.extraction_unlocked;
+  snapshot.objective_round_complete = world_state.objective_round_complete;
+  snapshot.extraction_zone_position = world_state.extraction_zone_position;
+  snapshot.extraction_zone_radius = world_state.extraction_zone_radius;
+  snapshot.active_minigame = active_minigame;
+  snapshot.active_minigame_hotspot = active_minigame_hotspot;
+
+  snapshot.minigame_hotspots.reserve(minigame_hotspots.size());
+  for (size_t i = 0; i < minigame_hotspots.size(); ++i) {
+    const MiniGameHotspot &hotspot = minigame_hotspots[i];
+    snapshot.minigame_hotspots.push_back(RuntimeMiniGameHotspotDebugSnapshot{
+        .type = hotspot.type,
+        .position = hotspot.position,
+        .nearby = static_cast<int>(i) == nearby_minigame_hotspot,
+        .active = static_cast<int>(i) == active_minigame_hotspot,
+    });
+  }
+
+  snapshot.objective_nodes.reserve(world_state.objective_nodes.size());
+  for (size_t i = 0; i < world_state.objective_nodes.size(); ++i) {
+    const auto &node = world_state.objective_nodes[i];
+    snapshot.objective_nodes.push_back(RuntimeObjectiveDebugSnapshot{
+        .position = node.position,
+        .activated = node.activated,
+        .nearby = static_cast<int>(i) == world_state.nearby_objective_node,
+    });
+  }
+
+  snapshot.remote_players.reserve(remote_render_players.size());
+  for (const auto &[player_id, render_player] : remote_render_players) {
+    snapshot.remote_players.push_back(RuntimeRemoteDebugPlayerSnapshot{
+        .player_id = player_id,
+        .position = render_player.position,
+        .orientation = render_player.orientation,
+        .anim_state = render_player.anim_state,
+        .anim_phase = render_player.anim_phase,
+        .anim_blend = render_player.anim_blend,
+        .animation_runtime = &render_player.animation_runtime,
+    });
+  }
+
+  return snapshot;
+}
+
+void Engine::refresh_overlay_text() {
+  const RuntimeHudSnapshot snapshot = build_hud_snapshot();
+  const GuiMenuView &menu_view = snapshot.menu_view;
+  render_stats.menu_open = menu_view.open;
+  render_stats.menu_selected = menu_view.selected;
+  render_stats.menu_title = menu_view.title;
+  render_stats.menu_items = menu_view.items;
+  render_stats.menu_guide = menu_view.guide_lines;
+  render_stats.menu_status = menu_view.status;
+  render_stats.menu_text.clear();
+  if (!snapshot.devhud_enabled && has_overlay_state_hash &&
+      snapshot.state_hash == last_overlay_state_hash) {
     return;
   }
 
   scene.debug_screen = RenderMesh{};
-  last_overlay_state_hash = overlay_state_hash;
+  last_overlay_state_hash = snapshot.state_hash;
   has_overlay_state_hash = true;
 
   auto append_screen_rect = [&](float x0, float y0, float x1, float y1,
@@ -2077,120 +2250,44 @@ void Engine::refresh_overlay_text() {
                                          menu_panel.y1 + 0.05f, 0.0056f,
                                          glm::vec3(0.88f, 0.93f, 0.99f)));
     }
-  } else if (runtime_options.devhud) {
-    char text[1280]{};
-    const float vehicle_distance =
-        k_vehicle_feature_enabled
-            ? glm::length(local_player.transform.position - vehicle.position)
-            : 0.0f;
-    const float aircraft_distance =
-        k_vehicle_feature_enabled
-            ? glm::length(local_player.transform.position - aircraft.position)
-            : 0.0f;
-    const NetDebugStats client_net_stats = net_client.debug_stats();
-    const NetDebugStats server_net_stats =
-        local_server_running ? local_server.debug_stats() : NetDebugStats{};
-    std::snprintf(
-        text, sizeof(text),
-        "FPS %.1f FT %.2f CPU %.2f RND %.2f\nFIX dt %.3f CPU %.2f x%u STR in "
-        "%u chg %u live %u\nP %.1f %.1f %.1f V %.1f %.1f %.1f G %d\nPEN %.3f "
-        "N %.1f %.1f %.1f\nYAW %.1f PIT %.1f LOOK %.1f %.1f\nRMB %d LOCK %d "
-        "LKEN %d REM %d\nNET C%d LID %u\nNCL tx/rx pps %u/%u Bps "
-        "%u/%u inv %llu\nNSV on%d tx/rx pps %u/%u Bps %u/%u snap %u pst "
-        "%u\nREC %s err %.2f tick %u seq %u replay %u corr %llu\nLOCO %s SPD "
-        "%.2f GND %d SLP %.1f CYO %.2f BUF %.2f\nANIM %s BL %.2f PH %.2f X "
-        "%.2f EVT %s\nPROC lean %.2f bank %.2f land %.2f jump %.2f\nVEH %s "
-        "DIST %.1f C[th %.2f br %.2f st %.2f hb %.2f]\nAIR %s SPD %.1f DIST "
-        "%.1f C[th %.2f y %.2f p %.2f r %.2f]",
-        render_stats.fps, render_stats.frame_ms, render_stats.cpu_ms,
-        render_stats.render_cpu_ms, fixed.fixed_dt, render_stats.fixed_cpu_ms,
-        render_stats.fixed_steps, render_stats.chunk_packets,
-        render_stats.chunk_changes, render_stats.streamed_chunk_count,
-        local_player.transform.position.x, local_player.transform.position.y,
-        local_player.transform.position.z, local_player.controller.velocity.x,
-        local_player.controller.velocity.y, local_player.controller.velocity.z,
-        local_player.controller.grounded ? 1 : 0,
-        last_collision_debug.penetration_correction,
-        last_collision_debug.contact_normal.x,
-        last_collision_debug.contact_normal.y,
-        last_collision_debug.contact_normal.z, local_player.camera_rig.yaw,
-        local_player.camera_rig.pitch, input_state.look_delta.x,
-        input_state.look_delta.y, input_state.rmb_down ? 1 : 0,
-        input_state.pointer_locked ? 1 : 0, input_state.look_enabled ? 1 : 0,
-        static_cast<int>(remote_render_players.size()),
-        render_stats.net_connected ? 1 : 0, render_stats.net_local_player_id,
-        client_net_stats.tx_packets_per_sec,
-        client_net_stats.rx_packets_per_sec, client_net_stats.tx_bytes_per_sec,
-        client_net_stats.rx_bytes_per_sec,
-        static_cast<unsigned long long>(client_net_stats.invalid_packets_total),
-        local_server_running ? 1 : 0, server_net_stats.tx_packets_per_sec,
-        server_net_stats.rx_packets_per_sec, server_net_stats.tx_bytes_per_sec,
-        server_net_stats.rx_bytes_per_sec,
-        server_net_stats.snapshots_sent_per_sec,
-        server_net_stats.player_state_broadcasts_per_sec,
-        reconcile_mode_name(static_cast<uint8_t>(reconcile_mode)),
-        last_reconcile_pos_error, last_reconcile_snapshot_tick,
-        last_reconcile_snapshot_sequence, reconcile_replay_ticks,
-        static_cast<unsigned long long>(reconcile_corrections),
-        player_locomotion_state_name(local_player.locomotion.state),
-        local_player.locomotion.move_speed,
-        local_player.locomotion.stable_grounded ? 1 : 0,
-        local_player.locomotion.slope_angle_deg,
-        local_player.locomotion.coyote_timer,
-        local_player.locomotion.jump_buffer_timer,
-        anim_state_name(local_player.anim_state), local_player.anim_blend,
-        local_player.anim_phase, local_player_animation.transition_alpha(),
-        player_anim_event_name(local_player.last_anim_event),
-        local_player.procedural.spine_lean, local_player.procedural.turn_bank,
-        local_player.procedural.landing_compression,
-        local_player.procedural.jump_anticipation,
-        k_vehicle_feature_enabled ? (vehicle.occupied ? "ONBOARD" : "ON FOOT")
-                                  : "DISABLED",
-        vehicle_distance, last_vehicle_control.throttle,
-        last_vehicle_control.brake, last_vehicle_control.steer,
-        last_vehicle_control.handbrake,
-        k_vehicle_feature_enabled ? (aircraft.occupied ? "ONBOARD" : "ON FOOT")
-                                  : "DISABLED",
-        aircraft.speed, aircraft_distance, last_aircraft_control.throttle,
-        last_aircraft_control.yaw, last_aircraft_control.pitch,
-        last_aircraft_control.roll);
+  } else if (snapshot.devhud_enabled) {
     draw_panel(devhud_panel, glm::vec3(0.05f, 0.07f, 0.10f),
                glm::vec3(0.09f, 0.11f, 0.16f));
     append_mesh(scene.debug_screen,
-                build_screen_text_mesh(text, devhud_panel.x0 + 0.03f,
+                build_screen_text_mesh(snapshot.devhud_text,
+                                       devhud_panel.x0 + 0.03f,
                                        devhud_panel.y0 - 0.06f, 0.0049f,
                                        glm::vec3(0.95f, 0.95f, 0.82f)));
   }
 
-  if (!menu_view.open &&
-      (active_minigame.active || nearby_minigame_hotspot >= 0)) {
-    if (active_minigame.active) {
+  if (snapshot.show_minigame_panel || snapshot.show_hotspot_panel) {
+    if (snapshot.show_minigame_panel) {
       draw_panel(minigame_panel, glm::vec3(0.04f, 0.06f, 0.08f),
                  glm::vec3(0.08f, 0.10f, 0.13f));
 
       append_mesh(scene.debug_screen,
-                  build_screen_text_mesh(minigame_title,
+                  build_screen_text_mesh(snapshot.minigame_title,
                                          minigame_panel.x0 + 0.04f,
                                          minigame_panel.y0 - 0.05f, 0.0068f,
                                          glm::vec3(0.98f, 0.98f, 1.0f)));
       append_mesh(scene.debug_screen,
-                  build_screen_text_mesh(minigame_status,
+                  build_screen_text_mesh(snapshot.minigame_status,
                                          minigame_panel.x0 + 0.04f,
                                          minigame_panel.y0 - 0.10f, 0.0052f,
                                          glm::vec3(0.89f, 0.95f, 1.0f)));
       append_mesh(scene.debug_screen,
-                  build_screen_text_mesh(minigame_objective,
+                  build_screen_text_mesh(snapshot.minigame_objective,
                                          minigame_panel.x0 + 0.04f,
                                          minigame_panel.y0 - 0.15f, 0.0048f,
                                          glm::vec3(0.86f, 0.91f, 0.98f)));
       append_mesh(scene.debug_screen,
-                  build_screen_text_mesh(minigame_controls,
+                  build_screen_text_mesh(snapshot.minigame_controls,
                                          minigame_panel.x0 + 0.04f,
                                          minigame_panel.y0 - 0.21f, 0.0046f,
                                          glm::vec3(0.83f, 0.89f, 0.97f)));
-      if (!minigame_hint.empty()) {
+      if (!snapshot.minigame_hint.empty()) {
         append_mesh(scene.debug_screen,
-                    build_screen_text_mesh(minigame_hint,
+                    build_screen_text_mesh(snapshot.minigame_hint,
                                            minigame_panel.x0 + 0.04f,
                                            minigame_panel.y0 - 0.25f, 0.0045f,
                                            glm::vec3(0.8f, 0.88f, 0.96f)));
@@ -2202,30 +2299,31 @@ void Engine::refresh_overlay_text() {
       const float fill_right =
           (minigame_panel.x0 + 0.04f) +
           ((minigame_panel.x1 - 0.04f) - (minigame_panel.x0 + 0.04f)) *
-              minigame_progress;
+              snapshot.minigame_progress;
       append_screen_rect(minigame_panel.x0 + 0.04f, 0.71f, fill_right, 0.685f,
                          glm::vec3(0.24f, 0.72f, 0.98f));
     } else {
       draw_panel(hotspot_panel, glm::vec3(0.04f, 0.06f, 0.08f),
                  glm::vec3(0.08f, 0.10f, 0.13f));
       append_mesh(scene.debug_screen,
-                  build_screen_text_mesh(hotspot_text, hotspot_panel.x0 + 0.04f,
-                                         hotspot_panel.y0 - 0.05f, 0.0050f,
-                                         glm::vec3(0.91f, 0.96f, 1.0f)));
+                  build_screen_text_mesh(
+                      snapshot.hotspot_text, hotspot_panel.x0 + 0.04f,
+                      hotspot_panel.y0 - 0.05f, 0.0050f,
+                      glm::vec3(0.91f, 0.96f, 1.0f)));
     }
   }
 
-  if (!menu_view.open) {
+  if (snapshot.show_objective_panel) {
     draw_panel(objective_panel, glm::vec3(0.04f, 0.06f, 0.08f),
                glm::vec3(0.08f, 0.10f, 0.13f));
     append_mesh(scene.debug_screen,
-                build_screen_text_mesh(objective_status,
+                build_screen_text_mesh(snapshot.objective_status,
                                        objective_panel.x0 + 0.04f,
                                        objective_panel.y0 - 0.05f, 0.0050f,
                                        glm::vec3(0.95f, 0.97f, 1.0f)));
-    if (!world_state.objective_hint.empty()) {
+    if (!snapshot.objective_hint.empty()) {
       append_mesh(scene.debug_screen,
-                  build_screen_text_mesh(world_state.objective_hint,
+                  build_screen_text_mesh(snapshot.objective_hint,
                                          objective_panel.x0 + 0.04f,
                                          objective_panel.y0 - 0.11f, 0.0045f,
                                          glm::vec3(0.84f, 0.90f, 0.98f)));
@@ -2234,17 +2332,24 @@ void Engine::refresh_overlay_text() {
 }
 
 void Engine::rebuild_dynamic_debug_mesh() {
+  const RuntimeDebugSceneSnapshot snapshot = build_debug_scene_snapshot();
   scene.debug_world = RenderMesh{};
-  const bool collision_debug_enabled = runtime_options.debug_collision;
-  const bool render_skeleton_only =
-      gui_menu.character() == GuiMenu::Character::Skeleton;
-  const SkinnedModel *selected_player_model = nullptr;
-  if (gui_menu.character() == GuiMenu::Character::Humanoid &&
-      has_humanoid_player_model) {
-    selected_player_model = &humanoid_player_model;
-  }
+  const bool collision_debug_enabled = snapshot.collision_debug_enabled;
+  const bool render_skeleton_only = snapshot.render_skeleton_only;
+  const SkinnedModel *selected_player_model = snapshot.selected_player_model;
   const bool render_skinned_avatar =
       !render_skeleton_only && selected_player_model != nullptr;
+  const PlayerEntity &local_player = *snapshot.local_player;
+  const PlayerAnimationRuntime &local_player_animation =
+      *snapshot.local_player_animation;
+  const VoxelCollisionWorld &collision_world = *snapshot.collision_world;
+  const RuntimeVehicleDebugSnapshot &vehicle = snapshot.vehicle;
+  const GroundVehicleController *vehicle_controller = snapshot.vehicle.controller;
+  const RuntimeAircraftDebugSnapshot &aircraft = snapshot.aircraft;
+  const glm::vec3 spherical_planet_center = snapshot.spherical_planet_center;
+  const float spherical_planet_radius = snapshot.spherical_planet_radius;
+  const MiniGameState &active_minigame = snapshot.active_minigame;
+  const PlayerCollisionDebug &last_collision_debug = snapshot.last_collision_debug;
 
   const AnimatedCapsuleShape local_shape = animated_shape(
       static_cast<uint8_t>(local_player.anim_state), local_player.anim_phase,
@@ -2304,7 +2409,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
     append_vehicle_quad(p[0], p[4], p[5], p[1], color);
   };
 
-  if (k_vehicle_feature_enabled && !runtime_options.debug_collision_only) {
+  if (k_vehicle_feature_enabled && !snapshot.debug_collision_only) {
     append_vehicle_box(glm::vec3(0.0f, k_vehicle_body_height * 0.5f, 0.0f),
                        glm::vec3(k_vehicle_body_half_width,
                                  k_vehicle_body_height * 0.5f,
@@ -2318,10 +2423,9 @@ void Engine::rebuild_dynamic_debug_mesh() {
         glm::vec3(0.0f, 0.58f, k_vehicle_body_half_length - 0.22f),
         glm::vec3(0.55f, 0.12f, 0.14f), glm::vec3(0.08f, 0.08f, 0.08f));
 
-    const auto &wheel_setup = vehicle.controller.wheel_setup();
+    const auto &wheel_setup = vehicle_controller->wheel_setup();
     const float visual_yaw = vehicle.yaw + k_vehicle_visual_yaw_offset;
-    const auto &wheel_compression =
-        vehicle.controller.state().wheel_compression;
+    const auto &wheel_compression = vehicle_controller->state().wheel_compression;
     for (size_t i = 0; i < wheel_setup.size(); ++i) {
       const GroundVehicleWheel &wheel = wheel_setup[i];
       const float suspension_length =
@@ -2390,7 +2494,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
                     0.05f, glm::vec3(0.2f, 0.9f, 1.0f)));
   }
 
-  if (!runtime_options.debug_collision_only) {
+  if (!snapshot.debug_collision_only) {
     auto append_minigame_voxel = [&](const glm::vec3 &center,
                                      const glm::vec3 &half,
                                      const glm::vec3 &color) {
@@ -2398,16 +2502,12 @@ void Engine::rebuild_dynamic_debug_mesh() {
                   build_debug_aabb_mesh(center - half, center + half, color));
     };
 
-    for (size_t i = 0; i < minigame_hotspots.size(); ++i) {
-      const MiniGameHotspot &hotspot = minigame_hotspots[i];
+    for (const auto &hotspot : snapshot.minigame_hotspots) {
       const glm::vec3 color = minigame_color(hotspot.type);
-      const bool selected = static_cast<int>(i) == nearby_minigame_hotspot ||
-                            static_cast<int>(i) == active_minigame_hotspot;
+      const bool selected = hotspot.nearby || hotspot.active;
       glm::vec3 up(0.0f, 1.0f, 0.0f);
-      if (runtime_options.spherical_planet &&
-          world_state.spherical_planet_radius > 0.0f) {
-        up = glm::normalize(hotspot.position -
-                            world_state.spherical_planet_center);
+      if (snapshot.spherical_planet && spherical_planet_radius > 0.0f) {
+        up = glm::normalize(hotspot.position - spherical_planet_center);
       }
       append_mesh(scene.debug_world,
                   build_debug_line_mesh(hotspot.position + up * 0.2f,
@@ -2422,10 +2522,8 @@ void Engine::rebuild_dynamic_debug_mesh() {
                                           color * glm::vec3(1.1f)));
     }
 
-    for (size_t i = 0; i < world_state.objective_nodes.size(); ++i) {
-      const auto &node = world_state.objective_nodes[i];
-      const bool selected =
-          static_cast<int>(i) == world_state.nearby_objective_node;
+    for (const auto &node : snapshot.objective_nodes) {
+      const bool selected = node.nearby;
       const glm::vec3 color = node.activated ? glm::vec3(0.18f, 0.82f, 0.36f)
                                              : glm::vec3(0.95f, 0.72f, 0.24f);
       append_mesh(
@@ -2439,25 +2537,25 @@ void Engine::rebuild_dynamic_debug_mesh() {
                                   selected ? 0.30f : 0.22f, color));
     }
 
-    if (world_state.extraction_unlocked ||
-        world_state.objective_round_complete) {
-      const glm::vec3 extraction_color = world_state.objective_round_complete
+    if (snapshot.extraction_unlocked || snapshot.objective_round_complete) {
+      const glm::vec3 extraction_color = snapshot.objective_round_complete
                                              ? glm::vec3(0.22f, 0.95f, 0.48f)
                                              : glm::vec3(0.24f, 0.72f, 0.98f);
       append_mesh(scene.debug_world,
-                  build_debug_sphere_mesh(world_state.extraction_zone_position,
-                                          world_state.extraction_zone_radius *
+                  build_debug_sphere_mesh(snapshot.extraction_zone_position,
+                                          snapshot.extraction_zone_radius *
                                               0.42f,
                                           extraction_color));
       append_mesh(scene.debug_world,
-                  build_debug_line_mesh(world_state.extraction_zone_position,
-                                        world_state.extraction_zone_position +
+                  build_debug_line_mesh(snapshot.extraction_zone_position,
+                                        snapshot.extraction_zone_position +
                                             glm::vec3(0.0f, 3.0f, 0.0f),
                                         0.06f, extraction_color));
     }
 
-    if (active_minigame.active && active_minigame_hotspot >= 0 &&
-        active_minigame_hotspot < static_cast<int>(minigame_hotspots.size())) {
+    if (active_minigame.active && snapshot.active_minigame_hotspot >= 0 &&
+        snapshot.active_minigame_hotspot <
+            static_cast<int>(snapshot.minigame_hotspots.size())) {
       const float board_yaw =
           local_player.camera_rig.yaw * 0.01745329251994329577f;
       glm::vec3 board_origin =
@@ -2465,11 +2563,8 @@ void Engine::rebuild_dynamic_debug_mesh() {
           rotate_y(glm::vec3(0.0f, 1.28f, 2.35f), board_yaw);
       SurfaceFrame board_frame{};
       bool use_surface_frame = false;
-      if (runtime_options.spherical_planet &&
-          world_state.spherical_planet_radius > 0.0f) {
-        const glm::vec3 up =
-            local_player.transform.position -
-            world_state.spherical_planet_center;
+      if (snapshot.spherical_planet && spherical_planet_radius > 0.0f) {
+        const glm::vec3 up = local_player.transform.position - spherical_planet_center;
         board_frame = make_surface_frame(up);
         board_origin = local_player.transform.position +
                        rotate_on_surface(glm::vec3(0.0f, 1.28f, 2.35f),
@@ -2636,9 +2731,9 @@ void Engine::rebuild_dynamic_debug_mesh() {
     }
   }
 
-  if (!runtime_options.debug_collision_only) {
+  if (!snapshot.debug_collision_only) {
     if ((!render_skinned_avatar && !render_skeleton_only) ||
-        collision_debug_enabled || runtime_options.devhud) {
+        collision_debug_enabled || snapshot.devhud_enabled) {
       append_mesh(scene.debug_world, player_capsule);
       append_mesh(scene.debug_world, target_marker);
     }
@@ -2651,7 +2746,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
     }
     if (render_skeleton_only ||
         (render_skinned_avatar &&
-         (collision_debug_enabled || runtime_options.devhud))) {
+         (collision_debug_enabled || snapshot.devhud_enabled))) {
       if (render_skinned_avatar) {
         selected_player_model->append_debug_skeleton(
             scene.debug_world, local_player_animation,
@@ -2669,7 +2764,10 @@ void Engine::rebuild_dynamic_debug_mesh() {
     }
   }
 
-  if (runtime_options.splitscreen) {
+  if (snapshot.splitscreen) {
+    const PlayerEntity &local_player_secondary = *snapshot.local_player_secondary;
+    const PlayerAnimationRuntime &local_player_secondary_animation =
+        *snapshot.local_player_secondary_animation;
     const AnimatedCapsuleShape p2_shape = animated_shape(
         static_cast<uint8_t>(local_player_secondary.anim_state),
         local_player_secondary.anim_phase, local_player_secondary.anim_blend,
@@ -2684,9 +2782,9 @@ void Engine::rebuild_dynamic_debug_mesh() {
         local_player_secondary.transform.position +
             glm::vec3(0.0f, p2_shape.pivot_height, 0.0f),
         0.10f, glm::vec3(0.6f, 0.85f, 1.0f));
-    if (!runtime_options.debug_collision_only) {
+    if (!snapshot.debug_collision_only) {
       if ((!render_skinned_avatar && !render_skeleton_only) ||
-          collision_debug_enabled || runtime_options.devhud) {
+          collision_debug_enabled || snapshot.devhud_enabled) {
         append_mesh(scene.debug_world, p2_capsule);
         append_mesh(scene.debug_world, p2_target);
       }
@@ -2721,7 +2819,7 @@ void Engine::rebuild_dynamic_debug_mesh() {
   }
 
   if (collision_debug_enabled &&
-      (runtime_options.devhud || runtime_options.debug_collision_only)) {
+      (snapshot.devhud_enabled || snapshot.debug_collision_only)) {
     for (const glm::ivec3 &cell : last_collision_debug.overlapped_voxels) {
       const glm::vec3 bmin(static_cast<float>(cell.x),
                            static_cast<float>(cell.y),
@@ -2746,9 +2844,8 @@ void Engine::rebuild_dynamic_debug_mesh() {
     append_mesh(scene.debug_world, normal_line);
   }
 
-  for (const auto &[player_id, render_player] : remote_render_players) {
-    (void)player_id;
-    if (runtime_options.debug_collision_only) {
+  for (const auto &render_player : snapshot.remote_players) {
+    if (snapshot.debug_collision_only) {
       continue;
     }
     const float remote_y =
@@ -2767,17 +2864,18 @@ void Engine::rebuild_dynamic_debug_mesh() {
     const glm::vec3 remote_base =
         glm::vec3(render_player.position.x, remote_y, render_player.position.z);
     if (!render_skinned_avatar || collision_debug_enabled ||
-        runtime_options.devhud) {
+        snapshot.devhud_enabled) {
       RenderMesh remote_capsule = build_debug_capsule_mesh(
           remote_base, remote_shape.radius, remote_shape.height,
-          player_color_from_id(player_id));
+          player_color_from_id(render_player.player_id));
       append_mesh(scene.debug_world, remote_capsule);
     }
     if (render_skinned_avatar) {
       const RenderMesh remote_model = selected_player_model->build_render_mesh(
-          render_player.animation_runtime, remote_base,
+          *render_player.animation_runtime, remote_base,
           render_player.orientation,
-          player_color_from_id(player_id) * glm::vec3(1.08f, 1.08f, 1.08f));
+          player_color_from_id(render_player.player_id) *
+              glm::vec3(1.08f, 1.08f, 1.08f));
       append_mesh(scene.debug_world, remote_model);
     }
   }

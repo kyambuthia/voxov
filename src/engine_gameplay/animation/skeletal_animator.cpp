@@ -196,34 +196,27 @@ SkeletonPose SkeletalAnimator::sample_pose(PlayerAnimState state, float phase, f
     const float clamped_blend = std::clamp(blend, 0.0f, 1.0f);
     apply_idle_motion(pose, phase, clamped_blend);
 
-    switch (state) {
-    case PlayerAnimState::StartMove:
-    case PlayerAnimState::LocomotionWalk:
-    case PlayerAnimState::PivotLeft:
-    case PlayerAnimState::PivotRight:
-    case PlayerAnimState::TurnInPlaceLeft:
-    case PlayerAnimState::TurnInPlaceRight:
-    case PlayerAnimState::MovingTurn:
+    if (player_anim_is_walk_cycle(state) ||
+        state == PlayerAnimState::StartMove ||
+        state == PlayerAnimState::PivotLeft ||
+        state == PlayerAnimState::PivotRight ||
+        state == PlayerAnimState::TurnInPlaceLeft ||
+        state == PlayerAnimState::TurnInPlaceRight ||
+        state == PlayerAnimState::MovingTurn) {
         apply_walk_or_run(pose, phase, 0.82f + 0.24f * clamped_blend);
-        break;
-    case PlayerAnimState::LocomotionRun:
+    } else if (player_anim_is_run_cycle(state)) {
         apply_walk_or_run(pose, phase, 1.15f + 0.34f * clamped_blend);
-        break;
-    case PlayerAnimState::JumpTakeoff:
-    case PlayerAnimState::JumpLoop:
-    case PlayerAnimState::FallLoop:
-    case PlayerAnimState::LandSoft:
-    case PlayerAnimState::LandHard:
+    } else if (state == PlayerAnimState::JumpTakeoff ||
+               state == PlayerAnimState::JumpLoop ||
+               state == PlayerAnimState::FallLoop ||
+               state == PlayerAnimState::LandSoft ||
+               state == PlayerAnimState::LandHard) {
         apply_jump(pose, phase);
-        break;
-    case PlayerAnimState::StopMove:
-    case PlayerAnimState::Recovery:
+    } else if (state == PlayerAnimState::StopMove ||
+               state == PlayerAnimState::Recovery) {
         apply_crawl(pose, phase);
-        break;
-    case PlayerAnimState::Idle:
-    default:
+    } else {
         // Idle keeps standing pose.
-        break;
     }
 
     return pose;

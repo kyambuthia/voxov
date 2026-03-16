@@ -84,6 +84,7 @@ struct PlayerLocomotionStateData {
     float jump_buffer_timer = 0.0f;
     float slope_angle_deg = 0.0f;
     float input_magnitude = 0.0f;
+    float move_direction_deg = 0.0f;
     float turn_delta_deg = 0.0f;
     float landing_impact = 0.0f;
     bool stable_grounded = false;

@@ -130,36 +130,29 @@ AnimatedCapsuleShape animated_shape(uint8_t anim_state, float anim_phase,
   out.pivot_height = base_pivot_height;
   out.bob = 0.01f * std::sin(anim_phase);
 
-  switch (anim_state) {
-  case static_cast<uint8_t>(PlayerAnimState::StartMove):
-  case static_cast<uint8_t>(PlayerAnimState::LocomotionWalk):
-  case static_cast<uint8_t>(PlayerAnimState::PivotLeft):
-  case static_cast<uint8_t>(PlayerAnimState::PivotRight):
-  case static_cast<uint8_t>(PlayerAnimState::TurnInPlaceLeft):
-  case static_cast<uint8_t>(PlayerAnimState::TurnInPlaceRight):
-  case static_cast<uint8_t>(PlayerAnimState::MovingTurn):
+  const PlayerAnimState state = static_cast<PlayerAnimState>(anim_state);
+  if (player_anim_is_walk_cycle(state) ||
+      state == PlayerAnimState::StartMove ||
+      state == PlayerAnimState::PivotLeft ||
+      state == PlayerAnimState::PivotRight ||
+      state == PlayerAnimState::TurnInPlaceLeft ||
+      state == PlayerAnimState::TurnInPlaceRight ||
+      state == PlayerAnimState::MovingTurn) {
     out.bob = 0.06f * std::max(0.35f, anim_blend) * anim_pulse(anim_phase);
-    break;
-  case static_cast<uint8_t>(PlayerAnimState::LocomotionRun):
+  } else if (player_anim_is_run_cycle(state)) {
     out.bob = 0.11f * std::max(0.55f, anim_blend) * anim_pulse(anim_phase);
-    break;
-  case static_cast<uint8_t>(PlayerAnimState::JumpTakeoff):
-  case static_cast<uint8_t>(PlayerAnimState::JumpLoop):
-  case static_cast<uint8_t>(PlayerAnimState::FallLoop):
-  case static_cast<uint8_t>(PlayerAnimState::LandSoft):
-  case static_cast<uint8_t>(PlayerAnimState::LandHard):
+  } else if (state == PlayerAnimState::JumpTakeoff ||
+             state == PlayerAnimState::JumpLoop ||
+             state == PlayerAnimState::FallLoop ||
+             state == PlayerAnimState::LandSoft ||
+             state == PlayerAnimState::LandHard) {
     out.bob = 0.08f * std::sin(anim_phase * 0.65f);
-    break;
-  case static_cast<uint8_t>(PlayerAnimState::StopMove):
-  case static_cast<uint8_t>(PlayerAnimState::Recovery):
+  } else if (state == PlayerAnimState::StopMove ||
+             state == PlayerAnimState::Recovery) {
     out.height = base_height * 0.55f;
     out.radius = base_radius * 1.08f;
     out.pivot_height = base_pivot_height * 0.62f;
     out.bob = 0.02f * anim_pulse(anim_phase * 0.8f);
-    break;
-  case static_cast<uint8_t>(PlayerAnimState::Idle):
-  default:
-    break;
   }
 
   return out;

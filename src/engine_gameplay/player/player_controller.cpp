@@ -57,6 +57,13 @@ float flat_length(glm::vec3 v) {
     return glm::length(glm::vec2(v.x, v.z));
 }
 
+float move_direction_deg(glm::vec2 move_axis) {
+    if (glm::length(move_axis) <= 1.0e-5f) {
+        return 0.0f;
+    }
+    return wrap_degrees(to_degrees(std::atan2(move_axis.x, move_axis.y)));
+}
+
 int top_solid_y(const VoxelCollisionWorld &collision_world, int x, int z) {
     for (int y = VoxelChunk::CHUNK_Y - 1; y >= 0; --y) {
         if (collision_world.is_solid_voxel(x, y, z)) {
@@ -220,13 +227,11 @@ PlayerAnimState map_animation_state(const PlayerEntity &player, const InputState
     case PlayerLocomotionState::StopMove:
         return PlayerAnimState::StopMove;
     case PlayerLocomotionState::Walk:
-        return std::fabs(yaw_delta) > player.locomotion_tuning.moving_turn_threshold_deg
-            ? PlayerAnimState::MovingTurn
-            : PlayerAnimState::LocomotionWalk;
+        return player_anim_directional_locomotion_state(
+            false, player.locomotion.move_direction_deg);
     case PlayerLocomotionState::Run:
-        return std::fabs(yaw_delta) > player.locomotion_tuning.moving_turn_threshold_deg
-            ? PlayerAnimState::MovingTurn
-            : PlayerAnimState::LocomotionRun;
+        return player_anim_directional_locomotion_state(
+            true, player.locomotion.move_direction_deg);
     case PlayerLocomotionState::JumpStart:
         return PlayerAnimState::JumpTakeoff;
     case PlayerLocomotionState::AirborneRise:
@@ -369,11 +374,12 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
     const float input_len = glm::length(glm::vec2(input.move.x, input.move.y));
     motion.input_magnitude = std::clamp(input_len, 0.0f, 1.0f);
     const bool has_move_input = motion.input_magnitude > tuning.input_deadzone;
+    motion.move_direction_deg = has_move_input ? move_direction_deg(input.move) : 0.0f;
     if (has_move_input) {
         desired_move = glm::normalize(desired_move);
-        motion.desired_yaw_deg = to_degrees(std::atan2(desired_move.x, desired_move.z));
     }
-    motion.turn_delta_deg = angle_delta_deg(motion.facing_yaw_deg, has_move_input ? motion.desired_yaw_deg : player.camera_rig.yaw);
+    motion.desired_yaw_deg = player.camera_rig.yaw;
+    motion.turn_delta_deg = angle_delta_deg(motion.facing_yaw_deg, motion.desired_yaw_deg);
 
     if (input.jump_pressed) {
         motion.jump_buffer_timer = tuning.jump_buffer_time;
@@ -416,10 +422,10 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
             motion.facing_yaw_deg,
             motion.desired_yaw_deg,
             facing_turn_rate * dt);
-    } else if (was_grounded && std::fabs(angle_delta_deg(motion.facing_yaw_deg, player.camera_rig.yaw)) > tuning.pivot_threshold_deg) {
+    } else if (was_grounded && std::fabs(angle_delta_deg(motion.facing_yaw_deg, motion.desired_yaw_deg)) > tuning.pivot_threshold_deg) {
         motion.facing_yaw_deg = rotate_towards_deg(motion.facing_yaw_deg, player.camera_rig.yaw, tuning.turn_rate * 0.55f * dt);
     }
-    motion.turn_delta_deg = angle_delta_deg(motion.facing_yaw_deg, has_move_input ? motion.desired_yaw_deg : player.camera_rig.yaw);
+    motion.turn_delta_deg = angle_delta_deg(motion.facing_yaw_deg, motion.desired_yaw_deg);
 
     if (was_grounded) {
         const float accel = has_move_input ? tuning.ground_accel : tuning.ground_decel;
@@ -607,7 +613,8 @@ void PlayerControllerSystem::update_animation_state(
     }
 
     float target_blend = player_anim_blend_target(next_state);
-    if (next_state == PlayerAnimState::LocomotionWalk || next_state == PlayerAnimState::LocomotionRun || next_state == PlayerAnimState::MovingTurn) {
+    if (player_anim_is_locomotion_cycle(next_state) ||
+        next_state == PlayerAnimState::MovingTurn) {
         const float speed_ratio = std::clamp(
             player.locomotion.move_speed / std::max(0.001f, player.locomotion_tuning.run_speed),
             0.0f,

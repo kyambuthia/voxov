@@ -409,6 +409,70 @@ void test_player_animation_state_transitions() {
   assert(player.locomotion.state == PlayerLocomotionState::JumpStart);
 }
 
+void test_player_directional_locomotion_states() {
+  VoxelChunk chunk;
+  chunk.generate_flat_ground(0);
+  VoxelCollisionWorld collision_world(&chunk);
+
+  auto expect_direction = [&](glm::vec2 move,
+                              bool sprint,
+                              PlayerAnimState expected_anim) {
+    PlayerEntity player = PlayerControllerSystem::spawn_player(collision_world);
+    player.transform.position = glm::vec3(8.0f, 1.05f, 8.0f);
+    player.controller.grounded = true;
+    player.controller.velocity = glm::vec3(0.0f);
+
+    InputState input{};
+    input.move = move;
+    input.sprint_held = sprint;
+    for (int i = 0; i < 12; ++i) {
+      PlayerControllerSystem::simulate_fixed(player, input, collision_world,
+                                             1.0f / 60.0f, false);
+    }
+
+    assert(player.locomotion.state ==
+           (sprint ? PlayerLocomotionState::Run : PlayerLocomotionState::Walk));
+    assert(player.anim_state == expected_anim);
+  };
+
+  expect_direction(glm::vec2(0.0f, 1.0f), false, PlayerAnimState::LocomotionWalk);
+  expect_direction(glm::vec2(0.0f, -1.0f), false,
+                   PlayerAnimState::LocomotionWalkBackward);
+  expect_direction(glm::vec2(-1.0f, 0.0f), false,
+                   PlayerAnimState::LocomotionWalkLeft);
+  expect_direction(glm::vec2(1.0f, 0.0f), false,
+                   PlayerAnimState::LocomotionWalkRight);
+  expect_direction(glm::vec2(1.0f, 1.0f), false,
+                   PlayerAnimState::LocomotionWalkForwardRight);
+  expect_direction(glm::vec2(-1.0f, -1.0f), true,
+                   PlayerAnimState::LocomotionRunBackwardLeft);
+}
+
+void test_player_backward_strafe_preserves_camera_facing() {
+  VoxelChunk chunk;
+  chunk.generate_flat_ground(0);
+  VoxelCollisionWorld collision_world(&chunk);
+
+  PlayerEntity player = PlayerControllerSystem::spawn_player(collision_world);
+  player.transform.position = glm::vec3(8.0f, 1.05f, 8.0f);
+  player.controller.grounded = true;
+  player.controller.velocity = glm::vec3(0.0f);
+  player.camera_rig.yaw = 35.0f;
+  player.locomotion.facing_yaw_deg = 35.0f;
+  player.locomotion.desired_yaw_deg = 35.0f;
+
+  InputState input{};
+  input.move = glm::vec2(0.0f, -1.0f);
+  for (int i = 0; i < 12; ++i) {
+    PlayerControllerSystem::simulate_fixed(player, input, collision_world,
+                                           1.0f / 60.0f, false);
+  }
+
+  assert(player.anim_state == PlayerAnimState::LocomotionWalkBackward);
+  assert(std::fabs(player.locomotion.facing_yaw_deg - 35.0f) < 0.01f);
+  assert(std::fabs(player.locomotion.turn_delta_deg) < 0.01f);
+}
+
 void test_player_coyote_jump_window() {
   VoxelChunk chunk;
   chunk.generate_flat_ground(0);
@@ -986,6 +1050,8 @@ int main() {
   test_strafe_axis_sign();
   test_player_settles_on_ground();
   test_player_animation_state_transitions();
+  test_player_directional_locomotion_states();
+  test_player_backward_strafe_preserves_camera_facing();
   test_player_coyote_jump_window();
   test_player_jump_buffer_consumes_on_landing();
   test_player_landing_thresholds();

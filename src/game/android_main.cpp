@@ -1520,34 +1520,29 @@ struct AndroidRenderer {
             float radius = player_capsule_radius;
             float height = player_capsule_height;
             float bob = 0.0f;
-            switch (remote.anim_state) {
-            case static_cast<uint8_t>(PlayerAnimState::StartMove):
-            case static_cast<uint8_t>(PlayerAnimState::LocomotionWalk):
-            case static_cast<uint8_t>(PlayerAnimState::PivotLeft):
-            case static_cast<uint8_t>(PlayerAnimState::PivotRight):
-            case static_cast<uint8_t>(PlayerAnimState::TurnInPlaceLeft):
-            case static_cast<uint8_t>(PlayerAnimState::TurnInPlaceRight):
-            case static_cast<uint8_t>(PlayerAnimState::MovingTurn):
+            const PlayerAnimState state =
+                static_cast<PlayerAnimState>(remote.anim_state);
+            if (player_anim_is_walk_cycle(state) ||
+                state == PlayerAnimState::StartMove ||
+                state == PlayerAnimState::PivotLeft ||
+                state == PlayerAnimState::PivotRight ||
+                state == PlayerAnimState::TurnInPlaceLeft ||
+                state == PlayerAnimState::TurnInPlaceRight ||
+                state == PlayerAnimState::MovingTurn) {
                 bob = 0.05f * std::fabs(std::sin(remote.anim_phase));
-                break;
-            case static_cast<uint8_t>(PlayerAnimState::LocomotionRun):
+            } else if (player_anim_is_run_cycle(state)) {
                 bob = 0.09f * std::fabs(std::sin(remote.anim_phase));
-                break;
-            case static_cast<uint8_t>(PlayerAnimState::StopMove):
-            case static_cast<uint8_t>(PlayerAnimState::Recovery):
+            } else if (state == PlayerAnimState::StopMove ||
+                       state == PlayerAnimState::Recovery) {
                 height *= 0.55f;
                 radius *= 1.08f;
                 bob = 0.02f * std::fabs(std::sin(remote.anim_phase * 0.8f));
-                break;
-            case static_cast<uint8_t>(PlayerAnimState::JumpTakeoff):
-            case static_cast<uint8_t>(PlayerAnimState::JumpLoop):
-            case static_cast<uint8_t>(PlayerAnimState::FallLoop):
-            case static_cast<uint8_t>(PlayerAnimState::LandSoft):
-            case static_cast<uint8_t>(PlayerAnimState::LandHard):
+            } else if (state == PlayerAnimState::JumpTakeoff ||
+                       state == PlayerAnimState::JumpLoop ||
+                       state == PlayerAnimState::FallLoop ||
+                       state == PlayerAnimState::LandSoft ||
+                       state == PlayerAnimState::LandHard) {
                 bob = 0.06f * std::sin(remote.anim_phase * 0.65f);
-                break;
-            default:
-                break;
             }
 
             const glm::vec3 pos = remote.position + glm::vec3(0.0f, bob, 0.0f);
@@ -1886,6 +1881,7 @@ struct AndroidRenderer {
 
         const glm::vec3 forward_flat = glm::normalize(glm::vec3(std::sin(cam_yaw), 0.0f, -std::cos(cam_yaw)));
         const glm::vec3 right_flat = glm::normalize(glm::cross(forward_flat, glm::vec3(0.0f, 1.0f, 0.0f)));
+        const bool moving = glm::length(touch.left_value) > 0.12f;
         float speed = 6.8f;
         if (touch.crouch_held) {
             speed = 2.2f;
@@ -1893,10 +1889,9 @@ struct AndroidRenderer {
             speed = 8.8f;
         }
         const glm::vec3 move_delta = (forward_flat * touch.left_value.y + right_flat * touch.left_value.x) * speed * static_cast<float>(dt_seconds);
-        const glm::vec3 move_dir = forward_flat * touch.left_value.y + right_flat * touch.left_value.x;
-        if (glm::length(glm::vec2(move_dir.x, move_dir.z)) > 0.06f) {
-            const float yaw = std::atan2(move_dir.x, move_dir.z);
-            player_anim_orientation = glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
+        if (moving) {
+            const float facing_yaw = std::atan2(forward_flat.x, forward_flat.z);
+            player_anim_orientation = glm::angleAxis(facing_yaw, glm::vec3(0.0f, 1.0f, 0.0f));
         }
         if (net_connected && net_target_valid) {
             const float net_err = glm::length(player_feet_position - net_target_position);
@@ -1948,12 +1943,13 @@ struct AndroidRenderer {
             -std::cos(cam_pitch) * std::cos(cam_yaw)));
         cam_pos = pivot - orbit_forward * camera_distance;
 
-        const bool moving = glm::length(touch.left_value) > 0.12f;
         PlayerAnimState next_state = PlayerAnimState::Idle;
         if (!session_controller.noclip_enabled() && !player_grounded) {
             next_state = player_vertical_velocity >= 0.0f ? PlayerAnimState::JumpLoop : PlayerAnimState::FallLoop;
         } else if (moving) {
-            next_state = touch.sprint_held ? PlayerAnimState::LocomotionRun : PlayerAnimState::LocomotionWalk;
+            const float direction_deg = glm::degrees(std::atan2(touch.left_value.x, touch.left_value.y));
+            next_state = player_anim_directional_locomotion_state(
+                touch.sprint_held, direction_deg);
         }
         player_anim_state = next_state;
         player_anim_phase += player_anim_cycle_rate(player_anim_state) * static_cast<float>(dt_seconds);

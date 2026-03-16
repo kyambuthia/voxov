@@ -67,6 +67,7 @@ if(ANDROID)
         src/engine_net/net_client.cpp
         src/engine_net/net_server.cpp
         src/engine_net/lan_discovery.cpp
+        src/engine_server/server_session.cpp
         ${VOXOV_ANDROID_GLUE_DIR}/android_native_app_glue.c
     )
     target_include_directories(voxov_android PRIVATE

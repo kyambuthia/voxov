@@ -259,6 +259,7 @@ endif()
 
 add_library(engine STATIC
     src/engine/engine.cpp
+    src/engine_presentation/debug_scene_builder.cpp
     src/engine_presentation/hud_composer.cpp
     src/engine_runtime/runtime_game_session.cpp
     src/engine_runtime/runtime_session_controller.cpp

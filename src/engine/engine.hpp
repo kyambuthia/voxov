@@ -8,6 +8,7 @@
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_input/input_state.hpp"
 #include "engine_math/camera.hpp"
+#include "engine_presentation/debug_scene_builder.hpp"
 #include "engine_presentation/hud_composer.hpp"
 #include "engine_presentation/presentation_snapshot.hpp"
 #include "engine_runtime/runtime_game_session.hpp"
@@ -166,6 +167,7 @@ private:
   bool touch_input_mode = false;
   GuiMenu gui_menu;
   RuntimeSessionController session_controller;
+  DebugSceneBuilder debug_scene_builder;
   HudComposer hud_composer;
   UiAudio ui_audio;
   SkinnedModel humanoid_player_model;

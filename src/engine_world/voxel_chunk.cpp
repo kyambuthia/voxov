@@ -17,10 +17,10 @@ void append_greedy_quad(RenderMesh &mesh, const glm::vec3 &origin,
   glm::vec3 p3(0.0f);
 
   if (positive_face) {
-    p0 = origin + glm::vec3(base + q);
-    p1 = origin + glm::vec3(base + q + du);
-    p2 = origin + glm::vec3(base + q + du + dv);
-    p3 = origin + glm::vec3(base + q + dv);
+    p0 = origin + glm::vec3(base);
+    p1 = origin + glm::vec3(base + du);
+    p2 = origin + glm::vec3(base + du + dv);
+    p3 = origin + glm::vec3(base + dv);
   } else {
     p0 = origin + glm::vec3(base);
     p1 = origin + glm::vec3(base + dv);

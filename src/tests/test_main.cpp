@@ -199,6 +199,31 @@ void test_chunk_world_footprint() {
 
   assert(max_x >= static_cast<float>(VoxelChunk::CHUNK_X) - 0.001f);
   assert(max_z >= static_cast<float>(VoxelChunk::CHUNK_Z) - 0.001f);
+  assert(max_x <= static_cast<float>(VoxelChunk::CHUNK_X) + 0.001f);
+  assert(max_z <= static_cast<float>(VoxelChunk::CHUNK_Z) + 0.001f);
+}
+
+void test_single_voxel_mesh_bounds() {
+  VoxelChunk chunk;
+  chunk.set_solid(0, 0, 0, true);
+  const RenderMesh mesh = chunk.build_naive_mesh();
+
+  assert(mesh.vertices.size() == 24);
+  assert(mesh.indices.size() == 36);
+
+  glm::vec3 min_pos(1000.0f);
+  glm::vec3 max_pos(-1000.0f);
+  for (const RenderVertex &vertex : mesh.vertices) {
+    min_pos = glm::min(min_pos, vertex.position);
+    max_pos = glm::max(max_pos, vertex.position);
+  }
+
+  assert(std::fabs(min_pos.x - 0.0f) < 0.001f);
+  assert(std::fabs(min_pos.y - 0.0f) < 0.001f);
+  assert(std::fabs(min_pos.z - 0.0f) < 0.001f);
+  assert(std::fabs(max_pos.x - 1.0f) < 0.001f);
+  assert(std::fabs(max_pos.y - 1.0f) < 0.001f);
+  assert(std::fabs(max_pos.z - 1.0f) < 0.001f);
 }
 
 void test_chunk_seed_determinism() {
@@ -1043,6 +1068,7 @@ int main() {
   test_net_header_validation();
   test_chunk_meshing();
   test_chunk_world_footprint();
+  test_single_voxel_mesh_bounds();
   test_chunk_seed_determinism();
   test_chunk_spherical_planet_generation();
   test_locomotion_course_only_affects_origin_chunk();

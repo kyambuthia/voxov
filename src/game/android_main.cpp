@@ -1752,6 +1752,9 @@ struct AndroidRenderer {
             };
             load_android_model("CesiumMan.glb", humanoid_player_model, has_humanoid_player_model, "humanoid");
         }
+        gui_menu.set_character(has_humanoid_player_model
+            ? GuiMenu::Character::Humanoid
+            : GuiMenu::Character::Capsule);
         capsule_mesh = RenderMesh{};
         ui_text_mesh = RenderMesh{};
         ui_text_cache.clear();

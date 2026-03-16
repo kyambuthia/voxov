@@ -289,6 +289,9 @@ void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
 
   try_load_character_model(platform_services, humanoid_player_model, "humanoid",
                            "CesiumMan.glb", has_humanoid_player_model);
+  gui_menu.set_character(has_humanoid_player_model
+                             ? GuiMenu::Character::Humanoid
+                             : GuiMenu::Character::Capsule);
 
   try {
     renderer.init(window_handle);

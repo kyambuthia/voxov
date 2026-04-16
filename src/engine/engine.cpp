@@ -851,14 +851,6 @@ void Engine::tick(double frame_dt, EngineInputFrame input_frame) {
                                secondary_render_position, secondary_camera);
   }
 
-  fps_accumulator += frame_dt;
-  fps_frames++;
-  if (fps_accumulator >= 0.3) {
-    render_stats.fps = static_cast<double>(fps_frames) / fps_accumulator;
-    fps_accumulator = 0.0;
-    fps_frames = 0;
-  }
-
   if (runtime_options.devhud) {
     const MovementDebug movement_debug =
         PlayerControllerSystem::compute_movement_vectors(
@@ -913,10 +905,15 @@ void Engine::tick(double frame_dt, EngineInputFrame input_frame) {
 
   update_remote_interpolation(frame_dt);
 
+  const NetDebugStats client_net_stats = net_client.debug_stats();
   render_stats.net_connected = net_client.is_connected();
   render_stats.net_local_player_id = local_player.network_id;
   render_stats.net_remote_count =
       static_cast<uint32_t>(remote_render_players.size());
+  render_stats.net_tx_packets_per_sec = client_net_stats.tx_packets_per_sec;
+  render_stats.net_rx_packets_per_sec = client_net_stats.rx_packets_per_sec;
+  render_stats.net_tx_bytes_per_sec = client_net_stats.tx_bytes_per_sec;
+  render_stats.net_rx_bytes_per_sec = client_net_stats.rx_bytes_per_sec;
   render_stats.frame_ms =
       smooth_metric(render_stats.frame_ms, last_frame_dt * 1000.0, 0.20);
   render_stats.fixed_cpu_ms =

@@ -189,8 +189,6 @@ private:
   PlayerAnimationRuntime local_player_secondary_animation;
   EngineRuntimeOptions runtime_options{};
 
-  double fps_accumulator = 0.0;
-  uint32_t fps_frames = 0;
   uint64_t frame_index = 0;
   double log_accumulator = 0.0;
   double last_frame_dt = 0.0;

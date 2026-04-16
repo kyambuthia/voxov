@@ -30,6 +30,9 @@ public:
             return false;
         }
 
+        runtime_stats = RenderStats{};
+        fps_accumulator = 0.0;
+        fps_frames = 0;
         platform = params.platform;
         platform_services = params.platform_services;
         input_adapter = params.input_adapter;
@@ -101,6 +104,16 @@ public:
                 .secondary = input_frame.secondary,
                 .touch_mode = input_frame.touch_mode,
             });
+        const double previous_fps = runtime_stats.fps;
+        runtime_stats = engine.stats();
+        runtime_stats.fps = previous_fps;
+        fps_accumulator += frame_dt;
+        fps_frames++;
+        if (fps_accumulator >= 0.3) {
+            runtime_stats.fps = static_cast<double>(fps_frames) / fps_accumulator;
+            fps_accumulator = 0.0;
+            fps_frames = 0;
+        }
     }
 
     bool should_close() const {
@@ -108,7 +121,7 @@ public:
     }
 
     const RenderStats &stats() const {
-        return engine.stats();
+        return runtime_stats;
     }
 
     void connect(const char *host, uint16_t port) {
@@ -140,6 +153,9 @@ private:
     IRuntimeInputAdapter *input_adapter = nullptr;
     IRuntimePlatformAdapter *platform_adapter = nullptr;
     GameRuntimeInputFrame input_frame{};
+    RenderStats runtime_stats{};
+    double fps_accumulator = 0.0;
+    uint32_t fps_frames = 0;
     bool initialized = false;
 };
 

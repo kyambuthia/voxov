@@ -212,7 +212,10 @@ int main(int argc, char **argv) {
 
         const RenderStats &stats = runtime.stats();
         char title[128]{};
-        std::snprintf(title, sizeof(title), "VOXOV  FPS: %.1f  CPU: %.2fms", stats.fps, stats.cpu_ms);
+        std::snprintf(title, sizeof(title),
+                      "VOXOV  FPS: %.1f  CPU: %.2fms  NET: %u/%u Bps",
+                      stats.fps, stats.cpu_ms, stats.net_tx_bytes_per_sec,
+                      stats.net_rx_bytes_per_sec);
         platform.set_window_title(title);
     }
 

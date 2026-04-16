@@ -33,6 +33,10 @@ struct RenderStats {
     bool net_connected = false;
     uint32_t net_local_player_id = 0;
     uint32_t net_remote_count = 0;
+    uint32_t net_tx_packets_per_sec = 0;
+    uint32_t net_rx_packets_per_sec = 0;
+    uint32_t net_tx_bytes_per_sec = 0;
+    uint32_t net_rx_bytes_per_sec = 0;
     uint32_t fixed_steps = 0;
     uint32_t chunk_packets = 0;
     uint32_t chunk_changes = 0;

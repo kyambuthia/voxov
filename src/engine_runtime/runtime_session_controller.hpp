@@ -2,7 +2,7 @@
 
 #include "engine_input/input_state.hpp"
 #include "engine_net/net_client.hpp"
-#include "engine_net/net_runtime_shared.hpp"
+#include "engine_net_proto/net_protocol_helpers.hpp"
 #include "engine_ui/gui_menu.hpp"
 
 #include <cstdint>

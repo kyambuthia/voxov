@@ -302,16 +302,28 @@ add_library(engine_server STATIC
 target_include_directories(engine_server PUBLIC src)
 target_link_libraries(engine_server PUBLIC engine_gameplay engine_net_proto engine_world engine_math glm::glm)
 
-add_library(engine_net STATIC
+add_library(engine_net_transport STATIC
     src/engine_net/net_client.cpp
     src/engine_net/net_server.cpp
+)
+target_include_directories(engine_net_transport PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/enet/include)
+target_link_libraries(engine_net_transport PUBLIC enet fmt::fmt spdlog::spdlog engine_net_proto engine_server engine_world engine_math glm::glm)
+if(WIN32)
+    target_link_libraries(engine_net_transport PUBLIC ws2_32)
+endif()
+
+add_library(engine_net_discovery STATIC
     src/engine_net/lan_discovery.cpp
 )
-target_include_directories(engine_net PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/enet/include)
-target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog engine_net_proto engine_server engine_world engine_math glm::glm)
+target_include_directories(engine_net_discovery PUBLIC src)
+target_link_libraries(engine_net_discovery PUBLIC fmt::fmt spdlog::spdlog)
 if(WIN32)
-    target_link_libraries(engine_net PUBLIC ws2_32)
+    target_link_libraries(engine_net_discovery PUBLIC ws2_32)
 endif()
+
+add_library(engine_net INTERFACE)
+target_include_directories(engine_net INTERFACE src ${CMAKE_SOURCE_DIR}/dependencies/enet/include)
+target_link_libraries(engine_net INTERFACE engine_net_discovery engine_net_transport)
 
 add_library(engine STATIC
     src/engine/engine.cpp

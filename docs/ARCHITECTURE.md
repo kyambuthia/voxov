@@ -71,13 +71,105 @@ Android and Web both bypass the desktop orchestration layer. That means gameplay
 
 The repo contains iOS, console, and XR scaffolds, but only desktop is a fully integrated shared-engine runtime today. Planning docs should reflect that distinction clearly.
 
-## Architectural Direction
+## Target Runtime Contract
 
-The next architectural milestone should not be "add more platforms." It should be:
+The next milestone is to converge on one shared runtime contract before doing broader
+platform work. The target shape is:
 
-1. Keep the desktop renderer constrained to a mobile-friendly GLES3/WebGL2-class feature set
-2. Extract shared session/gameplay/network subsystems from `Engine`
-3. Reuse them from Android before expanding target scope
-4. Keep Web intentionally small until a real shared runtime path exists
+1. `GameRuntime` owns fixed-step advancement, session state, input handoff, and
+   shared gameplay orchestration.
+2. Platform entry points stay thin and own only lifecycle, native window/context setup,
+   platform event pumping, and platform-specific input capture.
+3. Desktop migrates first, then Android and Web are moved onto the same runtime path.
+
+Target ownership split:
+
+- `src/game/*`: thin entry points plus `GameRuntime` and platform adapter interfaces
+- `src/engine_runtime/*`: shared runtime state and orchestration, cleaned up so it does
+  not directly own UI, platform, or renderer concerns
+- `src/engine/*`: transitional desktop orchestrator that will shrink as runtime state
+  moves into the shared layer
+- `src/platform/*`: platform adapters and native services only
+
+## Planned Subsystem Boundaries
+
+The refactor target is a small set of explicit subsystems instead of one large `Engine`
+orchestrator.
+
+### Runtime orchestration
+
+Shared runtime code should own:
+
+- fixed-step progression
+- session/menu state transitions
+- input distribution to simulation
+- coordination between gameplay, networking, persistence, and presentation
+
+### Gameplay domain
+
+Gameplay code should own:
+
+- local player simulation
+- vehicles and aircraft
+- minigames and objective interactions
+- gameplay-facing state transitions that do not depend on platform APIs
+
+### Networking domain
+
+Networking should be split into separate layers:
+
+- `engine_net_proto`: wire types, serializers, validators, and protocol flags only
+- `engine_net_transport`: ENet transport only
+- `engine_net_discovery`: LAN discovery only
+- client runtime
+- server simulation
+
+Protocol code must not depend on world generation, renderer types, or platform APIs.
+
+### Presentation domain
+
+Presentation should consume abstract scene and HUD/debug snapshots rather than owning
+simulation state directly. Gameplay and runtime code may build render-facing data, but
+shared runtime code must not depend on platform-specific renderer implementations.
+
+## Planned Build Graph
+
+The target graph is layered so shared code compiles once and is reused by every runtime.
+
+1. foundation: `engine_core`, `engine_math`
+2. domain: `engine_world`, `engine_physics`, `engine_server`, `engine_net`
+3. gameplay/assets: `engine_gameplay`, `engine_assets`, `engine_audio`, `engine_ui`
+4. orchestration: `engine_runtime`, `engine_presentation`
+5. platform: renderer backends and platform adapters
+
+Key rules:
+
+- shared targets must not depend on GLFW, EGL, Emscripten, or other platform headers
+- platform executables link the platform adapter and renderer backend they need
+- tests link shared libraries only; they should not compile Android or Web platform code
+
+## Refactor Comment Policy
+
+The refactor should add comments only where the control flow or invariants are not
+obvious from the code. In practice that means:
+
+- fixed-step advancement and accumulator behavior
+- prediction/reconciliation ordering and buffer assumptions
+- protocol and wire-format invariants
+- JNI, EGL, or browser lifecycle constraints
+- cached platform metadata or cross-platform state synchronization assumptions
+
+Do not add explanatory comments for straightforward data movement or simple setter/getter
+logic.
+
+## Execution Priorities
+
+1. Freeze the runtime and adapter interfaces.
+2. Extract missing shared library targets without changing behavior.
+3. Move desktop onto the shared runtime first.
+4. Split networking into protocol, transport, discovery, client, and server-sim layers.
+5. Remove platform-only dependencies from shared render/runtime code.
+6. Migrate Android and Web to thin adapters over the shared runtime.
+7. Remove duplicate runtime paths after parity is established.
 
 For execution priorities, see `docs/ROADMAP.md`.

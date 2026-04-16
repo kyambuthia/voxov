@@ -31,3 +31,15 @@ The demo should be a small co-op scene that demonstrates:
 
 Success criteria: two clients connect to a server, move around, and see each other consistently,
 with graceful disconnects and recoveries.
+
+## Architecture Priorities
+
+The near-term demo depends on architecture convergence more than on new target count.
+Implementation should follow these priorities:
+
+1. establish a shared `GameRuntime` contract used first by desktop and later by Android/Web
+2. keep platform entry points thin and limited to lifecycle, native I/O, and renderer hookup
+3. split networking into protocol, transport, discovery, client, and server-simulation layers
+4. keep shared libraries free of platform headers and platform-only renderer dependencies
+5. document only correctness-critical invariants such as fixed-step ordering and
+   prediction/reconciliation behavior

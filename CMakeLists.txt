@@ -238,14 +238,65 @@ add_library(engine_physics STATIC
 target_include_directories(engine_physics PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/JoltPhysics)
 target_link_libraries(engine_physics PUBLIC Jolt fmt::fmt spdlog::spdlog)
 
-add_library(engine_server STATIC
-    src/engine_server/server_session.cpp
+add_library(engine_gameplay STATIC
+    src/engine_gameplay/animation/animation_runtime.cpp
     src/engine_gameplay/animation/player_animation_graph.cpp
     src/engine_gameplay/animation/player_animation_types.cpp
+    src/engine_gameplay/animation/skeletal_animator.cpp
+    src/engine_gameplay/minigames/minigames.cpp
     src/engine_gameplay/player/player_controller.cpp
+    src/engine_gameplay/player/player_visuals.cpp
+)
+target_include_directories(engine_gameplay PUBLIC src)
+target_link_libraries(engine_gameplay PUBLIC engine_render engine_world engine_math glm::glm)
+
+add_library(engine_assets STATIC
+    src/engine_assets/cgltf_impl.cpp
+    src/engine_assets/skinned_model.cpp
+)
+target_include_directories(engine_assets PUBLIC src dependencies/cgltf)
+target_link_libraries(engine_assets PUBLIC engine_gameplay engine_render glm::glm)
+
+add_library(engine_audio STATIC
+    src/engine_audio/ui_audio.cpp
+)
+target_include_directories(engine_audio PUBLIC src dependencies/miniaudio)
+
+add_library(engine_ui STATIC
+    src/engine_ui/gui_menu.cpp
+)
+target_include_directories(engine_ui PUBLIC src)
+
+add_library(engine_runtime STATIC
+    src/engine_runtime/runtime_game_session.cpp
+    src/engine_runtime/runtime_session_controller.cpp
+    src/engine_runtime/runtime_world_state.cpp
+)
+target_include_directories(engine_runtime PUBLIC src)
+target_link_libraries(engine_runtime PUBLIC engine_core engine_net engine_render engine_ui engine_world)
+
+add_library(engine_presentation STATIC
+    src/engine_presentation/debug_scene_builder.cpp
+    src/engine_presentation/hud_composer.cpp
+)
+target_include_directories(engine_presentation PUBLIC src)
+target_link_libraries(
+    engine_presentation
+    PUBLIC
+        engine_assets
+        engine_gameplay
+        engine_net
+        engine_physics
+        engine_render
+        engine_ui
+        engine_world
+)
+
+add_library(engine_server STATIC
+    src/engine_server/server_session.cpp
 )
 target_include_directories(engine_server PUBLIC src)
-target_link_libraries(engine_server PUBLIC engine_world engine_math glm::glm)
+target_link_libraries(engine_server PUBLIC engine_gameplay engine_world engine_math glm::glm)
 
 add_library(engine_net STATIC
     src/engine_net/net_client.cpp
@@ -260,32 +311,39 @@ endif()
 
 add_library(engine STATIC
     src/engine/engine.cpp
-    src/engine_presentation/debug_scene_builder.cpp
-    src/engine_presentation/hud_composer.cpp
-    src/engine_runtime/runtime_game_session.cpp
-    src/engine_runtime/runtime_session_controller.cpp
-    src/engine_runtime/runtime_world_state.cpp
     src/platform/platform_services.cpp
-    src/engine_assets/cgltf_impl.cpp
-    src/engine_assets/skinned_model.cpp
-    src/engine_audio/ui_audio.cpp
-    src/engine_gameplay/animation/animation_runtime.cpp
-    src/engine_gameplay/animation/player_animation_graph.cpp
-    src/engine_gameplay/animation/player_animation_types.cpp
-    src/engine_gameplay/animation/skeletal_animator.cpp
-    src/engine_gameplay/minigames/minigames.cpp
-    src/engine_gameplay/player/player_controller.cpp
-    src/engine_gameplay/player/player_visuals.cpp
-    src/engine_ui/gui_menu.cpp
 )
 target_include_directories(engine PUBLIC src dependencies/miniaudio dependencies/cgltf)
-target_link_libraries(engine PUBLIC engine_core engine_render engine_physics engine_net engine_math engine_world platform_desktop)
+target_link_libraries(
+    engine
+    PUBLIC
+        engine_assets
+        engine_audio
+        engine_core
+        engine_gameplay
+        engine_math
+        engine_net
+        engine_physics
+        engine_presentation
+        engine_render
+        engine_runtime
+        engine_ui
+        engine_world
+        platform_desktop
+)
 if(VOXOV_ENABLE_XR)
     target_link_libraries(engine PUBLIC engine_xr)
     target_compile_definitions(engine PUBLIC VOXOV_ENABLE_XR=1)
 else()
     target_compile_definitions(engine PUBLIC VOXOV_ENABLE_XR=0)
 endif()
+
+add_library(game_runtime STATIC
+    src/game/game_runtime.cpp
+    src/game/desktop_runtime_adapter.cpp
+)
+target_include_directories(game_runtime PUBLIC src)
+target_link_libraries(game_runtime PUBLIC engine platform_desktop)
 
 set(VOXOV_PLATFORM_FUTURE_SOURCES "")
 if(VOXOV_ENABLE_IOS_BACKEND)
@@ -308,7 +366,7 @@ add_executable(voxov
 )
 target_include_directories(voxov PRIVATE src)
 target_link_libraries(voxov PRIVATE
-    engine
+    game_runtime
     glfw
     OpenGL::GL
 )

@@ -275,7 +275,7 @@ void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
   if (runtime_options.splitscreen) {
     update_third_person_camera(local_player_secondary, secondary_camera);
   }
-  refresh_overlay_text();
+  refresh_overlay_text(InputState{});
   rebuild_dynamic_debug_mesh();
 
   local_replication.network_id = local_player.network_id;
@@ -376,13 +376,6 @@ void Engine::leave_session() {
   }
   local_server_loopback = true;
   multiplayer_hint = "Left session.";
-}
-
-void Engine::set_input(const InputState &input_primary,
-                       const InputState &input_secondary, bool touch_mode) {
-  input_state = input_primary;
-  input_state_secondary = input_secondary;
-  touch_input_mode = touch_mode;
 }
 
 void Engine::shutdown() {
@@ -576,24 +569,24 @@ void Engine::sync_network_state(uint32_t sim_tick,
   }
 }
 
-void Engine::apply_runtime_toggles() {
-  if (input_state.debug_toggle_pressed) {
+void Engine::apply_runtime_toggles(const InputState &primary_input) {
+  if (primary_input.debug_toggle_pressed) {
     runtime_options.debug_collision = !runtime_options.debug_collision;
   }
-  if (input_state.debug_xray_toggle_pressed) {
+  if (primary_input.debug_xray_toggle_pressed) {
     runtime_options.debug_xray = !runtime_options.debug_xray;
   }
-  if (input_state.debug_collision_only_toggle_pressed) {
+  if (primary_input.debug_collision_only_toggle_pressed) {
     runtime_options.debug_collision_only =
         !runtime_options.debug_collision_only;
   }
-  if (input_state.debug_freeze_toggle_pressed) {
+  if (primary_input.debug_freeze_toggle_pressed) {
     runtime_options.debug_freeze = !runtime_options.debug_freeze;
     if (!runtime_options.debug_freeze) {
       frozen_debug_world = RenderMesh{};
     }
   }
-  if (input_state.debug_reconcile_toggle_pressed) {
+  if (primary_input.debug_reconcile_toggle_pressed) {
     const uint8_t next = (static_cast<uint8_t>(reconcile_mode) + 1u) % 3u;
     reconcile_mode = static_cast<ReconcileMode>(next);
     spdlog::info("Reconciliation mode -> {}",
@@ -732,20 +725,23 @@ void Engine::update_remote_interpolation(double frame_dt) {
   }
 }
 
-void Engine::tick(double frame_dt) {
+void Engine::tick(double frame_dt, EngineInputFrame input_frame) {
   const PerfClock::time_point frame_cpu_start = PerfClock::now();
   const FixedStep &fixed = game_session.fixed_step();
   last_frame_dt = frame_dt;
+  InputState &input_primary = input_frame.primary;
+  InputState &input_secondary = input_frame.secondary;
+  const bool touch_input_mode = input_frame.touch_mode;
 
-  apply_runtime_toggles();
-  process_menu_actions(input_state);
+  apply_runtime_toggles(input_primary);
+  process_menu_actions(input_primary);
 
-  InputState gameplay_input = input_state;
+  InputState gameplay_input = input_primary;
   if (gui_menu.open()) {
     disable_gameplay_actions(gameplay_input);
     gameplay_input.look_delta = glm::vec2(0.0f);
   }
-  InputState gameplay_input_secondary = input_state_secondary;
+  InputState gameplay_input_secondary = input_secondary;
   if (gui_menu.open()) {
     disable_gameplay_actions(gameplay_input_secondary);
     gameplay_input_secondary.look_delta = glm::vec2(0.0f);
@@ -779,7 +775,7 @@ void Engine::tick(double frame_dt) {
         }
       },
       .simulate_step =
-          [this, &gameplay_input, &gameplay_input_secondary,
+          [this, &gameplay_input, &gameplay_input_secondary, &input_primary,
            &jump_consumed](const RuntimeGameSessionStepContext &step) {
             local_player_prev_position = local_player.transform.position;
             InputState step_input = gameplay_input;
@@ -823,7 +819,7 @@ void Engine::tick(double frame_dt) {
                                            local_player_secondary_animation,
                                            step.dt);
             }
-            jump_consumed = jump_consumed || input_state.jump_pressed;
+            jump_consumed = jump_consumed || input_primary.jump_pressed;
 
             sync_network_state(static_cast<uint32_t>(step.tick), step_input);
 
@@ -836,8 +832,8 @@ void Engine::tick(double frame_dt) {
   const double fixed_cpu_ms = game_session.fixed_cpu_ms();
   const uint32_t fixed_steps_this_frame = game_session.fixed_steps_last_frame();
 
-  input_state.jump_pressed = false;
-  input_state.interact_pressed = false;
+  input_primary.jump_pressed = false;
+  input_primary.interact_pressed = false;
 
   const float alpha = static_cast<float>(
       std::clamp(fixed.accumulator / fixed.fixed_dt, 0.0, 1.0));
@@ -864,14 +860,14 @@ void Engine::tick(double frame_dt) {
   if (runtime_options.devhud) {
     const MovementDebug movement_debug =
         PlayerControllerSystem::compute_movement_vectors(
-            local_player.camera_rig.yaw, input_state.move);
+            local_player.camera_rig.yaw, input_primary.move);
 
-    const bool any_non_zero = std::fabs(input_state.look_delta.x) > 0.0001f ||
-                              std::fabs(input_state.look_delta.y) > 0.0001f ||
-                              std::fabs(input_state.move.x) > 0.0001f ||
-                              std::fabs(input_state.move.y) > 0.0001f ||
-                              input_state.key_w || input_state.key_a ||
-                              input_state.key_s || input_state.key_d;
+    const bool any_non_zero =
+        std::fabs(input_primary.look_delta.x) > 0.0001f ||
+        std::fabs(input_primary.look_delta.y) > 0.0001f ||
+        std::fabs(input_primary.move.x) > 0.0001f ||
+        std::fabs(input_primary.move.y) > 0.0001f || input_primary.key_w ||
+        input_primary.key_a || input_primary.key_s || input_primary.key_d;
 
     log_accumulator += frame_dt;
     if (any_non_zero && log_accumulator >= 0.2) {
@@ -885,11 +881,11 @@ void Engine::tick(double frame_dt) {
           "vel=({:.2f},{:.2f},{:.2f}) grounded={} pen={:.3f} "
           "n=({:.2f},{:.2f},{:.2f}) mode[rmb={} lock={} look_en={}] remotes={} "
           "noclip={}",
-          frame_dt, fixed.fixed_dt, input_state.look_delta.x,
-          input_state.look_delta.y, input_state.key_w ? 1 : 0,
-          input_state.key_a ? 1 : 0, input_state.key_s ? 1 : 0,
-          input_state.key_d ? 1 : 0, input_state.move.x, input_state.move.y,
-          input_state.look_delta.x, input_state.look_delta.y,
+          frame_dt, fixed.fixed_dt, input_primary.look_delta.x,
+          input_primary.look_delta.y, input_primary.key_w ? 1 : 0,
+          input_primary.key_a ? 1 : 0, input_primary.key_s ? 1 : 0,
+          input_primary.key_d ? 1 : 0, input_primary.move.x, input_primary.move.y,
+          input_primary.look_delta.x, input_primary.look_delta.y,
           local_player.camera_rig.yaw, local_player.camera_rig.pitch,
           movement_debug.forward.x, movement_debug.forward.y,
           movement_debug.forward.z, movement_debug.right.x,
@@ -905,8 +901,9 @@ void Engine::tick(double frame_dt) {
           last_collision_debug.penetration_correction,
           last_collision_debug.contact_normal.x,
           last_collision_debug.contact_normal.y,
-          last_collision_debug.contact_normal.z, input_state.rmb_down ? 1 : 0,
-          input_state.pointer_locked ? 1 : 0, input_state.look_enabled ? 1 : 0,
+          last_collision_debug.contact_normal.z, input_primary.rmb_down ? 1 : 0,
+          input_primary.pointer_locked ? 1 : 0,
+          input_primary.look_enabled ? 1 : 0,
           static_cast<int>(remote_players.size()),
           runtime_options.noclip ? 1 : 0);
     }
@@ -952,7 +949,7 @@ void Engine::tick(double frame_dt) {
     }
   }
 
-  refresh_overlay_text();
+  refresh_overlay_text(input_primary);
   if (!runtime_options.debug_freeze || frozen_debug_world.vertices.empty()) {
     rebuild_dynamic_debug_mesh();
     if (runtime_options.debug_freeze) {
@@ -1707,7 +1704,8 @@ void Engine::update_spherical_player_sim(const InputState &input, float dt) {
                                                  was_grounded);
 }
 
-RuntimeHudSnapshot Engine::build_hud_snapshot() const {
+RuntimeHudSnapshot Engine::build_hud_snapshot(
+    const InputState &primary_input) const {
   const FixedStep &fixed = game_session.fixed_step();
 
   RuntimeHudSnapshot snapshot{};
@@ -1840,9 +1838,10 @@ RuntimeHudSnapshot Engine::build_hud_snapshot() const {
         last_collision_debug.contact_normal.x,
         last_collision_debug.contact_normal.y,
         last_collision_debug.contact_normal.z, local_player.camera_rig.yaw,
-        local_player.camera_rig.pitch, input_state.look_delta.x,
-        input_state.look_delta.y, input_state.rmb_down ? 1 : 0,
-        input_state.pointer_locked ? 1 : 0, input_state.look_enabled ? 1 : 0,
+        local_player.camera_rig.pitch, primary_input.look_delta.x,
+        primary_input.look_delta.y, primary_input.rmb_down ? 1 : 0,
+        primary_input.pointer_locked ? 1 : 0,
+        primary_input.look_enabled ? 1 : 0,
         static_cast<int>(remote_render_players.size()),
         render_stats.net_connected ? 1 : 0, render_stats.net_local_player_id,
         client_net_stats.tx_packets_per_sec,
@@ -1965,8 +1964,8 @@ RuntimeDebugSceneSnapshot Engine::build_debug_scene_snapshot() const {
   return snapshot;
 }
 
-void Engine::refresh_overlay_text() {
-  hud_composer.compose(build_hud_snapshot(), render_stats, scene);
+void Engine::refresh_overlay_text(const InputState &primary_input) {
+  hud_composer.compose(build_hud_snapshot(primary_input), render_stats, scene);
 }
 
 void Engine::rebuild_dynamic_debug_mesh() {

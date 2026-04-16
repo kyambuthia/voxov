@@ -46,14 +46,18 @@ struct EngineRuntimeOptions {
   PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
 };
 
+struct EngineInputFrame {
+  InputState primary{};
+  InputState secondary{};
+  bool touch_mode = false;
+};
+
 class Engine {
 public:
   void init(void *window_handle, const EngineRuntimeOptions &options);
   void connect(const char *host, uint16_t port);
   void shutdown();
-  void tick(double frame_dt);
-  void set_input(const InputState &input_primary,
-                 const InputState &input_secondary, bool touch_mode);
+  void tick(double frame_dt, EngineInputFrame input_frame);
   const RenderStats &stats() const;
 
 private:
@@ -112,7 +116,6 @@ private:
   glm::vec3 vehicle_seat_world_position() const;
   glm::vec3 aircraft_seat_world_position() const;
   void rebuild_dynamic_debug_mesh();
-  void refresh_overlay_text();
   void update_third_person_camera(PlayerEntity &player, Camera &out_camera);
   void update_third_person_camera(PlayerEntity &player,
                                   const glm::vec3 &render_position,
@@ -124,11 +127,12 @@ private:
   void record_prediction_history(uint32_t sim_tick,
                                  const InputState &step_input);
   void reconcile_local_player_from_snapshot(uint32_t current_sim_tick);
-  void apply_runtime_toggles();
+  void apply_runtime_toggles(const InputState &primary_input);
   void process_menu_actions(const InputState &primary_input);
   RuntimeSessionSnapshot session_snapshot() const;
-  RuntimeHudSnapshot build_hud_snapshot() const;
+  RuntimeHudSnapshot build_hud_snapshot(const InputState &primary_input) const;
   RuntimeDebugSceneSnapshot build_debug_scene_snapshot() const;
+  void refresh_overlay_text(const InputState &primary_input);
   void update_remote_interpolation(double frame_dt);
 
   Renderer renderer;
@@ -162,9 +166,6 @@ private:
 
   RenderScene scene;
   RenderStats render_stats;
-  InputState input_state{};
-  InputState input_state_secondary{};
-  bool touch_input_mode = false;
   GuiMenu gui_menu;
   RuntimeSessionController session_controller;
   DebugSceneBuilder debug_scene_builder;

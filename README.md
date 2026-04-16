@@ -57,6 +57,10 @@ ctest --test-dir build/desktop/main --output-on-failure
 
 The codebase is designed reasonably well for a fast-moving prototype: the desktop renderer is now aligned to an OpenGL-first, GLES3/WebGL2-class target, the build graph is split into engine modules, and CI validates packaged artifacts. The main design debt is architectural drift between the desktop runtime and the Android/Web runtimes, plus a large `Engine` orchestration layer that owns too many responsibilities.
 
+The current refactor target is a shared `GameRuntime` layer with thin platform adapters so
+desktop, Android, and Web converge on one runtime contract instead of maintaining parallel
+orchestration paths.
+
 ## Docs
 
 - Setup: `docs/SETUP.md`

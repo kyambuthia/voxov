@@ -1,12 +1,11 @@
-#include "engine/engine.hpp"
 #include "engine_core/timing.hpp"
-#include "engine_input/input_state.hpp"
 #include "engine_net/net_server.hpp"
+#include "game/desktop_runtime_adapter.hpp"
+#include "game/game_runtime.hpp"
 #include "platform/platform.hpp"
-#include "platform/desktop/input_desktop.hpp"
+#include "platform/platform_services.hpp"
 
 #include <GLFW/glfw3.h>
-#include <glm/glm.hpp>
 
 #include <atomic>
 #include <chrono>
@@ -22,56 +21,6 @@ std::atomic<bool> keep_running{true};
 
 void on_signal(int) {
     keep_running = false;
-}
-
-InputState poll_secondary_split_input(GLFWwindow *window) {
-    InputState out{};
-    if (!window) {
-        return out;
-    }
-
-    if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
-        out.move.y += 1.0f;
-    }
-    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
-        out.move.y -= 1.0f;
-    }
-    if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
-        out.move.x += 1.0f;
-    }
-    if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
-        out.move.x -= 1.0f;
-    }
-    if (out.move.x != 0.0f || out.move.y != 0.0f) {
-        out.move = glm::normalize(out.move);
-    }
-
-    constexpr float look_speed = 5.0f;
-    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
-        out.look_delta.x -= look_speed;
-    }
-    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
-        out.look_delta.x += look_speed;
-    }
-    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
-        out.look_delta.y -= look_speed;
-    }
-    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
-        out.look_delta.y += look_speed;
-    }
-
-    const bool rctrl_down =
-        glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS ||
-        glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS;
-    out.jump_held = rctrl_down;
-    out.jump_pressed = rctrl_down;
-    out.sprint_held =
-        glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS ||
-        glfwGetKey(window, GLFW_KEY_SLASH) == GLFW_PRESS;
-    out.crouch_held =
-        glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
-
-    return out;
 }
 }
 
@@ -199,9 +148,14 @@ int main(int argc, char **argv) {
         return 1;
     }
 
-    Engine engine;
+    GameRuntime runtime;
+    DesktopRuntimePlatformAdapter runtime_platform(platform);
+    DesktopRuntimeInputAdapter runtime_input(platform, splitscreen);
+    const PlatformServices platform_services = PlatformServices::desktop_default();
     try {
-        EngineRuntimeOptions options{};
+        GameRuntimeInitParams init_params{};
+        init_params.platform = RuntimePlatform::Desktop;
+        GameRuntimeOptions options{};
         options.devhud = devhud;
         options.noclip = noclip;
         options.splitscreen = splitscreen;
@@ -212,9 +166,20 @@ int main(int argc, char **argv) {
         options.vehicle_sandbox = vehicle_sandbox;
         options.spherical_planet = spherical_planet;
         options.physics_backend = physics_backend;
-        engine.init(platform.native_window(), options);
+        init_params.options = options;
+        init_params.input_adapter = &runtime_input;
+        init_params.platform_adapter = &runtime_platform;
+        init_params.platform_services = &platform_services;
+        if (!runtime.init(init_params)) {
+            std::fprintf(stderr, "Runtime init failed\n");
+            platform.shutdown();
+            if (server_started) {
+                server.shutdown();
+            }
+            return 1;
+        }
     } catch (const std::exception &e) {
-        std::fprintf(stderr, "Engine init failed: %s\n", e.what());
+        std::fprintf(stderr, "Runtime init failed: %s\n", e.what());
         platform.shutdown();
         if (server_started) {
             server.shutdown();
@@ -223,41 +188,35 @@ int main(int argc, char **argv) {
     }
 
     if (connect_host) {
-        engine.connect(connect_host, connect_port);
+        runtime.connect(connect_host, connect_port);
     }
 
     FramePacer pacer;
     pacer.init(120.0);
-    DesktopInputBackend desktop_input(platform.glfw_window());
     bool f11_was_down = false;
 
-    while (!platform.should_close() && keep_running.load()) {
+    while (!runtime.should_close() && keep_running.load()) {
         pacer.begin_frame();
-        platform.poll_events();
+        if (server_started) {
+            server.pump();
+        }
+
+        runtime.tick(pacer.frame_dt());
 
         const bool f11_down = glfwGetKey(platform.glfw_window(), GLFW_KEY_F11) == GLFW_PRESS;
         if (f11_down && !f11_was_down) {
             platform.toggle_fullscreen();
         }
         f11_was_down = f11_down;
-
-        const InputState input = desktop_input.poll();
-        const InputState input_secondary = splitscreen ? poll_secondary_split_input(platform.glfw_window()) : InputState{};
-        engine.set_input(input, input_secondary, false);
-        if (server_started) {
-            server.pump();
-        }
-
-        engine.tick(pacer.frame_dt());
         pacer.end_frame();
 
-        const RenderStats &stats = engine.stats();
+        const RenderStats &stats = runtime.stats();
         char title[128]{};
         std::snprintf(title, sizeof(title), "VOXOV  FPS: %.1f  CPU: %.2fms", stats.fps, stats.cpu_ms);
         platform.set_window_title(title);
     }
 
-    engine.shutdown();
+    runtime.shutdown();
     platform.shutdown();
 
     if (server_started) {

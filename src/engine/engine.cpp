@@ -163,14 +163,15 @@ void disable_gameplay_actions(InputState &input) {
 
 void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
   runtime_options = options;
+  session_state_.devhud_enabled = runtime_options.devhud;
+  session_state_.noclip_enabled = runtime_options.noclip;
+  session_state_.gameplay_started = false;
+  session_state_.menu_open = true;
+  session_state_.selected_character = GuiMenu::Character::Capsule;
   platform_services = PlatformServices::desktop_default();
   game_session.reset();
-  session_controller.set_devhud_enabled(runtime_options.devhud);
-  session_controller.set_noclip_enabled(runtime_options.noclip);
-  session_controller.set_gameplay_started(false);
   spdlog::info("Engine init: backend=OpenGL save_path={}",
                platform_services.session_state_path().generic_string());
-  gui_menu.set_character(GuiMenu::Character::Capsule);
 
   EnginePhysicsSettings settings{};
   settings.solver_backend = runtime_options.physics_backend;
@@ -185,7 +186,6 @@ void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
   if (!net_client.init()) {
     spdlog::error("NetClient init failed; multiplayer disabled until restart");
   }
-  ui_audio.init();
 
   build_static_scene();
   world_state.load_persistent_state(platform_services);
@@ -289,9 +289,7 @@ void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
 
   try_load_character_model(platform_services, humanoid_player_model, "humanoid",
                            "CesiumMan.glb", has_humanoid_player_model);
-  gui_menu.set_character(has_humanoid_player_model
-                             ? GuiMenu::Character::Humanoid
-                             : GuiMenu::Character::Capsule);
+  session_state_.selected_character = preferred_character();
 
   try {
     renderer.init(window_handle);
@@ -378,6 +376,135 @@ void Engine::leave_session() {
   multiplayer_hint = "Left session.";
 }
 
+void Engine::set_session_state(const EngineSessionState &state) {
+  session_state_ = state;
+  runtime_options.devhud = state.devhud_enabled;
+  runtime_options.noclip = state.noclip_enabled;
+}
+
+void Engine::apply_debug_toggles(const InputState &primary_input) {
+  if (primary_input.debug_toggle_pressed) {
+    runtime_options.debug_collision = !runtime_options.debug_collision;
+  }
+  if (primary_input.debug_xray_toggle_pressed) {
+    runtime_options.debug_xray = !runtime_options.debug_xray;
+  }
+  if (primary_input.debug_collision_only_toggle_pressed) {
+    runtime_options.debug_collision_only =
+        !runtime_options.debug_collision_only;
+  }
+  if (primary_input.debug_freeze_toggle_pressed) {
+    runtime_options.debug_freeze = !runtime_options.debug_freeze;
+    if (!runtime_options.debug_freeze) {
+      frozen_debug_world = RenderMesh{};
+    }
+  }
+  if (primary_input.debug_reconcile_toggle_pressed) {
+    const uint8_t next = (static_cast<uint8_t>(reconcile_mode) + 1u) % 3u;
+    reconcile_mode = static_cast<ReconcileMode>(next);
+    spdlog::info("Reconciliation mode -> {}",
+                 reconcile_mode_name(static_cast<uint8_t>(reconcile_mode)));
+  }
+}
+
+void Engine::update_session_flow(double frame_dt) {
+  if (local_server_running && !local_server_loopback) {
+    lan_discovery.pump();
+  }
+
+  const NetClientConnectionState connection_state =
+      net_client.connection_state();
+  if (connection_state == NetClientConnectionState::Connecting) {
+    net_connect_elapsed += frame_dt;
+    if (net_connect_elapsed >= 5.0) {
+      stop_client_session();
+      multiplayer_hint = "Connection timed out.";
+    }
+  } else {
+    net_connect_elapsed = 0.0;
+  }
+
+  if (connection_state != last_net_connection_state) {
+    if (connection_state == NetClientConnectionState::Connected) {
+      multiplayer_hint.clear();
+    } else if (last_net_connection_state ==
+                   NetClientConnectionState::Connected &&
+               multiplayer_hint != "Left session.") {
+      multiplayer_hint = "Disconnected from server.";
+    }
+    last_net_connection_state = connection_state;
+  }
+
+  if (searching_nearby &&
+      connection_state == NetClientConnectionState::Disconnected) {
+    lan_discovery.pump();
+    LanHostEntry host{};
+    if (lan_discovery.pop_host(host)) {
+      if (net_client.connect(host.ip.c_str(), host.port)) {
+        NetChunkInterest interest{};
+        interest.center_x = 0;
+        interest.center_z = 0;
+        interest.radius = 2;
+        net_client.set_chunk_interest(interest);
+        last_chunk_interest = interest;
+        has_last_chunk_interest = true;
+        searching_nearby = false;
+        net_connect_elapsed = 0.0;
+        multiplayer_hint = "Joining " + host.name + " (" + host.ip + ")";
+      } else {
+        multiplayer_hint = "Join failed. Retrying discovery...";
+      }
+    }
+  } else if (searching_nearby &&
+             connection_state == NetClientConnectionState::Connected) {
+    searching_nearby = false;
+  }
+}
+
+void Engine::host_local_session() {
+  leave_session();
+  start_local_server(7777, true);
+  connect("127.0.0.1", 7777);
+  lan_discovery.stop();
+  searching_nearby = false;
+  multiplayer_hint = "Hosting this device only.";
+}
+
+void Engine::host_lan_session() {
+  leave_session();
+  start_local_server(7777, false);
+  connect("127.0.0.1", 7777);
+  lan_discovery.start_host(7777, "VOXOV Host");
+  searching_nearby = false;
+  multiplayer_hint =
+      "Hosting Wi-Fi game. Tell friends: Multiplayer > Join Nearby.";
+}
+
+void Engine::join_nearby_session() {
+  stop_client_session();
+  if (local_server_running) {
+    local_server.shutdown();
+    local_server_running = false;
+    local_server_loopback = true;
+  }
+  lan_discovery.stop();
+  lan_discovery.start_client();
+  searching_nearby = true;
+  net_connect_elapsed = 0.0;
+  multiplayer_hint = "Searching nearby Wi-Fi hosts...";
+}
+
+void Engine::reset_camera() {
+  local_player.camera_rig.yaw = 180.0f;
+  local_player.camera_rig.pitch = -12.0f;
+  local_player.camera_rig.distance = 5.0f;
+}
+
+GuiMenu::Character Engine::preferred_character() const {
+  return has_humanoid_player_model ? GuiMenu::Character::Humanoid
+                                   : GuiMenu::Character::Capsule;
+}
+
 void Engine::shutdown() {
   world_state.save_persistent_state(platform_services);
   lan_discovery.stop();
@@ -386,7 +513,6 @@ void Engine::shutdown() {
     local_server_running = false;
   }
   renderer.shutdown();
-  ui_audio.shutdown();
   net_client.disconnect();
   net_client.shutdown();
   physics.shutdown();
@@ -569,129 +695,6 @@ void Engine::sync_network_state(uint32_t sim_tick,
   }
 }
 
-void Engine::apply_runtime_toggles(const InputState &primary_input) {
-  if (primary_input.debug_toggle_pressed) {
-    runtime_options.debug_collision = !runtime_options.debug_collision;
-  }
-  if (primary_input.debug_xray_toggle_pressed) {
-    runtime_options.debug_xray = !runtime_options.debug_xray;
-  }
-  if (primary_input.debug_collision_only_toggle_pressed) {
-    runtime_options.debug_collision_only =
-        !runtime_options.debug_collision_only;
-  }
-  if (primary_input.debug_freeze_toggle_pressed) {
-    runtime_options.debug_freeze = !runtime_options.debug_freeze;
-    if (!runtime_options.debug_freeze) {
-      frozen_debug_world = RenderMesh{};
-    }
-  }
-  if (primary_input.debug_reconcile_toggle_pressed) {
-    const uint8_t next = (static_cast<uint8_t>(reconcile_mode) + 1u) % 3u;
-    reconcile_mode = static_cast<ReconcileMode>(next);
-    spdlog::info("Reconciliation mode -> {}",
-                 reconcile_mode_name(static_cast<uint8_t>(reconcile_mode)));
-  }
-}
-
-void Engine::process_menu_actions(const InputState &primary_input) {
-  const RuntimeSessionMenuCallbacks callbacks{
-      .leave_session = [this]() { leave_session(); },
-      .host_local = [this]() {
-        leave_session();
-        start_local_server(7777, true);
-        connect("127.0.0.1", 7777);
-        lan_discovery.stop();
-        searching_nearby = false;
-        multiplayer_hint = "Hosting this device only.";
-      },
-      .host_lan = [this]() {
-        leave_session();
-        start_local_server(7777, false);
-        connect("127.0.0.1", 7777);
-        lan_discovery.start_host(7777, "VOXOV Host");
-        searching_nearby = false;
-        multiplayer_hint =
-            "Hosting Wi-Fi game. Tell friends: Multiplayer > Join Nearby.";
-      },
-      .join_nearby = [this]() {
-        stop_client_session();
-        if (local_server_running) {
-          local_server.shutdown();
-          local_server_running = false;
-          local_server_loopback = true;
-        }
-        lan_discovery.stop();
-        lan_discovery.start_client();
-        searching_nearby = true;
-        net_connect_elapsed = 0.0;
-        multiplayer_hint = "Searching nearby Wi-Fi hosts...";
-      }};
-  const RuntimeMenuResult menu_result =
-      session_controller.handle_menu_input(primary_input, gui_menu, callbacks);
-  if (menu_result.ui_move_sfx) {
-    ui_audio.play_move();
-  }
-  if (menu_result.ui_select_sfx) {
-    ui_audio.play_click();
-  }
-  runtime_options.devhud = session_controller.devhud_enabled();
-  runtime_options.noclip = session_controller.noclip_enabled();
-  if (local_server_running && !local_server_loopback) {
-    lan_discovery.pump();
-  }
-  const NetClientConnectionState connection_state =
-      net_client.connection_state();
-  if (connection_state == NetClientConnectionState::Connecting) {
-    net_connect_elapsed += last_frame_dt;
-    if (net_connect_elapsed >= 5.0) {
-      stop_client_session();
-      multiplayer_hint = "Connection timed out.";
-    }
-  } else {
-    net_connect_elapsed = 0.0;
-  }
-  if (connection_state != last_net_connection_state) {
-    if (connection_state == NetClientConnectionState::Connected) {
-      multiplayer_hint.clear();
-    } else if (last_net_connection_state ==
-                   NetClientConnectionState::Connected &&
-               multiplayer_hint != "Left session.") {
-      multiplayer_hint = "Disconnected from server.";
-    }
-    last_net_connection_state = connection_state;
-  }
-  if (searching_nearby &&
-      connection_state == NetClientConnectionState::Disconnected) {
-    lan_discovery.pump();
-    LanHostEntry host{};
-    if (lan_discovery.pop_host(host)) {
-      if (net_client.connect(host.ip.c_str(), host.port)) {
-        NetChunkInterest interest{};
-        interest.center_x = 0;
-        interest.center_z = 0;
-        interest.radius = 2;
-        net_client.set_chunk_interest(interest);
-        last_chunk_interest = interest;
-        has_last_chunk_interest = true;
-        searching_nearby = false;
-        net_connect_elapsed = 0.0;
-        multiplayer_hint = "Joining " + host.name + " (" + host.ip + ")";
-      } else {
-        multiplayer_hint = "Join failed. Retrying discovery...";
-      }
-    }
-  } else if (searching_nearby &&
-             connection_state == NetClientConnectionState::Connected) {
-    searching_nearby = false;
-  }
-  if (menu_result.reset_camera_requested) {
-    local_player.camera_rig.yaw = 180.0f;
-    local_player.camera_rig.pitch = -12.0f;
-    local_player.camera_rig.distance = 5.0f;
-  }
-}
-
 RuntimeSessionSnapshot Engine::session_snapshot() const {
   RuntimeSessionSnapshot snapshot{};
   snapshot.connection_state = net_client.connection_state();
@@ -733,20 +736,19 @@ void Engine::tick(double frame_dt, EngineInputFrame input_frame) {
   InputState &input_secondary = input_frame.secondary;
   const bool touch_input_mode = input_frame.touch_mode;
 
-  apply_runtime_toggles(input_primary);
-  process_menu_actions(input_primary);
+  apply_debug_toggles(input_primary);
 
   InputState gameplay_input = input_primary;
-  if (gui_menu.open()) {
+  if (session_state_.menu_open) {
     disable_gameplay_actions(gameplay_input);
     gameplay_input.look_delta = glm::vec2(0.0f);
   }
   InputState gameplay_input_secondary = input_secondary;
-  if (gui_menu.open()) {
+  if (session_state_.menu_open) {
     disable_gameplay_actions(gameplay_input_secondary);
     gameplay_input_secondary.look_delta = glm::vec2(0.0f);
   }
-  if (!session_controller.gameplay_started()) {
+  if (!session_state_.gameplay_started) {
     disable_gameplay_actions(gameplay_input);
     gameplay_input_secondary = gameplay_input;
   }
@@ -1182,8 +1184,8 @@ void Engine::handle_vehicle_interaction(const InputState &input) {
     vehicle.occupied = false;
     return;
   }
-  if (!input.interact_pressed || gui_menu.open() ||
-      !session_controller.gameplay_started()) {
+  if (!input.interact_pressed || session_state_.menu_open ||
+      !session_state_.gameplay_started) {
     return;
   }
   if (aircraft.occupied) {
@@ -1239,8 +1241,8 @@ void Engine::handle_aircraft_interaction(const InputState &input) {
     aircraft.occupied = false;
     return;
   }
-  if (!input.interact_pressed || gui_menu.open() ||
-      !session_controller.gameplay_started()) {
+  if (!input.interact_pressed || session_state_.menu_open ||
+      !session_state_.gameplay_started) {
     return;
   }
   if (vehicle.occupied) {
@@ -1298,7 +1300,7 @@ void Engine::handle_objective_interaction(const InputState &input) {
   world_state.nearby_objective_node = -1;
   world_state.objective_hint.clear();
 
-  if (!session_controller.gameplay_started() || gui_menu.open()) {
+  if (!session_state_.gameplay_started || session_state_.menu_open) {
     return;
   }
   if (active_minigame.active) {
@@ -1371,7 +1373,7 @@ void Engine::handle_minigame_interaction(const InputState &input) {
   nearby_minigame_hotspot = -1;
   minigame_hint.clear();
 
-  if (!session_controller.gameplay_started() || gui_menu.open()) {
+  if (!session_state_.gameplay_started || session_state_.menu_open) {
     return;
   }
 
@@ -1710,9 +1712,7 @@ RuntimeHudSnapshot Engine::build_hud_snapshot(
 
   RuntimeHudSnapshot snapshot{};
   snapshot.devhud_enabled = runtime_options.devhud;
-  snapshot.menu_view = gui_menu.build_view(
-      runtime_options.devhud, runtime_options.noclip,
-      session_controller.build_session_context(session_snapshot()));
+  snapshot.menu_view = session_state_.menu_view;
   snapshot.show_objective_panel = !snapshot.menu_view.open;
 
   snapshot.objective_status =
@@ -1893,8 +1893,8 @@ RuntimeDebugSceneSnapshot Engine::build_debug_scene_snapshot() const {
   snapshot.splitscreen = runtime_options.splitscreen;
   snapshot.spherical_planet = runtime_options.spherical_planet;
   snapshot.render_skeleton_only =
-      gui_menu.character() == GuiMenu::Character::Skeleton;
-  if (gui_menu.character() == GuiMenu::Character::Humanoid &&
+      session_state_.selected_character == GuiMenu::Character::Skeleton;
+  if (session_state_.selected_character == GuiMenu::Character::Humanoid &&
       has_humanoid_player_model) {
     snapshot.selected_player_model = &humanoid_player_model;
   }

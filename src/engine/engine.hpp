@@ -1,7 +1,6 @@
 #pragma once
 
 #include "engine_assets/skinned_model.hpp"
-#include "engine_audio/ui_audio.hpp"
 #include "engine_gameplay/animation/animation_runtime.hpp"
 #include "engine_gameplay/minigames/minigames.hpp"
 #include "engine_gameplay/player/player_components.hpp"
@@ -52,6 +51,15 @@ struct EngineInputFrame {
   bool touch_mode = false;
 };
 
+struct EngineSessionState {
+  bool devhud_enabled = false;
+  bool noclip_enabled = false;
+  bool gameplay_started = false;
+  bool menu_open = true;
+  GuiMenu::Character selected_character = GuiMenu::Character::Capsule;
+  GuiMenuView menu_view{};
+};
+
 class Engine {
 public:
   void init(void *window_handle, const EngineRuntimeOptions &options);
@@ -59,6 +67,15 @@ public:
   void shutdown();
   void tick(double frame_dt, EngineInputFrame input_frame);
   const RenderStats &stats() const;
+  void set_session_state(const EngineSessionState &state);
+  RuntimeSessionSnapshot session_snapshot() const;
+  void update_session_flow(double frame_dt);
+  void host_local_session();
+  void host_lan_session();
+  void join_nearby_session();
+  void leave_session();
+  void reset_camera();
+  GuiMenu::Character preferred_character() const;
 
 private:
   struct RemoteRenderPlayer {
@@ -123,13 +140,10 @@ private:
   void sync_network_state(uint32_t sim_tick, const InputState &net_input);
   void start_local_server(uint16_t port, bool loopback_only);
   void stop_client_session();
-  void leave_session();
   void record_prediction_history(uint32_t sim_tick,
                                  const InputState &step_input);
   void reconcile_local_player_from_snapshot(uint32_t current_sim_tick);
-  void apply_runtime_toggles(const InputState &primary_input);
-  void process_menu_actions(const InputState &primary_input);
-  RuntimeSessionSnapshot session_snapshot() const;
+  void apply_debug_toggles(const InputState &primary_input);
   RuntimeHudSnapshot build_hud_snapshot(const InputState &primary_input) const;
   RuntimeDebugSceneSnapshot build_debug_scene_snapshot() const;
   void refresh_overlay_text(const InputState &primary_input);
@@ -166,11 +180,9 @@ private:
 
   RenderScene scene;
   RenderStats render_stats;
-  GuiMenu gui_menu;
-  RuntimeSessionController session_controller;
+  EngineSessionState session_state_{};
   DebugSceneBuilder debug_scene_builder;
   HudComposer hud_composer;
-  UiAudio ui_audio;
   SkinnedModel humanoid_player_model;
   bool has_humanoid_player_model = false;
   PlayerAnimationRuntime local_player_animation;

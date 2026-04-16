@@ -1,6 +1,9 @@
 #include "game/game_runtime.hpp"
 
+#include "engine_audio/ui_audio.hpp"
 #include "engine/engine.hpp"
+#include "engine_runtime/runtime_session_controller.hpp"
+#include "engine_ui/gui_menu.hpp"
 #include "platform/platform_services.hpp"
 
 namespace {
@@ -31,7 +34,13 @@ public:
         platform_services = params.platform_services;
         input_adapter = params.input_adapter;
         platform_adapter = params.platform_adapter;
+        session_controller.set_devhud_enabled(params.options.devhud);
+        session_controller.set_noclip_enabled(params.options.noclip);
+        session_controller.set_gameplay_started(false);
         engine.init(platform_adapter->native_window(), to_engine_options(params.options));
+        ui_audio.init();
+        gui_menu.set_character(engine.preferred_character());
+        sync_session_state();
         initialized = true;
         return true;
     }
@@ -40,6 +49,7 @@ public:
         if (!initialized) {
             return;
         }
+        ui_audio.shutdown();
         engine.shutdown();
         initialized = false;
     }
@@ -59,6 +69,30 @@ public:
         if (input_adapter != nullptr) {
             input_frame = input_adapter->poll_input();
         }
+
+        const RuntimeSessionMenuCallbacks callbacks{
+            .leave_session = [this]() { engine.leave_session(); },
+            .host_local = [this]() { engine.host_local_session(); },
+            .host_lan = [this]() { engine.host_lan_session(); },
+            .join_nearby = [this]() { engine.join_nearby_session(); },
+        };
+        const RuntimeMenuResult menu_result =
+            session_controller.handle_menu_input(
+                input_frame.primary,
+                gui_menu,
+                callbacks);
+        if (menu_result.ui_move_sfx) {
+            ui_audio.play_move();
+        }
+        if (menu_result.ui_select_sfx) {
+            ui_audio.play_click();
+        }
+        if (menu_result.reset_camera_requested) {
+            engine.reset_camera();
+        }
+
+        engine.update_session_flow(frame_dt);
+        sync_session_state();
 
         engine.tick(
             frame_dt,
@@ -81,9 +115,28 @@ public:
         engine.connect(host, port);
     }
 
+private:
+    void sync_session_state() {
+        const RuntimeSessionSnapshot snapshot = engine.session_snapshot();
+        engine.set_session_state(EngineSessionState{
+            .devhud_enabled = session_controller.devhud_enabled(),
+            .noclip_enabled = session_controller.noclip_enabled(),
+            .gameplay_started = session_controller.gameplay_started(),
+            .menu_open = gui_menu.open(),
+            .selected_character = gui_menu.character(),
+            .menu_view = gui_menu.build_view(
+                session_controller.devhud_enabled(),
+                session_controller.noclip_enabled(),
+                session_controller.build_session_context(snapshot)),
+        });
+    }
+
     RuntimePlatform platform = RuntimePlatform::Desktop;
     const PlatformServices *platform_services = nullptr;
     Engine engine{};
+    RuntimeSessionController session_controller{};
+    GuiMenu gui_menu{};
+    UiAudio ui_audio{};
     IRuntimeInputAdapter *input_adapter = nullptr;
     IRuntimePlatformAdapter *platform_adapter = nullptr;
     GameRuntimeInputFrame input_frame{};

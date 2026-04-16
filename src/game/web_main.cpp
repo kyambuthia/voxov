@@ -1,6 +1,7 @@
 #include "engine_input/input_state.hpp"
 #include "engine_runtime/runtime_session_controller.hpp"
 #include "engine_ui/gui_menu.hpp"
+#include "game/web_session_flow.hpp"
 
 #include <GLES3/gl3.h>
 #include <emscripten/emscripten.h>
@@ -53,9 +54,7 @@ struct WebAppState {
     float t = 0.0f;
     GuiMenu menu{};
     RuntimeSessionController session_controller{};
-    bool hosting_local = false;
-    bool hosting_lan = false;
-    bool joined = false;
+    WebSessionFlow session_flow{};
     int remote_count = 0;
 
     float x = 8.0f;
@@ -65,6 +64,12 @@ struct WebAppState {
     float vy = 0.0f;
     float vz = 0.0f;
     float yaw = 3.14159f;
+    struct Telemetry {
+        int frames = 0;
+        double frame_ms_sum = 0.0;
+        double fps = 0.0;
+        double frame_ms = 0.0;
+    } telemetry{};
 };
 
 InputState poll_web_input() {
@@ -135,22 +140,7 @@ void simulate_local_player(WebAppState &state, const InputState &input, float dt
 }
 
 std::string build_overlay_text(const WebAppState &state) {
-    RuntimeSessionSnapshot snapshot{};
-    snapshot.connection_state =
-        state.joined && !state.hosting_local && !state.hosting_lan
-            ? NetClientConnectionState::Connected
-            : NetClientConnectionState::Disconnected;
-    snapshot.hosting_local = state.hosting_local;
-    snapshot.hosting_lan = state.hosting_lan;
-    if (!web_net_available()) {
-        snapshot.status_hint = "Web net API not attached. Running local sim only.";
-    } else if (state.hosting_local || state.hosting_lan) {
-        snapshot.status_hint = "Web host active.";
-    } else if (state.joined) {
-        snapshot.status_hint = "Connected to web host.";
-    } else {
-        snapshot.status_hint = "Select Host/Join to use web transport hooks.";
-    }
+    const RuntimeSessionSnapshot snapshot = state.session_flow.snapshot();
 
     if (state.menu.open()) {
         return state.menu.build_text(
@@ -164,10 +154,10 @@ std::string build_overlay_text(const WebAppState &state) {
     }
 
     char buffer[256]{};
-    std::snprintf(
+        std::snprintf(
         buffer,
         sizeof(buffer),
-        "WEB DEVHUD\nP %.1f %.1f %.1f\nV %.1f %.1f %.1f\nYAW %.2f REM %d\nNET %s",
+        "WEB DEVHUD\nP %.1f %.1f %.1f\nV %.1f %.1f %.1f\nYAW %.2f REM %d\nTEL FPS %.1f FT %.2f\nNET %s",
         state.x,
         state.y,
         state.z,
@@ -176,6 +166,8 @@ std::string build_overlay_text(const WebAppState &state) {
         state.vz,
         state.yaw,
         state.remote_count,
+        state.telemetry.fps,
+        state.telemetry.frame_ms,
         web_net_available() ? "HOOKED" : "LOCAL");
     return std::string(buffer);
 }
@@ -188,26 +180,18 @@ void tick(void *arg) {
     const InputState input = poll_web_input();
     const RuntimeSessionMenuCallbacks callbacks{
         .leave_session = [state]() {
-            state->hosting_local = false;
-            state->hosting_lan = false;
-            state->joined = false;
+            state->session_flow.leave_session();
         },
         .host_local = [state]() {
-            state->hosting_local = true;
-            state->hosting_lan = false;
-            state->joined = true;
+            state->session_flow.host_local_session();
             web_net_host();
         },
         .host_lan = [state]() {
-            state->hosting_local = false;
-            state->hosting_lan = true;
-            state->joined = true;
+            state->session_flow.host_lan_session();
             web_net_host();
         },
         .join_nearby = [state]() {
-            state->hosting_local = false;
-            state->hosting_lan = false;
-            state->joined = true;
+            state->session_flow.join_nearby_session();
             web_net_join();
         }};
     (void)state->session_controller.handle_menu_input(input, state->menu, callbacks);
@@ -215,6 +199,17 @@ void tick(void *arg) {
     simulate_local_player(*state, input, dt);
     web_net_send_local(state->x, state->y, state->z, state->yaw);
     state->remote_count = std::max(0, web_net_remote_count());
+    state->session_flow.update(web_net_available());
+    state->telemetry.frames += 1;
+    state->telemetry.frame_ms_sum += static_cast<double>(dt) * 1000.0;
+    if (state->telemetry.frames >= 30) {
+        state->telemetry.frame_ms =
+            state->telemetry.frame_ms_sum / static_cast<double>(state->telemetry.frames);
+        state->telemetry.fps =
+            1000.0 / std::max(0.001, state->telemetry.frame_ms);
+        state->telemetry.frames = 0;
+        state->telemetry.frame_ms_sum = 0.0;
+    }
 
     const float move_energy = std::clamp(std::sqrt(state->vx * state->vx + state->vz * state->vz) / 9.0f, 0.0f, 1.0f);
     const float remote_tint = std::clamp(static_cast<float>(state->remote_count) / 6.0f, 0.0f, 1.0f);

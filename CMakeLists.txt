@@ -109,6 +109,7 @@ if(EMSCRIPTEN)
 
     add_executable(voxov_web
         src/game/web_main.cpp
+        src/game/web_session_flow.cpp
         src/engine_runtime/runtime_session_controller.cpp
         src/platform/web_platform.cpp
         src/engine_ui/gui_menu.cpp

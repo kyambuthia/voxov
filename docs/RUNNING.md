@@ -31,6 +31,7 @@ Standalone dedicated server:
 
 ```bash
 ./build/desktop/main/bin/voxov_server --port 7777
+./build/desktop/main/bin/voxov_server --port 7777 --telemetry-json
 ```
 
 Compatibility headless server mode:
@@ -68,6 +69,7 @@ Notes:
 - `voxov_server` is the preferred standalone authoritative server target.
 - `voxov --headless-server` remains useful for compatibility and quick local bring-up, but it is no longer the only dedicated-server path.
 - `voxov_server` now prints rate-limited `TEL ...` telemetry lines (about every 5 seconds) with loop, network, and server activity counters.
+- `--telemetry-json` switches those server telemetry lines to compact JSON for automation.
 
 ## Desktop Hotkeys
 

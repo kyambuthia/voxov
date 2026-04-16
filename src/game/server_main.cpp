@@ -25,6 +25,7 @@ struct ServerTelemetry {
 int main(int argc, char **argv) {
     uint16_t port = 7777;
     bool loopback_only = false;
+    bool telemetry_json = false;
 
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--port") == 0 && i + 1 < argc) {
@@ -34,6 +35,8 @@ int main(int argc, char **argv) {
             loopback_only = true;
         } else if (std::strcmp(argv[i], "--lan") == 0) {
             loopback_only = false;
+        } else if (std::strcmp(argv[i], "--telemetry-json") == 0) {
+            telemetry_json = true;
         }
     }
 
@@ -89,19 +92,38 @@ int main(int argc, char **argv) {
                           static_cast<double>(telemetry.loop_count) / 1000.0
                     : 0.0;
             const NetDebugStats stats = server.debug_stats();
-            std::fprintf(
-                stderr,
-                "TEL frame=%.1f/s fixed=snap:%u/s pst:%u/s render=na net=tx:%u/%u rx:%u/%u invalid=%llu chunk=na activity=pump:%.3fms sleep:%.3fms\n",
-                loop_hz,
-                stats.snapshots_sent_per_sec,
-                stats.player_state_broadcasts_per_sec,
-                stats.tx_packets_per_sec,
-                stats.tx_bytes_per_sec,
-                stats.rx_packets_per_sec,
-                stats.rx_bytes_per_sec,
-                static_cast<unsigned long long>(stats.invalid_packets_total),
-                avg_pump_ms,
-                avg_sleep_ms);
+            if (telemetry_json) {
+                std::fprintf(
+                    stderr,
+                    "{\"type\":\"tel\",\"frame_hz\":%.3f,\"fixed_snap_per_sec\":%u,\"fixed_pst_per_sec\":%u,"
+                    "\"net_tx_packets_per_sec\":%u,\"net_tx_bytes_per_sec\":%u,\"net_rx_packets_per_sec\":%u,"
+                    "\"net_rx_bytes_per_sec\":%u,\"net_invalid_total\":%llu,\"activity_pump_ms\":%.3f,"
+                    "\"activity_sleep_ms\":%.3f}\n",
+                    loop_hz,
+                    stats.snapshots_sent_per_sec,
+                    stats.player_state_broadcasts_per_sec,
+                    stats.tx_packets_per_sec,
+                    stats.tx_bytes_per_sec,
+                    stats.rx_packets_per_sec,
+                    stats.rx_bytes_per_sec,
+                    static_cast<unsigned long long>(stats.invalid_packets_total),
+                    avg_pump_ms,
+                    avg_sleep_ms);
+            } else {
+                std::fprintf(
+                    stderr,
+                    "TEL frame=%.1f/s fixed=snap:%u/s pst:%u/s render=na net=tx:%u/%u rx:%u/%u invalid=%llu chunk=na activity=pump:%.3fms sleep:%.3fms\n",
+                    loop_hz,
+                    stats.snapshots_sent_per_sec,
+                    stats.player_state_broadcasts_per_sec,
+                    stats.tx_packets_per_sec,
+                    stats.tx_bytes_per_sec,
+                    stats.rx_packets_per_sec,
+                    stats.rx_bytes_per_sec,
+                    static_cast<unsigned long long>(stats.invalid_packets_total),
+                    avg_pump_ms,
+                    avg_sleep_ms);
+            }
 
             telemetry.window_start = loop_end;
             telemetry.loop_count = 0;

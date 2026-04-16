@@ -9,8 +9,8 @@ This document describes the repository as it exists today, not the long-term tar
 | Linux desktop | Supported | Shared desktop runtime (`src/game/main.cpp` + `src/game/game_runtime.cpp`) | CI build + tests + release bundle validation |
 | Windows desktop | Supported for release packaging | Shared desktop runtime | Release packaging and startup smoke test |
 | macOS desktop | Goal / unverified | Intended shared desktop runtime | No active CI coverage in this repo |
-| Android | Active target, separate runtime | `src/game/android_main.cpp` | Release APK build and artifact validation; no automated device smoke test |
-| Web | Preview | `src/game/web_main.cpp` | Buildable, but no CI/runtime parity validation |
+| Android | Supported | `src/game/android_main.cpp` | Release APK validation + CI emulator startup smoke |
+| Web | Preview | `src/game/web_main.cpp` | CI Emscripten build + artifact smoke check |
 | iOS | Scaffold | `src/platform/ios_platform.cpp` | Placeholder only |
 | Consoles | Scaffold | `src/platform/console_platform.cpp` | Placeholder only |
 | XR | Scaffold | `src/engine_xr/xr_session.cpp` | Placeholder only |
@@ -51,7 +51,7 @@ Notes:
 
 ## Android
 
-Android is not just a stub, but it is not yet the same runtime path as desktop.
+Android is not just a stub. It remains a separate runtime path from desktop, but now has CI startup smoke coverage.
 
 - Native target: `voxov_android`
 - Entry point: `src/game/android_main.cpp`
@@ -67,7 +67,7 @@ See `docs/ANDROID.md` for NDK and APK details.
 
 ## Web
 
-Web is a preview path used for lightweight runtime bring-up, menu flow, and transport-hook experimentation.
+Web is a preview path used for lightweight runtime bring-up, menu flow, and transport-hook experimentation, with CI build validation.
 
 Configure:
 

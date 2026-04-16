@@ -6,10 +6,11 @@ Web support is an active preview target with:
 
 - a playable local movement loop
 - menu/devhud flow parity with desktop controls
+- shared Web session-flow orchestration (`WebSessionFlow`) for host/join/leave state
 - WebGL2 runtime bring-up
 - optional JS transport hooks for host/join state exchange
 
-The current preview is still JS-heavy. `src/game/web_main.cpp` directly owns the movement loop and browser hook integration, while the Emscripten build only compiles a small subset of the shared runtime. The next step is not "more JavaScript"; it is more shared C++ compiled to WASM.
+The current preview is still JS-heavy. `src/game/web_main.cpp` still owns the movement loop and browser hook integration, while the Emscripten build compiles a focused subset of shared runtime helpers (`RuntimeSessionController`, `GuiMenu`, and `WebSessionFlow`). The next step is not "more JavaScript"; it is more shared C++ compiled to WASM.
 
 ## Prerequisites
 

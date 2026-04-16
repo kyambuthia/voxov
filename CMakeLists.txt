@@ -197,6 +197,9 @@ add_library(engine_math STATIC
 target_include_directories(engine_math PUBLIC src)
 target_link_libraries(engine_math PUBLIC glm::glm)
 
+add_library(engine_net_proto INTERFACE)
+target_include_directories(engine_net_proto INTERFACE src)
+
 if(VOXOV_ENABLE_XR)
     add_library(engine_xr STATIC
         src/engine_xr/xr_session.cpp
@@ -273,7 +276,7 @@ add_library(engine_runtime STATIC
     src/engine_runtime/runtime_world_state.cpp
 )
 target_include_directories(engine_runtime PUBLIC src)
-target_link_libraries(engine_runtime PUBLIC engine_core engine_net engine_render engine_ui engine_world)
+target_link_libraries(engine_runtime PUBLIC engine_core engine_net engine_net_proto engine_render engine_ui engine_world)
 
 add_library(engine_presentation STATIC
     src/engine_presentation/debug_scene_builder.cpp
@@ -286,6 +289,7 @@ target_link_libraries(
         engine_assets
         engine_gameplay
         engine_net
+        engine_net_proto
         engine_physics
         engine_render
         engine_ui
@@ -296,7 +300,7 @@ add_library(engine_server STATIC
     src/engine_server/server_session.cpp
 )
 target_include_directories(engine_server PUBLIC src)
-target_link_libraries(engine_server PUBLIC engine_gameplay engine_world engine_math glm::glm)
+target_link_libraries(engine_server PUBLIC engine_gameplay engine_net_proto engine_world engine_math glm::glm)
 
 add_library(engine_net STATIC
     src/engine_net/net_client.cpp
@@ -304,7 +308,7 @@ add_library(engine_net STATIC
     src/engine_net/lan_discovery.cpp
 )
 target_include_directories(engine_net PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/enet/include)
-target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog engine_server engine_world engine_math glm::glm)
+target_link_libraries(engine_net PUBLIC enet fmt::fmt spdlog::spdlog engine_net_proto engine_server engine_world engine_math glm::glm)
 if(WIN32)
     target_link_libraries(engine_net PUBLIC ws2_32)
 endif()
@@ -448,7 +452,7 @@ if(VOXOV_BUILD_TESTS)
         src/platform/web_platform.cpp
     )
     target_include_directories(voxov_tests PRIVATE src)
-    target_link_libraries(voxov_tests PRIVATE engine engine_math engine_world engine_net)
+    target_link_libraries(voxov_tests PRIVATE engine engine_math engine_world engine_net engine_net_proto)
     add_test(NAME voxov_tests COMMAND voxov_tests)
 
     add_executable(voxov_net_stress

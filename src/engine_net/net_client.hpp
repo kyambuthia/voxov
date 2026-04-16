@@ -1,6 +1,6 @@
 #pragma once
 
-#include "engine_net/net_common.hpp"
+#include "engine_net_proto/net_types.hpp"
 
 #include <cstddef>
 #include <string>

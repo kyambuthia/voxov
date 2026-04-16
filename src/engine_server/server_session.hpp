@@ -1,7 +1,7 @@
 #pragma once
 
 #include "engine_gameplay/player/player_components.hpp"
-#include "engine_net/net_common.hpp"
+#include "engine_net_proto/net_types.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
 

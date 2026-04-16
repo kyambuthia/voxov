@@ -4,7 +4,7 @@
 #include "engine_gameplay/animation/animation_runtime.hpp"
 #include "engine_gameplay/minigames/minigames.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
-#include "engine_net/net_common.hpp"
+#include "engine_net_proto/net_types.hpp"
 #include "engine_physics/vehicle/ground_vehicle_controller.hpp"
 #include "engine_render/render_types.hpp"
 #include "engine_ui/gui_menu.hpp"

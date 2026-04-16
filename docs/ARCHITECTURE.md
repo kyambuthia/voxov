@@ -4,21 +4,23 @@ This document describes the architecture that is implemented today.
 
 ## Runtime Matrix
 
-- Desktop: primary integrated runtime in `src/game/main.cpp`, backed by `Engine`
+- Desktop: primary integrated runtime in `src/game/main.cpp`, booted through `GameRuntime` and desktop adapters, with `Engine` still providing most implementation
+- Dedicated server: `src/game/server_main.cpp`, a standalone authoritative ENet server binary
 - Android: separate native runtime in `src/game/android_main.cpp`
 - Web: preview runtime in `src/game/web_main.cpp`
 - iOS, console, and XR: scaffolds only, disabled by default
 
-The important distinction is that VOXOV is a shared codebase, but not yet a single shared runtime architecture across every target.
+The important distinction is that VOXOV is a shared codebase with a real shared runtime seam on desktop, but not yet a single shared runtime architecture across every target.
 
 ## Desktop Runtime
 
 The desktop target is the cleanest path in the repository:
 
-1. `src/game/main.cpp` parses CLI flags and creates `DesktopPlatform`
-2. `Engine` owns the frame loop, fixed-step simulation, renderer, physics, and networking
-3. `Renderer` currently targets a single OpenGL desktop backend and keeps the render contract aligned with GLES3/WebGL2-class limits
-4. Shared gameplay, world, and network code lives under `src/engine_*`
+1. `src/game/main.cpp` parses CLI flags, optionally starts an in-process `NetServer`, and creates `DesktopPlatform`
+2. `DesktopRuntimePlatformAdapter` and `DesktopRuntimeInputAdapter` bridge platform services into `GameRuntime`
+3. `GameRuntime` owns per-frame platform polling, menu/session flow handoff, and the runtime-facing shell API
+4. `Engine` still owns most fixed-step simulation, renderer, physics, networking, and presentation assembly behind that shell
+5. `Renderer` currently targets a single OpenGL desktop backend and keeps the render contract aligned with GLES3/WebGL2-class limits
 
 Core module boundaries:
 
@@ -27,19 +29,24 @@ Core module boundaries:
 - `engine_render/*`: render abstractions plus the active OpenGL backend
 - `engine_world/*`: voxel terrain and collision helpers
 - `engine_physics/*`: physics backends and vehicle helpers
-- `engine_net/*`: ENet client/server and LAN discovery
+- `engine_net_proto/*`: protocol types, headers, feature flags, and POD helpers
+- `engine_net/*`: ENet client/server transport plus networking runtime helpers
+- `engine_server/*`: authoritative server session/state
 - `engine_ui/*`: in-game menu flow
+- `engine_runtime/*`: shared runtime state and session helpers
+- `engine_presentation/*`: HUD/debug snapshot building
 - `engine_gameplay/*`: player, animation, minigames, and related gameplay code
+- `game/*`: entry points, runtime adapters, and `GameRuntime`
 
 ## Target-Specific Paths
 
 ### Android
 
-Android shares some lower-level modules such as world, gameplay, networking, and UI code, but it does not reuse the desktop `Engine` orchestration layer. The Android target runs its own native loop, rendering path, menu state, and networking/session flow.
+Android shares lower-level modules such as world, gameplay, networking, session helpers, and UI code, but it does not yet reuse the desktop `GameRuntime` path. The Android target still runs its own native loop, rendering path, and platform integration.
 
 ### Web
 
-The Web target is a lightweight preview. It currently implements a minimal local movement loop, menu handling, and optional JavaScript transport hooks rather than the full desktop runtime.
+The Web target is a lightweight preview. It currently reuses the session/menu controller but still implements its own minimal movement loop and JavaScript transport hooks rather than the full desktop runtime. The intended direction is to move more gameplay and runtime code into WASM while keeping JavaScript limited to browser I/O, asset/bootstrap wiring, and browser-appropriate transport glue.
 
 ### Legacy and Future Scaffolds
 
@@ -59,42 +66,36 @@ These paths are useful reference material, but they are not the main shipping ru
 
 ## Current Design Liabilities
 
-### 1. `Engine` is too broad
+### 1. `Engine` is still too broad
 
-`Engine` currently owns rendering, physics, local and remote player state, networking, UI, persistence, objectives, minigames, vehicle state, and split-screen flow. That makes the desktop runtime hard to test and hard to reuse from other targets.
+`Engine` still owns rendering, physics, local and remote player state, networking, UI, persistence, objectives, minigames, vehicle state, and split-screen flow. Wrapping it behind `GameRuntime` improves entry-point shape, but it does not yet make those responsibilities modular.
 
-### 2. Cross-platform behavior is only partially shared
+### 2. The shared runtime seam is still shallow
 
-Android and Web both bypass the desktop orchestration layer. That means gameplay, networking, and menu behavior can drift across targets even when they nominally ship from one repository.
+Desktop now uses `GameRuntime`, but most runtime behavior still drops directly into `Engine`. The next refactor steps need to move real state ownership into `game/*`, `engine_runtime/*`, and `engine_presentation/*` rather than stopping at an adapter wrapper.
 
-### 3. The platform story is more aspirational than integrated
+### 3. Cross-platform behavior is only partially shared
 
-The repo contains iOS, console, and XR scaffolds, but only desktop is a fully integrated shared-engine runtime today. Planning docs should reflect that distinction clearly.
+Android and Web still bypass the desktop `GameRuntime` path. That means gameplay, networking, and menu behavior can drift across targets even when they nominally ship from one repository.
 
-## Target Runtime Contract
+## Shared Runtime Contract
 
-The next milestone is to converge on one shared runtime contract before doing broader
-platform work. The target shape is:
+The shared runtime contract now exists and looks like this:
 
-1. `GameRuntime` owns fixed-step advancement, session state, input handoff, and
-   shared gameplay orchestration.
-2. Platform entry points stay thin and own only lifecycle, native window/context setup,
-   platform event pumping, and platform-specific input capture.
-3. Desktop migrates first, then Android and Web are moved onto the same runtime path.
+1. `GameRuntime` exposes initialization, input handoff, per-frame ticking, shutdown, and connect entrypoints.
+2. Platform entry points stay thin and own only lifecycle, native window/context setup, platform event pumping, and platform-specific input capture.
+3. Desktop is already on that path; Android and Web are the next migrations.
 
-Target ownership split:
+Current ownership split:
 
 - `src/game/*`: thin entry points plus `GameRuntime` and platform adapter interfaces
-- `src/engine_runtime/*`: shared runtime state and orchestration, cleaned up so it does
-  not directly own UI, platform, or renderer concerns
-- `src/engine/*`: transitional desktop orchestrator that will shrink as runtime state
-  moves into the shared layer
-- `src/platform/*`: platform adapters and native services only
+- `src/engine_runtime/*`: shared runtime state and session helpers
+- `src/engine/*`: transitional desktop orchestrator that will shrink as runtime state moves into the shared layer
+- `src/platform/*`: desktop/native platform adapters and services only
 
 ## Planned Subsystem Boundaries
 
-The refactor target is a small set of explicit subsystems instead of one large `Engine`
-orchestrator.
+The refactor target remains a small set of explicit subsystems instead of one large `Engine` orchestrator.
 
 ### Runtime orchestration
 
@@ -116,13 +117,13 @@ Gameplay code should own:
 
 ### Networking domain
 
-Networking should be split into separate layers:
+Networking is now split into separate layers and should stay that way:
 
 - `engine_net_proto`: wire types, serializers, validators, and protocol flags only
 - `engine_net_transport`: ENet transport only
 - `engine_net_discovery`: LAN discovery only
 - client runtime
-- server simulation
+- `engine_server`: server simulation/state
 
 Protocol code must not depend on world generation, renderer types, or platform APIs.
 
@@ -134,13 +135,13 @@ shared runtime code must not depend on platform-specific renderer implementation
 
 ## Planned Build Graph
 
-The target graph is layered so shared code compiles once and is reused by every runtime.
+The build graph is already moving toward a layered shape so shared code compiles once and is reused by every runtime.
 
 1. foundation: `engine_core`, `engine_math`
 2. domain: `engine_world`, `engine_physics`, `engine_server`, `engine_net`
 3. gameplay/assets: `engine_gameplay`, `engine_assets`, `engine_audio`, `engine_ui`
 4. orchestration: `engine_runtime`, `engine_presentation`
-5. platform: renderer backends and platform adapters
+5. platform/apps: renderer backends, runtime entrypoints, and platform adapters
 
 Key rules:
 
@@ -164,12 +165,11 @@ logic.
 
 ## Execution Priorities
 
-1. Freeze the runtime and adapter interfaces.
-2. Extract missing shared library targets without changing behavior.
-3. Move desktop onto the shared runtime first.
-4. Split networking into protocol, transport, discovery, client, and server-sim layers.
-5. Remove platform-only dependencies from shared render/runtime code.
-6. Migrate Android and Web to thin adapters over the shared runtime.
-7. Remove duplicate runtime paths after parity is established.
+1. Keep the runtime and adapter interfaces stable while moving real ownership behind them.
+2. Move more session/world/presentation state out of `Engine` and into shared runtime-facing modules.
+3. Keep networking cleanly split across protocol, transport, discovery, client, and server-session layers.
+4. Remove platform-only dependencies from shared render/runtime code.
+5. Migrate Android and Web to thin adapters over the shared runtime.
+6. Remove duplicate runtime paths after parity is established.
 
 For execution priorities, see `docs/ROADMAP.md`.

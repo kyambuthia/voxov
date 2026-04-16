@@ -47,7 +47,7 @@ Useful configure flags:
 Notes:
 
 - Android and Web builds are selected by the toolchain (`ANDROID` or `EMSCRIPTEN`), not by a normal desktop configure flag.
-- Desktop is the main integrated runtime and now uses an OpenGL-first renderer aligned to a GLES3/WebGL2-class feature budget.
+- Desktop is the main integrated runtime, boots through `GameRuntime`, and uses an OpenGL-first renderer aligned to a GLES3/WebGL2-class feature budget.
 - Android and Web use separate runtime paths today.
 
 ## 4. Run
@@ -58,7 +58,13 @@ Desktop:
 ./build/desktop/main/bin/voxov
 ```
 
-Headless authoritative server:
+Dedicated authoritative server:
+
+```bash
+./build/desktop/main/bin/voxov_server --port 7777
+```
+
+Compatibility headless server mode:
 
 ```bash
 ./build/desktop/main/bin/voxov --headless-server --port 7777

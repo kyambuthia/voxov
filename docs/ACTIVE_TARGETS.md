@@ -1,14 +1,15 @@
 # VOXOV Active Targets
 
-This repository currently ships these runtime entrypoints:
+This repository currently ships these active entrypoints:
 
 - Desktop: `src/game/main.cpp` (`voxov`)
+- Dedicated server: `src/game/server_main.cpp` (`voxov_server`)
 - Android: `src/game/android_main.cpp` (`voxov_android`)
 - Web preview: `src/game/web_main.cpp` (`voxov_web`)
 
-Only desktop is currently the fully integrated shared-engine runtime.
+Desktop is the first target booting through the shared `GameRuntime` seam. Android and Web still keep separate runtime loops.
 
-Android remains a separate runtime path and Web remains a preview/bootstrap target.
+The desktop client also still supports combined local client/server bring-up via `--server` and the older `--headless-server` compatibility mode, but the preferred dedicated-server entrypoint is `voxov_server`.
 
 The repository also contains non-shipping platform scaffolds that are disabled by default:
 

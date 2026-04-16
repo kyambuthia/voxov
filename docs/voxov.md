@@ -1,5 +1,7 @@
 # VOXOV: Cross‑Platform Multiplayer, Ragdolls, and Procedural Locomotion — Repo Audit and Implementation Plan
 
+> Archived note: this audit document is not the source of truth for the current repo shape. Prefer `README.md`, `docs/ARCHITECTURE.md`, `docs/NETWORKING.md`, `docs/ROADMAP.md`, and `docs/WEB.md` for the maintained runtime and platform documentation.
+
 ## Executive summary
 
 The repository is a custom C++23 game codebase built via CMake, with desktop (Vulkan/OpenGL), Android, and an MVP Web (Emscripten/WebGL2) target. citeturn6view0turn18view0turn19view2 The networking stack currently uses ENet (reliable UDP with reliable/unreliable channels) for gameplay traffic plus a bespoke LAN discovery system using UDP broadcast sockets. citeturn19view0turn22view0turn23view0turn14view1turn45view0
@@ -369,4 +371,3 @@ timeline
     Week 10-11: Foot IK + pelvis adjustment over voxel terrain
     Week 11-12: Blend/transition polish (inertialization-style) + networked parameters
 ```
-

@@ -37,7 +37,7 @@ with graceful disconnects and recoveries.
 The near-term demo depends on architecture convergence more than on new target count.
 Implementation should follow these priorities:
 
-1. establish a shared `GameRuntime` contract used first by desktop and later by Android/Web
+1. deepen the shared `GameRuntime` contract already used by desktop and migrate Android/Web onto it
 2. keep platform entry points thin and limited to lifecycle, native I/O, and renderer hookup
 3. split networking into protocol, transport, discovery, client, and server-simulation layers
 4. keep shared libraries free of platform headers and platform-only renderer dependencies

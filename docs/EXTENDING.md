@@ -10,12 +10,14 @@
 
 ## Add a replicated component
 
-1. Define payload in `src/engine_net/net_common.hpp`.
-2. Add message handling in `src/engine_net/net_server.cpp` and `src/engine_net/net_client.cpp`.
-3. Pick channel:
+1. Define wire types and packet headers in `src/engine_net_proto/net_types.hpp`.
+2. Add helper builders or validators in `src/engine_net_proto/net_protocol_helpers.hpp` if the message needs shared protocol logic.
+3. Add transport handling in `src/engine_net/net_server.cpp` and `src/engine_net/net_client.cpp`.
+4. Keep server-side session/state ownership in `src/engine_server/server_session.*` or runtime code instead of pushing policy into protocol headers.
+5. Pick channel:
    - reliable: `NetChannel::Reliable`
    - transient/unreliable: `NetChannel::Unreliable`
-4. Add/extend serialization tests in `src/tests/test_main.cpp`.
+6. Add or extend serialization tests in `src/tests/test_main.cpp`.
 
 ## Add a new asset type
 

@@ -4,9 +4,9 @@ This roadmap is based on the current repository shape. The main priority is to c
 
 ## Near Term
 
-### 1. Converge On A Shared Runtime Core
+### 1. Deepen The Shared Runtime Core
 
-- Break the desktop `Engine` into smaller runtime services:
+- Move more desktop ownership out of `Engine` and behind `GameRuntime`:
   - session/game state
   - rendering scene assembly
   - multiplayer/session management
@@ -32,7 +32,7 @@ This roadmap is based on the current repository shape. The main priority is to c
   - render CPU time
 - network send/receive rates
 - chunk streaming counters
-- Keep the first pass cheap, always available in dev builds, and easy to surface in desktop, Android, and future dedicated server builds.
+- Keep the first pass cheap, always available in dev builds, and easy to surface in desktop, Android, and dedicated server builds.
 
 ### 4. Build Out The Visual Debug Stack
 
@@ -47,14 +47,14 @@ This roadmap is based on the current repository shape. The main priority is to c
 ### 5. Reduce Platform Divergence
 
 - Move Android toward shared simulation/session helpers instead of growing more custom runtime code.
-- Move Web toward shared gameplay/session logic where practical.
+- Move Web toward a WASM-heavy runtime where gameplay, menu/session flow, and simulation live in C++ and JavaScript is reduced to browser APIs, bootstrap, and transport glue.
 - Keep iOS, console, and XR work in scaffold mode until desktop, Android, and Web are closer to one runtime model.
 
-### 6. Extract A Real Dedicated Server Target
+### 6. Harden The Dedicated Server Target
 
-- Split `--headless-server` out of the desktop client executable.
-- Make server builds independent from render and window-system requirements.
-- Preserve the authoritative networking path while simplifying deployment and CI.
+- Keep `voxov_server` independent from render and window-system requirements.
+- Reduce reliance on the older `voxov --headless-server` compatibility path.
+- Expand verification and deployment around the standalone server binary.
 
 ### 7. Tighten Verification
 
@@ -88,6 +88,6 @@ This roadmap is based on the current repository shape. The main priority is to c
 
 - Revisit XR, iOS, and console targets only after:
   - shared runtime services are in place
-  - dedicated server separation exists
+  - the standalone dedicated server path is stable
   - asset/save path abstractions are real
 - Android/Web divergence is materially reduced

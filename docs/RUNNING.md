@@ -27,7 +27,13 @@ Host in one process:
 ./build/desktop/main/bin/voxov --server
 ```
 
-Headless server:
+Standalone dedicated server:
+
+```bash
+./build/desktop/main/bin/voxov_server --port 7777
+```
+
+Compatibility headless server mode:
 
 ```bash
 ./build/desktop/main/bin/voxov --headless-server --port 7777
@@ -59,6 +65,8 @@ Notes:
 
 - Desktop now uses the OpenGL renderer by default.
 - `--renderer gl` is still accepted as a compatibility alias, but it is no longer required.
+- `voxov_server` is the preferred standalone authoritative server target.
+- `voxov --headless-server` remains useful for compatibility and quick local bring-up, but it is no longer the only dedicated-server path.
 
 ## Desktop Hotkeys
 

@@ -6,7 +6,7 @@ This document describes the repository as it exists today, not the long-term tar
 
 | Platform | Status | Runtime Path | Verification |
 | --- | --- | --- | --- |
-| Linux desktop | Supported | Shared desktop runtime (`src/game/main.cpp` + `src/engine/*`) | CI build + tests + release bundle validation |
+| Linux desktop | Supported | Shared desktop runtime (`src/game/main.cpp` + `src/game/game_runtime.cpp`) | CI build + tests + release bundle validation |
 | Windows desktop | Supported for release packaging | Shared desktop runtime | Release packaging and startup smoke test |
 | macOS desktop | Goal / unverified | Intended shared desktop runtime | No active CI coverage in this repo |
 | Android | Active target, separate runtime | `src/game/android_main.cpp` | Release APK build and artifact validation; no automated device smoke test |
@@ -36,16 +36,17 @@ Run local client + server:
 ./build/desktop/main/bin/voxov --server
 ```
 
-Run dedicated server mode:
+Run dedicated server:
 
 ```bash
-./build/desktop/main/bin/voxov --headless-server --port 7777
+./build/desktop/main/bin/voxov_server --port 7777
 ```
 
 Notes:
 
 - Desktop is now OpenGL-only and is intended to stay inside a GLES3/WebGL2-class rendering budget.
-- `--headless-server` is currently a mode of the desktop client executable, not a separate `voxov_server` binary.
+- `voxov_server` is the preferred standalone authoritative server target.
+- `voxov --headless-server` still exists as a compatibility path for quick bring-up from the client executable.
 - `ctest` requires a build configured with `-DVOXOV_BUILD_TESTS=ON`.
 
 ## Android

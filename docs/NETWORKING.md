@@ -2,7 +2,15 @@
 
 ## Overview
 
-VOXOV currently uses an authoritative server model over ENet.
+VOXOV currently uses an authoritative server model over ENet, with the networking code split into distinct layers:
+
+- `engine_net_proto`: packet headers, protocol versioning, feature/session flags, and POD wire structs
+- `engine_net_transport`: ENet client/server transport (`NetClient`, `NetServer`)
+- `engine_net_discovery`: LAN discovery
+- `engine_server`: authoritative server session/state
+- `engine_net`: umbrella target that links discovery + transport for callers
+
+At runtime:
 
 - Server owns world/network truth.
 - Clients send input ticks.
@@ -11,9 +19,11 @@ VOXOV currently uses an authoritative server model over ENet.
 
 ## Runtime Modes
 
+- Standalone dedicated server:
+  - `./build/desktop/main/bin/voxov_server --port 7777`
 - Combined client + server in one process:
   - `./build/desktop/main/bin/voxov --server`
-- Headless dedicated server:
+- Compatibility headless server mode inside the desktop client:
   - `./build/desktop/main/bin/voxov --headless-server --port 7777`
 - Client connect:
   - `./build/desktop/main/bin/voxov --connect <SERVER_IP> --port 7777`
@@ -23,7 +33,7 @@ VOXOV currently uses an authoritative server model over ENet.
 Server machine:
 
 ```bash
-./build/desktop/main/bin/voxov --headless-server --port 7777
+./build/desktop/main/bin/voxov_server --port 7777
 ```
 
 Client machine A:
@@ -51,14 +61,20 @@ Client machine B:
 - `Snapshot`: server authoritative local-player snapshot to client.
 - `AssignPlayer`: server-assigned network id.
 - `PlayerState`: replicated player state broadcast.
+- `PlayerRemove`: player removal broadcast.
 - `ChunkInterest`: client chunk-interest request.
 - `ChunkState`: server chunk-state response.
+- `ProtocolInfo`: protocol/version/feature handshake data.
+- `SessionInfo`: server/session metadata.
 
 See:
 
-- `src/engine_net/net_common.hpp`
+- `src/engine_net_proto/net_types.hpp`
+- `src/engine_net_proto/net_protocol_helpers.hpp`
 - `src/engine_net/net_client.cpp`
 - `src/engine_net/net_server.cpp`
+- `src/engine_net/lan_discovery.cpp`
+- `src/engine_server/server_session.cpp`
 
 ## Troubleshooting
 
@@ -76,5 +92,6 @@ See:
 
 ## Notes
 
-- Current networking is foundation-level and still WIP.
-- Protocol versioning and stronger serialization validation are planned improvements.
+- Current networking is still foundation-level and still WIP.
+- Protocol framing, versioning, packet headers, and feature/session metadata are now explicit in `engine_net_proto`.
+- The recent refactor direction is to keep protocol, transport, discovery, and server-session responsibilities separated while Android/Web move toward the same runtime model.

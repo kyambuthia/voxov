@@ -4,9 +4,10 @@ VOXOV is a C++23 voxel game prototype with multiplayer, physics, and multiple ru
 
 The current project shape is:
 
-- Desktop is the primary shared-engine runtime.
-- Android is a separate native runtime that reuses gameplay and data code but does not yet share the full desktop engine loop.
-- Web is an experimental preview target.
+- Desktop is the primary runtime and now boots through a shared `GameRuntime` seam.
+- Android is a separate native runtime that reuses gameplay, networking, and data code but does not yet run through `GameRuntime`.
+- Web is an experimental preview target that currently shares menu/session helpers rather than the full desktop runtime.
+- A standalone authoritative server binary ships as `voxov_server`.
 
 ## Install
 
@@ -42,6 +43,12 @@ Run:
 ./build/desktop/main/bin/voxov
 ```
 
+Dedicated server:
+
+```bash
+./build/desktop/main/bin/voxov_server --port 7777
+```
+
 Tests:
 
 ```bash
@@ -50,28 +57,22 @@ ctest --test-dir build/desktop/main --output-on-failure
 
 ## Architecture Snapshot
 
-- `src/game/main.cpp` is the main desktop entry point.
-- `src/engine/*` owns the desktop runtime loop, rendering, physics, networking, UI, and gameplay orchestration.
-- `src/game/android_main.cpp` and `src/game/web_main.cpp` are separate platform-specific runtime paths.
+- `src/game/main.cpp` is the desktop entry point and boots the game through `GameRuntime` plus desktop input/platform adapters.
+- `src/game/server_main.cpp` is the standalone dedicated server entry point.
+- `src/game/game_runtime.cpp` is the runtime-facing shell currently wrapping the transitional desktop `Engine`.
+- `src/engine/*` still owns most desktop simulation, rendering, networking, UI, and gameplay orchestration while the runtime extraction continues.
+- Networking is now split into protocol (`src/engine_net_proto/*`), ENet transport (`src/engine_net/*`), LAN discovery, and server-session layers.
+- `src/game/android_main.cpp` and `src/game/web_main.cpp` remain separate platform-specific runtime paths.
 - Core third-party dependencies are GLFW, ENet, Jolt Physics, Dear ImGui, GLM, fmt, and spdlog.
 
-The codebase is designed reasonably well for a fast-moving prototype: the desktop renderer is now aligned to an OpenGL-first, GLES3/WebGL2-class target, the build graph is split into engine modules, and CI validates packaged artifacts. The main design debt is architectural drift between the desktop runtime and the Android/Web runtimes, plus a large `Engine` orchestration layer that owns too many responsibilities.
+The codebase is designed reasonably well for a fast-moving prototype: the desktop renderer is now aligned to an OpenGL-first, GLES3/WebGL2-class target, the build graph is split into engine modules, the dedicated server is separated into its own binary, and CI validates packaged artifacts. The main design debt is still architectural drift between the desktop runtime and the Android/Web runtimes, plus a large `Engine` orchestration layer that owns too many responsibilities behind the new runtime seam.
 
-The current refactor target is a shared `GameRuntime` layer with thin platform adapters so
-desktop, Android, and Web converge on one runtime contract instead of maintaining parallel
-orchestration paths.
+The current refactor direction is to deepen the `GameRuntime` contract, continue shrinking `Engine`, and migrate Android/Web toward the same runtime interfaces instead of maintaining parallel orchestration paths.
 
 ## Docs
 
-- Setup: `docs/SETUP.md`
-- Running and testing: `docs/RUNNING.md`
-- Active targets: `docs/ACTIVE_TARGETS.md`
-- Architecture: `docs/ARCHITECTURE.md`
-- Roadmap: `docs/ROADMAP.md`
-- Networking: `docs/NETWORKING.md`
-- Android: `docs/ANDROID.md`
-- Web: `docs/WEB.md`
-- Releases: `docs/RELEASES.md`
+- Canonical handbook: `docs/HANDBOOK.md`
+- The handbook consolidates the current repository docs into one place and preserves the existing file contents verbatim.
 
 ## Assets
 

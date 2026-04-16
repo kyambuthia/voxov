@@ -18,7 +18,7 @@ The desktop target is the cleanest path in the repository:
 
 1. `src/game/main.cpp` parses CLI flags, optionally starts an in-process `NetServer`, and creates `DesktopPlatform`
 2. `DesktopRuntimePlatformAdapter` and `DesktopRuntimeInputAdapter` bridge platform services into `GameRuntime`
-3. `GameRuntime` owns per-frame platform polling, menu/session flow handoff, and the runtime-facing shell API
+3. `GameRuntime` owns per-frame platform polling, menu/session flow orchestration, and the runtime-facing shell API
 4. `Engine` still owns most fixed-step simulation, renderer, physics, networking, and presentation assembly behind that shell
 5. `Renderer` currently targets a single OpenGL desktop backend and keeps the render contract aligned with GLES3/WebGL2-class limits
 
@@ -72,7 +72,7 @@ These paths are useful reference material, but they are not the main shipping ru
 
 ### 2. The shared runtime seam is still shallow
 
-Desktop now uses `GameRuntime`, but most runtime behavior still drops directly into `Engine`. The next refactor steps need to move real state ownership into `game/*`, `engine_runtime/*`, and `engine_presentation/*` rather than stopping at an adapter wrapper.
+Desktop now uses `GameRuntime`, and session-flow orchestration plus FPS rollup ownership now live in `game/*`. Most runtime behavior still drops directly into `Engine`, so the next refactor steps should keep moving real state ownership into `game/*`, `engine_runtime/*`, and `engine_presentation/*` rather than stopping at an adapter wrapper.
 
 ### 3. Cross-platform behavior is only partially shared
 

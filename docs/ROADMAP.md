@@ -32,7 +32,8 @@ This roadmap is based on the current repository shape. The main priority is to c
   - render CPU time
 - network send/receive rates
 - chunk streaming counters
-- Keep the first pass cheap, always available in dev builds, and easy to surface in desktop, Android, and dedicated server builds.
+- Progress: desktop now exposes runtime-owned FPS plus frame/fixed/render/network/chunk counters; Android dev HUD and `voxov_server` now emit compact telemetry rollups for frame/fixed/network/chunk activity where applicable.
+- Next: keep the first pass cheap, always available in dev builds, and extend parity to the remaining preview/runtime targets.
 
 ### 4. Build Out The Visual Debug Stack
 

@@ -357,6 +357,7 @@ endif()
 add_library(game_runtime STATIC
     src/game/game_runtime.cpp
     src/game/desktop_runtime_adapter.cpp
+    src/game/runtime_session_flow.cpp
 )
 target_include_directories(game_runtime PUBLIC src)
 target_link_libraries(game_runtime PUBLIC engine platform_desktop)

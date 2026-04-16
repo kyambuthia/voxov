@@ -301,20 +301,18 @@ void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
   }
 }
 
-void Engine::connect(const char *host, uint16_t port) {
+EngineConnectResult Engine::connect(const char *host, uint16_t port) {
   if (!net_client.is_initialized()) {
     if (!net_client.init()) {
       spdlog::error("NetClient init failed; cannot connect to {}:{}",
                     host ? host : "(null)", port);
-      multiplayer_hint = "Network init failed.";
-      return;
+      return EngineConnectResult::NetworkInitFailed;
     }
   }
   if (!net_client.connect(host, port)) {
     spdlog::error("NetClient connect failed to {}:{}", host ? host : "(null)",
                   port);
-    multiplayer_hint = "Connect failed.";
-    return;
+    return EngineConnectResult::ConnectFailed;
   }
   NetChunkInterest interest{};
   interest.center_x = 0;
@@ -323,9 +321,7 @@ void Engine::connect(const char *host, uint16_t port) {
   net_client.set_chunk_interest(interest);
   last_chunk_interest = interest;
   has_last_chunk_interest = true;
-  net_connect_elapsed = 0.0;
-  multiplayer_hint = std::string("Connecting to ") + (host ? host : "server") +
-                     ":" + std::to_string(port) + "...";
+  return EngineConnectResult::Connected;
 }
 
 void Engine::start_local_server(uint16_t port, bool loopback_only) {
@@ -339,7 +335,6 @@ void Engine::start_local_server(uint16_t port, bool loopback_only) {
   if (!local_server.init(port, loopback_only)) {
     spdlog::error("Failed to start {} server on {}",
                   loopback_only ? "local-only" : "LAN", port);
-    multiplayer_hint = "Failed to start server.";
     return;
   }
   local_server_loopback = loopback_only;
@@ -350,8 +345,6 @@ void Engine::start_local_server(uint16_t port, bool loopback_only) {
 
 void Engine::stop_client_session() {
   net_client.disconnect();
-  searching_nearby = false;
-  net_connect_elapsed = 0.0;
   has_last_chunk_interest = false;
   has_snapshot = false;
   latest_snapshot = NetSnapshot{};
@@ -373,7 +366,6 @@ void Engine::leave_session() {
     local_server_running = false;
   }
   local_server_loopback = true;
-  multiplayer_hint = "Left session.";
 }
 
 void Engine::set_session_state(const EngineSessionState &state) {
@@ -407,77 +399,26 @@ void Engine::apply_debug_toggles(const InputState &primary_input) {
   }
 }
 
-void Engine::update_session_flow(double frame_dt) {
-  if (local_server_running && !local_server_loopback) {
-    lan_discovery.pump();
-  }
+void Engine::pump_lan_discovery() { lan_discovery.pump(); }
 
-  const NetClientConnectionState connection_state =
-      net_client.connection_state();
-  if (connection_state == NetClientConnectionState::Connecting) {
-    net_connect_elapsed += frame_dt;
-    if (net_connect_elapsed >= 5.0) {
-      stop_client_session();
-      multiplayer_hint = "Connection timed out.";
-    }
-  } else {
-    net_connect_elapsed = 0.0;
-  }
-
-  if (connection_state != last_net_connection_state) {
-    if (connection_state == NetClientConnectionState::Connected) {
-      multiplayer_hint.clear();
-    } else if (last_net_connection_state ==
-                   NetClientConnectionState::Connected &&
-               multiplayer_hint != "Left session.") {
-      multiplayer_hint = "Disconnected from server.";
-    }
-    last_net_connection_state = connection_state;
-  }
-
-  if (searching_nearby &&
-      connection_state == NetClientConnectionState::Disconnected) {
-    lan_discovery.pump();
-    LanHostEntry host{};
-    if (lan_discovery.pop_host(host)) {
-      if (net_client.connect(host.ip.c_str(), host.port)) {
-        NetChunkInterest interest{};
-        interest.center_x = 0;
-        interest.center_z = 0;
-        interest.radius = 2;
-        net_client.set_chunk_interest(interest);
-        last_chunk_interest = interest;
-        has_last_chunk_interest = true;
-        searching_nearby = false;
-        net_connect_elapsed = 0.0;
-        multiplayer_hint = "Joining " + host.name + " (" + host.ip + ")";
-      } else {
-        multiplayer_hint = "Join failed. Retrying discovery...";
-      }
-    }
-  } else if (searching_nearby &&
-             connection_state == NetClientConnectionState::Connected) {
-    searching_nearby = false;
-  }
+bool Engine::pop_discovered_host(LanHostEntry &host) {
+  return lan_discovery.pop_host(host);
 }
+
+void Engine::abort_client_session() { stop_client_session(); }
 
 void Engine::host_local_session() {
   leave_session();
   start_local_server(7777, true);
-  connect("127.0.0.1", 7777);
+  (void)connect("127.0.0.1", 7777);
   lan_discovery.stop();
-  searching_nearby = false;
-  multiplayer_hint = "Hosting this device only.";
 }
 
 void Engine::host_lan_session() {
   leave_session();
   start_local_server(7777, false);
-  connect("127.0.0.1", 7777);
+  (void)connect("127.0.0.1", 7777);
   lan_discovery.start_host(7777, "VOXOV Host");
-  searching_nearby = false;
-  multiplayer_hint =
-      "Hosting Wi-Fi game. Tell friends: Multiplayer > Join Nearby.";
 }
 
 void Engine::join_nearby_session() {
@@ -489,9 +430,6 @@ void Engine::join_nearby_session() {
   }
   lan_discovery.stop();
   lan_discovery.start_client();
-  searching_nearby = true;
-  net_connect_elapsed = 0.0;
-  multiplayer_hint = "Searching nearby Wi-Fi hosts...";
 }
 
 void Engine::reset_camera() {
@@ -698,7 +636,6 @@ void Engine::sync_network_state(uint32_t sim_tick,
 RuntimeSessionSnapshot Engine::session_snapshot() const {
   RuntimeSessionSnapshot snapshot{};
   snapshot.connection_state = net_client.connection_state();
-  snapshot.searching_nearby = searching_nearby;
   snapshot.hosting_local = local_server_running && local_server_loopback;
   snapshot.hosting_lan = local_server_running && !local_server_loopback;
   snapshot.has_session_info = net_client.has_session_info();
@@ -707,7 +644,6 @@ RuntimeSessionSnapshot Engine::session_snapshot() const {
   }
   snapshot.connect_target_host = net_client.connect_target_host();
   snapshot.connect_target_port = net_client.connect_target_port();
-  snapshot.status_hint = multiplayer_hint;
   return snapshot;
 }
 

@@ -60,16 +60,24 @@ struct EngineSessionState {
   GuiMenuView menu_view{};
 };
 
+enum class EngineConnectResult {
+  Connected = 0,
+  NetworkInitFailed = 1,
+  ConnectFailed = 2,
+};
+
 class Engine {
 public:
   void init(void *window_handle, const EngineRuntimeOptions &options);
-  void connect(const char *host, uint16_t port);
+  EngineConnectResult connect(const char *host, uint16_t port);
   void shutdown();
   void tick(double frame_dt, EngineInputFrame input_frame);
   const RenderStats &stats() const;
   void set_session_state(const EngineSessionState &state);
   RuntimeSessionSnapshot session_snapshot() const;
-  void update_session_flow(double frame_dt);
+  void pump_lan_discovery();
+  bool pop_discovered_host(LanHostEntry &host);
+  void abort_client_session();
   void host_local_session();
   void host_lan_session();
   void join_nearby_session();
@@ -158,11 +166,6 @@ private:
   NetServer local_server;
   bool local_server_loopback = true;
   bool local_server_running = false;
-  bool searching_nearby = false;
-  std::string multiplayer_hint;
-  double net_connect_elapsed = 0.0;
-  NetClientConnectionState last_net_connection_state =
-      NetClientConnectionState::Disconnected;
 
   VoxelChunk world_chunk;
   VoxelCollisionWorld collision_world{nullptr};

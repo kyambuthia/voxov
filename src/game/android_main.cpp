@@ -85,6 +85,17 @@ const char *egl_error_to_string(EGLint err) {
     }
 }
 
+uint64_t monotonic_now_ms() {
+    timespec now{};
+    clock_gettime(CLOCK_MONOTONIC, &now);
+    return static_cast<uint64_t>(now.tv_sec) * 1000ull + static_cast<uint64_t>(now.tv_nsec / 1000000ull);
+}
+
+double monotonic_elapsed_ms(const timespec &start, const timespec &end) {
+    return static_cast<double>(end.tv_sec - start.tv_sec) * 1000.0 +
+           static_cast<double>(end.tv_nsec - start.tv_nsec) * 1.0e-6;
+}
+
 glm::vec3 player_color_from_id(uint32_t player_id) {
     return player_color_from_network_id(player_id);
 }
@@ -669,10 +680,81 @@ struct AndroidRenderer {
     timespec last_time{};
     bool has_last_time = false;
     uint64_t frame_counter = 0;
+    struct RuntimeTelemetry {
+        uint64_t last_rollup_ms = 0;
+        uint64_t frame_total = 0;
+        uint32_t frame_window = 0;
+        double frame_ms_window = 0.0;
+        uint64_t fixed_total = 0;
+        uint32_t fixed_window = 0;
+        uint64_t render_total = 0;
+        double render_ms_window = 0.0;
+        uint64_t chunk_total = 0;
+        uint32_t chunk_window = 0;
+        double frame_hz = 0.0;
+        double frame_ms_avg = 0.0;
+        double render_ms_avg = 0.0;
+        double fixed_hz = 0.0;
+        double chunk_hz = 0.0;
+    } runtime_telemetry{};
     double remote_interp_tick_cursor = 0.0;
     bool remote_interp_tick_cursor_initialized = false;
     mutable UiSafeArea cached_safe_area{};
     mutable bool cached_safe_area_valid = false;
+
+    void mark_fixed_step() {
+        runtime_telemetry.fixed_total += 1;
+        runtime_telemetry.fixed_window += 1;
+    }
+
+    void mark_chunk_update() {
+        runtime_telemetry.chunk_total += 1;
+        runtime_telemetry.chunk_window += 1;
+    }
+
+    void refresh_runtime_telemetry(double frame_dt_ms, double render_ms) {
+        runtime_telemetry.frame_total += 1;
+        runtime_telemetry.frame_window += 1;
+        runtime_telemetry.frame_ms_window += frame_dt_ms;
+        runtime_telemetry.render_total += 1;
+        runtime_telemetry.render_ms_window += render_ms;
+
+        const uint64_t now_ms = monotonic_now_ms();
+        if (runtime_telemetry.last_rollup_ms == 0) {
+            runtime_telemetry.last_rollup_ms = now_ms;
+            return;
+        }
+        const uint64_t elapsed_ms = now_ms - runtime_telemetry.last_rollup_ms;
+        if (elapsed_ms < 1000) {
+            return;
+        }
+
+        const double elapsed_seconds = static_cast<double>(elapsed_ms) / 1000.0;
+        runtime_telemetry.frame_hz =
+            static_cast<double>(runtime_telemetry.frame_window) / elapsed_seconds;
+        runtime_telemetry.frame_ms_avg =
+            runtime_telemetry.frame_window > 0
+                ? runtime_telemetry.frame_ms_window /
+                      static_cast<double>(runtime_telemetry.frame_window)
+                : 0.0;
+        runtime_telemetry.render_ms_avg =
+            runtime_telemetry.render_total > 0
+                ? runtime_telemetry.render_ms_window /
+                      static_cast<double>(runtime_telemetry.render_total)
+                : 0.0;
+        runtime_telemetry.fixed_hz =
+            static_cast<double>(runtime_telemetry.fixed_window) / elapsed_seconds;
+        runtime_telemetry.chunk_hz =
+            static_cast<double>(runtime_telemetry.chunk_window) / elapsed_seconds;
+
+        runtime_telemetry.frame_window = 0;
+        runtime_telemetry.frame_ms_window = 0.0;
+        runtime_telemetry.fixed_window = 0;
+        runtime_telemetry.render_total = 0;
+        runtime_telemetry.render_ms_window = 0.0;
+        runtime_telemetry.chunk_window = 0;
+        runtime_telemetry.last_rollup_ms = now_ms;
+    }
 
     void refresh_multicast_lock_state() {
         const bool needs_multicast = searching_nearby || (local_server_running && !local_server_loopback);
@@ -1325,6 +1407,7 @@ struct AndroidRenderer {
             input.action_flags |= net_flag(NetInputFlags::CrouchHeld);
         }
         net_client.send_input(input);
+        mark_fixed_step();
 
         NetSnapshot snapshot{};
         if (net_client.poll_snapshot(snapshot)) {
@@ -1348,6 +1431,7 @@ struct AndroidRenderer {
         NetChunkState chunk_state{};
         while (net_client.poll_chunk_state(chunk_state)) {
             if (apply_streamed_world_state(chunk_state)) {
+                mark_chunk_update();
                 __android_log_print(
                     ANDROID_LOG_INFO,
                     kLogTag,
@@ -1765,6 +1849,7 @@ struct AndroidRenderer {
         clock_gettime(CLOCK_MONOTONIC, &last_time);
         has_last_time = true;
         frame_counter = 0;
+        runtime_telemetry = RuntimeTelemetry{};
 
         __android_log_print(
             ANDROID_LOG_INFO,
@@ -1813,6 +1898,7 @@ struct AndroidRenderer {
         can_draw_uint_indices = false;
         has_last_time = false;
         frame_counter = 0;
+        runtime_telemetry = RuntimeTelemetry{};
     }
 
     void process_gui_actions() {
@@ -2122,6 +2208,14 @@ struct AndroidRenderer {
                 ui_key += std::to_string(server_stats.snapshots_sent_per_sec);
                 ui_key += ":";
                 ui_key += std::to_string(server_stats.player_state_broadcasts_per_sec);
+                ui_key += ":";
+                ui_key += std::to_string(static_cast<int>(runtime_telemetry.frame_hz * 10.0));
+                ui_key += ":";
+                ui_key += std::to_string(static_cast<int>(runtime_telemetry.fixed_hz * 10.0));
+                ui_key += ":";
+                ui_key += std::to_string(static_cast<int>(runtime_telemetry.render_ms_avg * 100.0));
+                ui_key += ":";
+                ui_key += std::to_string(static_cast<int>(runtime_telemetry.chunk_hz * 10.0));
             }
         }
 
@@ -2204,24 +2298,33 @@ struct AndroidRenderer {
                     const UiRect panel = menu_panel_rect();
                     const NetDebugStats client_stats = net_client.debug_stats();
                     const NetDebugStats server_stats = local_server_running ? local_server.debug_stats() : NetDebugStats{};
-                    char line1[160]{};
+                    char line1[200]{};
                     char line2[200]{};
                     char line3[200]{};
                     std::snprintf(
                         line1,
                         sizeof(line1),
-                        "NET C%d REM %u LID %u",
-                        net_connected ? 1 : 0,
-                        static_cast<unsigned>(remote_render_players.size()),
-                        net_local_player_id);
+                        "TEL F %.1f(%.2fms) FX %.1f/s R %.2fms CH %.1f/s",
+                        runtime_telemetry.frame_hz,
+                        runtime_telemetry.frame_ms_avg,
+                        runtime_telemetry.fixed_hz,
+                        runtime_telemetry.render_ms_avg,
+                        runtime_telemetry.chunk_hz);
                     std::snprintf(
                         line2,
                         sizeof(line2),
-                        "CL pps %u/%u Bps %u/%u | SV snap %u pst %u",
+                        "NET C%d REM %u LID %u CL %u/%u %u/%u SV %u/%u %u/%u snap %u pst %u",
+                        net_connected ? 1 : 0,
+                        static_cast<unsigned>(remote_render_players.size()),
+                        net_local_player_id,
                         client_stats.tx_packets_per_sec,
                         client_stats.rx_packets_per_sec,
                         client_stats.tx_bytes_per_sec,
                         client_stats.rx_bytes_per_sec,
+                        server_stats.tx_packets_per_sec,
+                        server_stats.rx_packets_per_sec,
+                        server_stats.tx_bytes_per_sec,
+                        server_stats.rx_bytes_per_sec,
                         server_stats.snapshots_sent_per_sec,
                         server_stats.player_state_broadcasts_per_sec);
                     std::snprintf(
@@ -2268,6 +2371,8 @@ struct AndroidRenderer {
         process_gui_actions();
         pump_network(dt_seconds);
         update_player_and_camera(dt_seconds);
+        timespec render_begin{};
+        clock_gettime(CLOCK_MONOTONIC, &render_begin);
 
         glViewport(0, 0, width, height);
         if (gui_menu.open()) {
@@ -2298,7 +2403,13 @@ struct AndroidRenderer {
             return;
         }
 
+        timespec render_end{};
+        clock_gettime(CLOCK_MONOTONIC, &render_end);
+
         ++frame_counter;
+        refresh_runtime_telemetry(
+            dt_seconds * 1000.0,
+            monotonic_elapsed_ms(render_begin, render_end));
         if (frame_counter == 1 || frame_counter % 300 == 0) {
             const NetDebugStats client_stats = net_client.debug_stats();
             const NetDebugStats server_stats = local_server_running ? local_server.debug_stats() : NetDebugStats{};

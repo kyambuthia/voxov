@@ -67,6 +67,7 @@ Notes:
 - `--renderer gl` is still accepted as a compatibility alias, but it is no longer required.
 - `voxov_server` is the preferred standalone authoritative server target.
 - `voxov --headless-server` remains useful for compatibility and quick local bring-up, but it is no longer the only dedicated-server path.
+- `voxov_server` now prints rate-limited `TEL ...` telemetry lines (about every 5 seconds) with loop, network, and server activity counters.
 
 ## Desktop Hotkeys
 

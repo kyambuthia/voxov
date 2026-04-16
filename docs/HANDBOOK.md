@@ -359,6 +359,7 @@ Notes:
 - `--renderer gl` is still accepted as a compatibility alias, but it is no longer required.
 - `voxov_server` is the preferred standalone authoritative server target.
 - `voxov --headless-server` remains useful for compatibility and quick local bring-up, but it is no longer the only dedicated-server path.
+- `voxov_server` now prints rate-limited `TEL ...` telemetry lines (about every 5 seconds) with loop, network, and server activity counters.
 
 ## Desktop Hotkeys
 
@@ -560,7 +561,7 @@ The desktop target is the cleanest path in the repository:
 
 1. `src/game/main.cpp` parses CLI flags, optionally starts an in-process `NetServer`, and creates `DesktopPlatform`
 2. `DesktopRuntimePlatformAdapter` and `DesktopRuntimeInputAdapter` bridge platform services into `GameRuntime`
-3. `GameRuntime` owns per-frame platform polling, menu/session flow handoff, and the runtime-facing shell API
+3. `GameRuntime` owns per-frame platform polling, menu/session flow orchestration, and the runtime-facing shell API
 4. `Engine` still owns most fixed-step simulation, renderer, physics, networking, and presentation assembly behind that shell
 5. `Renderer` currently targets a single OpenGL desktop backend and keeps the render contract aligned with GLES3/WebGL2-class limits
 
@@ -614,7 +615,7 @@ These paths are useful reference material, but they are not the main shipping ru
 
 ### 2. The shared runtime seam is still shallow
 
-Desktop now uses `GameRuntime`, but most runtime behavior still drops directly into `Engine`. The next refactor steps need to move real state ownership into `game/*`, `engine_runtime/*`, and `engine_presentation/*` rather than stopping at an adapter wrapper.
+Desktop now uses `GameRuntime`, and session-flow orchestration plus FPS rollup ownership now live in `game/*`. Most runtime behavior still drops directly into `Engine`, so the next refactor steps should keep moving real state ownership into `game/*`, `engine_runtime/*`, and `engine_presentation/*` rather than stopping at an adapter wrapper.
 
 ### 3. Cross-platform behavior is only partially shared
 
@@ -1120,7 +1121,8 @@ This roadmap is based on the current repository shape. The main priority is to c
   - render CPU time
 - network send/receive rates
 - chunk streaming counters
-- Keep the first pass cheap, always available in dev builds, and easy to surface in desktop, Android, and dedicated server builds.
+- Progress: desktop now exposes runtime-owned FPS plus frame/fixed/render/network/chunk counters; Android dev HUD and `voxov_server` now emit compact telemetry rollups for frame/fixed/network/chunk activity where applicable.
+- Next: keep the first pass cheap, always available in dev builds, and extend parity to the remaining preview/runtime targets.
 
 ### 4. Build Out The Visual Debug Stack
 
@@ -2734,5 +2736,3 @@ timeline
     Week 10-11: Foot IK + pelvis adjustment over voxel terrain
     Week 11-12: Blend/transition polish (inertialization-style) + networked parameters
 ```
-
-

@@ -4,6 +4,7 @@
 #include "engine/engine.hpp"
 #include "engine_runtime/runtime_session_controller.hpp"
 #include "engine_ui/gui_menu.hpp"
+#include "game/runtime_session_flow.hpp"
 #include "platform/platform_services.hpp"
 
 namespace {
@@ -74,10 +75,10 @@ public:
         }
 
         const RuntimeSessionMenuCallbacks callbacks{
-            .leave_session = [this]() { engine.leave_session(); },
-            .host_local = [this]() { engine.host_local_session(); },
-            .host_lan = [this]() { engine.host_lan_session(); },
-            .join_nearby = [this]() { engine.join_nearby_session(); },
+            .leave_session = [this]() { session_flow.leave_session(engine); },
+            .host_local = [this]() { session_flow.host_local_session(engine); },
+            .host_lan = [this]() { session_flow.host_lan_session(engine); },
+            .join_nearby = [this]() { session_flow.join_nearby_session(engine); },
         };
         const RuntimeMenuResult menu_result =
             session_controller.handle_menu_input(
@@ -94,7 +95,7 @@ public:
             engine.reset_camera();
         }
 
-        engine.update_session_flow(frame_dt);
+        session_flow.update(engine, frame_dt);
         sync_session_state();
 
         engine.tick(
@@ -125,12 +126,13 @@ public:
     }
 
     void connect(const char *host, uint16_t port) {
-        engine.connect(host, port);
+        session_flow.connect(engine, host, port);
     }
 
 private:
     void sync_session_state() {
-        const RuntimeSessionSnapshot snapshot = engine.session_snapshot();
+        const RuntimeSessionSnapshot snapshot =
+            session_flow.build_snapshot(engine.session_snapshot());
         engine.set_session_state(EngineSessionState{
             .devhud_enabled = session_controller.devhud_enabled(),
             .noclip_enabled = session_controller.noclip_enabled(),
@@ -147,6 +149,7 @@ private:
     RuntimePlatform platform = RuntimePlatform::Desktop;
     const PlatformServices *platform_services = nullptr;
     Engine engine{};
+    RuntimeSessionFlow session_flow{};
     RuntimeSessionController session_controller{};
     GuiMenu gui_menu{};
     UiAudio ui_audio{};

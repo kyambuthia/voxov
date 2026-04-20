@@ -123,5 +123,4 @@ jobs:
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             adb shell am start -W -n com.voxov.game/android.app.NativeActivity
             sleep 5
-            app_pid="$(adb shell pidof com.voxov.game | tr -d '\r')"
-            test -n "${app_pid}"
+            for i in $(seq 1 20); do adb shell pidof com.voxov.game 2>/dev/null | grep -Eq '[0-9]' && exit 0; sleep 2; done; exit 1

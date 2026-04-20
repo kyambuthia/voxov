@@ -117,6 +117,13 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           script: |
+            # Wait for Android package manager service; sys.boot_completed can be true before it's ready.
+            for i in $(seq 1 60); do
+              if adb shell cmd package list packages >/dev/null 2>&1; then
+                break
+              fi
+              sleep 2
+            done
             adb install -r android/app/build/outputs/apk/debug/app-debug.apk
             adb shell am start -W -n com.voxov.game/android.app.NativeActivity
             sleep 5

@@ -240,7 +240,7 @@ add_library(engine_physics STATIC
     src/engine_physics/physics_world.cpp
 )
 target_include_directories(engine_physics PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/JoltPhysics)
-target_link_libraries(engine_physics PUBLIC Jolt fmt::fmt spdlog::spdlog)
+target_link_libraries(engine_physics PUBLIC Jolt fmt::fmt spdlog::spdlog glm::glm)
 
 add_library(engine_gameplay STATIC
     src/engine_gameplay/animation/animation_runtime.cpp

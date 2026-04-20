@@ -270,6 +270,7 @@ add_library(engine_ui STATIC
     src/engine_ui/gui_menu.cpp
 )
 target_include_directories(engine_ui PUBLIC src)
+target_link_libraries(engine_ui PUBLIC glm::glm)
 
 add_library(engine_runtime STATIC
     src/engine_runtime/runtime_game_session.cpp

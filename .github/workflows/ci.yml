@@ -115,6 +115,7 @@ jobs:
           target: google_apis
           profile: pixel_5
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          emulator-boot-timeout: 1800
           disable-animations: true
           script: |
             # Wait for Android package manager service; sys.boot_completed can be true before it's ready.

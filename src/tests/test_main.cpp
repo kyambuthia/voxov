@@ -1,3 +1,4 @@
+#include "engine_core/string_id.hpp"
 #include "engine_gameplay/minigames/minigames.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_math/camera.hpp"
@@ -28,6 +29,14 @@
 #include <vector>
 
 namespace {
+
+void test_string_id_compile_time_hash() {
+  constexpr auto id_walk = "walk"_sid;
+  constexpr auto id_run = "run"_sid;
+  static_assert(id_walk != 0, "hash must be non-zero");
+  static_assert(id_walk == "walk"_sid, "same string must produce same hash");
+  static_assert(id_walk != id_run, "different strings must produce different hashes");
+}
 
 void test_camera_vectors() {
   Camera camera;
@@ -1060,6 +1069,7 @@ void test_vehicle_sandbox_scene_step() {
 } // namespace
 
 int main() {
+  test_string_id_compile_time_hash();
   test_camera_vectors();
   test_camera_view_override_basis();
   test_net_pod_serialization();

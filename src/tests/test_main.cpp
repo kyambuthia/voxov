@@ -1,3 +1,4 @@
+#include "engine_core/cvar.hpp"
 #include "engine_core/string_id.hpp"
 #include "engine_gameplay/minigames/minigames.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
@@ -29,6 +30,45 @@
 #include <vector>
 
 namespace {
+
+void test_cvar_register_and_find() {
+  CVAR_FLOAT(test_value, 42.0f, CvarFlags::None, "test cvar");
+  Cvar* found = cvar_find("test_value"_sid);
+  assert(found != nullptr);
+  assert(found->value == 42.0f);
+  assert(found->default_value == 42.0f);
+}
+
+void test_cvar_set_and_get_float() {
+  CVAR_FLOAT(test_set, 10.0f, CvarFlags::None, "set test");
+  cvar_set_float("test_set"_sid, 25.0f);
+  assert(cvar_get_float("test_set"_sid) == 25.0f);
+}
+
+void test_cvar_readonly_blocked() {
+  CVAR_FLOAT(test_readonly, 5.0f, CvarFlags::ReadOnly, "readonly test");
+  cvar_set_float("test_readonly"_sid, 99.0f);
+  assert(cvar_get_float("test_readonly"_sid) == 5.0f);
+}
+
+void test_cvar_bool() {
+  CVAR_BOOL(test_bool, true, CvarFlags::None, "bool test");
+  assert(cvar_get_bool("test_bool"_sid) == true);
+}
+
+void test_cvar_command_line_parse() {
+  CVAR_BOOL(test_server, false, CvarFlags::None, "server mode");
+  CVAR_FLOAT(test_port, 7777.0f, CvarFlags::None, "port number");
+  const char* args[] = {"voxov", "--test-server", "--test-port", "9999"};
+  cvar_parse_command_line(4, const_cast<char**>(args));
+  assert(cvar_get_bool("test_server"_sid) == true);
+  assert(cvar_get_int("test_port"_sid) == 9999);
+}
+
+void test_cvar_not_found_returns_zero() {
+  assert(cvar_get_float("nonexistent"_sid) == 0.0f);
+  assert(cvar_get_bool("nonexistent"_sid) == false);
+}
 
 void test_string_id_compile_time_hash() {
   constexpr auto id_walk = "walk"_sid;
@@ -1070,6 +1110,12 @@ void test_vehicle_sandbox_scene_step() {
 
 int main() {
   test_string_id_compile_time_hash();
+  test_cvar_register_and_find();
+  test_cvar_set_and_get_float();
+  test_cvar_readonly_blocked();
+  test_cvar_bool();
+  test_cvar_command_line_parse();
+  test_cvar_not_found_returns_zero();
   test_camera_vectors();
   test_camera_view_override_basis();
   test_net_pod_serialization();

@@ -181,6 +181,7 @@ add_library(engine_core STATIC
     src/engine_core/timing.cpp
     src/engine_core/jobs.cpp
     src/engine_core/memory.cpp
+    src/engine_core/cvar.cpp
 )
 target_include_directories(engine_core PUBLIC src)
 target_link_libraries(engine_core PUBLIC fmt::fmt spdlog::spdlog)

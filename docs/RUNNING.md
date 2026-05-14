@@ -112,3 +112,5 @@ The network stress test binds loopback ports, so it may fail inside restrictive 
 - Platform support: `docs/BUILD_PLATFORMS.md`
 - Networking details: `docs/NETWORKING.md`
 - Release workflow: `docs/RELEASES.md`
+- Architecture: `docs/ARCHITECTURE.md`
+- Implementation guide: `docs/VOXOV_IMPLEMENTATION_GUIDE.md`

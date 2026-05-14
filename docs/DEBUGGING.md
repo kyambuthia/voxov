@@ -1,5 +1,8 @@
 # Debugging Guide
 
+Following GEA §10, the engine provides in-game debugging tools: runtime metrics overlay,
+collision visualization, and an integrated Dear ImGui debug panel.
+
 ## Controls (Desktop)
 
 - Mouse controls third-person camera orbit (GTA-style while focused)

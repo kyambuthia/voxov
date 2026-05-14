@@ -1,6 +1,7 @@
-# Platform Support
+# Build Platforms
 
-This document describes the repository as it exists today, not the long-term target vision.
+This document describes platform build support as it exists today. For the target architecture
+and long-term platform vision, see `ENGINE_VISION.md` and `ARCHITECTURE.md`.
 
 ## Status Matrix
 

@@ -70,5 +70,6 @@ Multiplayer checks:
 
 ## Notes
 
-- Android currently uses a native GLES runtime path and does not yet share the full desktop `Engine` orchestration layer.
+- Android currently uses a native GLES runtime path and does not yet share the full desktop `GameRuntime` orchestration layer (GEA §1.6.15 — cross-platform runtime convergence).
 - Ongoing work should prioritize shared multiplayer/simulation helpers over renderer rewrites.
+- For the target shared runtime architecture, see `docs/ARCHITECTURE.md` and `docs/ROADMAP.md` Phase 10.

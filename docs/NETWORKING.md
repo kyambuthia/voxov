@@ -95,3 +95,4 @@ See:
 - Current networking is still foundation-level and still WIP.
 - Protocol framing, versioning, packet headers, and feature/session metadata are now explicit in `engine_net_proto`.
 - The recent refactor direction is to keep protocol, transport, discovery, and server-session responsibilities separated while Android/Web move toward the same runtime model.
+- For the target networking architecture (transport abstraction, interest management, delta compression), see `docs/ROADMAP.md` Phase 8 and `docs/ARCHITECTURE.md` Layer 14.

@@ -92,3 +92,4 @@ The right integration direction for Web is:
 3. Move local movement and simulation state out of `web_main.cpp` and into shared gameplay/runtime modules.
 4. Keep the current JS hooks, but reduce them to transport and browser I/O only.
 5. Once that is stable, replace ad-hoc local/remote browser state with protocol-driven state built from shared `engine_net_proto` types.
+- For the target transport abstraction that enables this, see `docs/ROADMAP.md` Phase 8 and `docs/ARCHITECTURE.md` Layer 14.

@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <limits>
 #include <vector>
 
 #include <glm/gtc/type_ptr.hpp>
@@ -31,34 +32,48 @@ struct GlRenderVertex {
   float nz;
 };
 
-uint64_t mesh_content_hash(const RenderMesh &mesh) {
-  constexpr uint64_t k_fnv_offset = 1469598103934665603ull;
-  constexpr uint64_t k_fnv_prime = 1099511628211ull;
-  auto hash_bytes = [](const uint8_t *data, size_t len, uint64_t seed) {
-    uint64_t h = seed;
-    for (size_t i = 0; i < len; ++i) {
-      h ^= static_cast<uint64_t>(data[i]);
-      h *= k_fnv_prime;
-    }
-    return h;
-  };
+// O(1) change-detection token: encodes vertex count and index count.
+// Catches every structural change (mesh rebuilt) at zero per-byte cost.
+static uint64_t mesh_size_token(const RenderMesh &mesh) {
+  return (static_cast<uint64_t>(mesh.vertices.size()) << 32) |
+         static_cast<uint64_t>(mesh.indices.size());
+}
 
-  uint64_t h = k_fnv_offset;
-  const size_t vertex_count = mesh.vertices.size();
-  const size_t index_count = mesh.indices.size();
-  h = hash_bytes(reinterpret_cast<const uint8_t *>(&vertex_count),
-                 sizeof(size_t), h);
-  h = hash_bytes(reinterpret_cast<const uint8_t *>(&index_count),
-                 sizeof(size_t), h);
-  if (!mesh.vertices.empty()) {
-    h = hash_bytes(reinterpret_cast<const uint8_t *>(mesh.vertices.data()),
-                   mesh.vertices.size() * sizeof(RenderVertex), h);
+struct Frustum {
+  glm::vec4 planes[6];
+};
+
+Frustum extract_frustum(const glm::mat4 &vp) {
+  // GLM is column-major: vp[col][row], so row i = (vp[0][i], vp[1][i], vp[2][i], vp[3][i])
+  auto row = [&](int i) {
+    return glm::vec4(vp[0][i], vp[1][i], vp[2][i], vp[3][i]);
+  };
+  const glm::vec4 r0 = row(0);
+  const glm::vec4 r1 = row(1);
+  const glm::vec4 r2 = row(2);
+  const glm::vec4 r3 = row(3);
+  Frustum f{};
+  f.planes[0] = r3 + r0; // left
+  f.planes[1] = r3 - r0; // right
+  f.planes[2] = r3 + r1; // bottom
+  f.planes[3] = r3 - r1; // top
+  f.planes[4] = r3 + r2; // near
+  f.planes[5] = r3 - r2; // far
+  return f;
+}
+
+bool aabb_in_frustum(const Frustum &f, glm::vec3 bmin, glm::vec3 bmax) {
+  for (int p = 0; p < 6; ++p) {
+    const glm::vec4 &pl = f.planes[p];
+    const glm::vec3 pv(
+        pl.x >= 0.0f ? bmax.x : bmin.x,
+        pl.y >= 0.0f ? bmax.y : bmin.y,
+        pl.z >= 0.0f ? bmax.z : bmin.z);
+    if (pl.x * pv.x + pl.y * pv.y + pl.z * pv.z + pl.w < 0.0f) {
+      return false;
+    }
   }
-  if (!mesh.indices.empty()) {
-    h = hash_bytes(reinterpret_cast<const uint8_t *>(mesh.indices.data()),
-                   mesh.indices.size() * sizeof(uint32_t), h);
-  }
-  return h;
+  return true;
 }
 
 GLuint compile_shader(GLenum type, const char *source) {
@@ -116,6 +131,9 @@ PFNGLBUFFERDATAPROC g_buffer_data = nullptr;
 PFNGLENABLEVERTEXATTRIBARRAYPROC g_enable_vertex_attrib_array = nullptr;
 PFNGLVERTEXATTRIBPOINTERPROC g_vertex_attrib_pointer = nullptr;
 PFNGLDISABLEVERTEXATTRIBARRAYPROC g_disable_vertex_attrib_array = nullptr;
+PFNGLGENVERTEXARRAYSPROC g_gen_vertex_arrays = nullptr;
+PFNGLBINDVERTEXARRAYPROC g_bind_vertex_array = nullptr;
+PFNGLDELETEVERTEXARRAYSPROC g_delete_vertex_arrays = nullptr;
 
 template <typename T> bool load_gl_proc(const char *name, T &fn_ptr) {
   fn_ptr = reinterpret_cast<T>(glfwGetProcAddress(name));
@@ -147,7 +165,10 @@ bool GLRenderer::init_pipeline() {
       load_gl_proc("glBufferData", g_buffer_data) &&
       load_gl_proc("glEnableVertexAttribArray", g_enable_vertex_attrib_array) &&
       load_gl_proc("glVertexAttribPointer", g_vertex_attrib_pointer) &&
-      load_gl_proc("glDisableVertexAttribArray", g_disable_vertex_attrib_array);
+      load_gl_proc("glDisableVertexAttribArray", g_disable_vertex_attrib_array) &&
+      load_gl_proc("glGenVertexArrays", g_gen_vertex_arrays) &&
+      load_gl_proc("glBindVertexArray", g_bind_vertex_array) &&
+      load_gl_proc("glDeleteVertexArrays", g_delete_vertex_arrays);
   if (!loaded) {
     return false;
   }
@@ -174,14 +195,17 @@ bool GLRenderer::init_pipeline() {
         in vec3 v_normal;
         out vec4 frag_color;
         void main() {
-            float lit = 1.0;
             float normal_len2 = dot(v_normal, v_normal);
-            if (normal_len2 > 0.001) {
-                vec3 n = normalize(v_normal);
-                vec3 light_dir = normalize(vec3(0.35, 0.82, 0.24));
-                lit = 0.35 + max(dot(n, light_dir), 0.0) * 0.65;
+            if (normal_len2 < 0.001) {
+                frag_color = vec4(v_color, 1.0);
+                return;
             }
-            frag_color = vec4(v_color * lit, 1.0);
+            vec3 n = normalize(v_normal);
+            float ndl = clamp(dot(n, normalize(vec3(0.3, 0.8, 0.4))), 0.0, 1.0);
+            float stepped = floor(ndl * 4.0) / 4.0;
+            float rim = pow(1.0 - max(dot(n, vec3(0.0, 0.0, 1.0)), 0.0), 2.0);
+            vec3 base = v_color * (0.5 + 0.5 * stepped);
+            frag_color = vec4(base + rim * 0.15, 1.0);
         }
     )";
 
@@ -277,7 +301,9 @@ void GLRenderer::init(void *window_handle) {
   window = static_cast<GLFWwindow *>(window_handle);
   glfwMakeContextCurrent(window);
   glEnable(GL_DEPTH_TEST);
-  glDisable(GL_CULL_FACE);
+  glEnable(GL_CULL_FACE);
+  glCullFace(GL_BACK);
+  glFrontFace(GL_CCW);
 
   (void)init_pipeline();
 
@@ -302,9 +328,14 @@ void GLRenderer::shutdown() {
   if (ImGui::GetCurrentContext() != nullptr) {
     ImGui::DestroyContext();
   }
-  destroy_uploaded_mesh(static_mesh);
+  destroy_uploaded_mesh(transient_mesh);
+  destroy_uploaded_mesh(debug_grid_mesh);
   destroy_uploaded_mesh(debug_world_mesh);
   destroy_uploaded_mesh(debug_screen_mesh);
+  for (auto &[id, mesh] : cached_meshes_) {
+    destroy_uploaded_mesh(mesh);
+  }
+  cached_meshes_.clear();
   shutdown_pipeline();
   scene = RenderScene{};
   has_dynamic_mesh_hash = false;
@@ -314,32 +345,58 @@ void GLRenderer::shutdown() {
 
 void GLRenderer::upload_scene(const RenderScene &new_scene) {
   scene = new_scene;
-  RenderMesh static_scene{};
+
+  // Evict cached GPU meshes that are no longer in the scene
+  std::unordered_map<uint64_t, bool> live_ids;
+  for (const RenderMesh &mesh : scene.opaque_meshes) {
+    if (mesh.mesh_id != 0) {
+      live_ids[mesh.mesh_id] = true;
+    }
+  }
+  std::vector<uint64_t> stale_ids;
+  for (const auto &[id, _] : cached_meshes_) {
+    if (live_ids.find(id) == live_ids.end()) {
+      stale_ids.push_back(id);
+    }
+  }
+  for (uint64_t id : stale_ids) {
+    destroy_uploaded_mesh(cached_meshes_[id]);
+    cached_meshes_.erase(id);
+  }
+
+  // Build transient mesh from all meshes with mesh_id == 0 (sky, planet)
+  RenderMesh transient_scene{};
   auto append_mesh = [&](const RenderMesh &mesh) {
-    const uint32_t base = static_cast<uint32_t>(static_scene.vertices.size());
-    static_scene.vertices.insert(static_scene.vertices.end(),
-                                 mesh.vertices.begin(), mesh.vertices.end());
+    const uint32_t base = static_cast<uint32_t>(transient_scene.vertices.size());
+    transient_scene.vertices.insert(transient_scene.vertices.end(),
+                                    mesh.vertices.begin(), mesh.vertices.end());
     for (uint32_t idx : mesh.indices) {
-      static_scene.indices.push_back(base + idx);
+      transient_scene.indices.push_back(base + idx);
     }
   };
   for (const RenderMesh &mesh : scene.opaque_meshes) {
-    append_mesh(mesh);
+    if (mesh.mesh_id == 0) {
+      append_mesh(mesh);
+    } else if (cached_meshes_.find(mesh.mesh_id) == cached_meshes_.end()) {
+      UploadedMesh uploaded{};
+      upload_mesh(uploaded, mesh);
+      cached_meshes_[mesh.mesh_id] = uploaded;
+    }
   }
-  append_mesh(scene.debug_grid);
 
-  upload_mesh(static_mesh, static_scene);
+  upload_mesh(transient_mesh, transient_scene, GL_DYNAMIC_DRAW);
+  upload_mesh(debug_grid_mesh, scene.debug_grid);
   upload_mesh(debug_world_mesh, scene.debug_world);
   upload_mesh(debug_screen_mesh, scene.debug_screen);
-  last_debug_world_hash = mesh_content_hash(scene.debug_world);
-  last_debug_screen_hash = mesh_content_hash(scene.debug_screen);
+  last_debug_world_hash = mesh_size_token(scene.debug_world);
+  last_debug_screen_hash = mesh_size_token(scene.debug_screen);
   has_dynamic_mesh_hash = true;
 }
 
 void GLRenderer::update_dynamic_meshes(const RenderMesh &debug_world,
                                        const RenderMesh &debug_screen) {
-  const uint64_t world_hash = mesh_content_hash(debug_world);
-  const uint64_t screen_hash = mesh_content_hash(debug_screen);
+  const uint64_t world_hash = mesh_size_token(debug_world);
+  const uint64_t screen_hash = mesh_size_token(debug_screen);
   if (has_dynamic_mesh_hash && world_hash == last_debug_world_hash &&
       screen_hash == last_debug_screen_hash) {
     return;
@@ -371,10 +428,19 @@ void GLRenderer::destroy_uploaded_mesh(UploadedMesh &mesh) {
 #endif
     mesh.vertex_buffer = 0;
   }
+  if (mesh.vertex_array != 0) {
+#if defined(__APPLE__)
+    glDeleteVertexArrays(1, &mesh.vertex_array);
+#else
+    g_delete_vertex_arrays(1, &mesh.vertex_array);
+#endif
+    mesh.vertex_array = 0;
+  }
   mesh.index_count = 0;
 }
 
-void GLRenderer::upload_mesh(UploadedMesh &mesh, const RenderMesh &source) {
+void GLRenderer::upload_mesh(UploadedMesh &mesh, const RenderMesh &source,
+                             unsigned int usage) {
   if (source.vertices.empty() || source.indices.empty()) {
     destroy_uploaded_mesh(mesh);
     return;
@@ -394,58 +460,43 @@ void GLRenderer::upload_mesh(UploadedMesh &mesh, const RenderMesh &source) {
     g_gen_buffers(1, &mesh.index_buffer);
 #endif
   }
+  if (mesh.vertex_array == 0) {
+#if defined(__APPLE__)
+    glGenVertexArrays(1, &mesh.vertex_array);
+#else
+    g_gen_vertex_arrays(1, &mesh.vertex_array);
+#endif
+  }
 
   std::vector<GlRenderVertex> vertices;
   vertices.reserve(source.vertices.size());
+  glm::vec3 bmin(std::numeric_limits<float>::max());
+  glm::vec3 bmax(-std::numeric_limits<float>::max());
   for (const RenderVertex &v : source.vertices) {
     vertices.push_back({v.position.x, v.position.y, v.position.z, v.color.r,
                         v.color.g, v.color.b, v.normal.x, v.normal.y,
                         v.normal.z});
+    bmin = glm::min(bmin, v.position);
+    bmax = glm::max(bmax, v.position);
   }
+  mesh.bounds_min = bmin;
+  mesh.bounds_max = bmax;
 
+  // Record buffer bindings and attrib layout inside the VAO.
+  // Note: GL_ELEMENT_ARRAY_BUFFER is part of VAO state; unbind VAO before
+  // touching the IBO binding externally.
 #if defined(__APPLE__)
+  glBindVertexArray(mesh.vertex_array);
   glBindBuffer(GL_ARRAY_BUFFER, mesh.vertex_buffer);
   glBufferData(
       GL_ARRAY_BUFFER,
       static_cast<GLsizeiptr>(vertices.size() * sizeof(GlRenderVertex)),
-      vertices.data(), GL_STATIC_DRAW);
+      vertices.data(), static_cast<GLenum>(usage));
   glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.index_buffer);
   glBufferData(
       GL_ELEMENT_ARRAY_BUFFER,
       static_cast<GLsizeiptr>(source.indices.size() * sizeof(uint32_t)),
-      source.indices.data(), GL_STATIC_DRAW);
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-#else
-  g_bind_buffer(GL_ARRAY_BUFFER, mesh.vertex_buffer);
-  g_buffer_data(
-      GL_ARRAY_BUFFER,
-      static_cast<GLsizeiptr>(vertices.size() * sizeof(GlRenderVertex)),
-      vertices.data(), GL_STATIC_DRAW);
-  g_bind_buffer(GL_ELEMENT_ARRAY_BUFFER, mesh.index_buffer);
-  g_buffer_data(
-      GL_ELEMENT_ARRAY_BUFFER,
-      static_cast<GLsizeiptr>(source.indices.size() * sizeof(uint32_t)),
-      source.indices.data(), GL_STATIC_DRAW);
-  g_bind_buffer(GL_ARRAY_BUFFER, 0);
-  g_bind_buffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-#endif
-
-  mesh.index_count = static_cast<uint32_t>(source.indices.size());
-}
-
-void GLRenderer::draw_mesh(const UploadedMesh &mesh,
-                           const glm::mat4 &mvp) const {
-  if (program == 0 || mesh.vertex_buffer == 0 || mesh.index_buffer == 0 ||
-      mesh.index_count == 0) {
-    return;
-  }
-
-#if defined(__APPLE__)
-  glUseProgram(program);
-  glUniformMatrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
-  glBindBuffer(GL_ARRAY_BUFFER, mesh.vertex_buffer);
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.index_buffer);
+      source.indices.data(), static_cast<GLenum>(usage));
   glEnableVertexAttribArray(0);
   glEnableVertexAttribArray(1);
   glEnableVertexAttribArray(2);
@@ -457,11 +508,20 @@ void GLRenderer::draw_mesh(const UploadedMesh &mesh,
   glVertexAttribPointer(
       2, 3, GL_FLOAT, GL_FALSE, sizeof(GlRenderVertex),
       reinterpret_cast<const void *>(offsetof(GlRenderVertex, nx)));
+  glBindVertexArray(0);
+  glBindBuffer(GL_ARRAY_BUFFER, 0);
 #else
-  g_use_program(program);
-  g_uniform_matrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
+  g_bind_vertex_array(mesh.vertex_array);
   g_bind_buffer(GL_ARRAY_BUFFER, mesh.vertex_buffer);
+  g_buffer_data(
+      GL_ARRAY_BUFFER,
+      static_cast<GLsizeiptr>(vertices.size() * sizeof(GlRenderVertex)),
+      vertices.data(), static_cast<GLenum>(usage));
   g_bind_buffer(GL_ELEMENT_ARRAY_BUFFER, mesh.index_buffer);
+  g_buffer_data(
+      GL_ELEMENT_ARRAY_BUFFER,
+      static_cast<GLsizeiptr>(source.indices.size() * sizeof(uint32_t)),
+      source.indices.data(), static_cast<GLenum>(usage));
   g_enable_vertex_attrib_array(0);
   g_enable_vertex_attrib_array(1);
   g_enable_vertex_attrib_array(2);
@@ -473,25 +533,34 @@ void GLRenderer::draw_mesh(const UploadedMesh &mesh,
   g_vertex_attrib_pointer(
       2, 3, GL_FLOAT, GL_FALSE, sizeof(GlRenderVertex),
       reinterpret_cast<const void *>(offsetof(GlRenderVertex, nx)));
+  g_bind_vertex_array(0);
+  g_bind_buffer(GL_ARRAY_BUFFER, 0);
+#endif
+
+  mesh.index_count = static_cast<uint32_t>(source.indices.size());
+}
+
+void GLRenderer::draw_mesh(const UploadedMesh &mesh,
+                           const glm::mat4 &mvp) const {
+  if (program == 0 || mesh.vertex_array == 0 || mesh.index_count == 0) {
+    return;
+  }
+
+#if defined(__APPLE__)
+  glUniformMatrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
+  glBindVertexArray(mesh.vertex_array);
+#else
+  g_uniform_matrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
+  g_bind_vertex_array(mesh.vertex_array);
 #endif
 
   glDrawElements(GL_TRIANGLES, static_cast<GLsizei>(mesh.index_count),
                  GL_UNSIGNED_INT, reinterpret_cast<const void *>(0));
 
 #if defined(__APPLE__)
-  glDisableVertexAttribArray(0);
-  glDisableVertexAttribArray(1);
-  glDisableVertexAttribArray(2);
-  glBindBuffer(GL_ARRAY_BUFFER, 0);
-  glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-  glUseProgram(0);
+  glBindVertexArray(0);
 #else
-  g_disable_vertex_attrib_array(0);
-  g_disable_vertex_attrib_array(1);
-  g_disable_vertex_attrib_array(2);
-  g_bind_buffer(GL_ARRAY_BUFFER, 0);
-  g_bind_buffer(GL_ELEMENT_ARRAY_BUFFER, 0);
-  g_use_program(0);
+  g_bind_vertex_array(0);
 #endif
 }
 
@@ -509,6 +578,14 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx,
   glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
 
   const uint32_t view_count = std::max(1u, std::min(ctx.view_count, 2u));
+
+  // Bind the shader program once for all draw calls this frame.
+#if defined(__APPLE__)
+  glUseProgram(program);
+#else
+  if (program != 0) { g_use_program(program); }
+#endif
+
   for (uint32_t i = 0; i < view_count; ++i) {
     const RenderView &view = ctx.views[i];
     const int vx =
@@ -527,7 +604,20 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx,
                          view.camera.z_near, view.camera.z_far);
     const glm::mat4 view_proj = p * view.camera.view();
 
-    draw_mesh(static_mesh, view_proj);
+    draw_mesh(transient_mesh, view_proj);
+
+    // Draw per-chunk cached meshes with frustum culling
+    const Frustum frustum = extract_frustum(view_proj);
+    for (const auto &[id, mesh] : cached_meshes_) {
+      if (aabb_in_frustum(frustum, mesh.bounds_min, mesh.bounds_max)) {
+        draw_mesh(mesh, view_proj);
+      }
+    }
+
+    // Debug grid uses flat horizontal quads — disable culling while drawing
+    glDisable(GL_CULL_FACE);
+    draw_mesh(debug_grid_mesh, view_proj);
+    glEnable(GL_CULL_FACE);
 
     if (ctx.debug_xray) {
       glDisable(GL_DEPTH_TEST);
@@ -542,6 +632,13 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx,
     draw_mesh(debug_screen_mesh, screen_mvp);
     glEnable(GL_DEPTH_TEST);
   }
+
+  // Release program after all geometry draws.
+#if defined(__APPLE__)
+  glUseProgram(0);
+#else
+  if (program != 0) { g_use_program(0); }
+#endif
 
   if (imgui_ready) {
     ImGui_ImplOpenGL3_NewFrame();

@@ -35,7 +35,10 @@ private:
   void destroy_uploaded_mesh(UploadedMesh &mesh);
   void upload_mesh(UploadedMesh &mesh, const RenderMesh &source,
                    unsigned int usage = 0x88B4 /*GL_STATIC_DRAW*/);
-  void draw_mesh(const UploadedMesh &mesh, const glm::mat4 &mvp) const;
+  void draw_mesh(const UploadedMesh &mesh, const glm::mat4 &mvp);
+
+  // Dirty-bit constants for GL state change detection
+  static constexpr uint32_t kDirtyProgram = 1u << 0;
 
   GLFWwindow *window = nullptr;
   RenderScene scene;
@@ -50,4 +53,10 @@ private:
   uint64_t last_debug_world_hash = 0;
   uint64_t last_debug_screen_hash = 0;
   bool has_dynamic_mesh_hash = false;
+
+  // Dirty-bit state tracking
+  uint32_t dirty_flags_ = ~0u;
+  glm::mat4 last_mvp_{1.0f};
+  bool last_cull_face_enabled_ = true;
+  bool last_depth_test_enabled_ = true;
 };

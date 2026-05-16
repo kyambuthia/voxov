@@ -11,6 +11,7 @@
 #include <algorithm>
 #include <cstddef>
 #include <cstdint>
+#include <cstring>
 #include <limits>
 #include <vector>
 
@@ -305,6 +306,11 @@ void GLRenderer::init(void *window_handle) {
   glCullFace(GL_BACK);
   glFrontFace(GL_CCW);
 
+  // Sync dirty-bit tracking with the GL state we just set
+  dirty_flags_ = ~0u;
+  last_cull_face_enabled_ = true;
+  last_depth_test_enabled_ = true;
+
   (void)init_pipeline();
 
   IMGUI_CHECKVERSION();
@@ -541,16 +547,25 @@ void GLRenderer::upload_mesh(UploadedMesh &mesh, const RenderMesh &source,
 }
 
 void GLRenderer::draw_mesh(const UploadedMesh &mesh,
-                           const glm::mat4 &mvp) const {
+                           const glm::mat4 &mvp) {
   if (program == 0 || mesh.vertex_array == 0 || mesh.index_count == 0) {
     return;
   }
 
+  // Skip redundant MVP uniform upload when the matrix hasn't changed
+  if (std::memcmp(glm::value_ptr(mvp), glm::value_ptr(last_mvp_),
+                  sizeof(glm::mat4)) != 0) {
+    last_mvp_ = mvp;
 #if defined(__APPLE__)
-  glUniformMatrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
+    glUniformMatrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
+#else
+    g_uniform_matrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
+#endif
+  }
+
+#if defined(__APPLE__)
   glBindVertexArray(mesh.vertex_array);
 #else
-  g_uniform_matrix4fv(uniform_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
   g_bind_vertex_array(mesh.vertex_array);
 #endif
 
@@ -579,12 +594,15 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx,
 
   const uint32_t view_count = std::max(1u, std::min(ctx.view_count, 2u));
 
-  // Bind the shader program once for all draw calls this frame.
+  // Bind the shader program once for all draw calls this frame (only when dirty).
+  if (dirty_flags_ & kDirtyProgram) {
 #if defined(__APPLE__)
-  glUseProgram(program);
+    glUseProgram(program);
 #else
-  if (program != 0) { g_use_program(program); }
+    if (program != 0) { g_use_program(program); }
 #endif
+    dirty_flags_ &= ~kDirtyProgram;
+  }
 
   for (uint32_t i = 0; i < view_count; ++i) {
     const RenderView &view = ctx.views[i];
@@ -615,22 +633,40 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx,
     }
 
     // Debug grid uses flat horizontal quads — disable culling while drawing
-    glDisable(GL_CULL_FACE);
+    if (last_cull_face_enabled_) {
+      glDisable(GL_CULL_FACE);
+      last_cull_face_enabled_ = false;
+    }
     draw_mesh(debug_grid_mesh, view_proj);
-    glEnable(GL_CULL_FACE);
+    if (!last_cull_face_enabled_) {
+      glEnable(GL_CULL_FACE);
+      last_cull_face_enabled_ = true;
+    }
 
     if (ctx.debug_xray) {
-      glDisable(GL_DEPTH_TEST);
+      if (last_depth_test_enabled_) {
+        glDisable(GL_DEPTH_TEST);
+        last_depth_test_enabled_ = false;
+      }
       draw_mesh(debug_world_mesh, view_proj);
-      glEnable(GL_DEPTH_TEST);
+      if (!last_depth_test_enabled_) {
+        glEnable(GL_DEPTH_TEST);
+        last_depth_test_enabled_ = true;
+      }
     } else {
       draw_mesh(debug_world_mesh, view_proj);
     }
 
     const glm::mat4 screen_mvp(1.0f);
-    glDisable(GL_DEPTH_TEST);
+    if (last_depth_test_enabled_) {
+      glDisable(GL_DEPTH_TEST);
+      last_depth_test_enabled_ = false;
+    }
     draw_mesh(debug_screen_mesh, screen_mvp);
-    glEnable(GL_DEPTH_TEST);
+    if (!last_depth_test_enabled_) {
+      glEnable(GL_DEPTH_TEST);
+      last_depth_test_enabled_ = true;
+    }
   }
 
   // Release program after all geometry draws.
@@ -639,6 +675,7 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx,
 #else
   if (program != 0) { g_use_program(0); }
 #endif
+  dirty_flags_ |= kDirtyProgram;
 
   if (imgui_ready) {
     ImGui_ImplOpenGL3_NewFrame();

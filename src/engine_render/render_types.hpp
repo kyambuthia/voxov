@@ -17,6 +17,9 @@ struct RenderMesh {
     std::vector<uint32_t> indices;
     // Non-zero = stable GPU cache key; zero = transient (always re-uploaded).
     uint64_t mesh_id = 0;
+    // Primary material (most-frequent) for draw-call batching.
+    // 0 = unset/unknown; otherwise matches VoxelMaterial enum values.
+    uint8_t material = 0;
 };
 
 struct RenderScene {

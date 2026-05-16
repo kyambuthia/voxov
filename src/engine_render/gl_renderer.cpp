@@ -67,10 +67,10 @@ bool aabb_in_frustum(const Frustum &f, glm::vec3 bmin, glm::vec3 bmax) {
   for (int p = 0; p < 6; ++p) {
     const glm::vec4 &pl = f.planes[p];
     const glm::vec3 pv(
-        pl.x >= 0.0f ? bmax.x : bmin.x,
-        pl.y >= 0.0f ? bmax.y : bmin.y,
-        pl.z >= 0.0f ? bmax.z : bmin.z);
-    if (pl.x * pv.x + pl.y * pv.y + pl.z * pv.z + pl.w < 0.0f) {
+        (pl.x >= 0.0f) ? bmin.x : bmax.x,
+        (pl.y >= 0.0f) ? bmin.y : bmax.y,
+        (pl.z >= 0.0f) ? bmin.z : bmax.z);
+    if (glm::dot(glm::vec3(pl), pv) + pl.w < 0.0f) {
       return false;
     }
   }
@@ -618,9 +618,7 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx,
 
     glViewport(vx, vy, vw, vh);
     const glm::mat4 p =
-        glm::perspective(view.camera.fov_y_radians,
-                         static_cast<float>(vw) / static_cast<float>(vh),
-                         view.camera.z_near, view.camera.z_far);
+        view.camera.projection(static_cast<float>(vw) / static_cast<float>(vh));
     const glm::mat4 view_proj = p * view.camera.view();
 
     draw_mesh(transient_mesh, view_proj);

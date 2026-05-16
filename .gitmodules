@@ -28,3 +28,6 @@
 [submodule "dependencies/sokol"]
 	path = dependencies/sokol
 	url = https://github.com/floooh/sokol.git
+[submodule "dependencies/sokol-tools-bin"]
+	path = dependencies/sokol-tools-bin
+	url = https://github.com/floooh/sokol-tools-bin.git

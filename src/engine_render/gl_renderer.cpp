@@ -487,6 +487,7 @@ void GLRenderer::upload_mesh(UploadedMesh &mesh, const RenderMesh &source,
   }
   mesh.bounds_min = bmin;
   mesh.bounds_max = bmax;
+  mesh.material = source.material;
 
   // Record buffer bindings and attrib layout inside the VAO.
   // Note: GL_ELEMENT_ARRAY_BUFFER is part of VAO state; unbind VAO before
@@ -624,11 +625,18 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx,
 
     draw_mesh(transient_mesh, view_proj);
 
-    // Draw per-chunk cached meshes with frustum culling
+    // Draw per-chunk cached meshes with frustum culling, grouped by material
+    // to minimise redundant state switching between same-material draws.
     const Frustum frustum = extract_frustum(view_proj);
+    std::vector<const UploadedMesh *> material_groups[4];
     for (const auto &[id, mesh] : cached_meshes_) {
-      if (aabb_in_frustum(frustum, mesh.bounds_min, mesh.bounds_max)) {
-        draw_mesh(mesh, view_proj);
+      material_groups[mesh.material].push_back(&mesh);
+    }
+    for (int mat = 0; mat < 4; ++mat) {
+      for (const UploadedMesh *mesh : material_groups[mat]) {
+        if (aabb_in_frustum(frustum, mesh->bounds_min, mesh->bounds_max)) {
+          draw_mesh(*mesh, view_proj);
+        }
       }
     }
 

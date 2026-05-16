@@ -25,3 +25,6 @@
 [submodule "dependencies/imgui"]
 	path = dependencies/imgui
 	url = https://github.com/ocornut/imgui.git
+[submodule "dependencies/sokol"]
+	path = dependencies/sokol
+	url = https://github.com/floooh/sokol.git

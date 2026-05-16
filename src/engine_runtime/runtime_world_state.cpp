@@ -168,7 +168,6 @@ void RuntimeWorldState::rebuild_streamed_chunk_scene(
     RenderScene &scene,
     bool spherical_planet) {
     scene.opaque_meshes.clear();
-    scene.opaque_meshes.push_back(world_chunk.build_sky_placeholder(240.0f));
     if (spherical_planet) {
         scene.opaque_meshes.push_back(world_chunk.build_greedy_mesh());
         return;

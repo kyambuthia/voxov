@@ -36,6 +36,9 @@ cmake_install.cmake
 # Dear ImGui local state
 imgui.ini
 
+# Hermes agent working files
+.hermes/
+
 # Android local build artifacts
 /android/.gradle/
 /android/build/

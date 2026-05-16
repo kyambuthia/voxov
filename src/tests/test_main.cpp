@@ -219,7 +219,7 @@ void test_net_header_validation() {
 void test_chunk_meshing() {
   VoxelChunk chunk;
   chunk.generate_heightmap_terrain();
-  RenderMesh mesh = chunk.build_naive_mesh();
+  RenderMesh mesh = chunk.build_greedy_mesh();
 
   assert(!mesh.vertices.empty());
   assert(!mesh.indices.empty());
@@ -237,7 +237,7 @@ void test_chunk_meshing() {
 void test_chunk_world_footprint() {
   VoxelChunk chunk;
   chunk.generate_flat_ground(0);
-  const RenderMesh mesh = chunk.build_naive_mesh();
+  const RenderMesh mesh = chunk.build_greedy_mesh();
   assert(!mesh.vertices.empty());
 
   float max_x = -1000.0f;
@@ -256,7 +256,7 @@ void test_chunk_world_footprint() {
 void test_single_voxel_mesh_bounds() {
   VoxelChunk chunk;
   chunk.set_solid(0, 0, 0, true);
-  const RenderMesh mesh = chunk.build_naive_mesh();
+  const RenderMesh mesh = chunk.build_greedy_mesh();
 
   assert(mesh.vertices.size() == 24);
   assert(mesh.indices.size() == 36);
@@ -285,9 +285,9 @@ void test_chunk_seed_determinism() {
   b.generate_heightmap_terrain_seeded(12345u, 4, -2);
   c.generate_heightmap_terrain_seeded(12345u, 5, -2);
 
-  const RenderMesh mesh_a = a.build_naive_mesh();
-  const RenderMesh mesh_b = b.build_naive_mesh();
-  const RenderMesh mesh_c = c.build_naive_mesh();
+  const RenderMesh mesh_a = a.build_greedy_mesh();
+  const RenderMesh mesh_b = b.build_greedy_mesh();
+  const RenderMesh mesh_c = c.build_greedy_mesh();
 
   assert(mesh_a.vertices.size() == mesh_b.vertices.size());
   assert(mesh_a.indices.size() == mesh_b.indices.size());
@@ -314,7 +314,7 @@ void test_chunk_seed_determinism() {
 void test_chunk_spherical_planet_generation() {
   VoxelChunk chunk;
   chunk.generate_spherical_planet_seeded(0xBEEF1234u);
-  const RenderMesh mesh = chunk.build_naive_mesh();
+  const RenderMesh mesh = chunk.build_greedy_mesh();
   assert(!mesh.vertices.empty());
   assert(!mesh.indices.empty());
 
@@ -329,6 +329,34 @@ void test_chunk_spherical_planet_generation() {
   assert(solid_count > 0);
   assert(solid_count <
          (VoxelChunk::CHUNK_X * VoxelChunk::CHUNK_Y * VoxelChunk::CHUNK_Z) / 2);
+}
+
+void test_voxel_material_surface_assignment() {
+  VoxelChunk chunk;
+  chunk.generate_flat_ground(2);
+
+  assert(chunk.material(3, 2, 4) == VoxelMaterial::Grass);
+  assert(chunk.material(3, 1, 4) == VoxelMaterial::Dirt);
+  assert(chunk.material(3, 0, 4) == VoxelMaterial::Dirt);
+  assert(chunk.material(3, 3, 4) == VoxelMaterial::Air);
+}
+
+void test_voxel_material_custom_values_affect_mesh_colors() {
+  VoxelChunk chunk;
+  chunk.set_material(0, 0, 0, VoxelMaterial::Stone);
+  const RenderMesh mesh = chunk.build_greedy_mesh();
+
+  assert(!mesh.vertices.empty());
+  bool found_stone_tint = false;
+  for (const RenderVertex &vertex : mesh.vertices) {
+    if (std::fabs(vertex.color.r - 0.46f) < 0.001f &&
+        std::fabs(vertex.color.g - 0.48f) < 0.001f &&
+        std::fabs(vertex.color.b - 0.5f) < 0.001f) {
+      found_stone_tint = true;
+      break;
+    }
+  }
+  assert(found_stone_tint);
 }
 
 void test_locomotion_course_only_affects_origin_chunk() {
@@ -1128,6 +1156,8 @@ int main() {
   test_single_voxel_mesh_bounds();
   test_chunk_seed_determinism();
   test_chunk_spherical_planet_generation();
+  test_voxel_material_surface_assignment();
+  test_voxel_material_custom_values_affect_mesh_colors();
   test_locomotion_course_only_affects_origin_chunk();
   test_camera_yaw_response();
   test_strafe_axis_sign();

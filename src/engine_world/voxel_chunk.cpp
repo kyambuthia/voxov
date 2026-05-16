@@ -234,6 +234,9 @@ RenderMesh VoxelChunk::build_greedy_mesh(const glm::vec3 &origin,
       std::max({CHUNK_X * CHUNK_Y, CHUNK_Y * CHUNK_Z, CHUNK_X * CHUNK_Z}));
   std::vector<int16_t> mask(max_mask_size, 0);
 
+  // Track per-material quad counts to determine the primary material.
+  uint32_t material_quads[4] = {0, 0, 0, 0};
+
   for (int d = 0; d < 3; ++d) {
     const int u = axis_u[d];
     const int v = axis_v[d];
@@ -306,6 +309,7 @@ RenderMesh VoxelChunk::build_greedy_mesh(const glm::vec3 &origin,
           const bool positive_face = face > 0;
           const VoxelMaterial face_material =
               static_cast<VoxelMaterial>(std::abs(face));
+          ++material_quads[static_cast<uint8_t>(face_material)];
           const float surface_y =
               static_cast<float>(std::max(0, positive_face ? x[d] - 1 : x[d]));
           const float height_t =
@@ -329,6 +333,17 @@ RenderMesh VoxelChunk::build_greedy_mesh(const glm::vec3 &origin,
       }
     }
   }
+
+  // Set the primary material to the most-frequent face material.
+  uint8_t primary = 0;
+  uint32_t best = 0;
+  for (uint8_t m = 1; m < 4; ++m) {
+    if (material_quads[m] > best) {
+      best = material_quads[m];
+      primary = m;
+    }
+  }
+  mesh.material = primary;
 
   return mesh;
 }

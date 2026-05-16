@@ -15,6 +15,8 @@ struct RenderVertex {
 struct RenderMesh {
     std::vector<RenderVertex> vertices;
     std::vector<uint32_t> indices;
+    // Non-zero = stable GPU cache key; zero = transient (always re-uploaded).
+    uint64_t mesh_id = 0;
 };
 
 struct RenderScene {

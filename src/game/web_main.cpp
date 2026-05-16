@@ -11,6 +11,11 @@
 #include <cmath>
 #include <cstdio>
 #include <string>
+#include <vector>
+
+#include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
+#include <glm/gtc/type_ptr.hpp>
 
 EM_JS(int, web_poll_input_flags, (), {
     if (!Module.__voxovPollInputFlags) {
@@ -49,6 +54,22 @@ EM_JS(int, web_net_remote_count, (), {
 });
 
 namespace {
+struct SceneVertex {
+    float px = 0.0f;
+    float py = 0.0f;
+    float pz = 0.0f;
+    float r = 1.0f;
+    float g = 1.0f;
+    float b = 1.0f;
+};
+
+struct SceneMeshGpu {
+    GLuint vao = 0;
+    GLuint vbo = 0;
+    GLuint ibo = 0;
+    GLsizei index_count = 0;
+};
+
 struct WebAppState {
     EMSCRIPTEN_WEBGL_CONTEXT_HANDLE context = 0;
     float t = 0.0f;
@@ -70,7 +91,185 @@ struct WebAppState {
         double fps = 0.0;
         double frame_ms = 0.0;
     } telemetry{};
+    GLuint scene_program = 0;
+    GLint u_mvp = -1;
+    SceneMeshGpu ground_mesh{};
+    SceneMeshGpu player_mesh{};
+    bool scene_ready = false;
 };
+
+GLuint compile_shader(GLenum type, const char *source) {
+    const GLuint shader = glCreateShader(type);
+    glShaderSource(shader, 1, &source, nullptr);
+    glCompileShader(shader);
+    GLint ok = GL_FALSE;
+    glGetShaderiv(shader, GL_COMPILE_STATUS, &ok);
+    if (ok == GL_TRUE) {
+        return shader;
+    }
+    char log[512]{};
+    glGetShaderInfoLog(shader, sizeof(log), nullptr, log);
+    std::fprintf(stderr, "Web shader compile failed: %s\n", log);
+    glDeleteShader(shader);
+    return 0;
+}
+
+GLuint create_scene_program() {
+    static constexpr const char *k_vs = R"(
+        #version 300 es
+        precision highp float;
+        layout(location = 0) in vec3 a_pos;
+        layout(location = 1) in vec3 a_color;
+        uniform mat4 u_mvp;
+        out vec3 v_color;
+        void main() {
+            v_color = a_color;
+            gl_Position = u_mvp * vec4(a_pos, 1.0);
+        }
+    )";
+    static constexpr const char *k_fs = R"(
+        #version 300 es
+        precision highp float;
+        in vec3 v_color;
+        out vec4 o_color;
+        void main() {
+            o_color = vec4(v_color, 1.0);
+        }
+    )";
+
+    const GLuint vs = compile_shader(GL_VERTEX_SHADER, k_vs);
+    const GLuint fs = compile_shader(GL_FRAGMENT_SHADER, k_fs);
+    if (vs == 0 || fs == 0) {
+        if (vs != 0) glDeleteShader(vs);
+        if (fs != 0) glDeleteShader(fs);
+        return 0;
+    }
+
+    const GLuint program = glCreateProgram();
+    glAttachShader(program, vs);
+    glAttachShader(program, fs);
+    glLinkProgram(program);
+    glDeleteShader(vs);
+    glDeleteShader(fs);
+
+    GLint ok = GL_FALSE;
+    glGetProgramiv(program, GL_LINK_STATUS, &ok);
+    if (ok == GL_TRUE) {
+        return program;
+    }
+    char log[512]{};
+    glGetProgramInfoLog(program, sizeof(log), nullptr, log);
+    std::fprintf(stderr, "Web shader link failed: %s\n", log);
+    glDeleteProgram(program);
+    return 0;
+}
+
+SceneMeshGpu upload_scene_mesh(
+    const std::vector<SceneVertex> &vertices,
+    const std::vector<uint16_t> &indices) {
+    SceneMeshGpu mesh{};
+    if (vertices.empty() || indices.empty()) {
+        return mesh;
+    }
+
+    glGenVertexArrays(1, &mesh.vao);
+    glBindVertexArray(mesh.vao);
+
+    glGenBuffers(1, &mesh.vbo);
+    glBindBuffer(GL_ARRAY_BUFFER, mesh.vbo);
+    glBufferData(
+        GL_ARRAY_BUFFER,
+        static_cast<GLsizeiptr>(vertices.size() * sizeof(SceneVertex)),
+        vertices.data(),
+        GL_STATIC_DRAW);
+
+    glGenBuffers(1, &mesh.ibo);
+    glBindBuffer(GL_ELEMENT_ARRAY_BUFFER, mesh.ibo);
+    glBufferData(
+        GL_ELEMENT_ARRAY_BUFFER,
+        static_cast<GLsizeiptr>(indices.size() * sizeof(uint16_t)),
+        indices.data(),
+        GL_STATIC_DRAW);
+
+    glEnableVertexAttribArray(0);
+    glVertexAttribPointer(0, 3, GL_FLOAT, GL_FALSE, sizeof(SceneVertex), reinterpret_cast<void *>(0));
+    glEnableVertexAttribArray(1);
+    glVertexAttribPointer(
+        1,
+        3,
+        GL_FLOAT,
+        GL_FALSE,
+        sizeof(SceneVertex),
+        reinterpret_cast<void *>(3 * sizeof(float)));
+
+    glBindVertexArray(0);
+    mesh.index_count = static_cast<GLsizei>(indices.size());
+    return mesh;
+}
+
+void draw_scene_mesh(
+    const SceneMeshGpu &mesh,
+    GLuint program,
+    GLint u_mvp,
+    const glm::mat4 &mvp) {
+    if (mesh.vao == 0 || mesh.index_count <= 0) {
+        return;
+    }
+    glUseProgram(program);
+    glUniformMatrix4fv(u_mvp, 1, GL_FALSE, glm::value_ptr(mvp));
+    glBindVertexArray(mesh.vao);
+    glDrawElements(GL_TRIANGLES, mesh.index_count, GL_UNSIGNED_SHORT, nullptr);
+    glBindVertexArray(0);
+}
+
+bool init_scene_resources(WebAppState &state) {
+    state.scene_program = create_scene_program();
+    if (state.scene_program == 0) {
+        return false;
+    }
+    state.u_mvp = glGetUniformLocation(state.scene_program, "u_mvp");
+    if (state.u_mvp < 0) {
+        std::fprintf(stderr, "Web scene uniform lookup failed\n");
+        return false;
+    }
+
+    const std::vector<SceneVertex> ground_vertices{
+        {-64.0f, 5.5f, -64.0f, 0.15f, 0.22f, 0.16f},
+        {64.0f, 5.5f, -64.0f, 0.15f, 0.22f, 0.16f},
+        {64.0f, 5.5f, 64.0f, 0.15f, 0.22f, 0.16f},
+        {-64.0f, 5.5f, 64.0f, 0.15f, 0.22f, 0.16f},
+    };
+    const std::vector<uint16_t> ground_indices{0, 1, 2, 0, 2, 3};
+    state.ground_mesh = upload_scene_mesh(ground_vertices, ground_indices);
+
+    const std::vector<SceneVertex> player_vertices{
+        {-0.3f, 0.0f, -0.3f, 0.82f, 0.86f, 0.95f},
+        {0.3f, 0.0f, -0.3f, 0.82f, 0.86f, 0.95f},
+        {0.3f, 0.0f, 0.3f, 0.82f, 0.86f, 0.95f},
+        {-0.3f, 0.0f, 0.3f, 0.82f, 0.86f, 0.95f},
+        {-0.3f, 1.2f, -0.3f, 0.95f, 0.78f, 0.56f},
+        {0.3f, 1.2f, -0.3f, 0.95f, 0.78f, 0.56f},
+        {0.3f, 1.2f, 0.3f, 0.95f, 0.78f, 0.56f},
+        {-0.3f, 1.2f, 0.3f, 0.95f, 0.78f, 0.56f},
+    };
+    const std::vector<uint16_t> player_indices{
+        0, 1, 2, 0, 2, 3, // bottom
+        4, 5, 6, 4, 6, 7, // top
+        0, 1, 5, 0, 5, 4, // side
+        1, 2, 6, 1, 6, 5, // side
+        2, 3, 7, 2, 7, 6, // side
+        3, 0, 4, 3, 4, 7, // side
+    };
+    state.player_mesh = upload_scene_mesh(player_vertices, player_indices);
+
+    state.scene_ready =
+        state.ground_mesh.vao != 0 &&
+        state.player_mesh.vao != 0;
+    if (!state.scene_ready) {
+        std::fprintf(stderr, "Web scene mesh upload failed\n");
+    }
+    return state.scene_ready;
+}
 
 InputState poll_web_input() {
     InputState out{};
@@ -154,7 +353,7 @@ std::string build_overlay_text(const WebAppState &state) {
     }
 
     char buffer[256]{};
-        std::snprintf(
+    std::snprintf(
         buffer,
         sizeof(buffer),
         "WEB DEVHUD\nP %.1f %.1f %.1f\nV %.1f %.1f %.1f\nYAW %.2f REM %d\nTEL FPS %.1f FT %.2f\nNET %s",
@@ -217,13 +416,48 @@ void tick(void *arg) {
     const float g = 0.14f + 0.12f * (1.0f - move_energy) + 0.05f * std::sin(state->t * 0.8f + 1.0f);
     const float b = 0.20f + 0.28f * remote_tint + 0.05f * std::sin(state->t * 1.3f + 2.0f);
 
-    glViewport(0, 0, 1280, 720);
+    int viewport_w = 1280;
+    int viewport_h = 720;
+    (void)emscripten_get_canvas_element_size("#canvas", &viewport_w, &viewport_h);
+    if (viewport_w <= 0 || viewport_h <= 0) {
+        viewport_w = 1280;
+        viewport_h = 720;
+    }
+    glViewport(0, 0, viewport_w, viewport_h);
     if (state->menu.open()) {
         glClearColor(0.06f, 0.07f, 0.1f, 1.0f);
     } else {
         glClearColor(r, g, b, 1.0f);
     }
     glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    if (state->scene_ready) {
+        const glm::vec3 player_position(state->x, state->y, state->z);
+        const glm::vec3 forward(-std::sin(state->yaw), 0.0f, -std::cos(state->yaw));
+        const glm::vec3 camera_target = player_position + glm::vec3(0.0f, 1.0f, 0.0f);
+        const glm::vec3 camera_position =
+            camera_target - forward * 8.0f + glm::vec3(0.0f, 4.5f, 0.0f);
+        const glm::mat4 view = glm::lookAt(
+            camera_position,
+            camera_target,
+            glm::vec3(0.0f, 1.0f, 0.0f));
+        const glm::mat4 proj = glm::perspective(
+            glm::radians(70.0f),
+            static_cast<float>(viewport_w) / static_cast<float>(viewport_h),
+            0.1f,
+            256.0f);
+
+        draw_scene_mesh(
+            state->ground_mesh,
+            state->scene_program,
+            state->u_mvp,
+            proj * view * glm::mat4(1.0f));
+        draw_scene_mesh(
+            state->player_mesh,
+            state->scene_program,
+            state->u_mvp,
+            proj * view * glm::translate(glm::mat4(1.0f), player_position));
+    }
 
     update_web_overlay(build_overlay_text(*state));
 }
@@ -249,13 +483,17 @@ int main() {
         std::fprintf(stderr, "Failed to activate WebGL2 context\n");
         return 1;
     }
+    if (!init_scene_resources(state)) {
+        return 1;
+    }
 
     EM_ASM(
         {
             if (!Module.__voxovGuiInit) {
                 Module.__voxovGuiInit = true;
-                Module.__voxovGuiFlags = 0;
-                Module.__voxovGameFlags = 0;
+                Module.__voxovGuiPulseFlags = 0;
+                Module.__voxovGamePulseFlags = 0;
+                Module.__voxovGameHeldFlags = 0;
                 Module.__voxovNetApiReady = !!Module.__voxovNetHost || !!Module.__voxovNetJoin;
 
                 let viewport = document.querySelector('meta[name="viewport"]');
@@ -289,10 +527,36 @@ int main() {
                 }
 
                 Module.__voxovPollInputFlags = function() {
-                    const out = (Module.__voxovGuiFlags | Module.__voxovGameFlags) | 0;
-                    Module.__voxovGuiFlags = 0;
-                    Module.__voxovGameFlags = 0;
+                    const out = (
+                        Module.__voxovGuiPulseFlags |
+                        Module.__voxovGamePulseFlags |
+                        Module.__voxovGameHeldFlags
+                    ) | 0;
+                    Module.__voxovGuiPulseFlags = 0;
+                    Module.__voxovGamePulseFlags = 0;
                     return out;
+                };
+
+                const GAME_W = (1 << 4);
+                const GAME_S = (1 << 5);
+                const GAME_A = (1 << 6);
+                const GAME_D = (1 << 7);
+                const GAME_SHIFT = (1 << 8);
+                const GAME_SPACE = (1 << 9);
+                const GAME_CTRL = (1 << 10);
+                const GAME_LEFT = (1 << 11);
+                const GAME_RIGHT = (1 << 12);
+                const heldBitForKey = function(key) {
+                    if (key === "w" || key === "W") return GAME_W;
+                    if (key === "s" || key === "S") return GAME_S;
+                    if (key === "a" || key === "A") return GAME_A;
+                    if (key === "d" || key === "D") return GAME_D;
+                    if (key === "Shift") return GAME_SHIFT;
+                    if (key === " ") return GAME_SPACE;
+                    if (key === "Control") return GAME_CTRL;
+                    if (key === "ArrowLeft") return GAME_LEFT;
+                    if (key === "ArrowRight") return GAME_RIGHT;
+                    return 0;
                 };
 
                 const panel = document.createElement("pre");
@@ -319,19 +583,42 @@ int main() {
                 document.body.appendChild(panel);
 
                 window.addEventListener("keydown", function(ev) {
-                    if (ev.key === "Escape") Module.__voxovGuiFlags |= (1 << 0);
-                    else if (ev.key === "ArrowUp") Module.__voxovGuiFlags |= (1 << 1);
-                    else if (ev.key === "ArrowDown") Module.__voxovGuiFlags |= (1 << 2);
-                    else if (ev.key === "Enter" || ev.key === " ") Module.__voxovGuiFlags |= (1 << 3);
-                    else if (ev.key === "w" || ev.key === "W") Module.__voxovGameFlags |= (1 << 4);
-                    else if (ev.key === "s" || ev.key === "S") Module.__voxovGameFlags |= (1 << 5);
-                    else if (ev.key === "a" || ev.key === "A") Module.__voxovGameFlags |= (1 << 6);
-                    else if (ev.key === "d" || ev.key === "D") Module.__voxovGameFlags |= (1 << 7);
-                    else if (ev.key === "Shift") Module.__voxovGameFlags |= (1 << 8);
-                    else if (ev.key === "Space") Module.__voxovGameFlags |= (1 << 9);
-                    else if (ev.key === "Control") Module.__voxovGameFlags |= (1 << 10);
-                    else if (ev.key === "ArrowLeft") Module.__voxovGameFlags |= (1 << 11);
-                    else if (ev.key === "ArrowRight") Module.__voxovGameFlags |= (1 << 12);
+                    const heldBit = heldBitForKey(ev.key);
+                    if (heldBit !== 0) {
+                        Module.__voxovGameHeldFlags |= heldBit;
+                        ev.preventDefault();
+                        return;
+                    }
+
+                    if (ev.repeat) {
+                        return;
+                    }
+
+                    if (ev.key === "Escape") {
+                        Module.__voxovGuiPulseFlags |= (1 << 0);
+                        ev.preventDefault();
+                    } else if (ev.key === "ArrowUp") {
+                        Module.__voxovGuiPulseFlags |= (1 << 1);
+                        ev.preventDefault();
+                    } else if (ev.key === "ArrowDown") {
+                        Module.__voxovGuiPulseFlags |= (1 << 2);
+                        ev.preventDefault();
+                    } else if (ev.key === "Enter") {
+                        Module.__voxovGuiPulseFlags |= (1 << 3);
+                        ev.preventDefault();
+                    }
+                });
+
+                window.addEventListener("keyup", function(ev) {
+                    const heldBit = heldBitForKey(ev.key);
+                    if (heldBit !== 0) {
+                        Module.__voxovGameHeldFlags &= ~heldBit;
+                        ev.preventDefault();
+                    }
+                });
+
+                window.addEventListener("blur", function() {
+                    Module.__voxovGameHeldFlags = 0;
                 });
             }
         });

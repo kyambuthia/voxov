@@ -1527,7 +1527,7 @@ struct AndroidRenderer {
             0.05f;
         player_vertical_velocity = 0.0f;
         player_grounded = false;
-        terrain_mesh = world.build_naive_mesh();
+        terrain_mesh = world.build_greedy_mesh();
         grid_mesh = world.build_debug_grid(64.0f, 1.0f);
         terrain_gpu = upload_mesh(terrain_mesh);
         grid_gpu = upload_mesh(grid_mesh);

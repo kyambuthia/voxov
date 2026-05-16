@@ -4,6 +4,8 @@
 
 #include <cstdint>
 #include <glm/mat4x4.hpp>
+#include <glm/vec3.hpp>
+#include <unordered_map>
 
 struct GLFWwindow;
 
@@ -20,24 +22,30 @@ public:
 
 private:
   struct UploadedMesh {
+    unsigned int vertex_array = 0;
     unsigned int vertex_buffer = 0;
     unsigned int index_buffer = 0;
     uint32_t index_count = 0;
+    glm::vec3 bounds_min{};
+    glm::vec3 bounds_max{};
   };
 
   bool init_pipeline();
   void shutdown_pipeline();
   void destroy_uploaded_mesh(UploadedMesh &mesh);
-  void upload_mesh(UploadedMesh &mesh, const RenderMesh &source);
+  void upload_mesh(UploadedMesh &mesh, const RenderMesh &source,
+                   unsigned int usage = 0x88B4 /*GL_STATIC_DRAW*/);
   void draw_mesh(const UploadedMesh &mesh, const glm::mat4 &mvp) const;
 
   GLFWwindow *window = nullptr;
   RenderScene scene;
   bool imgui_ready = false;
   unsigned int program = 0;
-  UploadedMesh static_mesh;
+  UploadedMesh transient_mesh;
+  UploadedMesh debug_grid_mesh;
   UploadedMesh debug_world_mesh;
   UploadedMesh debug_screen_mesh;
+  std::unordered_map<uint64_t, UploadedMesh> cached_meshes_;
   int uniform_mvp = -1;
   uint64_t last_debug_world_hash = 0;
   uint64_t last_debug_screen_hash = 0;

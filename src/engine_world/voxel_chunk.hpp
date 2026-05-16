@@ -29,6 +29,9 @@ public:
   void set_solid(int x, int y, int z, bool value);
   void refresh_surface_materials();
 
+  static glm::vec3 material_color(VoxelMaterial material, bool top_face,
+                                   float height_t);
+
   RenderMesh build_greedy_mesh(const glm::vec3 &origin = glm::vec3(0.0f),
                                float voxel_scale = 1.0f) const;
   RenderMesh build_debug_grid(float span, float step) const;

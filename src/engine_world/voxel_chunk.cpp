@@ -6,23 +6,6 @@
 #include <vector>
 
 namespace {
-glm::vec3 voxel_material_color(VoxelMaterial material, bool top_face,
-                               float height_t) {
-  switch (material) {
-  case VoxelMaterial::Grass:
-    if (top_face) {
-      return glm::vec3(0.22f + height_t * 0.2f, 0.45f + height_t * 0.35f,
-                       0.16f);
-    }
-    return glm::vec3(0.33f, 0.42f, 0.18f);
-  case VoxelMaterial::Stone:
-    return glm::vec3(0.46f, 0.48f, 0.5f);
-  case VoxelMaterial::Dirt:
-  default:
-    return glm::vec3(0.38f, 0.27f, 0.18f);
-  }
-}
-
 void append_greedy_quad(RenderMesh &mesh, const glm::vec3 &origin,
                         const glm::ivec3 &base, const glm::ivec3 &q,
                         const glm::ivec3 &du, const glm::ivec3 &dv,
@@ -56,6 +39,23 @@ void append_greedy_quad(RenderMesh &mesh, const glm::vec3 &origin,
                                            start + 2, start + 3});
 }
 } // namespace
+
+glm::vec3 VoxelChunk::material_color(VoxelMaterial material, bool top_face,
+                                     float height_t) {
+  switch (material) {
+  case VoxelMaterial::Grass:
+    if (top_face) {
+      return glm::vec3(0.22f + height_t * 0.2f, 0.45f + height_t * 0.35f,
+                       0.16f);
+    }
+    return glm::vec3(0.33f, 0.42f, 0.18f);
+  case VoxelMaterial::Stone:
+    return glm::vec3(0.46f, 0.48f, 0.5f);
+  case VoxelMaterial::Dirt:
+  default:
+    return glm::vec3(0.38f, 0.27f, 0.18f);
+  }
+}
 
 size_t VoxelChunk::index(int x, int y, int z) const {
   return static_cast<size_t>((z * CHUNK_Y * CHUNK_X) + (y * CHUNK_X) + x);
@@ -312,7 +312,7 @@ RenderMesh VoxelChunk::build_greedy_mesh(const glm::vec3 &origin,
               std::clamp(surface_y / static_cast<float>(CHUNK_Y), 0.0f, 1.0f);
           const bool top_face = d == 1 && positive_face;
           const glm::vec3 color =
-              voxel_material_color(face_material, top_face, height_t);
+              VoxelChunk::material_color(face_material, top_face, height_t);
 
           append_greedy_quad(mesh, origin, base, q, du, dv, positive_face, color,
                              voxel_scale);

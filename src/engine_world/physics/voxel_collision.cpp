@@ -6,8 +6,9 @@
 #include <cmath>
 #include <limits>
 
-VoxelCollisionWorld::VoxelCollisionWorld(const VoxelChunk *chunk_data)
-    : chunk(chunk_data) {}
+VoxelCollisionWorld::VoxelCollisionWorld(const VoxelChunk *chunk_data,
+                                         float voxel_scale)
+    : chunk(chunk_data), voxel_scale_(voxel_scale > 0.0f ? voxel_scale : 1.0f) {}
 
 bool VoxelCollisionWorld::is_solid_voxel(int x, int y, int z) const {
     if (!chunk) {
@@ -52,12 +53,13 @@ bool VoxelCollisionWorld::capsule_overlaps(glm::vec3 feet_position, float capsul
     const glm::vec3 seg_a(feet_position.x, lower_center_y, feet_position.z);
     const glm::vec3 seg_b(feet_position.x, upper_center_y, feet_position.z);
 
-    const int min_x = static_cast<int>(std::floor(feet_position.x - capsule_radius));
-    const int max_x = static_cast<int>(std::floor(feet_position.x + capsule_radius));
-    const int min_y = static_cast<int>(std::floor(feet_position.y));
-    const int max_y = static_cast<int>(std::floor(feet_position.y + capsule_height));
-    const int min_z = static_cast<int>(std::floor(feet_position.z - capsule_radius));
-    const int max_z = static_cast<int>(std::floor(feet_position.z + capsule_radius));
+    const float inv_scale = 1.0f / voxel_scale_;
+    const int min_x = static_cast<int>(std::floor((feet_position.x - capsule_radius) * inv_scale));
+    const int max_x = static_cast<int>(std::floor((feet_position.x + capsule_radius) * inv_scale));
+    const int min_y = static_cast<int>(std::floor(feet_position.y * inv_scale));
+    const int max_y = static_cast<int>(std::floor((feet_position.y + capsule_height) * inv_scale));
+    const int min_z = static_cast<int>(std::floor((feet_position.z - capsule_radius) * inv_scale));
+    const int max_z = static_cast<int>(std::floor((feet_position.z + capsule_radius) * inv_scale));
 
     for (int z = min_z; z <= max_z; ++z) {
         for (int y = min_y; y <= max_y; ++y) {
@@ -66,8 +68,8 @@ bool VoxelCollisionWorld::capsule_overlaps(glm::vec3 feet_position, float capsul
                     continue;
                 }
 
-                glm::vec3 bmin(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z));
-                glm::vec3 bmax = bmin + glm::vec3(1.0f);
+                glm::vec3 bmin = glm::vec3(x, y, z) * voxel_scale_;
+                glm::vec3 bmax = bmin + glm::vec3(voxel_scale_);
 
                 bmin -= glm::vec3(capsule_radius);
                 bmax += glm::vec3(capsule_radius);
@@ -101,12 +103,13 @@ CapsuleResolveResult VoxelCollisionWorld::resolve_capsule(
         const glm::vec3 seg_a(result.position.x, result.position.y + lower_center_offset, result.position.z);
         const glm::vec3 seg_b(result.position.x, result.position.y + upper_center_offset, result.position.z);
 
-        const int min_x = static_cast<int>(std::floor(result.position.x - capsule_radius - skin_width));
-        const int max_x = static_cast<int>(std::floor(result.position.x + capsule_radius + skin_width));
-        const int min_y = static_cast<int>(std::floor(result.position.y - skin_width));
-        const int max_y = static_cast<int>(std::floor(result.position.y + capsule_height + skin_width));
-        const int min_z = static_cast<int>(std::floor(result.position.z - capsule_radius - skin_width));
-        const int max_z = static_cast<int>(std::floor(result.position.z + capsule_radius + skin_width));
+        const float inv_scale = 1.0f / voxel_scale_;
+        const int min_x = static_cast<int>(std::floor((result.position.x - capsule_radius - skin_width) * inv_scale));
+        const int max_x = static_cast<int>(std::floor((result.position.x + capsule_radius + skin_width) * inv_scale));
+        const int min_y = static_cast<int>(std::floor((result.position.y - skin_width) * inv_scale));
+        const int max_y = static_cast<int>(std::floor((result.position.y + capsule_height + skin_width) * inv_scale));
+        const int min_z = static_cast<int>(std::floor((result.position.z - capsule_radius - skin_width) * inv_scale));
+        const int max_z = static_cast<int>(std::floor((result.position.z + capsule_radius + skin_width) * inv_scale));
 
         bool had_penetration = false;
         glm::vec3 total_push(0.0f);
@@ -118,8 +121,8 @@ CapsuleResolveResult VoxelCollisionWorld::resolve_capsule(
                         continue;
                     }
 
-                    const glm::vec3 box_min(static_cast<float>(x), static_cast<float>(y), static_cast<float>(z));
-                    const glm::vec3 box_max = box_min + glm::vec3(1.0f);
+                    const glm::vec3 box_min = glm::vec3(x, y, z) * voxel_scale_;
+                    const glm::vec3 box_max = box_min + glm::vec3(voxel_scale_);
 
                     float closest_t = 0.0f;
                     float best_sq = std::numeric_limits<float>::max();
@@ -227,13 +230,14 @@ bool VoxelCollisionWorld::raycast(glm::vec3 origin, glm::vec3 direction, float m
     }
 
     direction /= len;
-    const float step = 0.05f;
+    const float step = voxel_scale_ * 0.05f;
     float d = 0.0f;
     while (d <= max_distance) {
         const glm::vec3 p = origin + direction * d;
-        const int vx = static_cast<int>(std::floor(p.x));
-        const int vy = static_cast<int>(std::floor(p.y));
-        const int vz = static_cast<int>(std::floor(p.z));
+        const float inv_scale = 1.0f / voxel_scale_;
+        const int vx = static_cast<int>(std::floor(p.x * inv_scale));
+        const int vy = static_cast<int>(std::floor(p.y * inv_scale));
+        const int vz = static_cast<int>(std::floor(p.z * inv_scale));
         if (is_solid_voxel(vx, vy, vz)) {
             out_hit_distance = d;
             return true;
@@ -245,19 +249,20 @@ bool VoxelCollisionWorld::raycast(glm::vec3 origin, glm::vec3 direction, float m
 }
 
 float VoxelCollisionWorld::find_spawn_height(glm::vec2 xz, float capsule_radius, float capsule_height) const {
-    float spawn_y = 8.0f;
-    const int vx = static_cast<int>(std::floor(xz.x));
-    const int vz = static_cast<int>(std::floor(xz.y));
+    float spawn_y = 8.0f * voxel_scale_;
+    const float inv_scale = 1.0f / voxel_scale_;
+    const int vx = static_cast<int>(std::floor(xz.x * inv_scale));
+    const int vz = static_cast<int>(std::floor(xz.y * inv_scale));
 
     for (int y = VoxelChunk::CHUNK_Y - 1; y >= 0; --y) {
         if (is_solid_voxel(vx, y, vz)) {
-            spawn_y = static_cast<float>(y + 1);
+            spawn_y = (static_cast<float>(y) + 1.0f) * voxel_scale_;
             break;
         }
     }
 
     while (capsule_overlaps(glm::vec3(xz.x, spawn_y, xz.y), capsule_radius, capsule_height)) {
-        spawn_y += 0.1f;
+        spawn_y += voxel_scale_ * 0.1f;
     }
 
     return spawn_y;

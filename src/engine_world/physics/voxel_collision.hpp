@@ -21,7 +21,8 @@ struct CapsuleResolveResult {
 
 class VoxelCollisionWorld {
 public:
-    explicit VoxelCollisionWorld(const VoxelChunk *chunk_data);
+    explicit VoxelCollisionWorld(const VoxelChunk *chunk_data = nullptr,
+                                 float voxel_scale = 1.0f);
 
     bool is_solid_voxel(int x, int y, int z) const;
     bool raycast(glm::vec3 origin, glm::vec3 direction, float max_distance, float &out_hit_distance) const;
@@ -41,4 +42,5 @@ private:
     bool segment_intersects_aabb(glm::vec3 a, glm::vec3 b, glm::vec3 bmin, glm::vec3 bmax) const;
 
     const VoxelChunk *chunk = nullptr;
+    float voxel_scale_ = 1.0f;
 };

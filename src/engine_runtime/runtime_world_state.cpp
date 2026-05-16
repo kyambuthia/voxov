@@ -92,6 +92,7 @@ void RuntimeWorldState::initialize(
 
 void RuntimeWorldState::reset_streamed_chunks(bool spherical_planet) {
     streamed_chunks.clear();
+    chunk_mesh_cache_.clear();
     if (spherical_planet) {
         return;
     }
@@ -131,6 +132,7 @@ bool RuntimeWorldState::consume_chunk_stream_updates(
             continue;
         }
         streamed_chunks[key] = RuntimeStreamedChunk{update};
+        chunk_mesh_cache_.erase(key);
         changed = true;
         out_change_count += 1;
     }
@@ -152,6 +154,7 @@ bool RuntimeWorldState::consume_chunk_stream_updates(
         }
         for (int32_t key : stale_keys) {
             streamed_chunks.erase(key);
+            chunk_mesh_cache_.erase(key);
             changed = true;
             out_change_count += 1;
         }
@@ -163,11 +166,11 @@ bool RuntimeWorldState::consume_chunk_stream_updates(
 void RuntimeWorldState::rebuild_streamed_chunk_scene(
     const VoxelChunk &world_chunk,
     RenderScene &scene,
-    bool spherical_planet) const {
+    bool spherical_planet) {
     scene.opaque_meshes.clear();
     scene.opaque_meshes.push_back(world_chunk.build_sky_placeholder(240.0f));
     if (spherical_planet) {
-        scene.opaque_meshes.push_back(world_chunk.build_naive_mesh());
+        scene.opaque_meshes.push_back(world_chunk.build_greedy_mesh());
         return;
     }
 
@@ -186,9 +189,16 @@ void RuntimeWorldState::rebuild_streamed_chunk_scene(
               });
 
     for (const NetChunkCoord &coord : coords) {
+        const int32_t key = render_chunk_key(coord);
+        auto cache_it = chunk_mesh_cache_.find(key);
+        if (cache_it != chunk_mesh_cache_.end()) {
+            scene.opaque_meshes.push_back(cache_it->second);
+            continue;
+        }
+
         VoxelChunk render_chunk{};
         const RuntimeStreamedChunk &streamed_chunk =
-            streamed_chunks.at(render_chunk_key(coord));
+            streamed_chunks.at(key);
         net_generate_chunk_from_state(render_chunk, streamed_chunk.state);
         const glm::vec3 chunk_origin(
             static_cast<float>(coord.x) *
@@ -196,8 +206,10 @@ void RuntimeWorldState::rebuild_streamed_chunk_scene(
             0.0f,
             static_cast<float>(coord.z) *
                 static_cast<float>(VoxelChunk::CHUNK_Z));
-        scene.opaque_meshes.push_back(
-            render_chunk.build_naive_mesh(chunk_origin));
+        RenderMesh mesh = render_chunk.build_greedy_mesh(chunk_origin);
+        mesh.mesh_id = next_mesh_id_++;
+        chunk_mesh_cache_[key] = mesh;
+        scene.opaque_meshes.push_back(mesh);
     }
 }
 

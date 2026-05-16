@@ -42,7 +42,7 @@ public:
     void rebuild_streamed_chunk_scene(
         const VoxelChunk &world_chunk,
         RenderScene &scene,
-        bool spherical_planet) const;
+        bool spherical_planet);
     void load_persistent_state(const PlatformServices &platform_services);
     void save_persistent_state(const PlatformServices &platform_services) const;
 
@@ -57,4 +57,8 @@ public:
     std::string objective_hint;
     glm::vec3 spherical_planet_center = glm::vec3(0.0f);
     float spherical_planet_radius = 0.0f;
+
+private:
+    mutable uint64_t next_mesh_id_ = 1;
+    mutable std::unordered_map<int32_t, RenderMesh> chunk_mesh_cache_;
 };

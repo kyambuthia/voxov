@@ -6,10 +6,28 @@
 #include <vector>
 
 namespace {
+glm::vec3 voxel_material_color(VoxelMaterial material, bool top_face,
+                               float height_t) {
+  switch (material) {
+  case VoxelMaterial::Grass:
+    if (top_face) {
+      return glm::vec3(0.22f + height_t * 0.2f, 0.45f + height_t * 0.35f,
+                       0.16f);
+    }
+    return glm::vec3(0.33f, 0.42f, 0.18f);
+  case VoxelMaterial::Stone:
+    return glm::vec3(0.46f, 0.48f, 0.5f);
+  case VoxelMaterial::Dirt:
+  default:
+    return glm::vec3(0.38f, 0.27f, 0.18f);
+  }
+}
+
 void append_greedy_quad(RenderMesh &mesh, const glm::vec3 &origin,
                         const glm::ivec3 &base, const glm::ivec3 &q,
                         const glm::ivec3 &du, const glm::ivec3 &dv,
-                        bool positive_face, const glm::vec3 &color) {
+                        bool positive_face, const glm::vec3 &color,
+                        float voxel_scale) {
   const uint32_t start = static_cast<uint32_t>(mesh.vertices.size());
   glm::vec3 p0(0.0f);
   glm::vec3 p1(0.0f);
@@ -17,15 +35,15 @@ void append_greedy_quad(RenderMesh &mesh, const glm::vec3 &origin,
   glm::vec3 p3(0.0f);
 
   if (positive_face) {
-    p0 = origin + glm::vec3(base);
-    p1 = origin + glm::vec3(base + du);
-    p2 = origin + glm::vec3(base + du + dv);
-    p3 = origin + glm::vec3(base + dv);
+    p0 = origin + glm::vec3(base) * voxel_scale;
+    p1 = origin + glm::vec3(base + du) * voxel_scale;
+    p2 = origin + glm::vec3(base + du + dv) * voxel_scale;
+    p3 = origin + glm::vec3(base + dv) * voxel_scale;
   } else {
-    p0 = origin + glm::vec3(base);
-    p1 = origin + glm::vec3(base + dv);
-    p2 = origin + glm::vec3(base + du + dv);
-    p3 = origin + glm::vec3(base + du);
+    p0 = origin + glm::vec3(base) * voxel_scale;
+    p1 = origin + glm::vec3(base + dv) * voxel_scale;
+    p2 = origin + glm::vec3(base + du + dv) * voxel_scale;
+    p3 = origin + glm::vec3(base + du) * voxel_scale;
   }
 
   const glm::vec3 normal =
@@ -50,7 +68,7 @@ void VoxelChunk::generate_heightmap_terrain() {
 void VoxelChunk::generate_heightmap_terrain_seeded(uint64_t world_seed,
                                                    int32_t chunk_x,
                                                    int32_t chunk_z) {
-  voxels.fill(0);
+  voxels.fill(static_cast<uint8_t>(VoxelMaterial::Air));
   constexpr float flat_height = 6.0f;
   const float min_dim = static_cast<float>(std::min(CHUNK_X, CHUNK_Z));
   const float inner = min_dim * 0.24f;
@@ -82,14 +100,16 @@ void VoxelChunk::generate_heightmap_terrain_seeded(uint64_t world_seed,
         max_y = CHUNK_Y - 1;
       }
       for (int y = 0; y <= max_y; ++y) {
-        voxels[index(x, y, z)] = 1;
+        voxels[index(x, y, z)] = static_cast<uint8_t>(VoxelMaterial::Dirt);
       }
     }
   }
+
+  refresh_surface_materials();
 }
 
 void VoxelChunk::generate_spherical_planet_seeded(uint64_t world_seed) {
-  voxels.fill(0);
+  voxels.fill(static_cast<uint8_t>(VoxelMaterial::Air));
   const WorldGenerator generator(world_seed);
 
   const float cx = static_cast<float>(CHUNK_X - 1) * 0.5f;
@@ -107,7 +127,7 @@ void VoxelChunk::generate_spherical_planet_seeded(uint64_t world_seed) {
         const float dz = static_cast<float>(z) - cz;
         const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
         if (dist <= 0.001f) {
-          voxels[index(x, y, z)] = 1;
+          voxels[index(x, y, z)] = static_cast<uint8_t>(VoxelMaterial::Stone);
           continue;
         }
 
@@ -121,7 +141,7 @@ void VoxelChunk::generate_spherical_planet_seeded(uint64_t world_seed) {
         const float shell_radius = base_radius + radial_noise;
 
         if (dist <= shell_radius && dist >= shell_min) {
-          voxels[index(x, y, z)] = 1;
+          voxels[index(x, y, z)] = static_cast<uint8_t>(VoxelMaterial::Stone);
         }
       }
     }
@@ -135,48 +155,84 @@ void VoxelChunk::generate_spherical_planet_seeded(uint64_t world_seed) {
       if (x < 1 || z < 1 || x >= CHUNK_X - 1 || z >= CHUNK_Z - 1) {
         continue;
       }
-      voxels[index(x, spawn_cap_y, z)] = 1;
+      voxels[index(x, spawn_cap_y, z)] = static_cast<uint8_t>(VoxelMaterial::Dirt);
       for (int y = spawn_cap_y + 1; y < CHUNK_Y; ++y) {
-        voxels[index(x, y, z)] = 0;
+        voxels[index(x, y, z)] = static_cast<uint8_t>(VoxelMaterial::Air);
       }
     }
   }
+
+  refresh_surface_materials();
 }
 
 void VoxelChunk::generate_flat_ground(int ground_y) {
-  voxels.fill(0);
+  voxels.fill(static_cast<uint8_t>(VoxelMaterial::Air));
   const int max_y = std::clamp(ground_y, 0, CHUNK_Y - 1);
   for (int z = 0; z < CHUNK_Z; ++z) {
     for (int x = 0; x < CHUNK_X; ++x) {
       for (int y = 0; y <= max_y; ++y) {
-        voxels[index(x, y, z)] = 1;
+        voxels[index(x, y, z)] = static_cast<uint8_t>(VoxelMaterial::Dirt);
+      }
+    }
+  }
+
+  refresh_surface_materials();
+}
+
+VoxelMaterial VoxelChunk::material(int x, int y, int z) const {
+  if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
+    return VoxelMaterial::Air;
+  }
+  return static_cast<VoxelMaterial>(voxels[index(x, y, z)]);
+}
+
+bool VoxelChunk::solid(int x, int y, int z) const {
+  return material(x, y, z) != VoxelMaterial::Air;
+}
+
+void VoxelChunk::set_material(int x, int y, int z, VoxelMaterial material_value) {
+  if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
+    return;
+  }
+  voxels[index(x, y, z)] = static_cast<uint8_t>(material_value);
+}
+
+void VoxelChunk::set_solid(int x, int y, int z, bool value) {
+  set_material(x, y, z, value ? VoxelMaterial::Dirt : VoxelMaterial::Air);
+}
+
+void VoxelChunk::refresh_surface_materials() {
+  for (int z = 0; z < CHUNK_Z; ++z) {
+    for (int x = 0; x < CHUNK_X; ++x) {
+      bool surface_found = false;
+      for (int y = CHUNK_Y - 1; y >= 0; --y) {
+        VoxelMaterial mat = material(x, y, z);
+        if (mat == VoxelMaterial::Air) {
+          continue;
+        }
+
+        if (!surface_found) {
+          if (mat != VoxelMaterial::Stone) {
+            set_material(x, y, z, VoxelMaterial::Grass);
+          }
+          surface_found = true;
+        } else if (mat == VoxelMaterial::Grass) {
+          set_material(x, y, z, VoxelMaterial::Dirt);
+        }
       }
     }
   }
 }
 
-bool VoxelChunk::solid(int x, int y, int z) const {
-  if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
-    return false;
-  }
-  return voxels[index(x, y, z)] != 0;
-}
-
-void VoxelChunk::set_solid(int x, int y, int z, bool value) {
-  if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
-    return;
-  }
-  voxels[index(x, y, z)] = value ? 1 : 0;
-}
-
-RenderMesh VoxelChunk::build_naive_mesh(const glm::vec3 &origin) const {
+RenderMesh VoxelChunk::build_greedy_mesh(const glm::vec3 &origin,
+                                         float voxel_scale) const {
   RenderMesh mesh;
   constexpr int dims[3] = {CHUNK_X, CHUNK_Y, CHUNK_Z};
   constexpr int axis_u[3] = {1, 2, 0};
   constexpr int axis_v[3] = {2, 0, 1};
   const size_t max_mask_size = static_cast<size_t>(
       std::max({CHUNK_X * CHUNK_Y, CHUNK_Y * CHUNK_Z, CHUNK_X * CHUNK_Z}));
-  std::vector<int8_t> mask(max_mask_size, 0);
+  std::vector<int16_t> mask(max_mask_size, 0);
 
   for (int d = 0; d < 3; ++d) {
     const int u = axis_u[d];
@@ -189,14 +245,19 @@ RenderMesh VoxelChunk::build_naive_mesh(const glm::vec3 &origin) const {
       int n = 0;
       for (x[v] = 0; x[v] < dims[v]; ++x[v]) {
         for (x[u] = 0; x[u] < dims[u]; ++x[u], ++n) {
-          const bool a = x[d] >= 0 && solid(x.x, x.y, x.z);
-          const bool b =
-              x[d] < (dims[d] - 1) && solid(x.x + q.x, x.y + q.y, x.z + q.z);
+          const VoxelMaterial a =
+              x[d] >= 0 ? material(x.x, x.y, x.z) : VoxelMaterial::Air;
+          const VoxelMaterial b = x[d] < (dims[d] - 1)
+                                      ? material(x.x + q.x, x.y + q.y, x.z + q.z)
+                                      : VoxelMaterial::Air;
 
           if (a == b) {
             mask[static_cast<size_t>(n)] = 0;
           } else {
-            mask[static_cast<size_t>(n)] = a ? 1 : -1;
+            mask[static_cast<size_t>(n)] =
+                a != VoxelMaterial::Air
+                    ? static_cast<int16_t>(a)
+                    : static_cast<int16_t>(-static_cast<int16_t>(b));
           }
         }
       }
@@ -205,7 +266,7 @@ RenderMesh VoxelChunk::build_naive_mesh(const glm::vec3 &origin) const {
       n = 0;
       for (int j = 0; j < dims[v]; ++j) {
         for (int i = 0; i < dims[u];) {
-          const int8_t face = mask[static_cast<size_t>(n)];
+          const int16_t face = mask[static_cast<size_t>(n)];
           if (face == 0) {
             ++i;
             ++n;
@@ -242,16 +303,19 @@ RenderMesh VoxelChunk::build_naive_mesh(const glm::vec3 &origin) const {
           du[u] = width;
           dv[v] = height;
 
-          glm::vec3 color(0.38f, 0.27f, 0.18f);
-          if (d == 1 && face > 0) {
-            const float surface_y = static_cast<float>(x[d] - 1);
-            const float height_t =
-                std::clamp(surface_y / static_cast<float>(CHUNK_Y), 0.0f, 1.0f);
-            color = glm::vec3(0.22f + height_t * 0.2f, 0.45f + height_t * 0.35f,
-                              0.16f);
-          }
+          const bool positive_face = face > 0;
+          const VoxelMaterial face_material =
+              static_cast<VoxelMaterial>(std::abs(face));
+          const float surface_y =
+              static_cast<float>(std::max(0, positive_face ? x[d] - 1 : x[d]));
+          const float height_t =
+              std::clamp(surface_y / static_cast<float>(CHUNK_Y), 0.0f, 1.0f);
+          const bool top_face = d == 1 && positive_face;
+          const glm::vec3 color =
+              voxel_material_color(face_material, top_face, height_t);
 
-          append_greedy_quad(mesh, origin, base, q, du, dv, face > 0, color);
+          append_greedy_quad(mesh, origin, base, q, du, dv, positive_face, color,
+                             voxel_scale);
 
           for (int row = 0; row < height; ++row) {
             for (int col = 0; col < width; ++col) {
@@ -310,8 +374,9 @@ RenderMesh VoxelChunk::build_sky_placeholder(float size) const {
   mesh.vertices.push_back({{h, h, -h}, top});
   mesh.vertices.push_back({{h, -h, -h}, horizon});
   mesh.vertices.push_back({{-h, -h, -h}, horizon});
-  mesh.indices.insert(mesh.indices.end(), {start, start + 1, start + 2, start,
-                                           start + 2, start + 3});
+  mesh.indices.insert(mesh.indices.end(), {start, start + 3, start + 2, start,
+                                           start + 2, start + 1});
+
 
   return mesh;
 }

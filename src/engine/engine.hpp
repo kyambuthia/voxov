@@ -43,6 +43,11 @@ struct EngineRuntimeOptions {
   bool vehicle_sandbox = false;
   bool spherical_planet = false;
   PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
+#ifdef VOXOV_PLATFORM_SOKOL
+  RenderBackendType render_backend = RenderBackendType::Sokol;
+#else
+  RenderBackendType render_backend = RenderBackendType::OpenGL;
+#endif
 };
 
 struct EngineInputFrame {

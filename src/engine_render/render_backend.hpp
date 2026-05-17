@@ -3,7 +3,28 @@
 #include <array>
 
 #include "engine_math/camera.hpp"
+#include "engine_render/render_backend_type.hpp"
 #include "engine_render/render_types.hpp"
+
+// ---------------------------------------------------------------------------
+// Backend-neutral render contract.
+// Window/surface info and GPU device desc are passed explicitly so no
+// native window pointer leaks into the interface.
+// ---------------------------------------------------------------------------
+
+struct RenderDeviceDesc {
+    RenderBackendType backend = RenderBackendType::Sokol;
+    int color_format = 0;   // sg_pixel_format for sokol path
+    int depth_format = 0;   // sg_pixel_format for sokol path
+    int sample_count = 1;
+    bool enable_imgui = true;
+};
+
+struct RenderSurface {
+    int width = 1;
+    int height = 1;
+    float dpi_scale = 1.0f;
+};
 
 struct RenderView {
     Camera camera{};
@@ -25,11 +46,13 @@ class IRenderBackend {
 public:
     virtual ~IRenderBackend() = default;
 
-    virtual void init(void *window_handle) = 0;
+    virtual bool init(const RenderDeviceDesc &desc) = 0;
     virtual void shutdown() = 0;
 
     virtual void upload_scene(const RenderScene &scene) = 0;
-    virtual void update_dynamic_meshes(const RenderMesh &debug_world, const RenderMesh &debug_screen) = 0;
-    virtual void begin_frame(const RenderFrameContext &ctx, const RenderStats &stats) = 0;
-    virtual void end_frame() = 0;
+    virtual void update_dynamic_meshes(const RenderMesh &debug_world,
+                                       const RenderMesh &debug_screen) = 0;
+    virtual void render_frame(const RenderFrameContext &ctx,
+                              const RenderStats &stats,
+                              const RenderSurface &surface) = 0;
 };

@@ -741,3 +741,167 @@ void GLRenderer::begin_frame(const RenderFrameContext &ctx,
 }
 
 void GLRenderer::end_frame() { glfwSwapBuffers(window); }
+
+bool GLRenderer::init(const RenderDeviceDesc &desc) {
+    // GL backend ignores the device desc — it uses the legacy init flow.
+    (void)desc;
+    return true; // Legacy init(void*) must be called first.
+}
+
+void GLRenderer::render_frame(const RenderFrameContext &ctx,
+                               const RenderStats &stats,
+                               const RenderSurface &surface) {
+    surface_ = surface;
+
+    // Use the passed-in surface size instead of glfwGetFramebufferSize.
+    int width = surface.width;
+    int height = surface.height;
+    if (height <= 0) {
+        height = 1;
+    }
+
+    glViewport(0, 0, width, height);
+    glClearColor(0.08f, 0.1f, 0.14f, 1.0f);
+    glClear(GL_COLOR_BUFFER_BIT | GL_DEPTH_BUFFER_BIT);
+
+    const uint32_t view_count = std::max(1u, std::min(ctx.view_count, 2u));
+
+    // Bind the shader program once for all draw calls this frame.
+    if (dirty_flags_ & kDirtyProgram) {
+#if defined(__APPLE__)
+        glUseProgram(program);
+#else
+        if (program != 0) { g_use_program(program); }
+#endif
+        dirty_flags_ &= ~kDirtyProgram;
+    }
+
+    for (uint32_t i = 0; i < view_count; ++i) {
+        const RenderView &view = ctx.views[i];
+        const int vx = static_cast<int>(view.viewport.x * static_cast<float>(width));
+        const int vy = static_cast<int>(view.viewport.y * static_cast<float>(height));
+        const int vw = std::max(1, static_cast<int>(view.viewport.z * static_cast<float>(width)));
+        const int vh = std::max(1, static_cast<int>(view.viewport.w * static_cast<float>(height)));
+
+        glViewport(vx, vy, vw, vh);
+        const glm::mat4 p = view.camera.projection(static_cast<float>(vw) / static_cast<float>(vh));
+        const glm::mat4 view_proj = p * view.camera.view();
+
+        draw_mesh(transient_mesh, view_proj);
+
+        const Frustum frustum = extract_frustum(view_proj);
+        std::vector<const UploadedMesh *> material_groups[4];
+        for (const auto &[id, mesh] : cached_meshes_) {
+            material_groups[mesh.material].push_back(&mesh);
+        }
+        for (int mat = 0; mat < 4; ++mat) {
+            for (const UploadedMesh *mesh : material_groups[mat]) {
+                if (aabb_in_frustum(frustum, mesh->bounds_min, mesh->bounds_max)) {
+                    draw_mesh(*mesh, view_proj);
+                }
+            }
+        }
+
+        // Debug grid — disable culling while drawing.
+        if (last_cull_face_enabled_) {
+            glDisable(GL_CULL_FACE);
+            last_cull_face_enabled_ = false;
+        }
+        draw_mesh(debug_grid_mesh, view_proj);
+        if (!last_cull_face_enabled_) {
+            glEnable(GL_CULL_FACE);
+            last_cull_face_enabled_ = true;
+        }
+
+        if (ctx.debug_xray) {
+            if (last_depth_test_enabled_) {
+                glDisable(GL_DEPTH_TEST);
+                last_depth_test_enabled_ = false;
+            }
+            draw_mesh(debug_world_mesh, view_proj);
+            if (!last_depth_test_enabled_) {
+                glEnable(GL_DEPTH_TEST);
+                last_depth_test_enabled_ = true;
+            }
+        } else {
+            draw_mesh(debug_world_mesh, view_proj);
+        }
+
+        const glm::mat4 screen_mvp(1.0f);
+        if (last_depth_test_enabled_) {
+            glDisable(GL_DEPTH_TEST);
+            last_depth_test_enabled_ = false;
+        }
+        draw_mesh(debug_screen_mesh, screen_mvp);
+        if (!last_depth_test_enabled_) {
+            glEnable(GL_DEPTH_TEST);
+            last_depth_test_enabled_ = true;
+        }
+    }
+
+    // Release program.
+#if defined(__APPLE__)
+    glUseProgram(0);
+#else
+    if (program != 0) { g_use_program(0); }
+#endif
+    dirty_flags_ |= kDirtyProgram;
+
+    if (imgui_ready) {
+        ImGui_ImplOpenGL3_NewFrame();
+        ImGui_ImplGlfw_NewFrame();
+        ImGui::NewFrame();
+
+        (void)stats;
+
+        if (false && (stats.menu_open || !stats.menu_text.empty())) {
+            ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowSize(ImVec2(520.0f, 420.0f), ImGuiCond_Always);
+            ImGui::SetNextWindowBgAlpha(0.92f);
+            const ImGuiWindowFlags menu_flags = ImGuiWindowFlags_NoCollapse |
+                                                ImGuiWindowFlags_NoResize |
+                                                ImGuiWindowFlags_NoSavedSettings;
+            if (ImGui::Begin("VOXOV Menu", nullptr, menu_flags)) {
+                if (stats.menu_open) {
+                    if (!stats.menu_title.empty()) {
+                        ImGui::TextUnformatted(stats.menu_title.c_str());
+                        ImGui::Separator();
+                    }
+                    for (size_t i = 0; i < stats.menu_items.size(); ++i) {
+                        const bool selected = static_cast<int>(i) == stats.menu_selected;
+                        if (selected) {
+                            ImGui::PushStyleColor(ImGuiCol_Button,
+                                                  ImVec4(0.20f, 0.34f, 0.52f, 1.0f));
+                            ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
+                                                  ImVec4(0.24f, 0.40f, 0.60f, 1.0f));
+                        }
+                        ImGui::Button(stats.menu_items[i].c_str(), ImVec2(-1.0f, 0.0f));
+                        if (selected) {
+                            ImGui::PopStyleColor(2);
+                        }
+                    }
+                    if (!stats.menu_guide.empty()) {
+                        ImGui::Separator();
+                        for (const std::string &line : stats.menu_guide) {
+                            ImGui::TextUnformatted(line.c_str());
+                        }
+                    }
+                    if (!stats.menu_status.empty()) {
+                        ImGui::Separator();
+                        ImGui::Text("Status: %s", stats.menu_status.c_str());
+                    }
+                } else {
+                    ImGui::PushTextWrapPos();
+                    ImGui::TextUnformatted(stats.menu_text.c_str());
+                    ImGui::PopTextWrapPos();
+                }
+            }
+            ImGui::End();
+        }
+
+        ImGui::Render();
+        ImGui_ImplOpenGL3_RenderDrawData(ImGui::GetDrawData());
+    }
+
+    glfwSwapBuffers(window);
+}

@@ -292,7 +292,10 @@ void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
   session_state_.selected_character = preferred_character();
 
   try {
-    renderer.init(window_handle);
+    renderer.init(RendererCreateInfo{
+        .backend = runtime_options.render_backend,
+        .window_handle = window_handle,
+    });
     renderer.upload_scene(scene);
     renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
   } catch (const std::exception &e) {
@@ -919,8 +922,12 @@ void Engine::tick(double frame_dt, EngineInputFrame input_frame) {
   ctx.debug_xray =
       runtime_options.debug_collision && runtime_options.debug_xray;
   const PerfClock::time_point render_cpu_start = PerfClock::now();
-  renderer.begin_frame(ctx, render_stats);
-  renderer.end_frame();
+  const RenderSurface surface{
+      .width = 1280,
+      .height = 720,
+      .dpi_scale = 1.0f,
+  };
+  renderer.render_frame(ctx, render_stats, surface);
 
   const double render_cpu_ms = elapsed_ms(render_cpu_start, PerfClock::now());
   const double frame_cpu_ms = elapsed_ms(frame_cpu_start, PerfClock::now());

@@ -2,6 +2,7 @@
 
 #include <cstdlib>
 #include <cstring>
+#include <string>
 
 static Cvar* g_cvar_list = nullptr;
 
@@ -42,8 +43,13 @@ void cvar_parse_command_line(int argc, char** argv) {
         const char* arg = argv[i];
         if (arg[0] != '-' || arg[1] != '-') continue;
 
-        const char* name = arg + 2;
-        StringId id = string_id_fnv1a(name, std::strlen(name));
+        std::string name = arg + 2;
+        for (char &ch : name) {
+            if (ch == '-') {
+                ch = '_';
+            }
+        }
+        StringId id = string_id_fnv1a(name.c_str(), name.size());
 
         Cvar* c = cvar_find(id);
         if (!c) continue;

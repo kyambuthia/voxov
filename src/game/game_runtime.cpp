@@ -20,6 +20,7 @@ EngineRuntimeOptions to_engine_options(const GameRuntimeOptions &options) {
     out.vehicle_sandbox = options.vehicle_sandbox;
     out.spherical_planet = options.spherical_planet;
     out.physics_backend = options.physics_backend;
+    out.render_backend = options.render_backend;
     return out;
 }
 } // namespace

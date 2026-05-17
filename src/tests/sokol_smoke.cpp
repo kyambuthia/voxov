@@ -17,7 +17,7 @@ namespace {
 
 // Shader: flat colour triangle
 static const char *kTriangleVsSrc = R"(
-    #version 410
+    #version 330
     layout(location=0) in vec3 position;
     layout(location=1) in vec3 color0;
     out vec3 v_color;
@@ -27,7 +27,7 @@ static const char *kTriangleVsSrc = R"(
     }
 )";
 static const char *kTriangleFsSrc = R"(
-    #version 410
+    #version 330
     in vec3 v_color;
     out vec4 frag_color;
     void main() {
@@ -156,6 +156,10 @@ int main() {
     desc.width = 640;
     desc.height = 480;
     desc.window_title = "Voxov Sokol Smoke Test";
+#if defined(SOKOL_GLCORE) && defined(__linux__)
+    desc.gl.major_version = 3;
+    desc.gl.minor_version = 3;
+#endif
     desc.logger.func = slog_func;
 
     sapp_run(&desc);

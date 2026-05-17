@@ -22,7 +22,7 @@
 
 #if defined(SOKOL_GLCORE)
 static const char *kSceneVsSrc = R"(
-    #version 410
+    #version 330
     uniform mat4 mvp;
     layout(location=0) in vec3 position;
     layout(location=1) in vec3 color0;
@@ -36,7 +36,7 @@ static const char *kSceneVsSrc = R"(
     }
 )";
 static const char *kSceneFsSrc = R"(
-    #version 410
+    #version 330
     in vec3 v_color;
     in vec3 v_normal;
     out vec4 frag_color;
@@ -246,8 +246,6 @@ void SokolRenderer::setup_imgui() {
 // ---------------------------------------------------------------------------
 
 bool SokolRenderer::init(const RenderDeviceDesc &desc) {
-    (void)desc; // color/depth format, sample count — used in production path.
-
     sg_desc sgdesc = {};
     sgdesc.environment = sglue_environment();
     sgdesc.logger.func = slog_func;
@@ -263,7 +261,20 @@ bool SokolRenderer::init(const RenderDeviceDesc &desc) {
         return false;
     }
 
-    setup_imgui();
+    if (desc.enable_imgui) {
+        bool can_use_sokol_imgui = true;
+#if defined(SOKOL_GLCORE)
+        const int gl_version = sapp_gl_get_major_version() * 10 + sapp_gl_get_minor_version();
+        can_use_sokol_imgui = gl_version >= 41;
+#endif
+        if (can_use_sokol_imgui) {
+            setup_imgui();
+        } else {
+            slog_func("voxov", 2, 0,
+                      "SokolRenderer: disabling sokol_imgui on GL < 4.1",
+                      __LINE__, __FILE__, nullptr);
+        }
+    }
 
     // Default pass action
     pass_action_ = (sg_pass_action){

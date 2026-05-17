@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine_physics/physics_solver.hpp"
+#include "engine_render/render_backend_type.hpp"
 #include "engine_render/render_types.hpp"
 #include "game/runtime_adapters.hpp"
 
@@ -19,6 +20,11 @@ struct GameRuntimeOptions {
     bool vehicle_sandbox = false;
     bool spherical_planet = false;
     PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
+#ifdef VOXOV_PLATFORM_SOKOL
+    RenderBackendType render_backend = RenderBackendType::Sokol;
+#else
+    RenderBackendType render_backend = RenderBackendType::OpenGL;
+#endif
 };
 
 struct GameRuntimeInitParams {

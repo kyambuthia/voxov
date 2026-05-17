@@ -54,6 +54,8 @@ std::atomic<bool> g_keep_running{true};
 
 // Heap-allocated so we can control lifetime across callbacks.
 DesktopPlatform *g_platform = nullptr;
+DesktopRuntimePlatformAdapter *g_runtime_platform = nullptr;
+DesktopRuntimeInputAdapter *g_runtime_input = nullptr;
 GameRuntime *g_runtime = nullptr;
 NetServer *g_server = nullptr;
 FramePacer *g_pacer = nullptr;
@@ -79,8 +81,8 @@ void voxov_init() {
 
     // Runtime
     g_runtime = new GameRuntime();
-    DesktopRuntimePlatformAdapter runtime_platform(*g_platform);
-    DesktopRuntimeInputAdapter runtime_input(*g_platform, g_opts.splitscreen);
+    g_runtime_platform = new DesktopRuntimePlatformAdapter(*g_platform);
+    g_runtime_input = new DesktopRuntimeInputAdapter(*g_platform, g_opts.splitscreen);
     const PlatformServices platform_services = PlatformServices::desktop_default();
 
     GameRuntimeInitParams init_params{};
@@ -96,9 +98,10 @@ void voxov_init() {
     options.vehicle_sandbox = g_opts.vehicle_sandbox;
     options.spherical_planet = g_opts.spherical_planet;
     options.physics_backend = g_opts.physics_backend;
+    options.render_backend = RenderBackendType::Sokol;
     init_params.options = options;
-    init_params.input_adapter = &runtime_input;
-    init_params.platform_adapter = &runtime_platform;
+    init_params.input_adapter = g_runtime_input;
+    init_params.platform_adapter = g_runtime_platform;
     init_params.platform_services = &platform_services;
 
     if (!g_runtime->init(init_params)) {
@@ -170,6 +173,10 @@ void voxov_cleanup() {
         delete g_runtime;
         g_runtime = nullptr;
     }
+    delete g_runtime_input;
+    g_runtime_input = nullptr;
+    delete g_runtime_platform;
+    g_runtime_platform = nullptr;
     if (g_platform) {
         g_platform->shutdown();
         delete g_platform;
@@ -277,6 +284,12 @@ int main(int argc, char **argv) {
     desc.height = g_opts.window_height;
     desc.fullscreen = g_opts.start_fullscreen;
     desc.window_title = "VOXOV";
+#if defined(SOKOL_GLCORE) && defined(__linux__)
+    // Sokol defaults Linux GLCORE to 4.3; older but still capable GPUs such as
+    // Intel HD 3000 top out at GL 3.3 core.
+    desc.gl.major_version = 3;
+    desc.gl.minor_version = 3;
+#endif
     desc.logger.func = slog_func;
 
     // Signal handlers

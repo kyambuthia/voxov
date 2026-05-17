@@ -170,7 +170,8 @@ void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
   session_state_.selected_character = GuiMenu::Character::Capsule;
   platform_services = PlatformServices::desktop_default();
   game_session.reset();
-  spdlog::info("Engine init: backend=OpenGL save_path={}",
+  spdlog::info("Engine init: backend={} save_path={}",
+               runtime_options.render_backend == RenderBackendType::Sokol ? "Sokol" : "OpenGL",
                platform_services.session_state_path().generic_string());
 
   EnginePhysicsSettings settings{};

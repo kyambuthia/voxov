@@ -2,17 +2,17 @@
 
 #include "engine_input/input_state.hpp"
 
-struct GLFWwindow;
+class DesktopPlatform;
 
 class DesktopInputBackend : public IInputBackend {
 public:
-    explicit DesktopInputBackend(GLFWwindow *window_handle);
+    explicit DesktopInputBackend(DesktopPlatform &platform);
     InputState poll() override;
 
 private:
     void set_pointer_lock(bool enabled);
 
-    GLFWwindow *window = nullptr;
+    DesktopPlatform &platform_;
     bool pointer_locked = false;
     bool prev_space_down = false;
     bool prev_escape_down = false;

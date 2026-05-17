@@ -1,3 +1,5 @@
+#ifndef VOXOV_PLATFORM_SOKOL
+
 #include "platform/platform.hpp"
 
 #include <GLFW/glfw3.h>
@@ -113,3 +115,52 @@ bool DesktopPlatform::is_fullscreen() const {
 void DesktopPlatform::toggle_fullscreen() {
     set_fullscreen(!fullscreen);
 }
+
+bool DesktopPlatform::is_key_down(int key_code) const {
+    return window && glfwGetKey(window, key_code) == GLFW_PRESS;
+}
+
+bool DesktopPlatform::is_mouse_button_down(int button) const {
+    return window && glfwGetMouseButton(window, button) == GLFW_PRESS;
+}
+
+void DesktopPlatform::mouse_position(double &x, double &y) const {
+    if (!window) {
+        x = 0.0;
+        y = 0.0;
+        return;
+    }
+    glfwGetCursorPos(window, &x, &y);
+}
+
+float DesktopPlatform::mouse_delta_x() const {
+    return 0.0f;
+}
+
+float DesktopPlatform::mouse_delta_y() const {
+    return 0.0f;
+}
+
+int DesktopPlatform::window_width() const {
+    int width = 1;
+    int height = 1;
+    if (window) {
+        glfwGetFramebufferSize(window, &width, &height);
+    }
+    return width;
+}
+
+int DesktopPlatform::window_height() const {
+    int width = 1;
+    int height = 1;
+    if (window) {
+        glfwGetFramebufferSize(window, &width, &height);
+    }
+    return height;
+}
+
+bool DesktopPlatform::window_focused() const {
+    return window && glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE;
+}
+
+#endif // VOXOV_PLATFORM_SOKOL

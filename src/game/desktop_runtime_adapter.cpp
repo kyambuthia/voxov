@@ -1,25 +1,22 @@
 #include "game/desktop_runtime_adapter.hpp"
+#include "platform/platform.hpp"
 
-#include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 
 namespace {
-InputState poll_secondary_split_input(GLFWwindow *window) {
+InputState poll_secondary_split_input(DesktopPlatform &platform) {
     InputState out{};
-    if (window == nullptr) {
-        return out;
-    }
 
-    if (glfwGetKey(window, GLFW_KEY_I) == GLFW_PRESS) {
+    if (platform.is_key_down(73)) { // I
         out.move.y += 1.0f;
     }
-    if (glfwGetKey(window, GLFW_KEY_K) == GLFW_PRESS) {
+    if (platform.is_key_down(75)) { // K
         out.move.y -= 1.0f;
     }
-    if (glfwGetKey(window, GLFW_KEY_L) == GLFW_PRESS) {
+    if (platform.is_key_down(76)) { // L
         out.move.x += 1.0f;
     }
-    if (glfwGetKey(window, GLFW_KEY_J) == GLFW_PRESS) {
+    if (platform.is_key_down(74)) { // J
         out.move.x -= 1.0f;
     }
     if (out.move.x != 0.0f || out.move.y != 0.0f) {
@@ -27,29 +24,27 @@ InputState poll_secondary_split_input(GLFWwindow *window) {
     }
 
     constexpr float look_speed = 5.0f;
-    if (glfwGetKey(window, GLFW_KEY_LEFT) == GLFW_PRESS) {
+    if (platform.is_key_down(263)) { // LEFT
         out.look_delta.x -= look_speed;
     }
-    if (glfwGetKey(window, GLFW_KEY_RIGHT) == GLFW_PRESS) {
+    if (platform.is_key_down(262)) { // RIGHT
         out.look_delta.x += look_speed;
     }
-    if (glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS) {
+    if (platform.is_key_down(265)) { // UP
         out.look_delta.y -= look_speed;
     }
-    if (glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS) {
+    if (platform.is_key_down(264)) { // DOWN
         out.look_delta.y += look_speed;
     }
 
     const bool rctrl_down =
-        glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS ||
-        glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS;
+        platform.is_key_down(341) || platform.is_key_down(341);
     out.jump_held = rctrl_down;
     out.jump_pressed = rctrl_down;
     out.sprint_held =
-        glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS ||
-        glfwGetKey(window, GLFW_KEY_SLASH) == GLFW_PRESS;
-    out.crouch_held =
-        glfwGetKey(window, GLFW_KEY_RIGHT_CONTROL) == GLFW_PRESS;
+        platform.is_key_down(340) || // RSHIFT
+        platform.is_key_down(47);    // SLASH
+    out.crouch_held = platform.is_key_down(341); // RCTRL
 
     return out;
 }
@@ -59,14 +54,14 @@ DesktopRuntimeInputAdapter::DesktopRuntimeInputAdapter(
     DesktopPlatform &platform,
     bool splitscreen_enabled)
     : platform_(platform),
-      input_backend_(platform.glfw_window()),
+      input_backend_(platform),
       splitscreen_enabled_(splitscreen_enabled) {}
 
 GameRuntimeInputFrame DesktopRuntimeInputAdapter::poll_input() {
     GameRuntimeInputFrame frame{};
     frame.primary = input_backend_.poll();
     if (splitscreen_enabled_) {
-        frame.secondary = poll_secondary_split_input(platform_.glfw_window());
+        frame.secondary = poll_secondary_split_input(platform_);
     }
     return frame;
 }
@@ -79,7 +74,8 @@ DesktopRuntimePlatformAdapter::DesktopRuntimePlatformAdapter(DesktopPlatform &pl
     : platform_(platform) {}
 
 void DesktopRuntimePlatformAdapter::poll_events() {
-    platform_.poll_events();
+    // sokol_app events are dispatched via the callback in main.cpp.
+    // No explicit poll_events() needed.
 }
 
 bool DesktopRuntimePlatformAdapter::should_close() const {

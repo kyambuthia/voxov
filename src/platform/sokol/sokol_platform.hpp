@@ -1,38 +1,34 @@
 #pragma once
 
-#include <cstdint>
-
 #include "engine_render/render_backend_type.hpp"
 
-// ---------------------------------------------------------------------------
-// Unified platform header — delegates to the active backend.
-// When VOXOV_PLATFORM_SOKOL is defined, the sokol_app backend is used.
-// Otherwise, GLFW is the fallback for incremental migration.
-// ---------------------------------------------------------------------------
-
-#ifdef VOXOV_PLATFORM_SOKOL
-#include "platform/sokol/sokol_platform.hpp"
-#else
-// Legacy GLFW path — kept for incremental migration.
-struct GLFWwindow;
+// Forward declarations for sokol types (real types come from sokol_app.h
+// in the .cpp — we keep headers clean of platform-specific includes).
+struct sapp_event;
 
 struct PlatformCreateInfo {
     const char *title = "VOXOV";
     int width = 1280;
     int height = 720;
     bool fullscreen = false;
-    RenderBackendType backend = RenderBackendType::OpenGL;
+    RenderBackendType backend = RenderBackendType::Sokol;
 };
 
+/// Thin platform abstraction over sokol_app.
+/// The sokol event callback feeds input state into the platform so
+/// downstream code never calls native APIs directly.
 class DesktopPlatform {
 public:
     bool init(const PlatformCreateInfo &create_info);
     void shutdown();
-    void poll_events();
-    bool should_close() const;
 
+    /// sokol_app uses callbacks — the platform processes the event
+    /// and stores derived state (keys, mouse, window flags).
+    void process_event(const sapp_event &event);
+    void on_frame();
+
+    bool should_close() const;
     void *native_window();
-    GLFWwindow *glfw_window();
 
     double now_seconds() const;
     void set_window_title(const char *title);
@@ -40,6 +36,8 @@ public:
     void set_fullscreen(bool enabled);
     bool is_fullscreen() const;
     void toggle_fullscreen();
+
+    // Input state queried by the input backend.
     bool is_key_down(int key_code) const;
     bool is_mouse_button_down(int button) const;
     void mouse_position(double &x, double &y) const;
@@ -50,11 +48,19 @@ public:
     bool window_focused() const;
 
 private:
-    GLFWwindow *window = nullptr;
     bool fullscreen = false;
     int windowed_x = 100;
     int windowed_y = 100;
     int windowed_width = 1280;
     int windowed_height = 720;
+    bool should_close_ = false;
+    bool focused_ = true;
+    double mouse_x_ = 0.0;
+    double mouse_y_ = 0.0;
+    float mouse_dx_ = 0.0f;
+    float mouse_dy_ = 0.0f;
 };
-#endif
+
+/// Global accessor used by sokol_app callbacks (which are C function pointers
+/// and cannot capture a this-pointer directly).
+using AppUserData = DesktopPlatform;

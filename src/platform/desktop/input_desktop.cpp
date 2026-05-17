@@ -1,33 +1,30 @@
 #include "platform/desktop/input_desktop.hpp"
+#include "platform/platform.hpp"
 
-#include <GLFW/glfw3.h>
 #include <glm/glm.hpp>
 
-DesktopInputBackend::DesktopInputBackend(GLFWwindow *window_handle)
-    : window(window_handle) {}
+DesktopInputBackend::DesktopInputBackend(DesktopPlatform &platform)
+    : platform_(platform) {}
 
 void DesktopInputBackend::set_pointer_lock(bool enabled) {
-    if (!window || pointer_locked == enabled) {
+    // sokol_app cursor mode: TBD in Phase 1 — for now, mouse delta
+    // is handled differently in sokol (no GLFW_CURSOR_DISABLED equivalent
+    // without platform-specific code). We track the locked state locally
+    // and only report deltas when locked.
+    if (pointer_locked == enabled) {
         return;
     }
-
     pointer_locked = enabled;
-    glfwSetInputMode(window, GLFW_CURSOR, enabled ? GLFW_CURSOR_DISABLED : GLFW_CURSOR_NORMAL);
-    if (glfwRawMouseMotionSupported()) {
-        glfwSetInputMode(window, GLFW_RAW_MOUSE_MOTION, enabled ? GLFW_TRUE : GLFW_FALSE);
-    }
     mouse_initialized = false;
 }
 
 InputState DesktopInputBackend::poll() {
     InputState out{};
 
-    if (!window) {
-        return out;
-    }
-
-    const bool rmb_down = glfwGetMouseButton(window, GLFW_MOUSE_BUTTON_RIGHT) == GLFW_PRESS;
-    const bool window_focused = glfwGetWindowAttrib(window, GLFW_FOCUSED) == GLFW_TRUE;
+    // GLFW_KEY_RIGHT / MOUSE_BUTTON_RIGHT
+    constexpr int kMouseRight = 1; // GLFW_MOUSE_BUTTON_RIGHT
+    const bool rmb_down = platform_.is_mouse_button_down(kMouseRight);
+    const bool window_focused = platform_.window_focused();
     const bool rmb_pressed = rmb_down && !prev_rmb_down;
     prev_rmb_down = rmb_down;
 
@@ -45,34 +42,27 @@ InputState DesktopInputBackend::poll() {
     out.pointer_locked = pointer_locked;
     out.look_enabled = active_look_mode;
 
-    out.key_w = glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS;
-    out.key_a = glfwGetKey(window, GLFW_KEY_A) == GLFW_PRESS;
-    out.key_s = glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS;
-    out.key_d = glfwGetKey(window, GLFW_KEY_D) == GLFW_PRESS;
+    // WASD — using GLFW-compatible key codes
+    out.key_w = platform_.is_key_down(87);   // GLFW_KEY_W
+    out.key_a = platform_.is_key_down(65);   // GLFW_KEY_A
+    out.key_s = platform_.is_key_down(83);   // GLFW_KEY_S
+    out.key_d = platform_.is_key_down(68);   // GLFW_KEY_D
 
-    if (out.key_w) {
-        out.move.y += 1.0f;
-    }
-    if (out.key_s) {
-        out.move.y -= 1.0f;
-    }
-    if (out.key_d) {
-        out.move.x += 1.0f;
-    }
-    if (out.key_a) {
-        out.move.x -= 1.0f;
-    }
+    if (out.key_w) out.move.y += 1.0f;
+    if (out.key_s) out.move.y -= 1.0f;
+    if (out.key_d) out.move.x += 1.0f;
+    if (out.key_a) out.move.x -= 1.0f;
 
     if (out.move.x != 0.0f || out.move.y != 0.0f) {
         out.move = glm::normalize(out.move);
     }
 
-    const bool space_down = glfwGetKey(window, GLFW_KEY_SPACE) == GLFW_PRESS;
+    const bool space_down = platform_.is_key_down(32);  // GLFW_KEY_SPACE
     out.jump_held = space_down;
     out.jump_pressed = space_down && !prev_space_down;
     prev_space_down = space_down;
 
-    const bool escape_down = glfwGetKey(window, GLFW_KEY_ESCAPE) == GLFW_PRESS;
+    const bool escape_down = platform_.is_key_down(256); // GLFW_KEY_ESCAPE
     out.menu_toggle_pressed = escape_down && !prev_escape_down;
     if (escape_down && !prev_escape_down) {
         look_capture_enabled = false;
@@ -80,52 +70,51 @@ InputState DesktopInputBackend::poll() {
     }
     prev_escape_down = escape_down;
 
-    const bool up_down = glfwGetKey(window, GLFW_KEY_UP) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_W) == GLFW_PRESS;
+    const bool up_down = platform_.is_key_down(265) || platform_.is_key_down(87);  // UP or W
     out.menu_up_pressed = up_down && !prev_up_down;
     prev_up_down = up_down;
 
-    const bool down_down = glfwGetKey(window, GLFW_KEY_DOWN) == GLFW_PRESS || glfwGetKey(window, GLFW_KEY_S) == GLFW_PRESS;
+    const bool down_down = platform_.is_key_down(264) || platform_.is_key_down(83); // DOWN or S
     out.menu_down_pressed = down_down && !prev_down_down;
     prev_down_down = down_down;
 
-    const bool enter_down = glfwGetKey(window, GLFW_KEY_ENTER) == GLFW_PRESS;
+    const bool enter_down = platform_.is_key_down(257); // GLFW_KEY_ENTER
     out.menu_select_pressed = enter_down && !prev_enter_down;
     prev_enter_down = enter_down;
 
-    const bool f_down = glfwGetKey(window, GLFW_KEY_F) == GLFW_PRESS;
-    const bool e_down = glfwGetKey(window, GLFW_KEY_E) == GLFW_PRESS;
+    const bool f_down = platform_.is_key_down(70);  // GLFW_KEY_F
+    const bool e_down = platform_.is_key_down(69);  // GLFW_KEY_E
     out.interact_pressed = (f_down && !prev_f_down) || (e_down && !prev_e_down);
     prev_f_down = f_down;
     prev_e_down = e_down;
 
-    const bool f1_down = glfwGetKey(window, GLFW_KEY_F1) == GLFW_PRESS;
+    // Debug toggle keys
+    const bool f1_down = platform_.is_key_down(290);
     out.debug_toggle_pressed = f1_down && !prev_f1_down;
     prev_f1_down = f1_down;
 
-    const bool f2_down = glfwGetKey(window, GLFW_KEY_F2) == GLFW_PRESS;
+    const bool f2_down = platform_.is_key_down(291);
     out.debug_xray_toggle_pressed = f2_down && !prev_f2_down;
     prev_f2_down = f2_down;
 
-    const bool f3_down = glfwGetKey(window, GLFW_KEY_F3) == GLFW_PRESS;
+    const bool f3_down = platform_.is_key_down(292);
     out.debug_collision_only_toggle_pressed = f3_down && !prev_f3_down;
     prev_f3_down = f3_down;
 
-    const bool f4_down = glfwGetKey(window, GLFW_KEY_F4) == GLFW_PRESS;
+    const bool f4_down = platform_.is_key_down(293);
     out.debug_freeze_toggle_pressed = f4_down && !prev_f4_down;
     prev_f4_down = f4_down;
 
-    const bool f5_down = glfwGetKey(window, GLFW_KEY_F5) == GLFW_PRESS;
+    const bool f5_down = platform_.is_key_down(294);
     out.debug_reconcile_toggle_pressed = f5_down && !prev_f5_down;
     prev_f5_down = f5_down;
 
-    out.sprint_held = glfwGetKey(window, GLFW_KEY_LEFT_SHIFT) == GLFW_PRESS ||
-                      glfwGetKey(window, GLFW_KEY_RIGHT_SHIFT) == GLFW_PRESS;
-    out.crouch_held = glfwGetKey(window, GLFW_KEY_C) == GLFW_PRESS ||
-                      glfwGetKey(window, GLFW_KEY_LEFT_CONTROL) == GLFW_PRESS;
+    out.sprint_held = platform_.is_key_down(340); // LEFT_SHIFT
+    out.crouch_held = platform_.is_key_down(67) || platform_.is_key_down(341); // C or LCTRL
 
-    double x = 0.0;
-    double y = 0.0;
-    glfwGetCursorPos(window, &x, &y);
+    // Mouse position/delta
+    double x = 0.0, y = 0.0;
+    platform_.mouse_position(x, y);
     if (!mouse_initialized) {
         prev_mouse_x = x;
         prev_mouse_y = y;
@@ -142,10 +131,10 @@ InputState DesktopInputBackend::poll() {
         out.look_delta.y = mouse_dy;
     }
 
-    if (glfwGetKey(window, GLFW_KEY_Q) == GLFW_PRESS) {
+    if (platform_.is_key_down(81)) { // Q
         out.zoom_delta += 0.08f;
     }
-    if (glfwGetKey(window, GLFW_KEY_R) == GLFW_PRESS) {
+    if (platform_.is_key_down(82)) { // R
         out.zoom_delta -= 0.08f;
     }
 

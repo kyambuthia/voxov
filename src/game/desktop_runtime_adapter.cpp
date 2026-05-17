@@ -1,50 +1,36 @@
 #include "game/desktop_runtime_adapter.hpp"
 #include "platform/platform.hpp"
+#include "platform/platform_input_state.hpp"
 
 #include <glm/glm.hpp>
 
 namespace {
 InputState poll_secondary_split_input(DesktopPlatform &platform) {
+    const PlatformInputSnapshot &snap = platform.input();
     InputState out{};
 
-    if (platform.is_key_down(73)) { // I
-        out.move.y += 1.0f;
-    }
-    if (platform.is_key_down(75)) { // K
-        out.move.y -= 1.0f;
-    }
-    if (platform.is_key_down(76)) { // L
-        out.move.x += 1.0f;
-    }
-    if (platform.is_key_down(74)) { // J
-        out.move.x -= 1.0f;
-    }
+    auto k = [&](PlatformKey key) -> bool {
+        return snap.keys_down.test(static_cast<size_t>(key));
+    };
+
+    if (k(PlatformKey::I)) { out.move.y += 1.0f; }
+    if (k(PlatformKey::K)) { out.move.y -= 1.0f; }
+    if (k(PlatformKey::L)) { out.move.x += 1.0f; }
+    if (k(PlatformKey::J)) { out.move.x -= 1.0f; }
     if (out.move.x != 0.0f || out.move.y != 0.0f) {
         out.move = glm::normalize(out.move);
     }
 
     constexpr float look_speed = 5.0f;
-    if (platform.is_key_down(263)) { // LEFT
-        out.look_delta.x -= look_speed;
-    }
-    if (platform.is_key_down(262)) { // RIGHT
-        out.look_delta.x += look_speed;
-    }
-    if (platform.is_key_down(265)) { // UP
-        out.look_delta.y -= look_speed;
-    }
-    if (platform.is_key_down(264)) { // DOWN
-        out.look_delta.y += look_speed;
-    }
+    if (k(PlatformKey::Left))  { out.look_delta.x -= look_speed; }
+    if (k(PlatformKey::Right)) { out.look_delta.x += look_speed; }
+    if (k(PlatformKey::Up))    { out.look_delta.y -= look_speed; }
+    if (k(PlatformKey::Down))  { out.look_delta.y += look_speed; }
 
-    const bool rctrl_down =
-        platform.is_key_down(341) || platform.is_key_down(341);
-    out.jump_held = rctrl_down;
-    out.jump_pressed = rctrl_down;
-    out.sprint_held =
-        platform.is_key_down(340) || // RSHIFT
-        platform.is_key_down(47);    // SLASH
-    out.crouch_held = platform.is_key_down(341); // RCTRL
+    out.jump_held = k(PlatformKey::RightControl);
+    out.jump_pressed = out.jump_held;
+    out.sprint_held = k(PlatformKey::RightShift) || k(PlatformKey::Slash);
+    out.crouch_held = k(PlatformKey::RightControl);
 
     return out;
 }
@@ -73,15 +59,6 @@ void DesktopRuntimeInputAdapter::set_splitscreen_enabled(bool enabled) {
 DesktopRuntimePlatformAdapter::DesktopRuntimePlatformAdapter(DesktopPlatform &platform)
     : platform_(platform) {}
 
-void DesktopRuntimePlatformAdapter::poll_events() {
-    // sokol_app events are dispatched via the callback in main.cpp.
-    // No explicit poll_events() needed.
-}
-
 bool DesktopRuntimePlatformAdapter::should_close() const {
     return platform_.should_close();
-}
-
-void *DesktopRuntimePlatformAdapter::native_window() {
-    return platform_.native_window();
 }

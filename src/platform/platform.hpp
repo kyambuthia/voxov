@@ -3,6 +3,7 @@
 #include <cstdint>
 
 #include "engine_render/render_backend_type.hpp"
+#include "platform/platform_input_state.hpp"
 
 // ---------------------------------------------------------------------------
 // Unified platform header — delegates to the active backend.
@@ -24,22 +25,28 @@ struct PlatformCreateInfo {
     RenderBackendType backend = RenderBackendType::OpenGL;
 };
 
-class DesktopPlatform {
+class DesktopPlatform : public PlatformRuntime {
 public:
     bool init(const PlatformCreateInfo &create_info);
     void shutdown();
-    void poll_events();
-    bool should_close() const;
 
+    void poll_events();
+
+    // ── PlatformRuntime interface ────────────────────────────────────
+    const PlatformInputSnapshot &input() const override { return input_; }
+    RenderSurface surface() const override;
+    void set_title(const char *title) override;
+    void set_fullscreen(bool enabled) override;
+    bool is_fullscreen() const override { return fullscreen_; }
+    void toggle_fullscreen() override;
+    bool should_close() const override;
+
+    // ── GLFW-specific (legacy) ───────────────────────────────────────
     void *native_window();
     GLFWwindow *glfw_window();
 
-    double now_seconds() const;
-    void set_window_title(const char *title);
-    void set_window_size(int width, int height);
-    void set_fullscreen(bool enabled);
-    bool is_fullscreen() const;
-    void toggle_fullscreen();
+    // ── Legacy query helpers ─────────────────────────────────────────
+    // Prefer platform.input() for new code.
     bool is_key_down(int key_code) const;
     bool is_mouse_button_down(int button) const;
     void mouse_position(double &x, double &y) const;
@@ -50,8 +57,11 @@ public:
     bool window_focused() const;
 
 private:
+    void refresh_input_snapshot();
+
     GLFWwindow *window = nullptr;
-    bool fullscreen = false;
+    PlatformInputSnapshot input_{};
+    bool fullscreen_ = false;
     int windowed_x = 100;
     int windowed_y = 100;
     int windowed_width = 1280;

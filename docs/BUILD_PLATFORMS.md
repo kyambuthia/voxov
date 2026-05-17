@@ -45,7 +45,9 @@ Run dedicated server:
 
 Notes:
 
-- Desktop is now OpenGL-only and is intended to stay inside a GLES3/WebGL2-class rendering budget.
+- Desktop now has a Sokol runtime path and must stay inside the compatibility
+  floor in `docs/COMPATIBILITY.md`: GL 3.3/D3D11 on older PCs, GLES3 on Android,
+  and WebGL2 on web.
 - `voxov_server` is the preferred standalone authoritative server target.
 - `voxov --headless-server` still exists as a compatibility path for quick bring-up from the client executable.
 - `ctest` requires a build configured with `-DVOXOV_BUILD_TESTS=ON`.

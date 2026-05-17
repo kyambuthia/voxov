@@ -47,7 +47,9 @@ Useful configure flags:
 Notes:
 
 - Android and Web builds are selected by the toolchain (`ANDROID` or `EMSCRIPTEN`), not by a normal desktop configure flag.
-- Desktop is the main integrated runtime, boots through `GameRuntime`, and uses an OpenGL-first renderer aligned to a GLES3/WebGL2-class feature budget.
+- Desktop is the main integrated runtime, boots through `GameRuntime`, and uses
+  the Sokol path by default. Keep rendering within the compatibility floor in
+  `docs/COMPATIBILITY.md`.
 - Android and Web use separate runtime paths today.
 
 ## 4. Run

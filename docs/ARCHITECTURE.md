@@ -105,7 +105,9 @@ individual subsystems.
 - Asset conditioning pipeline (DCC → intermediate format → platform-specific)
 
 ### Layer 8: Rendering Engine
-`src/engine_render/` — OpenGL-first backend, aligned to GLES3/WebGL2 ceiling.
+`src/engine_render/` — backend-neutral renderer with Sokol as the default
+desktop path and legacy OpenGL available behind the compatibility build option.
+Rendering stays aligned to the GLES3/WebGL2 ceiling.
 
 | Module | Purpose |
 |---|---|

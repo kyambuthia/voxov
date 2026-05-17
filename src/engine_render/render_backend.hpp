@@ -5,6 +5,7 @@
 #include "engine_math/camera.hpp"
 #include "engine_render/render_backend_type.hpp"
 #include "engine_render/render_types.hpp"
+#include "platform/platform_input_state.hpp"  // RenderSurface
 
 // ---------------------------------------------------------------------------
 // Backend-neutral render contract.
@@ -18,12 +19,6 @@ struct RenderDeviceDesc {
     int depth_format = 0;   // sg_pixel_format for sokol path
     int sample_count = 1;
     bool enable_imgui = true;
-};
-
-struct RenderSurface {
-    int width = 1;
-    int height = 1;
-    float dpi_scale = 1.0f;
 };
 
 struct RenderView {

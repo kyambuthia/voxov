@@ -23,7 +23,5 @@ public:
 class IRuntimePlatformAdapter {
 public:
     virtual ~IRuntimePlatformAdapter() = default;
-    virtual void poll_events() = 0;
     virtual bool should_close() const = 0;
-    virtual void *native_window() = 0;
 };

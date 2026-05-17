@@ -21,9 +21,7 @@ class DesktopRuntimePlatformAdapter : public IRuntimePlatformAdapter {
 public:
     explicit DesktopRuntimePlatformAdapter(DesktopPlatform &platform);
 
-    void poll_events() override;
     bool should_close() const override;
-    void *native_window() override;
 
 private:
     DesktopPlatform &platform_;

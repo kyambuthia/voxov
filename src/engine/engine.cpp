@@ -161,7 +161,7 @@ void disable_gameplay_actions(InputState &input) {
 
 } // namespace
 
-void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
+void Engine::init(const EngineRuntimeOptions &options) {
   runtime_options = options;
   session_state_.devhud_enabled = runtime_options.devhud;
   session_state_.noclip_enabled = runtime_options.noclip;
@@ -295,7 +295,6 @@ void Engine::init(void *window_handle, const EngineRuntimeOptions &options) {
   try {
     renderer.init(RendererCreateInfo{
         .backend = runtime_options.render_backend,
-        .window_handle = window_handle,
     });
     renderer.upload_scene(scene);
     renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);

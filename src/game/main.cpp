@@ -203,7 +203,9 @@ int main(int argc, char **argv) {
 
         runtime.tick(pacer.frame_dt());
 
-        const bool f11_down = glfwGetKey(platform.glfw_window(), GLFW_KEY_F11) == GLFW_PRESS;
+        // F11 fullscreen toggle — uses PlatformInputSnapshot
+        const bool f11_down = platform.input().keys_down.test(
+            static_cast<size_t>(PlatformKey::F11));
         if (f11_down && !f11_was_down) {
             platform.toggle_fullscreen();
         }
@@ -216,7 +218,7 @@ int main(int argc, char **argv) {
                       "VOXOV  FPS: %.1f  CPU: %.2fms  NET: %u/%u Bps",
                       stats.fps, stats.cpu_ms, stats.net_tx_bytes_per_sec,
                       stats.net_rx_bytes_per_sec);
-        platform.set_window_title(title);
+        platform.set_title(title);
     }
 
     runtime.shutdown();

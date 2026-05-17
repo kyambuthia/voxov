@@ -42,7 +42,7 @@ public:
         session_controller.set_devhud_enabled(params.options.devhud);
         session_controller.set_noclip_enabled(params.options.noclip);
         session_controller.set_gameplay_started(false);
-        engine.init(platform_adapter->native_window(), to_engine_options(params.options));
+        engine.init(to_engine_options(params.options));
         ui_audio.init();
         gui_menu.set_character(engine.preferred_character());
         sync_session_state();
@@ -68,9 +68,8 @@ public:
             return;
         }
 
-        // Poll native events before input so focus and cursor-lock changes are visible
-        // to the input adapter within the same frame.
-        platform_adapter->poll_events();
+        // Input is event-fed by sokol_app callbacks or polled by GLFW before tick.
+        // The input adapter produces the latest frame state.
         if (input_adapter != nullptr) {
             input_frame = input_adapter->poll_input();
         }

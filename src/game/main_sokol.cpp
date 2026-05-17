@@ -138,7 +138,8 @@ void voxov_frame() {
     // F11 fullscreen toggle
     static bool f11_was_down = false;
     if (g_platform) {
-        const bool f11_down = g_platform->is_key_down(303);
+        const bool f11_down = g_platform->input().keys_down.test(
+            static_cast<size_t>(PlatformKey::F11));
         if (f11_down && !f11_was_down) {
             g_platform->toggle_fullscreen();
         }
@@ -154,7 +155,7 @@ void voxov_frame() {
                       "VOXOV  FPS: %.1f  CPU: %.2fms  NET: %u/%u Bps",
                       stats.fps, stats.cpu_ms, stats.net_tx_bytes_per_sec,
                       stats.net_rx_bytes_per_sec);
-        g_platform->set_window_title(title);
+        g_platform->set_title(title);
 
         // Reset per-frame mouse deltas
         g_platform->on_frame();

@@ -73,7 +73,7 @@ enum class EngineConnectResult {
 
 class Engine {
 public:
-  void init(void *window_handle, const EngineRuntimeOptions &options);
+  void init(const EngineRuntimeOptions &options);
   EngineConnectResult connect(const char *host, uint16_t port);
   void shutdown();
   void tick(double frame_dt, EngineInputFrame input_frame);

@@ -6,146 +6,110 @@
 #include <cstdio>
 
 // ---------------------------------------------------------------------------
-// Per-platform key code mapping (matches GLFW keycodes that input_desktop
-// currently uses, so input_desktop.cpp can be ported with minimal changes).
+// Sokol key → PlatformKey mapping
 // ---------------------------------------------------------------------------
 
-static int map_sokol_key_to_glfw_code(int sokol_key) {
-    // sokol_app key codes map closely to ASCII for printable chars.
-    // We define explicit mappings for the keys used in input_desktop.cpp.
+static PlatformKey map_sokol_key(int sokol_key) {
     switch (sokol_key) {
-    case SAPP_KEYCODE_W:        return 87;   // GLFW_KEY_W
-    case SAPP_KEYCODE_A:        return 65;   // GLFW_KEY_A
-    case SAPP_KEYCODE_S:        return 83;   // GLFW_KEY_S
-    case SAPP_KEYCODE_D:        return 68;   // GLFW_KEY_D
-    case SAPP_KEYCODE_SPACE:    return 32;   // GLFW_KEY_SPACE
-    case SAPP_KEYCODE_ESCAPE:   return 256;  // GLFW_KEY_ESCAPE
-    case SAPP_KEYCODE_UP:       return 265;  // GLFW_KEY_UP
-    case SAPP_KEYCODE_DOWN:     return 264;  // GLFW_KEY_DOWN
-    case SAPP_KEYCODE_ENTER:    return 257;  // GLFW_KEY_ENTER
-    case SAPP_KEYCODE_F:        return 70;   // GLFW_KEY_F
-    case SAPP_KEYCODE_E:        return 69;   // GLFW_KEY_E
-    case SAPP_KEYCODE_F1:       return 290;  // GLFW_KEY_F1
-    case SAPP_KEYCODE_F2:       return 291;  // GLFW_KEY_F2
-    case SAPP_KEYCODE_F3:       return 292;  // GLFW_KEY_F3
-    case SAPP_KEYCODE_F4:       return 293;  // GLFW_KEY_F4
-    case SAPP_KEYCODE_F5:       return 294;  // GLFW_KEY_F5
-    case SAPP_KEYCODE_F11:      return 303;  // GLFW_KEY_F11
-    case SAPP_KEYCODE_LEFT_SHIFT:
-    case SAPP_KEYCODE_RIGHT_SHIFT: return 340; // GLFW_KEY_LEFT_SHIFT
-    case SAPP_KEYCODE_LEFT_CONTROL:
-    case SAPP_KEYCODE_RIGHT_CONTROL: return 341; // GLFW_KEY_LEFT_CONTROL
-    case SAPP_KEYCODE_C:        return 67;   // GLFW_KEY_C
-    case SAPP_KEYCODE_Q:        return 81;   // GLFW_KEY_Q
-    case SAPP_KEYCODE_R:        return 82;   // GLFW_KEY_R
-    case SAPP_KEYCODE_I:        return 73;   // GLFW_KEY_I
-    case SAPP_KEYCODE_J:        return 74;   // GLFW_KEY_J
-    case SAPP_KEYCODE_K:        return 75;   // GLFW_KEY_K
-    case SAPP_KEYCODE_L:        return 76;   // GLFW_KEY_L
-    case SAPP_KEYCODE_LEFT:     return 263;  // GLFW_KEY_LEFT
-    case SAPP_KEYCODE_RIGHT:    return 262;  // GLFW_KEY_RIGHT
-    case SAPP_KEYCODE_SLASH:    return 47;   // GLFW_KEY_SLASH
-    default: return -1;
+    case SAPP_KEYCODE_W:            return PlatformKey::W;
+    case SAPP_KEYCODE_A:            return PlatformKey::A;
+    case SAPP_KEYCODE_S:            return PlatformKey::S;
+    case SAPP_KEYCODE_D:            return PlatformKey::D;
+    case SAPP_KEYCODE_I:            return PlatformKey::I;
+    case SAPP_KEYCODE_J:            return PlatformKey::J;
+    case SAPP_KEYCODE_K:            return PlatformKey::K;
+    case SAPP_KEYCODE_L:            return PlatformKey::L;
+    case SAPP_KEYCODE_Q:            return PlatformKey::Q;
+    case SAPP_KEYCODE_R:            return PlatformKey::R;
+    case SAPP_KEYCODE_E:            return PlatformKey::E;
+    case SAPP_KEYCODE_F:            return PlatformKey::F;
+    case SAPP_KEYCODE_C:            return PlatformKey::C;
+    case SAPP_KEYCODE_SPACE:        return PlatformKey::Space;
+    case SAPP_KEYCODE_ESCAPE:       return PlatformKey::Escape;
+    case SAPP_KEYCODE_ENTER:        return PlatformKey::Enter;
+    case SAPP_KEYCODE_TAB:          return PlatformKey::Tab;
+    case SAPP_KEYCODE_UP:           return PlatformKey::Up;
+    case SAPP_KEYCODE_DOWN:         return PlatformKey::Down;
+    case SAPP_KEYCODE_LEFT:         return PlatformKey::Left;
+    case SAPP_KEYCODE_RIGHT:        return PlatformKey::Right;
+    case SAPP_KEYCODE_F1:           return PlatformKey::F1;
+    case SAPP_KEYCODE_F2:           return PlatformKey::F2;
+    case SAPP_KEYCODE_F3:           return PlatformKey::F3;
+    case SAPP_KEYCODE_F4:           return PlatformKey::F4;
+    case SAPP_KEYCODE_F5:           return PlatformKey::F5;
+    case SAPP_KEYCODE_F11:          return PlatformKey::F11;
+    case SAPP_KEYCODE_LEFT_SHIFT:   return PlatformKey::LeftShift;
+    case SAPP_KEYCODE_RIGHT_SHIFT:  return PlatformKey::RightShift;
+    case SAPP_KEYCODE_LEFT_CONTROL: return PlatformKey::LeftControl;
+    case SAPP_KEYCODE_RIGHT_CONTROL:return PlatformKey::RightControl;
+    case SAPP_KEYCODE_SLASH:        return PlatformKey::Slash;
+    default: return PlatformKey::Unknown;
     }
 }
-
-// ---------------------------------------------------------------------------
-// Key state storage (256 entries covers most used GLFW keycodes).
-// ---------------------------------------------------------------------------
-
-static constexpr int kMaxKeys = 512;
-static constexpr int kMaxMouseButtons = 8;
-
-static bool g_keys[kMaxKeys] = {};
-static bool g_mouse_buttons[kMaxMouseButtons] = {};
-static double g_mouse_x = 0.0;
-static double g_mouse_y = 0.0;
-static float g_mouse_dx = 0.0f;
-static float g_mouse_dy = 0.0f;
-static bool g_mouse_initialized = false;
-static bool g_window_focused = true;
 
 // ---------------------------------------------------------------------------
 // DesktopPlatform
 // ---------------------------------------------------------------------------
 
 bool DesktopPlatform::init(const PlatformCreateInfo &create_info) {
-    /// sokol_app initialization is handled by the global sapp_desc in main.cpp.
-    /// This init() stores local state; the actual window is created by sapp_run().
-    windowed_width = create_info.width;
-    windowed_height = create_info.height;
-    fullscreen = create_info.fullscreen;
-
-    // Clear key state
-    std::memset(g_keys, 0, sizeof(g_keys));
-    std::memset(g_mouse_buttons, 0, sizeof(g_mouse_buttons));
-    g_mouse_x = 0.0;
-    g_mouse_y = 0.0;
-    g_mouse_dx = 0.0f;
-    g_mouse_dy = 0.0f;
-    g_mouse_initialized = false;
-
+    fullscreen_ = create_info.fullscreen;
+    input_ = {};  // reset snapshot
     return true;
 }
 
 void DesktopPlatform::shutdown() {
-    // sokol_app shutdown is handled by sapp_run() returning.
-    std::memset(g_keys, 0, sizeof(g_keys));
+    input_ = {};
     should_close_ = true;
 }
 
 void DesktopPlatform::process_event(const sapp_event &event) {
     switch (event.type) {
     case SAPP_EVENTTYPE_KEY_DOWN: {
-        const int code = map_sokol_key_to_glfw_code(event.key_code);
-        if (code >= 0 && code < kMaxKeys) {
-            g_keys[code] = true;
+        const PlatformKey pk = map_sokol_key(event.key_code);
+        if (pk != PlatformKey::Unknown) {
+            input_.keys_down.set(static_cast<size_t>(pk));
         }
         break;
     }
     case SAPP_EVENTTYPE_KEY_UP: {
-        const int code = map_sokol_key_to_glfw_code(event.key_code);
-        if (code >= 0 && code < kMaxKeys) {
-            g_keys[code] = false;
+        const PlatformKey pk = map_sokol_key(event.key_code);
+        if (pk != PlatformKey::Unknown) {
+            input_.keys_down.reset(static_cast<size_t>(pk));
         }
         break;
     }
     case SAPP_EVENTTYPE_MOUSE_DOWN:
-        if (event.mouse_button < kMaxMouseButtons) {
-            g_mouse_buttons[event.mouse_button] = true;
+        if (event.mouse_button < 8) {
+            input_.mouse_down.set(static_cast<size_t>(event.mouse_button));
         }
         break;
     case SAPP_EVENTTYPE_MOUSE_UP:
-        if (event.mouse_button < kMaxMouseButtons) {
-            g_mouse_buttons[event.mouse_button] = false;
+        if (event.mouse_button < 8) {
+            input_.mouse_down.reset(static_cast<size_t>(event.mouse_button));
         }
         break;
     case SAPP_EVENTTYPE_MOUSE_MOVE: {
         const double new_x = event.mouse_x;
         const double new_y = event.mouse_y;
-        if (g_mouse_initialized) {
-            g_mouse_dx = static_cast<float>(new_x - g_mouse_x);
-            g_mouse_dy = static_cast<float>(new_y - g_mouse_y);
-        }
-        g_mouse_x = new_x;
-        g_mouse_y = new_y;
-        g_mouse_initialized = true;
+        // Accumulate deltas across multiple move events per frame
+        input_.mouse_delta.x += static_cast<float>(new_x - input_.mouse_pos.x);
+        input_.mouse_delta.y += static_cast<float>(new_y - input_.mouse_pos.y);
+        input_.mouse_pos.x = static_cast<float>(new_x);
+        input_.mouse_pos.y = static_cast<float>(new_y);
         break;
     }
     case SAPP_EVENTTYPE_MOUSE_SCROLL:
-        // Scroll not currently used by input_desktop.
+        input_.scroll_delta.x += event.scroll_x;
+        input_.scroll_delta.y += event.scroll_y;
         break;
     case SAPP_EVENTTYPE_FOCUSED:
-        g_window_focused = true;
-        focused_ = true;
+        input_.focused = true;
         break;
     case SAPP_EVENTTYPE_UNFOCUSED:
-        g_window_focused = false;
-        focused_ = false;
+        input_.focused = false;
         break;
     case SAPP_EVENTTYPE_RESIZED:
-        windowed_width = event.framebuffer_width;
-        windowed_height = event.framebuffer_height;
+        // surface() reports live dimensions from sokol
         break;
     case SAPP_EVENTTYPE_QUIT_REQUESTED:
         should_close_ = true;
@@ -156,85 +120,96 @@ void DesktopPlatform::process_event(const sapp_event &event) {
 }
 
 void DesktopPlatform::on_frame() {
-    // Reset per-frame mouse deltas (accumulated during event processing).
-    g_mouse_dx = 0.0f;
-    g_mouse_dy = 0.0f;
+    // Reset per-frame accumulators
+    input_.mouse_delta = glm::vec2(0.0f);
+    input_.scroll_delta = glm::vec2(0.0f);
 }
 
 bool DesktopPlatform::should_close() const {
     return should_close_;
 }
 
-void *DesktopPlatform::native_window() {
-    // sokol_app doesn't expose a native window handle easily.
-    // Render backend gets the swapchain via sokol_glue instead.
-    return nullptr;
+RenderSurface DesktopPlatform::surface() const {
+    return { sapp_width(), sapp_height(), sapp_dpi_scale() };
 }
 
-double DesktopPlatform::now_seconds() const {
-    return sapp_frame_duration() * sapp_frame_count();
-}
-
-void DesktopPlatform::set_window_title(const char *title) {
+void DesktopPlatform::set_title(const char *title) {
     sapp_set_window_title(title);
 }
 
-void DesktopPlatform::set_window_size(int width, int height) {
-    // sokol_app window resize is not supported at runtime in the same way.
-    // This is a no-op for now; the window size is set at creation time.
-    (void)width;
-    (void)height;
-}
-
 void DesktopPlatform::set_fullscreen(bool enabled) {
-    // sokol_app fullscreen toggle — note: sokol uses a different API model.
-    // For now, this is a simplified toggle.
     sapp_toggle_fullscreen();
-    fullscreen = enabled;
-}
-
-bool DesktopPlatform::is_fullscreen() const {
-    return fullscreen;
+    fullscreen_ = enabled;
 }
 
 void DesktopPlatform::toggle_fullscreen() {
     sapp_toggle_fullscreen();
-    fullscreen = !fullscreen;
+    fullscreen_ = !fullscreen_;
 }
 
-// ---- Input state queries (replaces glfwGetKey / glfwGetMouseButton) ----
+// ── Legacy query helpers (bridge for incremental migration) ───────────
 
 bool DesktopPlatform::is_key_down(int key_code) const {
-    if (key_code < 0 || key_code >= kMaxKeys) return false;
-    return g_keys[key_code];
+    // Keep supporting raw key-codes for existing DesktopInputBackend.
+    // Map common GLFW codes to PlatformKey for the snapshot.
+    static constexpr int kMaxCode = 512;
+    if (key_code < 0 || key_code >= kMaxCode) return false;
+
+    // Quick lookup: map GLFW keycode → PlatformKey
+    auto code_to_key = [](int code) -> PlatformKey {
+        switch (code) {
+        case 87:  return PlatformKey::W;
+        case 65:  return PlatformKey::A;
+        case 83:  return PlatformKey::S;
+        case 68:  return PlatformKey::D;
+        case 73:  return PlatformKey::I;
+        case 74:  return PlatformKey::J;
+        case 75:  return PlatformKey::K;
+        case 76:  return PlatformKey::L;
+        case 81:  return PlatformKey::Q;
+        case 82:  return PlatformKey::R;
+        case 69:  return PlatformKey::E;
+        case 70:  return PlatformKey::F;
+        case 67:  return PlatformKey::C;
+        case 32:  return PlatformKey::Space;
+        case 256: return PlatformKey::Escape;
+        case 257: return PlatformKey::Enter;
+        case 265: return PlatformKey::Up;
+        case 264: return PlatformKey::Down;
+        case 263: return PlatformKey::Left;
+        case 262: return PlatformKey::Right;
+        case 290: return PlatformKey::F1;
+        case 291: return PlatformKey::F2;
+        case 292: return PlatformKey::F3;
+        case 293: return PlatformKey::F4;
+        case 294: return PlatformKey::F5;
+        case 303: return PlatformKey::F11;
+        case 340: return PlatformKey::LeftShift;
+        case 341: return PlatformKey::LeftControl;
+        case 47:  return PlatformKey::Slash;
+        default:  return PlatformKey::Unknown;
+        }
+    };
+
+    const PlatformKey pk = code_to_key(key_code);
+    if (pk == PlatformKey::Unknown) return false;
+    return input_.keys_down.test(static_cast<size_t>(pk));
 }
 
 bool DesktopPlatform::is_mouse_button_down(int button) const {
-    if (button < 0 || button >= kMaxMouseButtons) return false;
-    return g_mouse_buttons[button];
+    if (button < 0 || button >= 8) return false;
+    return input_.mouse_down.test(static_cast<size_t>(button));
 }
 
 void DesktopPlatform::mouse_position(double &x, double &y) const {
-    x = g_mouse_x;
-    y = g_mouse_y;
+    x = static_cast<double>(input_.mouse_pos.x);
+    y = static_cast<double>(input_.mouse_pos.y);
 }
 
 float DesktopPlatform::mouse_delta_x() const {
-    return g_mouse_dx;
+    return input_.mouse_delta.x;
 }
 
 float DesktopPlatform::mouse_delta_y() const {
-    return g_mouse_dy;
-}
-
-int DesktopPlatform::window_width() const {
-    return windowed_width;
-}
-
-int DesktopPlatform::window_height() const {
-    return windowed_height;
-}
-
-bool DesktopPlatform::window_focused() const {
-    return g_window_focused;
+    return input_.mouse_delta.y;
 }

@@ -53,7 +53,26 @@ void sync_local_animation_runtime(PlayerEntity &player,
   if (!runtime.events().empty()) {
     player.last_anim_event = runtime.events().back().type;
   }
-  runtime.clear_events();
+}
+
+void enqueue_animation_runtime_events(EventBus &events,
+                                      const PlayerEntity &player,
+                                      const PlayerAnimationRuntime &runtime) {
+  for (const PlayerAnimationFiredEvent &event : runtime.events()) {
+    if (event.type == PlayerAnimEventType::Landing) {
+      events.enqueue_fixed(PlayerLandedEvent{
+          .player_id = player.network_id,
+          .position = player.transform.position,
+          .impact_speed = player.locomotion.landing_impact,
+      });
+    } else if (event.type == PlayerAnimEventType::SoundTrigger &&
+               event.payload == "jump") {
+      events.enqueue_fixed(PlayerJumpedEvent{
+          .player_id = player.network_id,
+          .position = player.transform.position,
+      });
+    }
+  }
 }
 } // namespace
 
@@ -69,6 +88,14 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   game_session.reset();
   event_bus_.clear();
   event_bus_.reserve(64, 1024, 2048);
+  event_bus_.subscribe<PlayerJumpedEvent>(
+      EventPhase::Fixed,
+      [](const PlayerJumpedEvent &event, const EventContext &context) {
+        static uint64_t jumped_event_count = 0;
+        ++jumped_event_count;
+        spdlog::debug("PlayerJumpedEvent fixed tick={} player={} count={}",
+                      context.tick, event.player_id, jumped_event_count);
+      });
 
   EnginePhysicsSettings settings{};
   settings.solver_backend = runtime_options.physics_backend;
@@ -148,6 +175,9 @@ void Engine::tick(double frame_dt,
                 local_player, step_input, collision_world, step.dt, false);
             sync_local_animation_runtime(local_player, local_player_animation,
                                          step.dt);
+            enqueue_animation_runtime_events(event_bus_, local_player,
+                                             local_player_animation);
+            local_player_animation.clear_events();
             jump_consumed = jump_consumed || input_frame.primary.jump_pressed;
             physics.step(step.dt);
             event_bus_.drain_fixed(EventContext{

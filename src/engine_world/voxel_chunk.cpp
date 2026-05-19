@@ -348,35 +348,6 @@ RenderMesh VoxelChunk::build_greedy_mesh(const glm::vec3 &origin,
   return mesh;
 }
 
-RenderMesh VoxelChunk::build_debug_grid(float span, float step) const {
-  RenderMesh mesh;
-  const float y = -0.01f;
-  const float half = span * 0.5f;
-
-  auto add_line_quad = [&](glm::vec3 a, glm::vec3 b, float thickness,
-                           glm::vec3 color) {
-    glm::vec3 dir = glm::normalize(b - a);
-    glm::vec3 side(-dir.z, 0.0f, dir.x);
-    side *= thickness * 0.5f;
-    uint32_t start = static_cast<uint32_t>(mesh.vertices.size());
-    mesh.vertices.push_back({a - side, color});
-    mesh.vertices.push_back({a + side, color});
-    mesh.vertices.push_back({b + side, color});
-    mesh.vertices.push_back({b - side, color});
-    mesh.indices.insert(mesh.indices.end(), {start, start + 1, start + 2, start,
-                                             start + 2, start + 3});
-  };
-
-  for (float p = -half; p <= half; p += step) {
-    glm::vec3 color = (std::fabs(p) < 0.001f) ? glm::vec3(0.6f, 0.6f, 0.8f)
-                                              : glm::vec3(0.18f, 0.18f, 0.22f);
-    add_line_quad({-half, y, p}, {half, y, p}, 0.04f, color);
-    add_line_quad({p, y, -half}, {p, y, half}, 0.04f, color);
-  }
-
-  return mesh;
-}
-
 RenderMesh VoxelChunk::build_sky_placeholder(float size) const {
   RenderMesh mesh;
   const float h = size * 0.5f;

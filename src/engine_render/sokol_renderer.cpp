@@ -269,31 +269,13 @@ bool SokolRenderer::init(const RenderDeviceDesc &desc) {
         },
     };
 
-    // --- Debug triangle (screen-space, always visible in center) ---
-    {
-        RenderMesh tri;
-        tri.vertices = {
-            {glm::vec3(-0.8f, -0.6f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f)},
-            {glm::vec3( 0.8f, -0.6f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f)},
-            {glm::vec3( 0.0f,  0.7f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f)},
-        };
-        tri.indices = {0, 1, 2};
-        upload_mesh(debug_triangle_mesh_, tri, false);
-        std::fprintf(stderr, "triangle init: vbuf.id=%d ibuf.id=%d idx_count=%u\n",
-            debug_triangle_mesh_.vertex_buffer.id,
-            debug_triangle_mesh_.index_buffer.id,
-            debug_triangle_mesh_.index_count);
-    }
-
     return true;
 }
 
 void SokolRenderer::shutdown() {
     destroy_mesh(transient_mesh_);
-    destroy_mesh(debug_grid_mesh_);
     destroy_mesh(debug_world_mesh_);
     destroy_mesh(debug_screen_mesh_);
-    destroy_mesh(debug_triangle_mesh_);
     for (auto &[id, mesh] : cached_meshes_) {
         destroy_mesh(mesh);
     }
@@ -452,7 +434,6 @@ void SokolRenderer::upload_scene(const RenderScene &new_scene) {
     }
 
     upload_mesh(transient_mesh_, transient_scene, true);
-    upload_mesh(debug_grid_mesh_, new_scene.debug_grid, false);
     upload_mesh(debug_world_mesh_, new_scene.debug_world, false);
     upload_mesh(debug_screen_mesh_, new_scene.debug_screen, false);
     last_debug_world_hash_ = mesh_size_token(new_scene.debug_world);
@@ -520,10 +501,6 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
             }
         }
 
-        // Debug grid (no cull)
-        sg_apply_pipeline(pipelines_.debug_no_cull);
-        draw_mesh(debug_grid_mesh_, vp);
-
         // Debug world (x-ray or normal)
         sg_apply_pipeline(ctx.debug_xray ? pipelines_.debug_xray : pipelines_.opaque);
         draw_mesh(debug_world_mesh_, vp);
@@ -531,16 +508,6 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         // Screen-space overlay
         sg_apply_pipeline(pipelines_.screen);
         draw_mesh(debug_screen_mesh_, glm::mat4(1.0f));
-
-        static int tri_log = 0;
-        if (tri_log < 3) {
-            std::fprintf(stderr, "triangle draw: vbuf.id=%d ibuf.id=%d idx_count=%u\n",
-                debug_triangle_mesh_.vertex_buffer.id,
-                debug_triangle_mesh_.index_buffer.id,
-                debug_triangle_mesh_.index_count);
-            tri_log++;
-        }
-        draw_mesh(debug_triangle_mesh_, glm::mat4(1.0f));
     }
 
     sg_end_pass();

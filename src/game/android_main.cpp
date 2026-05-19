@@ -612,16 +612,13 @@ struct AndroidRenderer {
     GLuint program = 0;
     GLint u_mvp = -1;
     GpuMesh terrain_gpu{};
-    GpuMesh grid_gpu{};
     GpuMesh capsule_gpu{};
     GpuMesh remote_players_gpu{};
     GpuMesh ui_text_gpu{};
-    GpuMesh debug_triangle_gpu{};
 
     VoxelChunk world{};
     NetChunkState streamed_world_state = net_make_flat_chunk_state(NetChunkCoord{});
     RenderMesh terrain_mesh{};
-    RenderMesh grid_mesh{};
     RenderMesh capsule_mesh{};
     RenderMesh remote_players_mesh{};
     RenderMesh ui_text_mesh{};
@@ -1505,11 +1502,9 @@ struct AndroidRenderer {
 
     void shutdown_gl_resources() {
         destroy_mesh(terrain_gpu);
-        destroy_mesh(grid_gpu);
         destroy_mesh(capsule_gpu);
         destroy_mesh(remote_players_gpu);
         destroy_mesh(ui_text_gpu);
-        destroy_mesh(debug_triangle_gpu);
         if (program != 0) {
             glDeleteProgram(program);
             program = 0;
@@ -1519,7 +1514,6 @@ struct AndroidRenderer {
 
     void rebuild_world_meshes() {
         destroy_mesh(terrain_gpu);
-        destroy_mesh(grid_gpu);
         net_generate_chunk_from_state(world, streamed_world_state);
         collision_world = VoxelCollisionWorld(&world);
         player_feet_position.y = collision_world.find_spawn_height(
@@ -1530,9 +1524,7 @@ struct AndroidRenderer {
         player_vertical_velocity = 0.0f;
         player_grounded = false;
         terrain_mesh = world.build_greedy_mesh();
-        grid_mesh = world.build_debug_grid(64.0f, 1.0f);
         terrain_gpu = upload_mesh(terrain_mesh);
-        grid_gpu = upload_mesh(grid_mesh);
     }
 
     bool apply_streamed_world_state(const NetChunkState &state) {
@@ -1845,20 +1837,7 @@ struct AndroidRenderer {
         ui_text_mesh = RenderMesh{};
         ui_text_cache.clear();
         terrain_gpu = upload_mesh(terrain_mesh);
-        grid_gpu = upload_mesh(grid_mesh);
         rebuild_player_visual_mesh();
-
-        // Debug triangle (screen-space, always visible)
-        {
-            RenderMesh tri;
-            tri.vertices = {
-                {glm::vec3(-0.5f, -0.4f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f)},
-                {glm::vec3( 0.5f, -0.4f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f)},
-                {glm::vec3( 0.0f,  0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f)},
-            };
-            tri.indices = {0, 1, 2};
-            debug_triangle_gpu = upload_mesh(tri);
-        }
 
         clock_gettime(CLOCK_MONOTONIC, &last_time);
         has_last_time = true;
@@ -2405,15 +2384,10 @@ struct AndroidRenderer {
         rebuild_player_visual_mesh();
         rebuild_remote_player_visual_mesh();
         draw_mesh(terrain_gpu, mvp);
-        draw_mesh(grid_gpu, mvp);
         const glm::mat4 capsule_model = glm::translate(glm::mat4(1.0f), player_feet_position);
         draw_mesh(capsule_gpu, mvp * capsule_model);
         draw_mesh(remote_players_gpu, mvp);
         draw_ui_overlay();
-
-        glDisable(GL_DEPTH_TEST);
-        draw_mesh(debug_triangle_gpu, glm::mat4(1.0f));
-        glEnable(GL_DEPTH_TEST);
 
         if (eglSwapBuffers(display, surface) == EGL_FALSE) {
             __android_log_print(ANDROID_LOG_ERROR, kLogTag, "eglSwapBuffers failed: %s", egl_error_to_string(eglGetError()));

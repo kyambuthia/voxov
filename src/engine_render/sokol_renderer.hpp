@@ -52,10 +52,8 @@ private:
 
     SokolPipelines pipelines_{};
     SokolGpuMesh transient_mesh_{};
-    SokolGpuMesh debug_grid_mesh_{};
     SokolGpuMesh debug_world_mesh_{};
     SokolGpuMesh debug_screen_mesh_{};
-    SokolGpuMesh debug_triangle_mesh_{};
     std::unordered_map<uint64_t, SokolGpuMesh> cached_meshes_;
     sg_pass_action pass_action_{};
 

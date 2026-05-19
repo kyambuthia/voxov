@@ -296,6 +296,7 @@ void Engine::tick(double frame_dt,
   }
   update_third_person_camera(local_player, local_player.transform.position,
                              camera);
+  scene.camera_origin.world_origin = glm::dvec3(camera.transform.position);
 
   render_stats.frame_ms =
       smooth_metric(render_stats.frame_ms, last_frame_dt * 1000.0, 0.20);
@@ -341,6 +342,7 @@ void Engine::tick(double frame_dt,
   ctx.alpha = fixed.accumulator / fixed.fixed_dt;
   ctx.delta_seconds = frame_dt;
   ctx.aspect_ratio = 16.0f / 9.0f;
+  ctx.camera_origin = scene.camera_origin;
   ctx.view_count = 1u;
   ctx.views[0].camera = camera;
   ctx.views[0].viewport = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);

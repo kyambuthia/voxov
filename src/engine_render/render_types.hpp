@@ -12,9 +12,20 @@ struct RenderVertex {
     glm::vec3 normal{0.0f, 0.0f, 0.0f};
 };
 
+struct PackedVertex {
+    glm::vec3 position{0.0f, 0.0f, 0.0f};
+    uint32_t color_rgba8 = 0xffffffffu;
+    int16_t normal_xyz[3] = {0, 0, 0};
+    uint16_t material = 0;
+};
+
+static_assert(sizeof(PackedVertex) == 24);
+
 struct RenderMesh {
     std::vector<RenderVertex> vertices;
     std::vector<uint32_t> indices;
+    std::vector<uint16_t> indices16;
+    bool use_16_bit_indices = false;
     // Non-zero = stable GPU cache key; zero = transient (always re-uploaded).
     uint64_t mesh_id = 0;
     // Primary material (most-frequent) for draw-call batching.
@@ -25,6 +36,12 @@ struct RenderMesh {
 struct CameraRelativeOrigin {
     glm::dvec3 world_origin{0.0};
 };
+
+inline glm::vec3 camera_relative_position(
+    const glm::dvec3 &world_position,
+    const CameraRelativeOrigin &origin) {
+    return glm::vec3(world_position - origin.world_origin);
+}
 
 struct RenderScene {
     CameraRelativeOrigin camera_origin{};

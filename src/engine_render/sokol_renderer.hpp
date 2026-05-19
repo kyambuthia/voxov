@@ -19,6 +19,7 @@ struct SokolGpuMesh {
     sg_buffer vertex_buffer{};
     sg_buffer index_buffer{};
     uint32_t index_count = 0;
+    sg_index_type index_type = SG_INDEXTYPE_UINT32;
     glm::vec3 bounds_min{};
     glm::vec3 bounds_max{};
     uint8_t material = 0;
@@ -27,9 +28,13 @@ struct SokolGpuMesh {
 struct SokolPipelines {
     sg_shader scene_shader{};
     sg_pipeline opaque{};
+    sg_pipeline opaque_u16{};
     sg_pipeline debug_no_cull{};
+    sg_pipeline debug_no_cull_u16{};
     sg_pipeline debug_xray{};
+    sg_pipeline debug_xray_u16{};
     sg_pipeline screen{};
+    sg_pipeline screen_u16{};
 };
 
 struct SokolDirectionalLight {
@@ -63,7 +68,10 @@ private:
     void draw_mesh(const SokolGpuMesh &mesh,
                    const glm::mat4 &mvp,
                    const glm::mat4 &model,
-                   const glm::vec3 &camera_pos);
+                   const glm::vec3 &camera_pos,
+                   const glm::dvec3 &camera_relative_origin = glm::dvec3(0.0),
+                   sg_pipeline pipeline_u32 = {},
+                   sg_pipeline pipeline_u16 = {});
 
     bool setup_pipelines();
 

@@ -31,6 +31,7 @@ struct RenderFrameContext {
     double alpha = 0.0;
     double delta_seconds = 0.0;
     float aspect_ratio = 16.0f / 9.0f;
+    CameraRelativeOrigin camera_origin{};
     std::array<RenderView, 2> views{};
     uint32_t view_count = 1;
     bool debug_xray = false;

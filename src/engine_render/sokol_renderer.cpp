@@ -154,8 +154,10 @@ namespace {
 
 // O(1) change-detection token: vertex count + index count.
 uint64_t mesh_size_token(const RenderMesh &mesh) {
+    const size_t index_count =
+        mesh.use_16_bit_indices ? mesh.indices16.size() : mesh.indices.size();
     return (static_cast<uint64_t>(mesh.vertices.size()) << 32) |
-           static_cast<uint64_t>(mesh.indices.size());
+           static_cast<uint64_t>(index_count);
 }
 
 // --- Frustum culling (same as GL renderer) ---
@@ -297,6 +299,9 @@ bool SokolRenderer::setup_pipelines() {
     opq_desc.depth.write_enabled = true;
     opq_desc.label = "voxov-opaque";
     pipelines_.opaque = sg_make_pipeline(&opq_desc);
+    opq_desc.index_type = SG_INDEXTYPE_UINT16;
+    opq_desc.label = "voxov-opaque-u16";
+    pipelines_.opaque_u16 = sg_make_pipeline(&opq_desc);
 
     // Debug no-cull pipeline
     sg_pipeline_desc dnc_desc = {};
@@ -310,6 +315,9 @@ bool SokolRenderer::setup_pipelines() {
     dnc_desc.depth.write_enabled = true;
     dnc_desc.label = "voxov-debug-nocull";
     pipelines_.debug_no_cull = sg_make_pipeline(&dnc_desc);
+    dnc_desc.index_type = SG_INDEXTYPE_UINT16;
+    dnc_desc.label = "voxov-debug-nocull-u16";
+    pipelines_.debug_no_cull_u16 = sg_make_pipeline(&dnc_desc);
 
     // Debug x-ray pipeline (depth always, no write)
     sg_pipeline_desc xray_desc = {};
@@ -323,6 +331,9 @@ bool SokolRenderer::setup_pipelines() {
     xray_desc.depth.write_enabled = false;
     xray_desc.label = "voxov-debug-xray";
     pipelines_.debug_xray = sg_make_pipeline(&xray_desc);
+    xray_desc.index_type = SG_INDEXTYPE_UINT16;
+    xray_desc.label = "voxov-debug-xray-u16";
+    pipelines_.debug_xray_u16 = sg_make_pipeline(&xray_desc);
 
     // Screen-space pipeline (no depth, no cull)
     sg_pipeline_desc scr_desc = {};
@@ -336,6 +347,9 @@ bool SokolRenderer::setup_pipelines() {
     scr_desc.depth.write_enabled = false;
     scr_desc.label = "voxov-screen";
     pipelines_.screen = sg_make_pipeline(&scr_desc);
+    scr_desc.index_type = SG_INDEXTYPE_UINT16;
+    scr_desc.label = "voxov-screen-u16";
+    pipelines_.screen_u16 = sg_make_pipeline(&scr_desc);
 
     return true;
 }
@@ -403,9 +417,13 @@ void SokolRenderer::shutdown() {
 
     if (pipelines_.scene_shader.id) sg_destroy_shader(pipelines_.scene_shader);
     if (pipelines_.opaque.id) sg_destroy_pipeline(pipelines_.opaque);
+    if (pipelines_.opaque_u16.id) sg_destroy_pipeline(pipelines_.opaque_u16);
     if (pipelines_.debug_no_cull.id) sg_destroy_pipeline(pipelines_.debug_no_cull);
+    if (pipelines_.debug_no_cull_u16.id) sg_destroy_pipeline(pipelines_.debug_no_cull_u16);
     if (pipelines_.debug_xray.id) sg_destroy_pipeline(pipelines_.debug_xray);
+    if (pipelines_.debug_xray_u16.id) sg_destroy_pipeline(pipelines_.debug_xray_u16);
     if (pipelines_.screen.id) sg_destroy_pipeline(pipelines_.screen);
+    if (pipelines_.screen_u16.id) sg_destroy_pipeline(pipelines_.screen_u16);
     pipelines_ = {};
 
     sg_shutdown();
@@ -424,7 +442,10 @@ void SokolRenderer::destroy_mesh(SokolGpuMesh &mesh) {
 
 void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
                                 bool stream) {
-    if (src.vertices.empty() || src.indices.empty()) {
+    const bool use_16_bit_indices = src.use_16_bit_indices;
+    const size_t index_count =
+        use_16_bit_indices ? src.indices16.size() : src.indices.size();
+    if (src.vertices.empty() || index_count == 0) {
         destroy_mesh(dst);
         return;
     }
@@ -446,14 +467,21 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
     dst.bounds_min = bmin;
     dst.bounds_max = bmax;
     dst.material = src.material;
+    dst.index_type =
+        use_16_bit_indices ? SG_INDEXTYPE_UINT16 : SG_INDEXTYPE_UINT32;
 
     const sg_range vbuf_range = {
         .ptr = vertices.data(),
         .size = vertices.size() * sizeof(vertices[0]),
     };
+    const void *index_data =
+        use_16_bit_indices ? static_cast<const void *>(src.indices16.data())
+                           : static_cast<const void *>(src.indices.data());
+    const size_t index_size =
+        use_16_bit_indices ? sizeof(src.indices16[0]) : sizeof(src.indices[0]);
     const sg_range ibuf_range = {
-        .ptr = src.indices.data(),
-        .size = src.indices.size() * sizeof(src.indices[0]),
+        .ptr = index_data,
+        .size = index_count * index_size,
     };
 
     if (stream) {
@@ -492,7 +520,7 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
         dst.index_buffer = sg_make_buffer(&sib_desc);
     }
 
-    dst.index_count = static_cast<uint32_t>(src.indices.size());
+    dst.index_count = static_cast<uint32_t>(index_count);
 }
 
 // ---------------------------------------------------------------------------
@@ -502,11 +530,22 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
 void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
                               const glm::mat4 &mvp,
                               const glm::mat4 &model,
-                              const glm::vec3 &camera_pos) {
-    if (!mesh.vertex_buffer.id || !mesh.index_buffer.id || mesh.index_count == 0) {
+                              const glm::vec3 &camera_pos,
+                              const glm::dvec3 &camera_relative_origin,
+                              sg_pipeline pipeline_u32,
+                              sg_pipeline pipeline_u16) {
+    if (!mesh.vertex_buffer.id || !mesh.index_buffer.id ||
+        mesh.index_count == 0) {
         return;
     }
 
+    const sg_pipeline pipeline =
+        mesh.index_type == SG_INDEXTYPE_UINT16 ? pipeline_u16 : pipeline_u32;
+    if (pipeline.id != 0) {
+        sg_apply_pipeline(pipeline);
+    }
+    const glm::vec3 relative_camera_pos =
+        glm::vec3(glm::dvec3(camera_pos) - camera_relative_origin);
     const vs_params_t vs_params = {
         .mvp = mvp,
         .model = model,
@@ -520,7 +559,7 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
         .material_diffuse = glm::vec4(material_.diffuse, 0.0f),
         .material_specular_shininess =
             glm::vec4(material_.specular, material_.shininess),
-        .camera_pos = glm::vec4(camera_pos, 0.0f),
+        .camera_pos = glm::vec4(relative_camera_pos, 0.0f),
     };
     const sg_range vs_range = SG_RANGE(vs_params);
     const sg_range fs_range = SG_RANGE(fs_params);
@@ -558,8 +597,14 @@ void SokolRenderer::upload_scene(const RenderScene &new_scene) {
         const uint32_t base = static_cast<uint32_t>(transient_scene.vertices.size());
         transient_scene.vertices.insert(transient_scene.vertices.end(),
                                         mesh.vertices.begin(), mesh.vertices.end());
-        for (uint32_t idx : mesh.indices) {
-            transient_scene.indices.push_back(base + idx);
+        if (mesh.use_16_bit_indices) {
+            for (uint16_t idx : mesh.indices16) {
+                transient_scene.indices.push_back(base + idx);
+            }
+        } else {
+            for (uint32_t idx : mesh.indices) {
+                transient_scene.indices.push_back(base + idx);
+            }
         }
     };
     for (const RenderMesh &mesh : new_scene.opaque_meshes) {
@@ -641,23 +686,29 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         const glm::vec3 camera_pos = view.camera.transform.position;
 
         // Opaque geometry
-        sg_apply_pipeline(pipelines_.opaque);
-        draw_mesh(transient_mesh_, vp, model, camera_pos);
+        draw_mesh(transient_mesh_, vp, model, camera_pos,
+                  glm::dvec3(0.0),
+                  pipelines_.opaque, pipelines_.opaque_u16);
 
         const Frustum frustum = extract_frustum(vp);
         for (const auto &[id, mesh] : cached_meshes_) {
             if (aabb_in_frustum(frustum, mesh.bounds_min, mesh.bounds_max)) {
-                draw_mesh(mesh, vp, model, camera_pos);
+                draw_mesh(mesh, vp, model, camera_pos,
+                          glm::dvec3(0.0),
+                          pipelines_.opaque, pipelines_.opaque_u16);
             }
         }
 
         // Debug world (x-ray or normal)
-        sg_apply_pipeline(ctx.debug_xray ? pipelines_.debug_xray : pipelines_.opaque);
-        draw_mesh(debug_world_mesh_, vp, model, camera_pos);
+        draw_mesh(debug_world_mesh_, vp, model, camera_pos,
+                  glm::dvec3(0.0),
+                  ctx.debug_xray ? pipelines_.debug_xray : pipelines_.opaque,
+                  ctx.debug_xray ? pipelines_.debug_xray_u16
+                                 : pipelines_.opaque_u16);
 
         // Screen-space overlay
-        sg_apply_pipeline(pipelines_.screen);
-        draw_mesh(debug_screen_mesh_, glm::mat4(1.0f), model, camera_pos);
+        draw_mesh(debug_screen_mesh_, glm::mat4(1.0f), model, camera_pos,
+                  glm::dvec3(0.0), pipelines_.screen, pipelines_.screen_u16);
     }
 
     sg_end_pass();

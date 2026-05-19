@@ -387,6 +387,7 @@ if(EMSCRIPTEN)
         VOXOV_PLATFORM_WEB=1
         SOKOL_GLES3
         GLM_ENABLE_EXPERIMENTAL
+        SOKOL_DEBUG=0
     )
     target_link_libraries(voxov_web PRIVATE
         game_runtime

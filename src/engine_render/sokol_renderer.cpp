@@ -345,8 +345,14 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
     dst.bounds_max = bmax;
     dst.material = src.material;
 
-    const sg_range vbuf_range = SG_RANGE(vertices);
-    const sg_range ibuf_range = SG_RANGE(src.indices);
+    const sg_range vbuf_range = {
+        .ptr = vertices.data(),
+        .size = vertices.size() * sizeof(vertices[0]),
+    };
+    const sg_range ibuf_range = {
+        .ptr = src.indices.data(),
+        .size = src.indices.size() * sizeof(src.indices[0]),
+    };
 
     if (stream) {
         // Dynamic: create with stream_update usage if new, otherwise update.

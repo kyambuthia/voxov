@@ -67,6 +67,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
                           ? *runtime_options.platform_services
                           : PlatformServices::desktop_default();
   game_session.reset();
+  event_bus_.clear();
+  event_bus_.reserve(64, 1024, 2048);
 
   EnginePhysicsSettings settings{};
   settings.solver_backend = runtime_options.physics_backend;
@@ -113,6 +115,12 @@ void Engine::tick(double frame_dt,
   const PerfClock::time_point frame_cpu_start = PerfClock::now();
   const FixedStep &fixed = game_session.fixed_step();
   last_frame_dt = frame_dt;
+  event_bus_.enqueue_frame(FrameStartedEvent{
+      .frame = frame_index,
+      .dt = static_cast<float>(frame_dt),
+      .alpha = static_cast<float>(
+          std::clamp(fixed.accumulator / fixed.fixed_dt, 0.0, 1.0)),
+  });
 
   InputState gameplay_input = input_frame.primary;
   if (session_state_.menu_open || !session_state_.gameplay_started) {
@@ -142,6 +150,12 @@ void Engine::tick(double frame_dt,
                                          step.dt);
             jump_consumed = jump_consumed || input_frame.primary.jump_pressed;
             physics.step(step.dt);
+            event_bus_.drain_fixed(EventContext{
+                .phase = EventPhase::Fixed,
+                .tick = step.tick,
+                .frame = frame_index,
+                .dt = step.dt,
+            });
           }};
   game_session.advance(frame_dt, callbacks);
 
@@ -150,6 +164,13 @@ void Engine::tick(double frame_dt,
 
   const float alpha = static_cast<float>(
       std::clamp(fixed.accumulator / fixed.fixed_dt, 0.0, 1.0));
+  event_bus_.drain_frame(EventContext{
+      .phase = EventPhase::Frame,
+      .tick = fixed.tick,
+      .frame = frame_index,
+      .dt = static_cast<float>(frame_dt),
+      .alpha = alpha,
+  });
   const glm::vec3 local_player_render_position = glm::mix(
       local_player_prev_position, local_player.transform.position, alpha);
   update_third_person_camera(local_player, local_player_render_position,

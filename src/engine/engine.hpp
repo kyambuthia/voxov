@@ -3,6 +3,7 @@
 #include "engine_gameplay/animation/animation_runtime.hpp"
 #include "engine_gameplay/player/player_components.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
+#include "engine_events/event_bus.hpp"
 #include "engine_input/input_state.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net/lan_discovery.hpp"
@@ -61,6 +62,7 @@ public:
   void leave_session();
   void reset_camera();
   GuiMenu::Character preferred_character() const;
+  EventBus &events() { return event_bus_; }
 
 private:
   void build_static_scene();
@@ -73,6 +75,7 @@ private:
   Renderer renderer;
   PlatformServices platform_services;
   RuntimeGameSession game_session;
+  EventBus event_bus_;
   PhysicsWorld physics;
 
   VoxelChunk world_chunk;

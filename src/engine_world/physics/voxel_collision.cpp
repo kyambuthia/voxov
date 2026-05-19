@@ -5,16 +5,46 @@
 #include <algorithm>
 #include <cmath>
 #include <limits>
+#include <utility>
 
 VoxelCollisionWorld::VoxelCollisionWorld(const VoxelChunk *chunk_data,
                                          float voxel_scale)
-    : chunk(chunk_data), voxel_scale_(voxel_scale > 0.0f ? voxel_scale : 1.0f) {}
+    : voxel_scale_(voxel_scale > 0.0f ? voxel_scale : 1.0f) {
+    if (chunk_data != nullptr) {
+        chunks_.push_back(VoxelCollisionChunk{chunk_data, 0, 0});
+    }
+}
+
+VoxelCollisionWorld::VoxelCollisionWorld(std::vector<VoxelCollisionChunk> chunks,
+                                         float voxel_scale)
+    : chunks_(std::move(chunks)),
+      voxel_scale_(voxel_scale > 0.0f ? voxel_scale : 1.0f) {}
+
+const VoxelChunk *VoxelCollisionWorld::chunk_at(int x, int z, int &local_x, int &local_z) const {
+    for (const VoxelCollisionChunk &entry : chunks_) {
+        if (entry.chunk == nullptr) {
+            continue;
+        }
+        const int rel_x = x - entry.origin_x;
+        const int rel_z = z - entry.origin_z;
+        if (rel_x >= 0 && rel_x < VoxelChunk::CHUNK_X &&
+            rel_z >= 0 && rel_z < VoxelChunk::CHUNK_Z) {
+            local_x = rel_x;
+            local_z = rel_z;
+            return entry.chunk;
+        }
+    }
+    return nullptr;
+}
 
 bool VoxelCollisionWorld::is_solid_voxel(int x, int y, int z) const {
-    if (!chunk) {
+    int local_x = 0;
+    int local_z = 0;
+    const VoxelChunk *chunk = chunk_at(x, z, local_x, local_z);
+    if (chunk == nullptr) {
         return false;
     }
-    return chunk->solid(x, y, z);
+    return chunk->solid(local_x, y, local_z);
 }
 
 bool VoxelCollisionWorld::segment_intersects_aabb(glm::vec3 a, glm::vec3 b, glm::vec3 bmin, glm::vec3 bmax) const {
@@ -220,7 +250,7 @@ CapsuleResolveResult VoxelCollisionWorld::resolve_capsule(
 }
 
 bool VoxelCollisionWorld::raycast(glm::vec3 origin, glm::vec3 direction, float max_distance, float &out_hit_distance) const {
-    if (!chunk) {
+    if (chunks_.empty()) {
         return false;
     }
 

@@ -35,4 +35,5 @@ public:
 private:
     mutable uint64_t next_mesh_id_ = 1;
     mutable std::unordered_map<int32_t, RenderMesh> chunk_mesh_cache_;
+    std::unordered_map<int32_t, VoxelChunk> collision_chunks_;
 };

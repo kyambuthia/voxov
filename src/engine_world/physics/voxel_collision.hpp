@@ -2,9 +2,16 @@
 
 #include <glm/glm.hpp>
 
+#include <cstdint>
 #include <vector>
 
 class VoxelChunk;
+
+struct VoxelCollisionChunk {
+    const VoxelChunk *chunk = nullptr;
+    int32_t origin_x = 0;
+    int32_t origin_z = 0;
+};
 
 struct CapsuleResolveResult {
     glm::vec3 position = glm::vec3(0.0f);
@@ -22,6 +29,8 @@ struct CapsuleResolveResult {
 class VoxelCollisionWorld {
 public:
     explicit VoxelCollisionWorld(const VoxelChunk *chunk_data = nullptr,
+                                 float voxel_scale = 1.0f);
+    explicit VoxelCollisionWorld(std::vector<VoxelCollisionChunk> chunks,
                                  float voxel_scale = 1.0f);
 
     bool is_solid_voxel(int x, int y, int z) const;
@@ -41,6 +50,8 @@ private:
     bool capsule_overlaps(glm::vec3 feet_position, float capsule_radius, float capsule_height) const;
     bool segment_intersects_aabb(glm::vec3 a, glm::vec3 b, glm::vec3 bmin, glm::vec3 bmax) const;
 
-    const VoxelChunk *chunk = nullptr;
+    const VoxelChunk *chunk_at(int x, int z, int &local_x, int &local_z) const;
+
+    std::vector<VoxelCollisionChunk> chunks_;
     float voxel_scale_ = 1.0f;
 };

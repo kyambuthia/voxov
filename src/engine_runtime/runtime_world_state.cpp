@@ -5,9 +5,11 @@
 
 #include <algorithm>
 #include <cmath>
+#include <utility>
 
 namespace {
 constexpr uint64_t k_session_state_magic = 0x564F585356303031ull;
+constexpr int k_world_chunk_radius = 1;
 
 struct SavedSessionState {
     uint64_t magic = k_session_state_magic;
@@ -19,16 +21,28 @@ int32_t render_chunk_key(NetChunkCoord coord) {
         static_cast<uint16_t>(coord.z);
 }
 
-void add_flat_world_boundary_walls(VoxelChunk &chunk) {
+void add_flat_world_boundary_walls(VoxelChunk &chunk, NetChunkCoord coord, int chunk_radius) {
     constexpr int kWallTop = 18;
     for (int y = 0; y <= kWallTop; ++y) {
-        for (int x = 0; x < VoxelChunk::CHUNK_X; ++x) {
-            chunk.set_material(x, y, 0, VoxelMaterial::Stone);
-            chunk.set_material(x, y, VoxelChunk::CHUNK_Z - 1, VoxelMaterial::Stone);
+        if (coord.z == -chunk_radius) {
+            for (int x = 0; x < VoxelChunk::CHUNK_X; ++x) {
+                chunk.set_material(x, y, 0, VoxelMaterial::Stone);
+            }
         }
-        for (int z = 0; z < VoxelChunk::CHUNK_Z; ++z) {
-            chunk.set_material(0, y, z, VoxelMaterial::Stone);
-            chunk.set_material(VoxelChunk::CHUNK_X - 1, y, z, VoxelMaterial::Stone);
+        if (coord.z == chunk_radius) {
+            for (int x = 0; x < VoxelChunk::CHUNK_X; ++x) {
+                chunk.set_material(x, y, VoxelChunk::CHUNK_Z - 1, VoxelMaterial::Stone);
+            }
+        }
+        if (coord.x == -chunk_radius) {
+            for (int z = 0; z < VoxelChunk::CHUNK_Z; ++z) {
+                chunk.set_material(0, y, z, VoxelMaterial::Stone);
+            }
+        }
+        if (coord.x == chunk_radius) {
+            for (int z = 0; z < VoxelChunk::CHUNK_Z; ++z) {
+                chunk.set_material(VoxelChunk::CHUNK_X - 1, y, z, VoxelMaterial::Stone);
+            }
         }
     }
     chunk.refresh_surface_materials();
@@ -40,11 +54,35 @@ void RuntimeWorldState::initialize(
     VoxelCollisionWorld &collision_world,
     RenderScene &scene) {
     generate_flat_world_locomotion_chunk(world_chunk);
-    add_flat_world_boundary_walls(world_chunk);
-    collision_world = VoxelCollisionWorld(&world_chunk);
 
     scene = RenderScene{};
     reset_streamed_chunks();
+    collision_chunks_.clear();
+    collision_chunks_.reserve(streamed_chunks.size());
+
+    std::vector<VoxelCollisionChunk> collision_chunks;
+    collision_chunks.reserve(streamed_chunks.size());
+    for (const auto &[key, streamed_chunk] : streamed_chunks) {
+        (void)key;
+        VoxelChunk chunk{};
+        net_generate_chunk_from_state(chunk, streamed_chunk.state);
+        add_flat_world_boundary_walls(chunk, streamed_chunk.state.coord, k_world_chunk_radius);
+
+        const NetChunkCoord coord = streamed_chunk.state.coord;
+        const int32_t chunk_key = render_chunk_key(coord);
+        auto [it, inserted] = collision_chunks_.emplace(chunk_key, std::move(chunk));
+        (void)inserted;
+        collision_chunks.push_back(VoxelCollisionChunk{
+            &it->second,
+            static_cast<int32_t>(coord.x) * VoxelChunk::CHUNK_X,
+            static_cast<int32_t>(coord.z) * VoxelChunk::CHUNK_Z,
+        });
+
+        if (coord.x == 0 && coord.z == 0) {
+            world_chunk = it->second;
+        }
+    }
+    collision_world = VoxelCollisionWorld(std::move(collision_chunks));
     rebuild_streamed_chunk_scene(world_chunk, scene);
 
 }
@@ -53,11 +91,10 @@ void RuntimeWorldState::reset_streamed_chunks() {
     streamed_chunks.clear();
     chunk_mesh_cache_.clear();
 
-    constexpr int k_render_chunk_radius = 1;
-    for (int chunk_z = -k_render_chunk_radius; chunk_z <= k_render_chunk_radius;
+    for (int chunk_z = -k_world_chunk_radius; chunk_z <= k_world_chunk_radius;
          ++chunk_z) {
-        for (int chunk_x = -k_render_chunk_radius;
-             chunk_x <= k_render_chunk_radius;
+        for (int chunk_x = -k_world_chunk_radius;
+             chunk_x <= k_world_chunk_radius;
              ++chunk_x) {
             NetChunkCoord coord{};
             coord.x = static_cast<int16_t>(chunk_x);
@@ -100,6 +137,7 @@ void RuntimeWorldState::rebuild_streamed_chunk_scene(
         const RuntimeStreamedChunk &streamed_chunk =
             streamed_chunks.at(key);
         net_generate_chunk_from_state(render_chunk, streamed_chunk.state);
+        add_flat_world_boundary_walls(render_chunk, coord, k_world_chunk_radius);
         const glm::vec3 chunk_origin(
             static_cast<float>(coord.x) *
                 static_cast<float>(VoxelChunk::CHUNK_X),

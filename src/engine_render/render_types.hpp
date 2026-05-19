@@ -28,12 +28,25 @@ struct RenderScene {
     RenderMesh debug_screen;
 };
 
+struct ProfilingSnapshot {
+    double gameplay_cpu_ms = 0.0;
+    double animation_cpu_ms = 0.0;
+    double physics_cpu_ms = 0.0;
+    double fixed_event_drain_cpu_ms = 0.0;
+    double frame_event_drain_cpu_ms = 0.0;
+    uint64_t memory_current_allocations = 0;
+    uint64_t memory_total_allocations = 0;
+    uint64_t memory_current_bytes = 0;
+    uint64_t memory_total_bytes = 0;
+};
+
 struct RenderStats {
     double fps = 0.0;
     double cpu_ms = 0.0;
     double frame_ms = 0.0;
     double fixed_cpu_ms = 0.0;
     double render_cpu_ms = 0.0;
+    ProfilingSnapshot profiling{};
     bool net_connected = false;
     uint32_t net_local_player_id = 0;
     uint32_t net_remote_count = 0;

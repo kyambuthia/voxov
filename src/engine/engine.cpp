@@ -1,5 +1,7 @@
 #include "engine/engine.hpp"
 
+#include "engine_core/memory.hpp"
+#include "engine_core/timing.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
 
@@ -27,6 +29,8 @@ double smooth_metric(double current, double sample, double alpha = 0.25) {
   }
   return current + (sample - current) * alpha;
 }
+
+uint64_t bytes_to_kib(uint64_t bytes) { return (bytes + 1023u) / 1024u; }
 
 void disable_gameplay_actions(InputState &input) {
   input.move = glm::vec2(0.0f);
@@ -192,28 +196,39 @@ void Engine::tick(double frame_dt,
       local_player, gameplay_input, input_frame.touch_mode,
       static_cast<float>(frame_dt));
 
+  ProfilingSnapshot profiling_sample{};
   bool jump_consumed = false;
   const RuntimeGameSessionCallbacks callbacks{
       .pump_server = []() {},
       .simulate_step =
           [this, &gameplay_input, &jump_consumed,
-           &input_frame](const RuntimeGameSessionStepContext &step) {
+           &input_frame,
+           &profiling_sample](const RuntimeGameSessionStepContext &step) {
             local_player_prev_position = local_player.transform.position;
             InputState step_input = gameplay_input;
             if (jump_consumed) {
               step_input.jump_pressed = false;
             }
 
-            const PlayerCollisionDebug collision_debug =
-                PlayerControllerSystem::simulate_fixed(
-                    local_player, step_input, collision_world, step.dt, false);
-            sync_local_animation_runtime(local_player, local_player_animation,
-                                         step.dt);
-            enqueue_animation_runtime_events(event_bus_, local_player,
-                                             local_player_animation);
-            local_player_animation.clear_events();
+            PlayerCollisionDebug collision_debug{};
+            {
+              ScopedCPUTimer timer(profiling_sample.gameplay_cpu_ms);
+              collision_debug = PlayerControllerSystem::simulate_fixed(
+                  local_player, step_input, collision_world, step.dt, false);
+            }
+            {
+              ScopedCPUTimer timer(profiling_sample.animation_cpu_ms);
+              sync_local_animation_runtime(local_player, local_player_animation,
+                                           step.dt);
+              enqueue_animation_runtime_events(event_bus_, local_player,
+                                               local_player_animation);
+              local_player_animation.clear_events();
+            }
             jump_consumed = jump_consumed || input_frame.primary.jump_pressed;
-            physics.step(step.dt);
+            {
+              ScopedCPUTimer timer(profiling_sample.physics_cpu_ms);
+              physics.step(step.dt);
+            }
             if (collision_debug.had_collision) {
               event_bus_.enqueue_fixed(CollisionEvent{
                   .entity_a = local_player.network_id,
@@ -223,12 +238,16 @@ void Engine::tick(double frame_dt,
                   .impulse = collision_debug.penetration_correction,
               });
             }
-            event_bus_.drain_fixed(EventContext{
-                .phase = EventPhase::Fixed,
-                .tick = step.tick,
-                .frame = frame_index,
-                .dt = step.dt,
-            });
+            {
+              ScopedCPUTimer timer(
+                  profiling_sample.fixed_event_drain_cpu_ms);
+              event_bus_.drain_fixed(EventContext{
+                  .phase = EventPhase::Fixed,
+                  .tick = step.tick,
+                  .frame = frame_index,
+                  .dt = step.dt,
+              });
+            }
           }};
   game_session.advance(frame_dt, callbacks);
 
@@ -251,28 +270,57 @@ void Engine::tick(double frame_dt,
 
   const float alpha = static_cast<float>(
       std::clamp(fixed.accumulator / fixed.fixed_dt, 0.0, 1.0));
-  event_bus_.drain_frame(EventContext{
-      .phase = EventPhase::Frame,
-      .tick = fixed.tick,
-      .frame = frame_index,
-      .dt = static_cast<float>(frame_dt),
-      .alpha = alpha,
-  });
+  {
+    ScopedCPUTimer timer(profiling_sample.frame_event_drain_cpu_ms);
+    event_bus_.drain_frame(EventContext{
+        .phase = EventPhase::Frame,
+        .tick = fixed.tick,
+        .frame = frame_index,
+        .dt = static_cast<float>(frame_dt),
+        .alpha = alpha,
+    });
+  }
   const glm::vec3 local_player_render_position = glm::mix(
       local_player_prev_position, local_player.transform.position, alpha);
   update_third_person_camera(local_player, local_player_render_position,
                              camera);
 
-  refresh_overlay_text();
-  renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
-
   render_stats.frame_ms =
       smooth_metric(render_stats.frame_ms, last_frame_dt * 1000.0, 0.20);
+  if (last_frame_dt > 0.0) {
+    render_stats.fps = smooth_metric(render_stats.fps, 1.0 / last_frame_dt,
+                                     0.20);
+  }
   render_stats.fixed_cpu_ms = smooth_metric(
       render_stats.fixed_cpu_ms, game_session.fixed_cpu_ms(), 0.25);
   render_stats.fixed_steps = game_session.fixed_steps_last_frame();
   render_stats.streamed_chunk_count =
       static_cast<uint32_t>(world_state.streamed_chunks.size());
+  render_stats.profiling.gameplay_cpu_ms = smooth_metric(
+      render_stats.profiling.gameplay_cpu_ms, profiling_sample.gameplay_cpu_ms,
+      0.25);
+  render_stats.profiling.animation_cpu_ms =
+      smooth_metric(render_stats.profiling.animation_cpu_ms,
+                    profiling_sample.animation_cpu_ms, 0.25);
+  render_stats.profiling.physics_cpu_ms = smooth_metric(
+      render_stats.profiling.physics_cpu_ms, profiling_sample.physics_cpu_ms,
+      0.25);
+  render_stats.profiling.fixed_event_drain_cpu_ms =
+      smooth_metric(render_stats.profiling.fixed_event_drain_cpu_ms,
+                    profiling_sample.fixed_event_drain_cpu_ms, 0.25);
+  render_stats.profiling.frame_event_drain_cpu_ms =
+      smooth_metric(render_stats.profiling.frame_event_drain_cpu_ms,
+                    profiling_sample.frame_event_drain_cpu_ms, 0.25);
+  const MemoryStats memory_stats = engine_memory_stats();
+  render_stats.profiling.memory_current_allocations =
+      memory_stats.current_allocations;
+  render_stats.profiling.memory_total_allocations =
+      memory_stats.total_allocations;
+  render_stats.profiling.memory_current_bytes = memory_stats.current_bytes;
+  render_stats.profiling.memory_total_bytes = memory_stats.total_bytes;
+
+  refresh_overlay_text();
+  renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
 
   RenderFrameContext ctx{};
   ctx.frame_index = frame_index++;
@@ -367,8 +415,36 @@ void Engine::update_third_person_camera(PlayerEntity &player,
 void Engine::refresh_overlay_text() {
   scene.debug_world = RenderMesh{};
   scene.debug_screen = RenderMesh{};
+  if (!session_state_.devhud_enabled) {
+    return;
+  }
+
+  const ProfilingSnapshot &profiling = render_stats.profiling;
   std::string overlay_text =
-      "Frame events: " + std::to_string(presentation_frame_events_seen_) +
+      "FPS: " + std::to_string(static_cast<int>(render_stats.fps + 0.5)) +
+      "\nCPU: " + std::to_string(render_stats.cpu_ms).substr(0, 5) +
+      " ms  Frame: " + std::to_string(render_stats.frame_ms).substr(0, 5) +
+      " ms" +
+      "\nRender: " + std::to_string(render_stats.render_cpu_ms).substr(0, 5) +
+      " ms  Fixed: " + std::to_string(render_stats.fixed_cpu_ms).substr(0, 5) +
+      " ms x" + std::to_string(render_stats.fixed_steps) +
+      "\nGameplay: " +
+      std::to_string(profiling.gameplay_cpu_ms).substr(0, 5) +
+      " ms  Anim: " +
+      std::to_string(profiling.animation_cpu_ms).substr(0, 5) + " ms" +
+      "\nPhysics: " + std::to_string(profiling.physics_cpu_ms).substr(0, 5) +
+      " ms" +
+      "\nEvents fixed/frame: " +
+      std::to_string(profiling.fixed_event_drain_cpu_ms).substr(0, 5) +
+      " / " +
+      std::to_string(profiling.frame_event_drain_cpu_ms).substr(0, 5) +
+      " ms" +
+      "\nMemory allocs: " +
+      std::to_string(profiling.memory_current_allocations) + "/" +
+      std::to_string(profiling.memory_total_allocations) + "  KiB: " +
+      std::to_string(bytes_to_kib(profiling.memory_current_bytes)) + "/" +
+      std::to_string(bytes_to_kib(profiling.memory_total_bytes)) +
+      "\nFrame events: " + std::to_string(presentation_frame_events_seen_) +
       "\nCollisions: " + std::to_string(collision_count_) +
       "\nNetwork events: " + std::to_string(net_events_seen_) +
       "\nNetwork status: " + last_net_status_;

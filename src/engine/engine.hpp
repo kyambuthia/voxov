@@ -35,6 +35,7 @@ struct EngineInputFrame {
 struct EngineSessionState {
   bool gameplay_started = false;
   bool menu_open = true;
+  bool devhud_enabled = false;
   GuiMenu::Character selected_character = GuiMenu::Character::Capsule;
   GuiMenuView menu_view{};
 };

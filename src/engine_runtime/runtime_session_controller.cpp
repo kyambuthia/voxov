@@ -29,6 +29,9 @@ RuntimeMenuResult RuntimeSessionController::handle_menu_input(
     GuiMenu &menu,
     const RuntimeSessionMenuCallbacks &callbacks) {
     GuiMenuActions actions{};
+    if (input.debug_toggle_pressed) {
+        actions.toggle_devhud = true;
+    }
     menu.handle_input(input, devhud_enabled_, noclip_enabled_, actions);
 
     RuntimeMenuResult result{};

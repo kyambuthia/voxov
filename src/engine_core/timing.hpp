@@ -1,5 +1,6 @@
 #pragma once
 
+#include <chrono>
 #include <cstdint>
 
 struct FixedStep {
@@ -11,6 +12,27 @@ struct FixedStep {
 struct FrameTiming {
     double dt = 0.0;
     double alpha = 0.0;
+};
+
+class ScopedCPUTimer {
+public:
+    explicit ScopedCPUTimer(double &accumulator_ms)
+        : accumulator(&accumulator_ms), start(Clock::now()) {}
+
+    ScopedCPUTimer(const ScopedCPUTimer &) = delete;
+    ScopedCPUTimer &operator=(const ScopedCPUTimer &) = delete;
+
+    ~ScopedCPUTimer() {
+        const auto end = Clock::now();
+        *accumulator +=
+            std::chrono::duration<double, std::milli>(end - start).count();
+    }
+
+private:
+    using Clock = std::chrono::steady_clock;
+
+    double *accumulator = nullptr;
+    Clock::time_point start;
 };
 
 class FramePacer {

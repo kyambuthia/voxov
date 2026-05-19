@@ -130,10 +130,11 @@ private:
         engine.set_session_state(EngineSessionState{
             .gameplay_started = session_controller.gameplay_started(),
             .menu_open = gui_menu.open(),
+            .devhud_enabled = session_controller.devhud_enabled(),
             .selected_character = gui_menu.character(),
             .menu_view = gui_menu.build_view(
-                false,
-                false,
+                session_controller.devhud_enabled(),
+                session_controller.noclip_enabled(),
                 session_controller.build_session_context(snapshot)),
         });
     }

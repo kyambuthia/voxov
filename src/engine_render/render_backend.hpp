@@ -18,7 +18,6 @@ struct RenderDeviceDesc {
     int color_format = 0;   // sg_pixel_format for sokol path
     int depth_format = 0;   // sg_pixel_format for sokol path
     int sample_count = 1;
-    bool enable_imgui = true;
 };
 
 struct RenderView {

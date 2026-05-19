@@ -1,11 +1,9 @@
 #include "engine_render/sokol_renderer.hpp"
 
-#include <imgui.h>
 #include "sokol_app.h"
 #include "sokol_gfx.h"
 #include "sokol_glue.h"
 #include "sokol_log.h"
-#include "sokol_imgui.h"
 
 #include <algorithm>
 #include <cstddef>
@@ -235,12 +233,6 @@ bool SokolRenderer::setup_pipelines() {
     return true;
 }
 
-void SokolRenderer::setup_imgui() {
-    simgui_desc_t desc = {};
-    simgui_setup(&desc);
-    imgui_ready_ = true;
-}
-
 // ---------------------------------------------------------------------------
 // Init / Shutdown
 // ---------------------------------------------------------------------------
@@ -261,21 +253,6 @@ bool SokolRenderer::init(const RenderDeviceDesc &desc) {
         return false;
     }
 
-    if (desc.enable_imgui) {
-        bool can_use_sokol_imgui = true;
-#if defined(SOKOL_GLCORE)
-        const int gl_version = sapp_gl_get_major_version() * 10 + sapp_gl_get_minor_version();
-        can_use_sokol_imgui = gl_version >= 41;
-#endif
-        if (can_use_sokol_imgui) {
-            setup_imgui();
-        } else {
-            slog_func("voxov", 2, 0,
-                      "SokolRenderer: disabling sokol_imgui on GL < 4.1",
-                      __LINE__, __FILE__, nullptr);
-        }
-    }
-
     // Default pass action
     pass_action_ = (sg_pass_action){
         .colors = {
@@ -292,19 +269,27 @@ bool SokolRenderer::init(const RenderDeviceDesc &desc) {
         },
     };
 
+    // --- Debug triangle (screen-space, always visible) ---
+    {
+        RenderMesh tri;
+        tri.vertices = {
+            {glm::vec3(-0.5f, -0.4f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f)},
+            {glm::vec3( 0.5f, -0.4f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f)},
+            {glm::vec3( 0.0f,  0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f)},
+        };
+        tri.indices = {0, 1, 2};
+        upload_mesh(debug_triangle_mesh_, tri, false);
+    }
+
     return true;
 }
 
 void SokolRenderer::shutdown() {
-    if (imgui_ready_) {
-        simgui_shutdown();
-        imgui_ready_ = false;
-    }
-
     destroy_mesh(transient_mesh_);
     destroy_mesh(debug_grid_mesh_);
     destroy_mesh(debug_world_mesh_);
     destroy_mesh(debug_screen_mesh_);
+    destroy_mesh(debug_triangle_mesh_);
     for (auto &[id, mesh] : cached_meshes_) {
         destroy_mesh(mesh);
     }
@@ -483,80 +468,13 @@ void SokolRenderer::update_dynamic_meshes(const RenderMesh &debug_world,
 }
 
 // ---------------------------------------------------------------------------
-// ImGui rendering via sokol_imgui
-// ---------------------------------------------------------------------------
-
-void SokolRenderer::render_imgui(const RenderStats &stats,
-                                  const RenderSurface &surface) {
-    if (!imgui_ready_) return;
-
-    simgui_frame_desc_t simgui_frame = {};
-    simgui_frame.width = surface.width;
-    simgui_frame.height = surface.height;
-    simgui_frame.delta_time = 1.0f / 60.0f;
-    simgui_frame.dpi_scale = surface.dpi_scale;
-    simgui_new_frame(&simgui_frame);
-
-    (void)stats;
-
-    ImGui::NewFrame();
-
-    if (false && (stats.menu_open || !stats.menu_text.empty())) {
-        ImGui::SetNextWindowPos(ImVec2(20.0f, 20.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowSize(ImVec2(520.0f, 420.0f), ImGuiCond_Always);
-        ImGui::SetNextWindowBgAlpha(0.92f);
-        const ImGuiWindowFlags menu_flags =
-            ImGuiWindowFlags_NoCollapse | ImGuiWindowFlags_NoResize |
-            ImGuiWindowFlags_NoSavedSettings;
-        if (ImGui::Begin("VOXOV Menu", nullptr, menu_flags)) {
-            if (stats.menu_open) {
-                if (!stats.menu_title.empty()) {
-                    ImGui::TextUnformatted(stats.menu_title.c_str());
-                    ImGui::Separator();
-                }
-                for (size_t i = 0; i < stats.menu_items.size(); ++i) {
-                    const bool selected = static_cast<int>(i) == stats.menu_selected;
-                    if (selected) {
-                        ImGui::PushStyleColor(ImGuiCol_Button,
-                            ImVec4(0.20f, 0.34f, 0.52f, 1.0f));
-                        ImGui::PushStyleColor(ImGuiCol_ButtonHovered,
-                            ImVec4(0.24f, 0.40f, 0.60f, 1.0f));
-                    }
-                    ImGui::Button(stats.menu_items[i].c_str(), ImVec2(-1.0f, 0.0f));
-                    if (selected) {
-                        ImGui::PopStyleColor(2);
-                    }
-                }
-                if (!stats.menu_guide.empty()) {
-                    ImGui::Separator();
-                    for (const std::string &line : stats.menu_guide) {
-                        ImGui::TextUnformatted(line.c_str());
-                    }
-                }
-                if (!stats.menu_status.empty()) {
-                    ImGui::Separator();
-                    ImGui::Text("Status: %s", stats.menu_status.c_str());
-                }
-            } else {
-                ImGui::PushTextWrapPos();
-                ImGui::TextUnformatted(stats.menu_text.c_str());
-                ImGui::PopTextWrapPos();
-            }
-        }
-        ImGui::End();
-    }
-
-    ImGui::Render();
-    simgui_render();
-}
-
-// ---------------------------------------------------------------------------
 // Frame rendering
 // ---------------------------------------------------------------------------
 
 void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                                   const RenderStats &stats,
                                   const RenderSurface &surface) {
+    (void)stats;
     sg_pass pass = {};
     pass.action = pass_action_;
     pass.swapchain = sglue_swapchain();
@@ -596,9 +514,9 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         // Screen-space overlay
         sg_apply_pipeline(pipelines_.screen);
         draw_mesh(debug_screen_mesh_, glm::mat4(1.0f));
+        draw_mesh(debug_triangle_mesh_, glm::mat4(1.0f));
     }
 
-    render_imgui(stats, surface);
     sg_end_pass();
     sg_commit();
 }

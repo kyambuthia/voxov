@@ -1,26 +1,12 @@
 #include "engine_render/renderer.hpp"
 
-#if VOXOV_HAS_RENDER_GL
-#include "engine_render/gl_renderer.hpp"
-#endif
-#if VOXOV_HAS_RENDER_SOKOL
 #include "engine_render/sokol_renderer.hpp"
-#endif
 
 #include <memory>
 #include <cstdio>
 
 void Renderer::init(const RendererCreateInfo &info) {
     switch (info.backend) {
-#if VOXOV_HAS_RENDER_GL
-    case RenderBackendType::OpenGL: {
-        auto gl = std::make_unique<GLRenderer>();
-        gl->init(info.window_handle);
-        backend = std::move(gl);
-        break;
-    }
-#endif
-#if VOXOV_HAS_RENDER_SOKOL
     case RenderBackendType::Sokol: {
         auto sokol = std::make_unique<SokolRenderer>();
         if (!sokol->init(info.device_desc)) {
@@ -30,7 +16,6 @@ void Renderer::init(const RendererCreateInfo &info) {
         backend = std::move(sokol);
         break;
     }
-#endif
     default:
         std::fprintf(stderr, "Renderer::init: no backend available\n");
         return;

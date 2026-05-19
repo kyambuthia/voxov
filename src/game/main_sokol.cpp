@@ -1,6 +1,5 @@
 /// Voxov sokol_app entry point.
 ///
-/// Replaces src/game/main.cpp when building with VOXOV_PLATFORM_SOKOL.
 /// sokol_app owns the main loop via callbacks; all game logic runs
 /// inside the frame callback.
 

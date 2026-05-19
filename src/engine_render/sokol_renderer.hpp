@@ -47,18 +47,16 @@ private:
     void upload_mesh(SokolGpuMesh &dst, const RenderMesh &src, bool stream);
     void destroy_mesh(SokolGpuMesh &mesh);
     void draw_mesh(const SokolGpuMesh &mesh, const glm::mat4 &mvp);
-    void render_imgui(const RenderStats &stats, const RenderSurface &surface);
 
     bool setup_pipelines();
-    void setup_imgui();
 
     SokolPipelines pipelines_{};
     SokolGpuMesh transient_mesh_{};
     SokolGpuMesh debug_grid_mesh_{};
     SokolGpuMesh debug_world_mesh_{};
     SokolGpuMesh debug_screen_mesh_{};
+    SokolGpuMesh debug_triangle_mesh_{};
     std::unordered_map<uint64_t, SokolGpuMesh> cached_meshes_;
-    bool imgui_ready_ = false;
     sg_pass_action pass_action_{};
 
     // Hash tokens for O(1) change detection on dynamic meshes.

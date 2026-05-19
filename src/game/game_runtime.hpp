@@ -10,15 +10,6 @@
 struct PlatformServices;
 
 struct GameRuntimeOptions {
-    bool devhud = false;
-    bool noclip = false;
-    bool splitscreen = false;
-    bool debug_collision = false;
-    bool debug_xray = false;
-    bool debug_collision_only = false;
-    bool debug_freeze = false;
-    bool vehicle_sandbox = false;
-    bool spherical_planet = false;
     PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
     RenderBackendType render_backend = RenderBackendType::Sokol;
 };

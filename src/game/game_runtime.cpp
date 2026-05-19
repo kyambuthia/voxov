@@ -10,15 +10,6 @@
 namespace {
 EngineRuntimeOptions to_engine_options(const GameRuntimeOptions &options) {
     EngineRuntimeOptions out{};
-    out.devhud = options.devhud;
-    out.noclip = options.noclip;
-    out.splitscreen = options.splitscreen;
-    out.debug_collision = options.debug_collision;
-    out.debug_xray = options.debug_xray;
-    out.debug_collision_only = options.debug_collision_only;
-    out.debug_freeze = options.debug_freeze;
-    out.vehicle_sandbox = options.vehicle_sandbox;
-    out.spherical_planet = options.spherical_planet;
     out.physics_backend = options.physics_backend;
     out.render_backend = options.render_backend;
     return out;
@@ -39,8 +30,6 @@ public:
         platform_services = params.platform_services;
         input_adapter = params.input_adapter;
         platform_adapter = params.platform_adapter;
-        session_controller.set_devhud_enabled(params.options.devhud);
-        session_controller.set_noclip_enabled(params.options.noclip);
         session_controller.set_gameplay_started(false);
         engine.init(to_engine_options(params.options));
         ui_audio.init();
@@ -134,14 +123,12 @@ private:
         const RuntimeSessionSnapshot snapshot =
             session_flow.build_snapshot(engine.session_snapshot());
         engine.set_session_state(EngineSessionState{
-            .devhud_enabled = session_controller.devhud_enabled(),
-            .noclip_enabled = session_controller.noclip_enabled(),
             .gameplay_started = session_controller.gameplay_started(),
             .menu_open = gui_menu.open(),
             .selected_character = gui_menu.character(),
             .menu_view = gui_menu.build_view(
-                session_controller.devhud_enabled(),
-                session_controller.noclip_enabled(),
+                false,
+                false,
                 session_controller.build_session_context(snapshot)),
         });
     }

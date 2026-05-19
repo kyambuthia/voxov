@@ -24,7 +24,6 @@ struct RenderMesh {
 
 struct RenderScene {
     std::vector<RenderMesh> opaque_meshes;
-    RenderMesh debug_grid;
     RenderMesh debug_world;
     RenderMesh debug_screen;
 };

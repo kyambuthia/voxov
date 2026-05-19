@@ -37,15 +37,6 @@ struct AppOptions {
     const char *connect_host = nullptr;
     uint16_t connect_port = 7777;
     PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
-    bool devhud = false;
-    bool noclip = false;
-    bool splitscreen = false;
-    bool debug_collision = false;
-    bool debug_xray = false;
-    bool debug_collision_only = false;
-    bool debug_freeze = false;
-    bool vehicle_sandbox = false;
-    bool spherical_planet = false;
 };
 
 AppOptions g_opts{};
@@ -81,21 +72,12 @@ void voxov_init() {
     // Runtime
     g_runtime = new GameRuntime();
     g_runtime_platform = new DesktopRuntimePlatformAdapter(*g_platform);
-    g_runtime_input = new DesktopRuntimeInputAdapter(*g_platform, g_opts.splitscreen);
+    g_runtime_input = new DesktopRuntimeInputAdapter(*g_platform, false);
     const PlatformServices platform_services = PlatformServices::desktop_default();
 
     GameRuntimeInitParams init_params{};
     init_params.platform = RuntimePlatform::Desktop;
     GameRuntimeOptions options{};
-    options.devhud = g_opts.devhud;
-    options.noclip = g_opts.noclip;
-    options.splitscreen = g_opts.splitscreen;
-    options.debug_collision = g_opts.debug_collision;
-    options.debug_xray = g_opts.debug_xray;
-    options.debug_collision_only = g_opts.debug_collision_only;
-    options.debug_freeze = g_opts.debug_freeze;
-    options.vehicle_sandbox = g_opts.vehicle_sandbox;
-    options.spherical_planet = g_opts.spherical_planet;
     options.physics_backend = g_opts.physics_backend;
     options.render_backend = RenderBackendType::Sokol;
     init_params.options = options;
@@ -239,30 +221,6 @@ int main(int argc, char **argv) {
             if (std::strcmp(argv[++i], "avbd") == 0 || std::strcmp(argv[i], "avbd-experimental") == 0) {
                 g_opts.physics_backend = PhysicsSolverBackend::AvbdExperimental;
             }
-        } else if (std::strcmp(argv[i], "--devhud") == 0) {
-            g_opts.devhud = true;
-        } else if (std::strcmp(argv[i], "--noclip") == 0) {
-            g_opts.noclip = true;
-        } else if (std::strcmp(argv[i], "--splitscreen") == 0) {
-            g_opts.splitscreen = true;
-        } else if (std::strcmp(argv[i], "--debug-collision") == 0) {
-            g_opts.debug_collision = true;
-        } else if (std::strcmp(argv[i], "--debug-xray") == 0) {
-            g_opts.debug_collision = true;
-            g_opts.debug_xray = true;
-        } else if (std::strcmp(argv[i], "--debug-collision-only") == 0) {
-            g_opts.debug_collision = true;
-            g_opts.debug_collision_only = true;
-        } else if (std::strcmp(argv[i], "--debug-freeze") == 0) {
-            g_opts.debug_collision = true;
-            g_opts.debug_freeze = true;
-        } else if (std::strcmp(argv[i], "--vehicle-sandbox") == 0) {
-            g_opts.vehicle_sandbox = true;
-        } else if (std::strcmp(argv[i], "--spherical-planet") == 0 ||
-                   std::strcmp(argv[i], "--planet-sphere") == 0) {
-            g_opts.spherical_planet = true;
-        } else if (std::strcmp(argv[i], "--flat-world") == 0) {
-            g_opts.spherical_planet = false;
         } else if (std::strcmp(argv[i], "--fullscreen") == 0) {
             g_opts.start_fullscreen = true;
         } else if (std::strcmp(argv[i], "--windowed") == 0) {

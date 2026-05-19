@@ -19,7 +19,6 @@ set(CMAKE_ARCHIVE_OUTPUT_DIRECTORY "${CMAKE_BINARY_DIR}/lib")
 # ── Build options ──────────────────────────────────────────────────────
 option(VOXOV_BUILD_TESTS "Build tests" OFF)
 option(VOXOV_BUILD_EXAMPLES "Build examples" OFF)
-option(VOXOV_BUILD_LEGACY_DEMOS "Build legacy SDL/Vulkan demo entrypoints" OFF)
 option(VOXOV_ENABLE_ASSERTIONS "Enable assertions in release builds" ON)
 option(VOXOV_ENABLE_ANDROID_BACKEND "Compile Android platform backend skeleton" ON)
 option(VOXOV_ENABLE_WEB_BACKEND "Compile Web platform backend skeleton" ON)
@@ -27,9 +26,9 @@ option(VOXOV_ENABLE_IOS_BACKEND "Compile iOS platform backend scaffold" OFF)
 option(VOXOV_ENABLE_CONSOLE_BACKEND "Compile console platform backend scaffold" OFF)
 option(VOXOV_ENABLE_XR "Compile XR session scaffold" OFF)
 
-# Platform / render backend selection.
-option(VOXOV_PLATFORM_SOKOL "Use sokol_app + sokol_gfx (default). OFF = legacy GLFW + OpenGL." ON)
-option(VOXOV_RENDER_BACKEND_GL "Build OpenGL render backend (only when not using sokol)" OFF)
+# ── Sokol headers (header-only; no subdir build needed) ────────────────
+set(VOXOV_SOKOL_DIR "${CMAKE_SOURCE_DIR}/dependencies/sokol")
+set(VOXOV_SOKOL_UTIL_DIR "${VOXOV_SOKOL_DIR}/util")
 
 # ── Android cross-compile ──────────────────────────────────────────────
 if(ANDROID)
@@ -49,6 +48,7 @@ if(ANDROID)
 
     add_library(voxov_android SHARED
         src/game/android_main.cpp
+        src/platform/sokol/sokol_impl.cpp
         src/engine_runtime/runtime_session_controller.cpp
         src/platform/platform_services.cpp
         src/platform/android_platform.cpp
@@ -79,12 +79,15 @@ if(ANDROID)
         src
         dependencies/glm
         dependencies/cgltf
-        dependencies/miniaudio
         dependencies/enet/include
+        ${VOXOV_SOKOL_DIR}
+        ${VOXOV_SOKOL_UTIL_DIR}
         ${VOXOV_ANDROID_GLUE_DIR}
     )
     target_compile_definitions(voxov_android PRIVATE
         VOXOV_PLATFORM_ANDROID=1
+        SOKOL_GLES3
+        VOXOV_HAS_RENDER_SOKOL=1
         GLM_ENABLE_EXPERIMENTAL
     )
 
@@ -149,91 +152,37 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/glm" EXCLUDE_FROM_ALL)
 add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/fmt" EXCLUDE_FROM_ALL)
 add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/spdlog" EXCLUDE_FROM_ALL)
 
-# ── Sokol headers (header-only; no subdir build needed) ────────────────
-set(VOXOV_SOKOL_DIR "${CMAKE_SOURCE_DIR}/dependencies/sokol")
-set(VOXOV_SOKOL_UTIL_DIR "${VOXOV_SOKOL_DIR}/util")
+# ── Platform backend ───────────────────────────────────────────────────
+message(STATUS "Platform backend: sokol_app + sokol_gfx")
 
-# ── Platform selection ─────────────────────────────────────────────────
-if(VOXOV_PLATFORM_SOKOL)
-    message(STATUS "Platform backend: sokol_app + sokol_gfx")
-
-    # sokol backend selection
-    if(APPLE)
-        set(VOXOV_SOKOL_BACKEND SOKOL_METAL)
-    elseif(WIN32)
-        set(VOXOV_SOKOL_BACKEND SOKOL_D3D11)
-    else()
-        set(VOXOV_SOKOL_BACKEND SOKOL_GLCORE)
-        find_package(OpenGL REQUIRED)
-    endif()
-
-    add_compile_definitions(VOXOV_PLATFORM_SOKOL=1)
-    add_compile_definitions(${VOXOV_SOKOL_BACKEND})
-    add_compile_definitions(VOXOV_HAS_RENDER_SOKOL=1)
-
-    # Platform library (sokol)
-    add_library(platform_desktop STATIC
-        src/platform/sokol/sokol_impl.cpp
-        src/platform/sokol/sokol_platform.cpp
-        src/platform/desktop/input_desktop.cpp
-    )
-    target_include_directories(platform_desktop PUBLIC
-        src
-        dependencies/imgui
-        ${VOXOV_SOKOL_DIR}
-        ${VOXOV_SOKOL_UTIL_DIR}
-    )
-    target_link_libraries(platform_desktop PUBLIC glm::glm)
-    if(UNIX AND NOT APPLE)
-        target_link_libraries(platform_desktop PUBLIC
-            OpenGL::GL X11 Xi Xcursor m dl asound
-        )
-    endif()
-
-    # ImGui via sokol_imgui (not GLFW)
-    add_library(imgui_core STATIC
-        dependencies/imgui/imgui.cpp
-        dependencies/imgui/imgui_demo.cpp
-        dependencies/imgui/imgui_draw.cpp
-        dependencies/imgui/imgui_tables.cpp
-        dependencies/imgui/imgui_widgets.cpp
-    )
-    target_include_directories(imgui_core PUBLIC dependencies/imgui)
-
+if(APPLE)
+    set(VOXOV_SOKOL_BACKEND SOKOL_METAL)
+elseif(WIN32)
+    set(VOXOV_SOKOL_BACKEND SOKOL_D3D11)
 else()
-    message(STATUS "Platform backend: GLFW + OpenGL (legacy)")
-    set(VOXOV_RENDER_BACKEND_GL ON)
-
-    set(GLFW_BUILD_DOCS OFF CACHE BOOL "" FORCE)
-    set(GLFW_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(GLFW_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/glfw" EXCLUDE_FROM_ALL)
+    set(VOXOV_SOKOL_BACKEND SOKOL_GLCORE)
     find_package(OpenGL REQUIRED)
+endif()
 
-    # Platform library (GLFW)
-    add_library(platform_desktop STATIC
-        src/platform/platform.cpp
-        src/platform/desktop/input_desktop.cpp
-    )
-    target_include_directories(platform_desktop PUBLIC src)
-    target_link_libraries(platform_desktop PUBLIC glfw glm::glm)
+add_compile_definitions(${VOXOV_SOKOL_BACKEND})
+add_compile_definitions(VOXOV_HAS_RENDER_SOKOL=1)
 
-    # ImGui GLFW+OpenGL backends
-    add_library(imgui_core STATIC
-        dependencies/imgui/imgui.cpp
-        dependencies/imgui/imgui_demo.cpp
-        dependencies/imgui/imgui_draw.cpp
-        dependencies/imgui/imgui_tables.cpp
-        dependencies/imgui/imgui_widgets.cpp
+# Platform library (sokol)
+add_library(platform_desktop STATIC
+    src/platform/sokol/sokol_impl.cpp
+    src/platform/sokol/sokol_platform.cpp
+    src/platform/desktop/input_desktop.cpp
+)
+target_include_directories(platform_desktop PUBLIC
+    src
+    ${VOXOV_SOKOL_DIR}
+    ${VOXOV_SOKOL_UTIL_DIR}
+)
+target_link_libraries(platform_desktop PUBLIC glm::glm)
+if(UNIX AND NOT APPLE)
+    target_link_libraries(platform_desktop PUBLIC
+        OpenGL::GL X11 Xi Xcursor m dl asound
     )
-    target_include_directories(imgui_core PUBLIC dependencies/imgui)
-
-    add_library(imgui_gl STATIC
-        dependencies/imgui/backends/imgui_impl_glfw.cpp
-        dependencies/imgui/backends/imgui_impl_opengl3.cpp
-    )
-    target_include_directories(imgui_gl PUBLIC dependencies/imgui dependencies/imgui/backends)
-    target_link_libraries(imgui_gl PUBLIC imgui_core glfw OpenGL::GL)
 endif()
 
 # ── Core systems ───────────────────────────────────────────────────────
@@ -276,34 +225,27 @@ add_library(engine_render_core STATIC
     src/engine_render/debug_draw/debug_draw.cpp
 )
 target_include_directories(engine_render_core PUBLIC src)
-target_link_libraries(engine_render_core PUBLIC glm::glm fmt::fmt spdlog::spdlog imgui_core)
+target_include_directories(engine_render_core PUBLIC
+    ${VOXOV_SOKOL_DIR}
+    ${VOXOV_SOKOL_UTIL_DIR}
+)
+target_link_libraries(engine_render_core PUBLIC glm::glm fmt::fmt spdlog::spdlog)
 
-if(VOXOV_RENDER_BACKEND_GL)
-    add_library(engine_render_gl STATIC
-        src/engine_render/gl_renderer.cpp
-    )
-    target_include_directories(engine_render_gl PUBLIC src)
-    target_link_libraries(engine_render_gl PUBLIC engine_render_core OpenGL::GL glfw imgui_gl)
-    target_compile_definitions(engine_render_gl PUBLIC VOXOV_HAS_RENDER_GL=1)
-    target_compile_definitions(engine_render_core PUBLIC VOXOV_HAS_RENDER_GL=1)
-    target_link_libraries(engine_render_core PRIVATE engine_render_gl)
-endif()
-
-if(VOXOV_PLATFORM_SOKOL)
-    add_library(engine_render_sokol STATIC
-        src/engine_render/sokol_renderer.cpp
-    )
-    target_include_directories(engine_render_sokol PUBLIC
-        src
-        ${VOXOV_SOKOL_DIR}
-        ${VOXOV_SOKOL_UTIL_DIR}
-    )
+add_library(engine_render_sokol STATIC
+    src/engine_render/sokol_renderer.cpp
+)
+target_include_directories(engine_render_sokol PUBLIC
+    src
+    ${VOXOV_SOKOL_DIR}
+    ${VOXOV_SOKOL_UTIL_DIR}
+)
+if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_compile_options(engine_render_sokol PRIVATE -fpermissive)
-    target_link_libraries(engine_render_sokol PUBLIC engine_render_core imgui_core)
-    target_compile_definitions(engine_render_sokol PUBLIC VOXOV_HAS_RENDER_SOKOL=1)
-    target_compile_definitions(engine_render_core PUBLIC VOXOV_HAS_RENDER_SOKOL=1)
-    target_link_libraries(engine_render_core PRIVATE engine_render_sokol)
 endif()
+target_link_libraries(engine_render_sokol PUBLIC glm::glm)
+target_compile_definitions(engine_render_sokol PUBLIC VOXOV_HAS_RENDER_SOKOL=1)
+target_compile_definitions(engine_render_core PUBLIC VOXOV_HAS_RENDER_SOKOL=1)
+target_link_libraries(engine_render_core PRIVATE engine_render_sokol)
 
 # ── Remaining subsystems ───────────────────────────────────────────────
 add_library(engine_physics STATIC
@@ -345,13 +287,7 @@ add_library(engine_audio STATIC
     src/engine_audio/ui_audio.cpp
 )
 target_include_directories(engine_audio PUBLIC src)
-if(VOXOV_PLATFORM_SOKOL)
-    target_include_directories(engine_audio PUBLIC
-        ${VOXOV_SOKOL_DIR}
-    )
-else()
-    target_include_directories(engine_audio PUBLIC dependencies/miniaudio)
-endif()
+target_include_directories(engine_audio PUBLIC ${VOXOV_SOKOL_DIR})
 
 add_library(engine_ui STATIC
     src/engine_ui/gui_menu.cpp
@@ -411,11 +347,7 @@ add_library(engine STATIC
     src/engine/engine.cpp
     src/platform/platform_services.cpp
 )
-if(VOXOV_PLATFORM_SOKOL)
-    target_include_directories(engine PUBLIC src dependencies/cgltf)
-else()
-    target_include_directories(engine PUBLIC src dependencies/miniaudio dependencies/cgltf)
-endif()
+target_include_directories(engine PUBLIC src dependencies/cgltf)
 target_link_libraries(engine PUBLIC
     engine_assets
     engine_audio
@@ -461,32 +393,24 @@ if(VOXOV_PLATFORM_FUTURE_SOURCES)
 endif()
 
 # ── Main executable ────────────────────────────────────────────────────
-if(VOXOV_PLATFORM_SOKOL)
-    add_executable(voxov
-        src/game/main_sokol.cpp
+add_executable(voxov
+    src/game/main_sokol.cpp
+)
+target_include_directories(voxov PRIVATE
+    src
+    ${VOXOV_SOKOL_DIR}
+    ${VOXOV_SOKOL_UTIL_DIR}
+)
+target_link_libraries(voxov PRIVATE game_runtime)
+if(APPLE)
+    target_link_libraries(voxov PRIVATE
+        "-framework Cocoa" "-framework QuartzCore" "-framework Metal" "-framework MetalKit"
+        "-framework AudioToolbox"
     )
-    target_include_directories(voxov PRIVATE
-        src
-        ${VOXOV_SOKOL_DIR}
-        ${VOXOV_SOKOL_UTIL_DIR}
+elseif(UNIX)
+    target_link_libraries(voxov PRIVATE
+        OpenGL::GL X11 Xi Xcursor m dl asound
     )
-    target_link_libraries(voxov PRIVATE game_runtime)
-    if(APPLE)
-        target_link_libraries(voxov PRIVATE
-            "-framework Cocoa" "-framework QuartzCore" "-framework Metal" "-framework MetalKit"
-            "-framework AudioToolbox"
-        )
-    elseif(UNIX)
-        target_link_libraries(voxov PRIVATE
-            OpenGL::GL X11 Xi Xcursor m dl asound
-        )
-    endif()
-else()
-    add_executable(voxov
-        src/game/main.cpp
-    )
-    target_include_directories(voxov PRIVATE src)
-    target_link_libraries(voxov PRIVATE game_runtime)
 endif()
 
 # ── Server ─────────────────────────────────────────────────────────────
@@ -568,36 +492,22 @@ if(VOXOV_BUILD_TESTS)
     add_test(NAME voxov_net_stress COMMAND voxov_net_stress)
 
     # ── Sokol smoke test ────────────────────────────────────────────────
-    if(VOXOV_PLATFORM_SOKOL)
-        add_executable(voxov_sokol_smoke
-            src/tests/sokol_smoke.cpp
-        )
-        target_include_directories(voxov_sokol_smoke PRIVATE
-            src
-            ${VOXOV_SOKOL_DIR}
-            ${VOXOV_SOKOL_UTIL_DIR}
-        )
-        if(APPLE)
-            target_link_libraries(voxov_sokol_smoke PRIVATE
-                "-framework Cocoa" "-framework QuartzCore" "-framework Metal" "-framework MetalKit"
-                "-framework AudioToolbox"
-            )
-        elseif(UNIX)
-            target_link_libraries(voxov_sokol_smoke PRIVATE
-                OpenGL::GL X11 Xi Xcursor m dl asound
-            )
-        endif()
-    endif()
-endif()
-
-# ── Legacy demos ───────────────────────────────────────────────────────
-if(VOXOV_BUILD_LEGACY_DEMOS)
-    add_custom_target(voxov_legacy_sources
-        SOURCES
-            src/main.cpp
-            src/game.cpp
-            src/renderer/vulkan_app.cpp
-            src/world/planet_world.cpp
-            src/engine_assets/static_model.cpp
+    add_executable(voxov_sokol_smoke
+        src/tests/sokol_smoke.cpp
     )
+    target_include_directories(voxov_sokol_smoke PRIVATE
+        src
+        ${VOXOV_SOKOL_DIR}
+        ${VOXOV_SOKOL_UTIL_DIR}
+    )
+    if(APPLE)
+        target_link_libraries(voxov_sokol_smoke PRIVATE
+            "-framework Cocoa" "-framework QuartzCore" "-framework Metal" "-framework MetalKit"
+            "-framework AudioToolbox"
+        )
+    elseif(UNIX)
+        target_link_libraries(voxov_sokol_smoke PRIVATE
+            OpenGL::GL X11 Xi Xcursor m dl asound
+        )
+    endif()
 endif()

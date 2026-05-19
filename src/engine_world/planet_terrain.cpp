@@ -111,10 +111,22 @@ void rebuild_vertex_normals(RenderMesh &mesh) {
 }
 } // namespace
 
+void stitch_face_edges(VoxelChunk &chunk, PlanetFace face, int32_t chunk_x,
+                       int32_t chunk_y, const PlanetDefinition &planet) {
+  (void)chunk;
+  (void)face;
+  (void)chunk_x;
+  (void)chunk_y;
+  (void)planet;
+  // TODO: Implement face-edge stitching in Phase 5b
+  return;
+}
+
 RenderMesh build_single_face_planet_terrain_mesh(
     const PlanetDefinition &planet, const PlanetChunkId &chunk_id) {
   VoxelChunk chunk;
   generate_heightfield(chunk, planet.seed);
+  stitch_face_edges(chunk, chunk_id.face, chunk_id.x, chunk_id.y, planet);
 
   RenderMesh mesh = chunk.build_greedy_mesh(glm::vec3(0.0f), 1.0f);
   for (RenderVertex &vertex : mesh.vertices) {

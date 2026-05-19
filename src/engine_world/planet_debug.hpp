@@ -9,6 +9,8 @@
 
 RenderMesh build_debug_planet_mesh(const PlanetDefinition &planet,
                                    int32_t grid_size);
+RenderMesh build_planet_impostor_mesh(const PlanetDefinition &planet,
+                                      int subdivisions);
 RenderMesh build_debug_planet_grid_mesh(const PlanetDefinition &planet,
                                         int32_t subdivisions,
                                         float line_thickness);

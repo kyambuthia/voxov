@@ -35,6 +35,11 @@ double smooth_metric(double current, double sample, double alpha = 0.25) {
 
 uint64_t bytes_to_kib(uint64_t bytes) { return (bytes + 1023u) / 1024u; }
 
+constexpr PlanetFace k_planet_faces[] = {
+    PlanetFace::PosX, PlanetFace::NegX, PlanetFace::PosY,
+    PlanetFace::NegY, PlanetFace::PosZ, PlanetFace::NegZ,
+};
+
 void disable_gameplay_actions(InputState &input) {
   input.move = glm::vec2(0.0f);
   input.jump_pressed = false;
@@ -162,14 +167,27 @@ bool Engine::init(const EngineRuntimeOptions &options) {
               build_debug_planet_grid_mesh(debug_planet_, 8, 0.025f));
   debug_planet_mesh.mesh_id = 0x5658504c414e4554ull;
   scene.opaque_meshes.push_back(debug_planet_mesh);
-  PlanetChunkId top_chunk{};
-  top_chunk.face = PlanetFace::PosY;
-  top_chunk.x = 0;
-  top_chunk.y = 0;
-  top_chunk.lod = 0;
-  RenderMesh top_terrain =
-      build_single_face_planet_terrain_mesh(debug_planet_, top_chunk);
-  scene.opaque_meshes.push_back(top_terrain);
+
+  const int32_t chunks_per_face = 1;
+  debug_planet_.chunks_per_face = chunks_per_face;
+  for (int32_t face_index = 0; face_index < 6; ++face_index) {
+    for (int32_t cy = 0; cy < chunks_per_face; ++cy) {
+      for (int32_t cx = 0; cx < chunks_per_face; ++cx) {
+        PlanetChunkId chunk_id{};
+        chunk_id.face = k_planet_faces[face_index];
+        chunk_id.x = cx;
+        chunk_id.y = cy;
+        chunk_id.lod = 0;
+        RenderMesh terrain =
+            build_single_face_planet_terrain_mesh(debug_planet_, chunk_id);
+        // Non-zero mesh IDs are cached by SokolRenderer::upload_scene(), and
+        // cached meshes are frustum-culled with aabb_in_frustum() per frame.
+        terrain.mesh_id =
+            static_cast<uint64_t>(1000 + face_index * 100 + cx + cy);
+        scene.opaque_meshes.push_back(terrain);
+      }
+    }
+  }
   local_player = PlayerControllerSystem::spawn_player(collision_world);
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);

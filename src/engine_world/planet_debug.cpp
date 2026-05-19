@@ -181,6 +181,13 @@ RenderMesh build_debug_planet_mesh(const PlanetDefinition &planet,
   return mesh;
 }
 
+RenderMesh build_planet_impostor_mesh(const PlanetDefinition &planet,
+                                      int subdivisions) {
+  (void)subdivisions;
+  // TODO: Replace this debug shell with a proper far/orbital impostor in Phase 6.
+  return build_debug_planet_mesh(planet, 6);
+}
+
 RenderMesh build_debug_planet_grid_mesh(const PlanetDefinition &planet,
                                         int32_t subdivisions,
                                         float line_thickness) {

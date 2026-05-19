@@ -62,5 +62,5 @@ private:
 
     bool devhud_enabled_ = false;
     bool noclip_enabled_ = false;
-    bool gameplay_started_ = false;
+    bool gameplay_started_ = true;
 };

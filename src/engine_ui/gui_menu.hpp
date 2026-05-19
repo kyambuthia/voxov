@@ -91,7 +91,7 @@ private:
 
     int item_count() const;
 
-    bool is_open = true;
+    bool is_open = false;
     int selected_item = 0;
     MenuPage page = MenuPage::Main;
     Character selected_character = Character::Capsule;

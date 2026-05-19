@@ -30,7 +30,6 @@ public:
         platform_services = params.platform_services;
         input_adapter = params.input_adapter;
         platform_adapter = params.platform_adapter;
-        session_controller.set_gameplay_started(false);
         EngineRuntimeOptions engine_options = to_engine_options(params.options);
         engine_options.platform_services = params.platform_services;
         engine.init(engine_options);

@@ -32,7 +32,7 @@ jobs:
             libxrandr-dev
 
       - name: Configure
-        run: cmake -S . -B build/desktop/ci -G Ninja -DVOXOV_BUILD_TESTS=ON
+        run: cmake -S . -B build/desktop/ci -G Ninja -DVOXOV_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug -DCMAKE_CXX_FLAGS="-Werror"
 
       - name: Build
         run: cmake --build build/desktop/ci --parallel
@@ -40,8 +40,40 @@ jobs:
       - name: Test
         run: ctest --test-dir build/desktop/ci --output-on-failure
 
+  build-windows:
+    runs-on: windows-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Configure
+        shell: powershell
+        run: |
+          cmake -S . -B build/desktop/ci-win -G Ninja `
+            -DVOXOV_BUILD_TESTS=ON `
+            -DCMAKE_BUILD_TYPE=Debug `
+            -DENABLE_ALL_WARNINGS=OFF `
+            -DJPH_USE_DX12=OFF `
+            -DJPH_USE_DXC=OFF `
+            -DUSE_AVX2=OFF `
+            -DUSE_F16C=OFF `
+            -DUSE_FMADD=OFF `
+            -DUSE_LZCNT=OFF
+
+      - name: Build
+        run: cmake --build build/desktop/ci-win --parallel
+
+      - name: Test
+        run: ctest --test-dir build/desktop/ci-win --output-on-failure
+
   build-web:
     runs-on: ubuntu-latest
+    env:
+      EMSDK_VERSION: 3.1.61
+      EM_CACHE: ${{ github.workspace }}/build/web/ci/cache
 
     steps:
       - name: Checkout
@@ -54,10 +86,16 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y cmake ninja-build python3
 
+      - name: Cache Emscripten
+        uses: actions/cache@v4
+        with:
+          path: ${{ env.EM_CACHE }}
+          key: emscripten-${{ runner.os }}-${{ env.EMSDK_VERSION }}
+
       - name: Setup Emscripten
         uses: mymindstorm/setup-emsdk@v14
         with:
-          version: 3.1.61
+          version: ${{ env.EMSDK_VERSION }}
 
       - name: Configure
         run: emcmake cmake -S . -B build/web/ci -G Ninja
@@ -65,8 +103,24 @@ jobs:
       - name: Build
         run: cmake --build build/web/ci --parallel
 
+      - name: Report wasm size
+        run: |
+          wc -c build/web/ci/bin/voxov_web.wasm | awk '{print "WASM size: " $1 " bytes (" $1/1024/1024 " MB)"}'
+
       - name: Smoke check web artifact
         run: test -f build/web/ci/bin/voxov_web.html
+
+      - name: Upload web dev artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-dev-build
+          path: |
+            build/web/ci/bin/voxov_web.html
+            build/web/ci/bin/voxov_web.js
+            build/web/ci/bin/voxov_web.wasm
+            build/web/ci/bin/voxov_web.data
+          if-no-files-found: error
+          retention-days: 7
 
   android-smoke:
     runs-on: ubuntu-latest

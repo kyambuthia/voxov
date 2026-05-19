@@ -12,6 +12,7 @@ public:
     void set_right_stick(glm::vec2 value);
     void set_jump(bool pressed);
     void set_sprint(bool enabled);
+    void set_crouch(bool enabled);
     void set_menu_toggle(bool pressed);
     void set_menu_up(bool pressed);
     void set_menu_down(bool pressed);
@@ -23,6 +24,7 @@ private:
     bool jump = false;
     bool prev_jump = false;
     bool sprint = false;
+    bool crouch = false;
     bool menu_toggle = false;
     bool prev_menu_toggle = false;
     bool menu_up = false;

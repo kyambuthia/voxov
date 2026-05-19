@@ -79,6 +79,7 @@ private:
   RuntimeGameSession game_session;
   EventBus event_bus_;
   PhysicsWorld physics;
+  uint64_t collision_count_ = 0;
 
   VoxelChunk world_chunk;
   VoxelCollisionWorld collision_world{nullptr};

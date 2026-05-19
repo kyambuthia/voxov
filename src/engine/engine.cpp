@@ -92,6 +92,11 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   game_session.reset();
   event_bus_.clear();
   event_bus_.reserve(64, 1024, 2048);
+  event_bus_.subscribe<CollisionEvent>(
+      EventPhase::Fixed,
+      [this](const CollisionEvent &, const EventContext &) {
+        ++collision_count_;
+      });
   event_bus_.subscribe<PlayerJumpedEvent>(
       EventPhase::Fixed,
       [](const PlayerJumpedEvent &event, const EventContext &context) {
@@ -187,8 +192,9 @@ void Engine::tick(double frame_dt,
               step_input.jump_pressed = false;
             }
 
-            PlayerControllerSystem::simulate_fixed(
-                local_player, step_input, collision_world, step.dt, false);
+            const PlayerCollisionDebug collision_debug =
+                PlayerControllerSystem::simulate_fixed(
+                    local_player, step_input, collision_world, step.dt, false);
             sync_local_animation_runtime(local_player, local_player_animation,
                                          step.dt);
             enqueue_animation_runtime_events(event_bus_, local_player,
@@ -196,6 +202,15 @@ void Engine::tick(double frame_dt,
             local_player_animation.clear_events();
             jump_consumed = jump_consumed || input_frame.primary.jump_pressed;
             physics.step(step.dt);
+            if (collision_debug.had_collision) {
+              event_bus_.enqueue_fixed(CollisionEvent{
+                  .entity_a = local_player.network_id,
+                  .entity_b = 0,
+                  .point = local_player.transform.position,
+                  .normal = collision_debug.contact_normal,
+                  .impulse = collision_debug.penetration_correction,
+              });
+            }
             event_bus_.drain_fixed(EventContext{
                 .phase = EventPhase::Fixed,
                 .tick = step.tick,
@@ -327,7 +342,8 @@ void Engine::refresh_overlay_text() {
   scene.debug_world = RenderMesh{};
   scene.debug_screen = RenderMesh{};
   std::string overlay_text =
-      "Frame events: " + std::to_string(presentation_frame_events_seen_);
+      "Frame events: " + std::to_string(presentation_frame_events_seen_) +
+      "\nCollisions: " + std::to_string(collision_count_);
   if (!last_hud_message_.empty()) {
     overlay_text += "\n" + last_hud_message_;
   }

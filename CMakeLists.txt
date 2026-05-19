@@ -30,75 +30,6 @@ option(VOXOV_ENABLE_XR "Compile XR session scaffold" OFF)
 set(VOXOV_SOKOL_DIR "${CMAKE_SOURCE_DIR}/dependencies/sokol")
 set(VOXOV_SOKOL_UTIL_DIR "${VOXOV_SOKOL_DIR}/util")
 
-# ── Android cross-compile ──────────────────────────────────────────────
-if(ANDROID)
-    message(STATUS "Configuring VOXOV for Android")
-
-    set(ENET_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    set(SPDLOG_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
-    set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-    add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/enet" EXCLUDE_FROM_ALL)
-    add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/fmt" EXCLUDE_FROM_ALL)
-    add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/spdlog" EXCLUDE_FROM_ALL)
-
-    set(VOXOV_ANDROID_GLUE_DIR "${CMAKE_ANDROID_NDK}/sources/android/native_app_glue")
-    if(NOT EXISTS "${VOXOV_ANDROID_GLUE_DIR}/android_native_app_glue.c")
-        message(FATAL_ERROR "android_native_app_glue.c not found at ${VOXOV_ANDROID_GLUE_DIR}")
-    endif()
-
-    add_library(voxov_android SHARED
-        src/game/android_main.cpp
-        src/engine_runtime/runtime_session_controller.cpp
-        src/platform/platform_services.cpp
-        src/platform/android_platform.cpp
-        src/platform/android/input_android.cpp
-        src/engine_assets/cgltf_impl.cpp
-        src/engine_assets/skinned_model.cpp
-        src/engine_gameplay/animation/animation_runtime.cpp
-        src/engine_gameplay/animation/player_animation_graph.cpp
-        src/engine_gameplay/animation/player_animation_types.cpp
-        src/engine_gameplay/animation/skeletal_animator.cpp
-        src/engine_gameplay/player/player_controller.cpp
-        src/engine_gameplay/player/player_visuals.cpp
-        src/engine_ui/gui_menu.cpp
-        src/engine_audio/ui_audio.cpp
-        src/engine_math/camera.cpp
-        src/engine_render/debug_text.cpp
-        src/engine_render/debug_draw/debug_draw.cpp
-        src/engine_world/world_gen.cpp
-        src/engine_world/voxel_chunk.cpp
-        src/engine_world/physics/voxel_collision.cpp
-        src/engine_net/net_client.cpp
-        src/engine_net/net_server.cpp
-        src/engine_net/lan_discovery.cpp
-        src/engine_server/server_session.cpp
-        ${VOXOV_ANDROID_GLUE_DIR}/android_native_app_glue.c
-    )
-    target_include_directories(voxov_android PRIVATE
-        src
-        dependencies/glm
-        dependencies/cgltf
-        dependencies/enet/include
-        ${VOXOV_ANDROID_GLUE_DIR}
-    )
-    target_compile_definitions(voxov_android PRIVATE
-        VOXOV_PLATFORM_ANDROID=1
-        GLM_ENABLE_EXPERIMENTAL
-    )
-
-    find_library(android_lib android REQUIRED)
-    find_library(log_lib log REQUIRED)
-    find_library(egl_lib EGL REQUIRED)
-    find_library(glesv3_lib GLESv3 REQUIRED)
-    target_link_libraries(voxov_android PRIVATE
-        ${android_lib} ${log_lib} ${egl_lib} ${glesv3_lib}
-        enet fmt::fmt spdlog::spdlog
-    )
-    set_target_properties(voxov_android PROPERTIES OUTPUT_NAME "voxov")
-    install(TARGETS voxov_android LIBRARY DESTINATION lib)
-    return()
-endif()
-
 # ── Web (Emscripten) ───────────────────────────────────────────────────
 if(EMSCRIPTEN)
     message(STATUS "Configuring VOXOV for Web (Emscripten)")
@@ -152,36 +83,56 @@ add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/fmt" EXCLUDE_FROM_ALL)
 add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/spdlog" EXCLUDE_FROM_ALL)
 
 # ── Platform backend ───────────────────────────────────────────────────
-message(STATUS "Platform backend: sokol_app + sokol_gfx")
-
-if(APPLE)
-    set(VOXOV_SOKOL_BACKEND SOKOL_METAL)
-elseif(WIN32)
-    set(VOXOV_SOKOL_BACKEND SOKOL_D3D11)
-else()
-    set(VOXOV_SOKOL_BACKEND SOKOL_GLCORE)
-    find_package(OpenGL REQUIRED)
+if(ANDROID)
+    message(STATUS "Configuring VOXOV for Android")
+    set(VOXOV_ANDROID_GLUE_DIR "${CMAKE_ANDROID_NDK}/sources/android/native_app_glue")
+    if(NOT EXISTS "${VOXOV_ANDROID_GLUE_DIR}/android_native_app_glue.c")
+        message(FATAL_ERROR "android_native_app_glue.c not found at ${VOXOV_ANDROID_GLUE_DIR}")
+    endif()
+    add_compile_definitions(VOXOV_PLATFORM_ANDROID=1)
+    add_compile_definitions(SOKOL_GLES3)
+elseif(NOT EMSCRIPTEN)
+    message(STATUS "Platform backend: sokol_app + sokol_gfx")
+    if(APPLE)
+        set(VOXOV_SOKOL_BACKEND SOKOL_METAL)
+    elseif(WIN32)
+        set(VOXOV_SOKOL_BACKEND SOKOL_D3D11)
+    else()
+        set(VOXOV_SOKOL_BACKEND SOKOL_GLCORE)
+        find_package(OpenGL REQUIRED)
+    endif()
+    add_compile_definitions(${VOXOV_SOKOL_BACKEND})
 endif()
-
-add_compile_definitions(${VOXOV_SOKOL_BACKEND})
 add_compile_definitions(VOXOV_HAS_RENDER_SOKOL=1)
 
-# Platform library (sokol)
-add_library(platform_desktop STATIC
-    src/platform/sokol/sokol_impl.cpp
-    src/platform/sokol/sokol_platform.cpp
-    src/platform/desktop/input_desktop.cpp
+add_library(sokol_gfx_impl STATIC
+    src/platform/sokol/sokol_gfx_impl.cpp
 )
-target_include_directories(platform_desktop PUBLIC
-    src
+target_include_directories(sokol_gfx_impl PUBLIC
     ${VOXOV_SOKOL_DIR}
-    ${VOXOV_SOKOL_UTIL_DIR}
 )
-target_link_libraries(platform_desktop PUBLIC glm::glm)
-if(UNIX AND NOT APPLE)
-    target_link_libraries(platform_desktop PUBLIC
-        OpenGL::GL X11 Xi Xcursor m dl asound
+if(ANDROID)
+    target_compile_definitions(sokol_gfx_impl PUBLIC SOKOL_GLES3 VOXOV_PLATFORM_ANDROID=1)
+endif()
+
+if(NOT ANDROID)
+    # Platform library (sokol_app/audio/glue)
+    add_library(platform_desktop STATIC
+        src/platform/sokol/sokol_impl_desktop.cpp
+        src/platform/sokol/sokol_platform.cpp
+        src/platform/desktop/input_desktop.cpp
     )
+    target_include_directories(platform_desktop PUBLIC
+        src
+        ${VOXOV_SOKOL_DIR}
+        ${VOXOV_SOKOL_UTIL_DIR}
+    )
+    target_link_libraries(platform_desktop PUBLIC sokol_gfx_impl glm::glm)
+    if(UNIX AND NOT APPLE)
+        target_link_libraries(platform_desktop PUBLIC
+            OpenGL::GL X11 Xi Xcursor m dl asound
+        )
+    endif()
 endif()
 
 # ── Core systems ───────────────────────────────────────────────────────
@@ -241,8 +192,11 @@ target_include_directories(engine_render_sokol PUBLIC
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_compile_options(engine_render_sokol PRIVATE -fpermissive)
 endif()
-target_link_libraries(engine_render_sokol PUBLIC glm::glm)
+target_link_libraries(engine_render_sokol PUBLIC glm::glm sokol_gfx_impl)
 target_compile_definitions(engine_render_sokol PUBLIC VOXOV_HAS_RENDER_SOKOL=1)
+if(ANDROID)
+    target_compile_definitions(engine_render_sokol PUBLIC SOKOL_GLES3 VOXOV_PLATFORM_ANDROID=1)
+endif()
 target_compile_definitions(engine_render_core PUBLIC VOXOV_HAS_RENDER_SOKOL=1)
 target_link_libraries(engine_render_core PRIVATE engine_render_sokol)
 
@@ -360,8 +314,10 @@ target_link_libraries(engine PUBLIC
     engine_runtime
     engine_ui
     engine_world
-    platform_desktop
 )
+if(NOT ANDROID)
+    target_link_libraries(engine PUBLIC platform_desktop)
+endif()
 if(VOXOV_ENABLE_XR)
     target_link_libraries(engine PUBLIC engine_xr)
     target_compile_definitions(engine PUBLIC VOXOV_ENABLE_XR=1)
@@ -372,11 +328,59 @@ endif()
 # ── Game runtime ───────────────────────────────────────────────────────
 add_library(game_runtime STATIC
     src/game/game_runtime.cpp
-    src/game/desktop_runtime_adapter.cpp
     src/game/runtime_session_flow.cpp
 )
+if(ANDROID)
+    target_sources(game_runtime PRIVATE src/game/android_runtime_adapter.cpp src/platform/android/input_android.cpp)
+else()
+    target_sources(game_runtime PRIVATE src/game/desktop_runtime_adapter.cpp)
+endif()
 target_include_directories(game_runtime PUBLIC src)
-target_link_libraries(game_runtime PUBLIC engine platform_desktop)
+target_link_libraries(game_runtime PUBLIC engine)
+if(NOT ANDROID)
+    target_link_libraries(game_runtime PUBLIC platform_desktop)
+endif()
+
+if(ANDROID)
+    add_library(voxov_android SHARED
+        src/game/android_main.cpp
+        ${VOXOV_ANDROID_GLUE_DIR}/android_native_app_glue.c
+    )
+    target_include_directories(voxov_android PRIVATE
+        src
+        dependencies/glm
+        dependencies/cgltf
+        dependencies/enet/include
+        ${VOXOV_ANDROID_GLUE_DIR}
+        ${VOXOV_SOKOL_DIR}
+        ${VOXOV_SOKOL_UTIL_DIR}
+    )
+    target_compile_definitions(voxov_android PRIVATE
+        VOXOV_PLATFORM_ANDROID=1
+        SOKOL_GLES3
+        GLM_ENABLE_EXPERIMENTAL
+    )
+
+    find_library(android_lib android REQUIRED)
+    find_library(log_lib log REQUIRED)
+    find_library(egl_lib EGL REQUIRED)
+    find_library(glesv3_lib GLESv3 REQUIRED)
+    target_link_libraries(voxov_android PRIVATE
+        game_runtime
+        engine
+        sokol_gfx_impl
+        ${android_lib}
+        ${log_lib}
+        ${egl_lib}
+        ${glesv3_lib}
+        enet
+        fmt::fmt
+        spdlog::spdlog
+    )
+    set_target_properties(voxov_android PROPERTIES OUTPUT_NAME "voxov")
+    install(TARGETS voxov_android LIBRARY DESTINATION lib)
+    return()
+endif()
 
 # ── Platform future scaffolds ─────────────────────────────────────────
 set(VOXOV_PLATFORM_FUTURE_SOURCES "")

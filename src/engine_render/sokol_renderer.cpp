@@ -1,8 +1,10 @@
 #include "engine_render/sokol_renderer.hpp"
 
-#include "sokol_app.h"
 #include "sokol_gfx.h"
+#if !defined(VOXOV_PLATFORM_ANDROID)
+#include "sokol_app.h"
 #include "sokol_glue.h"
+#endif
 #include "sokol_log.h"
 
 #include <algorithm>
@@ -239,7 +241,20 @@ bool SokolRenderer::setup_pipelines() {
 
 bool SokolRenderer::init(const RenderDeviceDesc &desc) {
     sg_desc sgdesc = {};
+#if defined(VOXOV_PLATFORM_ANDROID)
+    sgdesc.environment.defaults.color_format =
+        desc.color_format != 0
+            ? static_cast<sg_pixel_format>(desc.color_format)
+            : SG_PIXELFORMAT_RGBA8;
+    sgdesc.environment.defaults.depth_format =
+        desc.depth_format != 0
+            ? static_cast<sg_pixel_format>(desc.depth_format)
+            : SG_PIXELFORMAT_DEPTH_STENCIL;
+    sgdesc.environment.defaults.sample_count =
+        desc.sample_count > 0 ? desc.sample_count : 1;
+#else
     sgdesc.environment = sglue_environment();
+#endif
     sgdesc.logger.func = slog_func;
     sg_setup(&sgdesc);
     if (!sg_isvalid()) {
@@ -475,7 +490,16 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
     }
     sg_pass pass = {};
     pass.action = pass_action_;
+#if defined(VOXOV_PLATFORM_ANDROID)
+    pass.swapchain.width = surface.width;
+    pass.swapchain.height = surface.height;
+    pass.swapchain.sample_count = 1;
+    pass.swapchain.color_format = SG_PIXELFORMAT_RGBA8;
+    pass.swapchain.depth_format = SG_PIXELFORMAT_DEPTH_STENCIL;
+    pass.swapchain.gl.framebuffer = 0;
+#else
     pass.swapchain = sglue_swapchain();
+#endif
     sg_begin_pass(&pass);
 
     const uint32_t view_count = std::max(1u, std::min(ctx.view_count, 2u));

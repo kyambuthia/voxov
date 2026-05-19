@@ -124,9 +124,9 @@ bool aabb_in_frustum(const Frustum &f, glm::vec3 bmin, glm::vec3 bmax) {
     for (int p = 0; p < 6; ++p) {
         const glm::vec4 &pl = f.planes[p];
         const glm::vec3 pv(
-            (pl.x >= 0.0f) ? bmin.x : bmax.x,
-            (pl.y >= 0.0f) ? bmin.y : bmax.y,
-            (pl.z >= 0.0f) ? bmin.z : bmax.z);
+            (pl.x >= 0.0f) ? bmax.x : bmin.x,
+            (pl.y >= 0.0f) ? bmax.y : bmin.y,
+            (pl.z >= 0.0f) ? bmax.z : bmin.z);
         if (glm::dot(glm::vec3(pl), pv) + pl.w < 0.0f) return false;
     }
     return true;

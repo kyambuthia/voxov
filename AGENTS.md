@@ -50,17 +50,47 @@ Verification: Built desktop target and reproduced clean shutdown locally.
 
 ### Verification
 
-Before committing to `trunk`, run the narrowest useful verification for the change. For normal desktop engine work, the default is:
+Before committing to `trunk`, run the narrowest useful verification for the change. The canonical local build layout is:
+
+```text
+build/
+  desktop/main/
+  web/main/
+  android/main/
+```
+
+Keep generated CMake state inside those target-specific directories. Do not configure directly into `build/`, `build/desktop/`, or a root-level `build-web/` directory.
+
+For normal desktop engine work, the default is:
 
 ```bash
+cmake -S . -B build/desktop/main -DVOXOV_BUILD_TESTS=ON -DCMAKE_BUILD_TYPE=Debug
 cmake --build build/desktop/main --parallel
 ctest --test-dir build/desktop/main --output-on-failure
 ```
 
-If the relevant build directory does not exist, configure it first:
+For Web via Emscripten, use the emsdk environment and keep the Emscripten cache writable under the build tree:
 
 ```bash
-cmake -S . -B build/desktop/main -DVOXOV_BUILD_TESTS=ON
+source /usr/local/emsdk/emsdk_env.sh
+export EM_CACHE="$PWD/build/web/main/cache"
+emcmake cmake -S . -B build/web/main -G Ninja -DCMAKE_BUILD_TYPE=Debug
+cmake --build build/web/main --parallel
+test -f build/web/main/bin/voxov_web.html
+```
+
+For Android, prefer `ANDROID_HOME`, then `ANDROID_SDK_ROOT`, then `~/Android/Sdk`; use the NDK CMake toolchain and verify configure at minimum:
+
+```bash
+ANDROID_SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-$HOME/Android/Sdk}}"
+ANDROID_NDK="$ANDROID_SDK/ndk/26.1.10909125"
+cmake -S . -B build/android/main -G Ninja \
+  -DCMAKE_TOOLCHAIN_FILE="$ANDROID_NDK/build/cmake/android.toolchain.cmake" \
+  -DANDROID_ABI=arm64-v8a \
+  -DANDROID_PLATFORM=android-29 \
+  -DCMAKE_BUILD_TYPE=Debug \
+  -DVOXOV_ENABLE_VULKAN=OFF
+cmake --build build/android/main --parallel
 ```
 
 Use platform-specific verification when touching Android, Web, packaging, or CI behavior. If a commit cannot be fully verified locally, say exactly what was verified and what remains unverified in the commit body.

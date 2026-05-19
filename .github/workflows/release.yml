@@ -219,9 +219,70 @@ jobs:
           name: release-android
           path: VOXOV-${{ github.ref_name }}-android-arm64-v8a.apk
 
+  build-web:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake ninja-build python3 gzip
+
+      - name: Setup Emscripten
+        uses: mymindstorm/setup-emsdk@v14
+        with:
+          version: 3.1.61
+
+      - name: Configure
+        run: emcmake cmake -S . -B build/web/release -G Ninja -DCMAKE_BUILD_TYPE=Release
+
+      - name: Build
+        run: cmake --build build/web/release --parallel
+
+      - name: Optimize wasm
+        run: |
+          wasm-opt -Oz build/web/release/bin/voxov_web.wasm -o build/web/release/bin/voxov_web.opt.wasm
+          mv build/web/release/bin/voxov_web.opt.wasm build/web/release/bin/voxov_web.wasm
+
+      - name: Prepare web artifact
+        run: |
+          WEB_DIR="VOXOV-${GITHUB_REF_NAME}-web"
+          mkdir -p "${WEB_DIR}"
+          cp build/web/release/bin/voxov_web.html "${WEB_DIR}/"
+          cp build/web/release/bin/voxov_web.js "${WEB_DIR}/"
+          cp build/web/release/bin/voxov_web.wasm "${WEB_DIR}/"
+          cp build/web/release/bin/voxov_web.data "${WEB_DIR}/"
+          gzip -9 -k "${WEB_DIR}/voxov_web.html"
+          gzip -9 -k "${WEB_DIR}/voxov_web.js"
+          gzip -9 -k "${WEB_DIR}/voxov_web.wasm"
+          gzip -9 -k "${WEB_DIR}/voxov_web.data"
+
+      - name: Validate web artifact
+        run: |
+          WEB_DIR="VOXOV-${GITHUB_REF_NAME}-web"
+          test -f "${WEB_DIR}/voxov_web.html"
+          test -f "${WEB_DIR}/voxov_web.js"
+          test -f "${WEB_DIR}/voxov_web.wasm"
+          test -f "${WEB_DIR}/voxov_web.data"
+          test -f "${WEB_DIR}/voxov_web.html.gz"
+          test -f "${WEB_DIR}/voxov_web.js.gz"
+          test -f "${WEB_DIR}/voxov_web.wasm.gz"
+          test -f "${WEB_DIR}/voxov_web.data.gz"
+
+      - name: Upload web artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-web
+          path: VOXOV-${{ github.ref_name }}-web/*
+
   publish-release:
     runs-on: ubuntu-latest
-    needs: [build-linux, build-windows, build-android]
+    needs: [build-linux, build-windows, build-android, build-web]
 
     steps:
       - name: Download linux artifact
@@ -245,6 +306,13 @@ jobs:
           path: dist/release-windows
           if-no-files-found: error
 
+      - name: Download web artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: release-web
+          path: dist/release-web
+          if-no-files-found: error
+
       - name: Flatten artifacts
         run: |
           mkdir -p release
@@ -254,6 +322,6 @@ jobs:
       - name: Publish GitHub Release
         uses: softprops/action-gh-release@v2
         with:
-          name: VOXOV ${{ github.ref_name }} (Linux/Windows/Android)
+          name: VOXOV ${{ github.ref_name }} (Linux/Windows/Android/Web)
           generate_release_notes: true
           files: release/*

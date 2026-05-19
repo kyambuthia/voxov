@@ -57,7 +57,7 @@ void sync_local_animation_runtime(PlayerEntity &player,
 }
 } // namespace
 
-void Engine::init(const EngineRuntimeOptions &options) {
+bool Engine::init(const EngineRuntimeOptions &options) {
   runtime_options = options;
   session_state_.gameplay_started = true;
   session_state_.menu_open = false;
@@ -84,11 +84,16 @@ void Engine::init(const EngineRuntimeOptions &options) {
                    ? "Sokol"
                    : "OpenGL");
 
-  renderer.init(RendererCreateInfo{
+  if (!renderer.init(RendererCreateInfo{
       .backend = runtime_options.render_backend,
-  });
+  })) {
+    std::fprintf(stderr, "Engine init failed: renderer init failed\n");
+    physics.shutdown();
+    return false;
+  }
   renderer.upload_scene(scene);
   renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
+  return true;
 }
 
 EngineConnectResult Engine::connect(const char *host, uint16_t port) {

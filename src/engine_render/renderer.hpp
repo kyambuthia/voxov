@@ -12,7 +12,7 @@ struct RendererCreateInfo {
 
 class Renderer {
 public:
-    void init(const RendererCreateInfo &info);
+    bool init(const RendererCreateInfo &info);
     void shutdown();
     void upload_scene(const RenderScene &scene);
     void update_dynamic_meshes(const RenderMesh &debug_world,

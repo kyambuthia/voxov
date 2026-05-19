@@ -397,8 +397,11 @@ if(EMSCRIPTEN)
     )
     target_link_options(voxov_web PRIVATE
         "-sUSE_WEBGL2=1" "-sMIN_WEBGL_VERSION=2" "-sMAX_WEBGL_VERSION=2"
-        "-sALLOW_MEMORY_GROWTH=1" "-sSTACK_SIZE=4194304" "-sWASM=1"
+        "-sFULL_ES3=1"
+        "-sALLOW_MEMORY_GROWTH=1" "-sINITIAL_MEMORY=134217728"
+        "-sSTACK_SIZE=4194304" "-sWASM=1"
         "-sFORCE_FILESYSTEM=1"
+        "-sNO_DISABLE_EXCEPTION_CATCHING=1"
         "--preload-file=${CMAKE_SOURCE_DIR}/assets@/assets"
         "--shell-file=${CMAKE_SOURCE_DIR}/assets/web/shell.html"
     )

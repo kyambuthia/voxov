@@ -44,7 +44,7 @@ enum class EngineConnectResult {
 
 class Engine {
 public:
-  void init(const EngineRuntimeOptions &options);
+  bool init(const EngineRuntimeOptions &options);
   EngineConnectResult connect(const char *host, uint16_t port);
   void shutdown();
   void tick(double frame_dt, EngineInputFrame input_frame,

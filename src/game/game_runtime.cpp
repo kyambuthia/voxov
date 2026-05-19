@@ -32,7 +32,9 @@ public:
         platform_adapter = params.platform_adapter;
         EngineRuntimeOptions engine_options = to_engine_options(params.options);
         engine_options.platform_services = params.platform_services;
-        engine.init(engine_options);
+        if (!engine.init(engine_options)) {
+            return false;
+        }
         ui_audio.init();
         gui_menu.set_character(engine.preferred_character());
         sync_session_state();

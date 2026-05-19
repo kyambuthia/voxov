@@ -139,6 +139,12 @@ add_library(engine_math STATIC
 target_include_directories(engine_math PUBLIC src)
 target_link_libraries(engine_math PUBLIC glm::glm)
 
+add_library(engine_events STATIC
+    src/engine_events/event_bus.cpp
+)
+target_include_directories(engine_events PUBLIC src)
+target_link_libraries(engine_events PUBLIC glm::glm)
+
 add_library(engine_net_proto INTERFACE)
 target_include_directories(engine_net_proto INTERFACE src)
 
@@ -295,6 +301,7 @@ target_link_libraries(engine PUBLIC
     engine_assets
     engine_audio
     engine_core
+    engine_events
     engine_gameplay
     engine_math
     engine_net
@@ -512,8 +519,15 @@ if(VOXOV_BUILD_TESTS)
         src/platform/web_platform.cpp
     )
     target_include_directories(voxov_tests PRIVATE src)
-    target_link_libraries(voxov_tests PRIVATE engine engine_math engine_world engine_net engine_net_proto)
+    target_link_libraries(voxov_tests PRIVATE engine engine_events engine_math engine_world engine_net engine_net_proto)
     add_test(NAME voxov_tests COMMAND voxov_tests)
+
+    add_executable(voxov_event_bus_tests
+        src/tests/event_bus_tests.cpp
+    )
+    target_include_directories(voxov_event_bus_tests PRIVATE src)
+    target_link_libraries(voxov_event_bus_tests PRIVATE engine_events)
+    add_test(NAME voxov_event_bus_tests COMMAND voxov_event_bus_tests)
 
     add_executable(voxov_net_stress
         src/tests/net_stress.cpp

@@ -397,7 +397,7 @@ if(EMSCRIPTEN)
     )
     target_link_options(voxov_web PRIVATE
         "-sUSE_WEBGL2=1" "-sMIN_WEBGL_VERSION=2" "-sMAX_WEBGL_VERSION=2"
-        "-sALLOW_MEMORY_GROWTH=1" "-sWASM=1"
+        "-sALLOW_MEMORY_GROWTH=1" "-sSTACK_SIZE=4194304" "-sWASM=1"
         "--shell-file=${CMAKE_SOURCE_DIR}/assets/web/shell.html"
     )
     set_target_properties(voxov_web PROPERTIES OUTPUT_NAME "voxov_web" SUFFIX ".html")

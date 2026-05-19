@@ -279,6 +279,10 @@ bool SokolRenderer::init(const RenderDeviceDesc &desc) {
         };
         tri.indices = {0, 1, 2};
         upload_mesh(debug_triangle_mesh_, tri, false);
+        std::fprintf(stderr, "triangle init: vbuf.id=%d ibuf.id=%d idx_count=%u\n",
+            debug_triangle_mesh_.vertex_buffer.id,
+            debug_triangle_mesh_.index_buffer.id,
+            debug_triangle_mesh_.index_count);
     }
 
     return true;
@@ -475,6 +479,13 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                                   const RenderStats &stats,
                                   const RenderSurface &surface) {
     (void)stats;
+    static int frame_count = 0;
+    if (frame_count < 2) {
+        std::fprintf(stderr, "render_frame #%d: surface=%dx%d views=%u sc_ready=%d\n",
+            frame_count, surface.width, surface.height, ctx.view_count,
+            pipelines_.screen.id != SG_INVALID_ID ? 1 : 0);
+        frame_count++;
+    }
     sg_pass pass = {};
     pass.action = pass_action_;
     pass.swapchain = sglue_swapchain();
@@ -514,6 +525,15 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         // Screen-space overlay
         sg_apply_pipeline(pipelines_.screen);
         draw_mesh(debug_screen_mesh_, glm::mat4(1.0f));
+
+        static int tri_log = 0;
+        if (tri_log < 3) {
+            std::fprintf(stderr, "triangle draw: vbuf.id=%d ibuf.id=%d idx_count=%u\n",
+                debug_triangle_mesh_.vertex_buffer.id,
+                debug_triangle_mesh_.index_buffer.id,
+                debug_triangle_mesh_.index_count);
+            tri_log++;
+        }
         draw_mesh(debug_triangle_mesh_, glm::mat4(1.0f));
     }
 

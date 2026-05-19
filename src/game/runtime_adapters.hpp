@@ -2,6 +2,8 @@
 
 #include "engine_input/input_state.hpp"
 
+struct RenderSurface;
+
 enum class RuntimePlatform {
     Desktop,
     Android,
@@ -23,5 +25,6 @@ public:
 class IRuntimePlatformAdapter {
 public:
     virtual ~IRuntimePlatformAdapter() = default;
+    virtual RenderSurface surface() const = 0;
     virtual bool should_close() const = 0;
 };

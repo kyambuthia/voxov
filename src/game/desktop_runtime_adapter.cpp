@@ -59,6 +59,10 @@ void DesktopRuntimeInputAdapter::set_splitscreen_enabled(bool enabled) {
 DesktopRuntimePlatformAdapter::DesktopRuntimePlatformAdapter(DesktopPlatform &platform)
     : platform_(platform) {}
 
+RenderSurface DesktopRuntimePlatformAdapter::surface() const {
+    return platform_.surface();
+}
+
 bool DesktopRuntimePlatformAdapter::should_close() const {
     return platform_.should_close();
 }

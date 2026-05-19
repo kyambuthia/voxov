@@ -21,6 +21,7 @@ class DesktopRuntimePlatformAdapter : public IRuntimePlatformAdapter {
 public:
     explicit DesktopRuntimePlatformAdapter(DesktopPlatform &platform);
 
+    RenderSurface surface() const override;
     bool should_close() const override;
 
 private:

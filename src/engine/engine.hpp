@@ -18,6 +18,8 @@
 #include "engine_world/voxel_chunk.hpp"
 #include "platform/platform_services.hpp"
 
+#include <string>
+
 struct EngineRuntimeOptions {
   PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
   RenderBackendType render_backend = RenderBackendType::Sokol;
@@ -93,5 +95,7 @@ private:
   EngineRuntimeOptions runtime_options{};
 
   uint64_t frame_index = 0;
+  uint64_t presentation_frame_events_seen_ = 0;
   double last_frame_dt = 0.0;
+  std::string last_hud_message_;
 };

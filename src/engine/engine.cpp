@@ -1,10 +1,14 @@
 #include "engine/engine.hpp"
 
+#include "engine_render/debug_draw/debug_draw.hpp"
+#include "engine_render/debug_text.hpp"
+
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <string>
 
 namespace {
 using PerfClock = std::chrono::steady_clock;
@@ -95,6 +99,18 @@ bool Engine::init(const EngineRuntimeOptions &options) {
         ++jumped_event_count;
         spdlog::debug("PlayerJumpedEvent fixed tick={} player={} count={}",
                       context.tick, event.player_id, jumped_event_count);
+      });
+  event_bus_.subscribe<FrameStartedEvent>(
+      EventPhase::Frame,
+      [this](const FrameStartedEvent &, const EventContext &) {
+        ++presentation_frame_events_seen_;
+      });
+  event_bus_.subscribe<HudMessageEvent>(
+      EventPhase::Frame,
+      [this](const HudMessageEvent &event, const EventContext &) {
+        last_hud_message_ = "HUD message " + std::to_string(event.message_id) +
+                            " (" +
+                            std::to_string(event.duration_seconds) + "s)";
       });
 
   EnginePhysicsSettings settings{};
@@ -310,4 +326,12 @@ void Engine::update_third_person_camera(PlayerEntity &player,
 void Engine::refresh_overlay_text() {
   scene.debug_world = RenderMesh{};
   scene.debug_screen = RenderMesh{};
+  std::string overlay_text =
+      "Frame events: " + std::to_string(presentation_frame_events_seen_);
+  if (!last_hud_message_.empty()) {
+    overlay_text += "\n" + last_hud_message_;
+  }
+  append_mesh(scene.debug_screen,
+              build_screen_text_mesh(overlay_text, -0.92f, 0.90f, 0.0049f,
+                                     glm::vec3(0.95f, 0.95f, 0.82f)));
 }

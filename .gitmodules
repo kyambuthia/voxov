@@ -1,12 +1,6 @@
-[submodule "dependencies/SDL"]
-	path = dependencies/SDL
-	url = https://github.com/libsdl-org/SDL
 [submodule "dependencies/JoltPhysics"]
 	path = dependencies/JoltPhysics
 	url = https://github.com/jrouwe/JoltPhysics.git
-[submodule "dependencies/glfw"]
-	path = dependencies/glfw
-	url = https://github.com/glfw/glfw.git
 [submodule "dependencies/enet"]
 	path = dependencies/enet
 	url = https://github.com/lsalzman/enet.git
@@ -16,15 +10,9 @@
 [submodule "dependencies/spdlog"]
 	path = dependencies/spdlog
 	url = https://github.com/gabime/spdlog.git
-[submodule "dependencies/VulkanMemoryAllocator"]
-	path = dependencies/VulkanMemoryAllocator
-	url = https://github.com/GPUOpen-LibrariesAndSDKs/VulkanMemoryAllocator.git
 [submodule "dependencies/glm"]
 	path = dependencies/glm
 	url = https://github.com/g-truc/glm.git
-[submodule "dependencies/imgui"]
-	path = dependencies/imgui
-	url = https://github.com/ocornut/imgui.git
 [submodule "dependencies/sokol"]
 	path = dependencies/sokol
 	url = https://github.com/floooh/sokol.git

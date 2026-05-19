@@ -616,6 +616,7 @@ struct AndroidRenderer {
     GpuMesh capsule_gpu{};
     GpuMesh remote_players_gpu{};
     GpuMesh ui_text_gpu{};
+    GpuMesh debug_triangle_gpu{};
 
     VoxelChunk world{};
     NetChunkState streamed_world_state = net_make_flat_chunk_state(NetChunkCoord{});
@@ -1508,6 +1509,7 @@ struct AndroidRenderer {
         destroy_mesh(capsule_gpu);
         destroy_mesh(remote_players_gpu);
         destroy_mesh(ui_text_gpu);
+        destroy_mesh(debug_triangle_gpu);
         if (program != 0) {
             glDeleteProgram(program);
             program = 0;
@@ -1845,6 +1847,18 @@ struct AndroidRenderer {
         terrain_gpu = upload_mesh(terrain_mesh);
         grid_gpu = upload_mesh(grid_mesh);
         rebuild_player_visual_mesh();
+
+        // Debug triangle (screen-space, always visible)
+        {
+            RenderMesh tri;
+            tri.vertices = {
+                {glm::vec3(-0.5f, -0.4f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f)},
+                {glm::vec3( 0.5f, -0.4f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f)},
+                {glm::vec3( 0.0f,  0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f)},
+            };
+            tri.indices = {0, 1, 2};
+            debug_triangle_gpu = upload_mesh(tri);
+        }
 
         clock_gettime(CLOCK_MONOTONIC, &last_time);
         has_last_time = true;
@@ -2396,6 +2410,10 @@ struct AndroidRenderer {
         draw_mesh(capsule_gpu, mvp * capsule_model);
         draw_mesh(remote_players_gpu, mvp);
         draw_ui_overlay();
+
+        glDisable(GL_DEPTH_TEST);
+        draw_mesh(debug_triangle_gpu, glm::mat4(1.0f));
+        glEnable(GL_DEPTH_TEST);
 
         if (eglSwapBuffers(display, surface) == EGL_FALSE) {
             __android_log_print(ANDROID_LOG_ERROR, kLogTag, "eglSwapBuffers failed: %s", egl_error_to_string(eglGetError()));

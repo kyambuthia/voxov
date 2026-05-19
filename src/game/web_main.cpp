@@ -95,6 +95,7 @@ struct WebAppState {
     GLint u_mvp = -1;
     SceneMeshGpu ground_mesh{};
     SceneMeshGpu player_mesh{};
+    SceneMeshGpu debug_triangle{};
     bool scene_ready = false;
 };
 
@@ -261,6 +262,17 @@ bool init_scene_resources(WebAppState &state) {
         3, 0, 4, 3, 4, 7, // side
     };
     state.player_mesh = upload_scene_mesh(player_vertices, player_indices);
+
+    // Debug triangle (screen-space, always visible)
+    {
+        const std::vector<SceneVertex> tri_vertices{
+            {-0.5f, -0.4f, 0.0f, 1.0f, 0.0f, 0.0f},
+            { 0.5f, -0.4f, 0.0f, 0.0f, 1.0f, 0.0f},
+            { 0.0f,  0.5f, 0.0f, 0.0f, 0.0f, 1.0f},
+        };
+        const std::vector<uint16_t> tri_indices{0, 1, 2};
+        state.debug_triangle = upload_scene_mesh(tri_vertices, tri_indices);
+    }
 
     state.scene_ready =
         state.ground_mesh.vao != 0 &&
@@ -457,6 +469,14 @@ void tick(void *arg) {
             state->scene_program,
             state->u_mvp,
             proj * view * glm::translate(glm::mat4(1.0f), player_position));
+
+        glDisable(GL_DEPTH_TEST);
+        draw_scene_mesh(
+            state->debug_triangle,
+            state->scene_program,
+            state->u_mvp,
+            glm::mat4(1.0f));
+        glEnable(GL_DEPTH_TEST);
     }
 
     update_web_overlay(build_overlay_text(*state));

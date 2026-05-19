@@ -101,24 +101,6 @@ glm::quat facing_from_velocity(glm::vec3 velocity, const glm::quat &fallback) {
   return glm::angleAxis(yaw, glm::vec3(0.0f, 1.0f, 0.0f));
 }
 
-bool try_load_character_model(const PlatformServices &platform_services,
-                              SkinnedModel &model, const char *label,
-                              const char *filename, bool &out_loaded) {
-  std::string load_error;
-  const std::string relative_path =
-      std::string("assets/models/player/") + filename;
-  for (const std::string &path :
-       platform_services.candidate_asset_paths(relative_path)) {
-    if (model.load_from_glb(path, load_error)) {
-      out_loaded = true;
-      spdlog::info("Loaded {} player model from {}", label, path);
-      return true;
-    }
-  }
-  spdlog::warn("{} player model not loaded: {}", label, load_error);
-  return false;
-}
-
 void sync_local_animation_runtime(PlayerEntity &player,
                                   PlayerAnimationRuntime &runtime, float dt) {
   if (runtime.state() != player.anim_state) {
@@ -288,8 +270,6 @@ void Engine::init(const EngineRuntimeOptions &options) {
                local_player.transform.position.y,
                local_player.transform.position.z);
 
-  try_load_character_model(platform_services, humanoid_player_model, "humanoid",
-                           "CesiumMan.glb", has_humanoid_player_model);
   session_state_.selected_character = preferred_character();
 
   try {
@@ -442,8 +422,7 @@ void Engine::reset_camera() {
 }
 
 GuiMenu::Character Engine::preferred_character() const {
-  return has_humanoid_player_model ? GuiMenu::Character::Humanoid
-                                   : GuiMenu::Character::Capsule;
+  return GuiMenu::Character::Capsule;
 }
 
 void Engine::shutdown() {
@@ -1834,10 +1813,6 @@ RuntimeDebugSceneSnapshot Engine::build_debug_scene_snapshot() const {
   snapshot.spherical_planet = runtime_options.spherical_planet;
   snapshot.render_skeleton_only =
       session_state_.selected_character == GuiMenu::Character::Skeleton;
-  if (session_state_.selected_character == GuiMenu::Character::Humanoid &&
-      has_humanoid_player_model) {
-    snapshot.selected_player_model = &humanoid_player_model;
-  }
 
   snapshot.collision_world = &collision_world;
   snapshot.local_player = &local_player;

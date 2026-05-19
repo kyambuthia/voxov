@@ -187,8 +187,6 @@ private:
   EngineSessionState session_state_{};
   DebugSceneBuilder debug_scene_builder;
   HudComposer hud_composer;
-  SkinnedModel humanoid_player_model;
-  bool has_humanoid_player_model = false;
   PlayerAnimationRuntime local_player_animation;
   PlayerAnimationRuntime local_player_secondary_animation;
   EngineRuntimeOptions runtime_options{};

@@ -33,9 +33,6 @@ cmake_install.cmake
 *.vcxproj
 *.vcxproj.user
 
-# Dear ImGui local state
-imgui.ini
-
 # Hermes agent working files
 .hermes/
 

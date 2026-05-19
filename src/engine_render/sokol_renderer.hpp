@@ -32,6 +32,20 @@ struct SokolPipelines {
     sg_pipeline screen{};
 };
 
+struct SokolDirectionalLight {
+    glm::vec3 direction{0.318f, 0.848f, 0.424f};
+    glm::vec3 ambient{0.28f, 0.34f, 0.48f};
+    glm::vec3 diffuse{1.0f, 0.88f, 0.62f};
+    glm::vec3 specular{0.55f, 0.58f, 0.65f};
+};
+
+struct SokolMaterial {
+    glm::vec3 ambient{1.0f, 1.0f, 1.0f};
+    glm::vec3 diffuse{1.0f, 1.0f, 1.0f};
+    glm::vec3 specular{0.32f, 0.32f, 0.34f};
+    float shininess = 32.0f;
+};
+
 class SokolRenderer final : public IRenderBackend {
 public:
     bool init(const RenderDeviceDesc &desc) override;
@@ -46,7 +60,10 @@ public:
 private:
     void upload_mesh(SokolGpuMesh &dst, const RenderMesh &src, bool stream);
     void destroy_mesh(SokolGpuMesh &mesh);
-    void draw_mesh(const SokolGpuMesh &mesh, const glm::mat4 &mvp);
+    void draw_mesh(const SokolGpuMesh &mesh,
+                   const glm::mat4 &mvp,
+                   const glm::mat4 &model,
+                   const glm::vec3 &camera_pos);
 
     bool setup_pipelines();
 
@@ -56,6 +73,8 @@ private:
     SokolGpuMesh debug_screen_mesh_{};
     std::unordered_map<uint64_t, SokolGpuMesh> cached_meshes_;
     sg_pass_action pass_action_{};
+    SokolDirectionalLight light_{};
+    SokolMaterial material_{};
 
     // Hash tokens for O(1) change detection on dynamic meshes.
     uint64_t last_debug_world_hash_ = 0;

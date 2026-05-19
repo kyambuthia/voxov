@@ -14,6 +14,7 @@
 #include <vector>
 
 #include <glm/gtc/type_ptr.hpp>
+#include <glm/vec4.hpp>
 
 // ---------------------------------------------------------------------------
 // Shader — inline GLSL for Phase 1 smoke-test.  Production path is
@@ -24,21 +25,38 @@
 static const char *kSceneVsSrc = R"(
     #version 330
     uniform mat4 mvp;
+    uniform mat4 model;
     layout(location=0) in vec3 position;
     layout(location=1) in vec3 color0;
     layout(location=2) in vec3 normal;
     out vec3 v_color;
     out vec3 v_normal;
+    out vec3 v_world_pos;
     void main() {
+        vec4 world_pos = model * vec4(position, 1.0);
+        mat4 normal_model = model;
+        normal_model[3] = vec4(0.0, 0.0, 0.0, 1.0);
+
         v_color = color0;
-        v_normal = normal;
+        v_normal = mat3(normal_model) * normal;
+        v_world_pos = world_pos.xyz;
         gl_Position = mvp * vec4(position, 1.0);
     }
 )";
 static const char *kSceneFsSrc = R"(
     #version 330
+    uniform vec3 light_direction;
+    uniform vec3 light_ambient;
+    uniform vec3 light_diffuse;
+    uniform vec3 light_specular;
+    uniform vec3 material_ambient;
+    uniform vec3 material_diffuse;
+    uniform vec3 material_specular;
+    uniform float material_shininess;
+    uniform vec3 camera_pos;
     in vec3 v_color;
     in vec3 v_normal;
+    in vec3 v_world_pos;
     out vec4 frag_color;
     void main() {
         float normal_len2 = dot(v_normal, v_normal);
@@ -46,32 +64,60 @@ static const char *kSceneFsSrc = R"(
             frag_color = vec4(v_color, 1.0);
             return;
         }
+
         vec3 n = normalize(v_normal);
-        float ndl = clamp(dot(n, normalize(vec3(0.3, 0.8, 0.4))), 0.0, 1.0);
-        float stepped = floor(ndl * 4.0) / 4.0;
-        float rim = pow(1.0 - max(dot(n, vec3(0.0, 0.0, 1.0)), 0.0), 2.0);
-        vec3 base = v_color * (0.5 + 0.5 * stepped);
-        frag_color = vec4(base + rim * 0.15, 1.0);
+        vec3 l = normalize(light_direction);
+        vec3 v = normalize(camera_pos - v_world_pos);
+        vec3 h = normalize(l + v);
+
+        float ndl = max(dot(n, l), 0.0);
+        float ndh = max(dot(n, h), 0.0);
+        float spec_norm = (material_shininess + 8.0) * 0.0397887358;
+        float spec_factor = spec_norm * pow(ndh, material_shininess) * ndl;
+
+        vec3 ambient = light_ambient * material_ambient;
+        vec3 diffuse = light_diffuse * material_diffuse * ndl;
+        vec3 specular = light_specular * material_specular * spec_factor;
+        vec3 lit = ambient + diffuse + specular;
+
+        frag_color = vec4(v_color * lit, 1.0);
     }
 )";
 #elif defined(SOKOL_GLES3)
 static const char *kSceneVsSrc = R"(#version 300 es
     uniform mat4 mvp;
+    uniform mat4 model;
     layout(location=0) in vec3 position;
     layout(location=1) in vec3 color0;
     layout(location=2) in vec3 normal;
     out vec3 v_color;
     out vec3 v_normal;
+    out vec3 v_world_pos;
     void main() {
+        vec4 world_pos = model * vec4(position, 1.0);
+        mat4 normal_model = model;
+        normal_model[3] = vec4(0.0, 0.0, 0.0, 1.0);
+
         v_color = color0;
-        v_normal = normal;
+        v_normal = mat3(normal_model) * normal;
+        v_world_pos = world_pos.xyz;
         gl_Position = mvp * vec4(position, 1.0);
     }
 )";
 static const char *kSceneFsSrc = R"(#version 300 es
     precision mediump float;
+    uniform vec3 light_direction;
+    uniform vec3 light_ambient;
+    uniform vec3 light_diffuse;
+    uniform vec3 light_specular;
+    uniform vec3 material_ambient;
+    uniform vec3 material_diffuse;
+    uniform vec3 material_specular;
+    uniform float material_shininess;
+    uniform vec3 camera_pos;
     in vec3 v_color;
     in vec3 v_normal;
+    in vec3 v_world_pos;
     out vec4 frag_color;
     void main() {
         float normal_len2 = dot(v_normal, v_normal);
@@ -79,12 +125,23 @@ static const char *kSceneFsSrc = R"(#version 300 es
             frag_color = vec4(v_color, 1.0);
             return;
         }
+
         vec3 n = normalize(v_normal);
-        float ndl = clamp(dot(n, normalize(vec3(0.3, 0.8, 0.4))), 0.0, 1.0);
-        float stepped = floor(ndl * 4.0) / 4.0;
-        float rim = pow(1.0 - max(dot(n, vec3(0.0, 0.0, 1.0)), 0.0), 2.0);
-        vec3 base = v_color * (0.5 + 0.5 * stepped);
-        frag_color = vec4(base + rim * 0.15, 1.0);
+        vec3 l = normalize(light_direction);
+        vec3 v = normalize(camera_pos - v_world_pos);
+        vec3 h = normalize(l + v);
+
+        float ndl = max(dot(n, l), 0.0);
+        float ndh = max(dot(n, h), 0.0);
+        float spec_norm = (material_shininess + 8.0) * 0.0397887358;
+        float spec_factor = spec_norm * pow(ndh, material_shininess) * ndl;
+
+        vec3 ambient = light_ambient * material_ambient;
+        vec3 diffuse = light_diffuse * material_diffuse * ndl;
+        vec3 specular = light_specular * material_specular * spec_factor;
+        vec3 lit = ambient + diffuse + specular;
+
+        frag_color = vec4(v_color * lit, 1.0);
     }
 )";
 #else
@@ -135,7 +192,22 @@ bool aabb_in_frustum(const Frustum &f, glm::vec3 bmin, glm::vec3 bmax) {
 // M4x4 → sg_range for uniform upload
 struct vs_params_t {
     glm::mat4 mvp;
+    glm::mat4 model;
 };
+
+struct fs_params_t {
+    glm::vec4 light_direction;
+    glm::vec4 light_ambient;
+    glm::vec4 light_diffuse;
+    glm::vec4 light_specular;
+    glm::vec4 material_ambient;
+    glm::vec4 material_diffuse;
+    glm::vec4 material_specular_shininess;
+    glm::vec4 camera_pos;
+};
+
+static_assert(sizeof(vs_params_t) == 128);
+static_assert(sizeof(fs_params_t) == 128);
 
 } // namespace
 
@@ -157,13 +229,48 @@ bool SokolRenderer::setup_pipelines() {
     shd_desc.vertex_func.source = kSceneVsSrc;
     shd_desc.fragment_func.source = kSceneFsSrc;
 
-    // Uniform block: one mat4 mvp at binding 0.
+    // Uniform block 0: vertex transforms.
     shd_desc.uniform_blocks[0].stage = SG_SHADERSTAGE_VERTEX;
     shd_desc.uniform_blocks[0].size = sizeof(vs_params_t);
-    shd_desc.uniform_blocks[0].layout = SG_UNIFORMLAYOUT_NATIVE;
+    shd_desc.uniform_blocks[0].layout = SG_UNIFORMLAYOUT_STD140;
     shd_desc.uniform_blocks[0].glsl_uniforms[0].glsl_name = "mvp";
     shd_desc.uniform_blocks[0].glsl_uniforms[0].type = SG_UNIFORMTYPE_MAT4;
     shd_desc.uniform_blocks[0].glsl_uniforms[0].array_count = 1;
+    shd_desc.uniform_blocks[0].glsl_uniforms[1].glsl_name = "model";
+    shd_desc.uniform_blocks[0].glsl_uniforms[1].type = SG_UNIFORMTYPE_MAT4;
+    shd_desc.uniform_blocks[0].glsl_uniforms[1].array_count = 1;
+
+    // Uniform block 1: fragment light, material, and view state.
+    shd_desc.uniform_blocks[1].stage = SG_SHADERSTAGE_FRAGMENT;
+    shd_desc.uniform_blocks[1].size = sizeof(fs_params_t);
+    shd_desc.uniform_blocks[1].layout = SG_UNIFORMLAYOUT_STD140;
+    shd_desc.uniform_blocks[1].glsl_uniforms[0].glsl_name = "light_direction";
+    shd_desc.uniform_blocks[1].glsl_uniforms[0].type = SG_UNIFORMTYPE_FLOAT3;
+    shd_desc.uniform_blocks[1].glsl_uniforms[0].array_count = 1;
+    shd_desc.uniform_blocks[1].glsl_uniforms[1].glsl_name = "light_ambient";
+    shd_desc.uniform_blocks[1].glsl_uniforms[1].type = SG_UNIFORMTYPE_FLOAT3;
+    shd_desc.uniform_blocks[1].glsl_uniforms[1].array_count = 1;
+    shd_desc.uniform_blocks[1].glsl_uniforms[2].glsl_name = "light_diffuse";
+    shd_desc.uniform_blocks[1].glsl_uniforms[2].type = SG_UNIFORMTYPE_FLOAT3;
+    shd_desc.uniform_blocks[1].glsl_uniforms[2].array_count = 1;
+    shd_desc.uniform_blocks[1].glsl_uniforms[3].glsl_name = "light_specular";
+    shd_desc.uniform_blocks[1].glsl_uniforms[3].type = SG_UNIFORMTYPE_FLOAT3;
+    shd_desc.uniform_blocks[1].glsl_uniforms[3].array_count = 1;
+    shd_desc.uniform_blocks[1].glsl_uniforms[4].glsl_name = "material_ambient";
+    shd_desc.uniform_blocks[1].glsl_uniforms[4].type = SG_UNIFORMTYPE_FLOAT3;
+    shd_desc.uniform_blocks[1].glsl_uniforms[4].array_count = 1;
+    shd_desc.uniform_blocks[1].glsl_uniforms[5].glsl_name = "material_diffuse";
+    shd_desc.uniform_blocks[1].glsl_uniforms[5].type = SG_UNIFORMTYPE_FLOAT3;
+    shd_desc.uniform_blocks[1].glsl_uniforms[5].array_count = 1;
+    shd_desc.uniform_blocks[1].glsl_uniforms[6].glsl_name = "material_specular";
+    shd_desc.uniform_blocks[1].glsl_uniforms[6].type = SG_UNIFORMTYPE_FLOAT3;
+    shd_desc.uniform_blocks[1].glsl_uniforms[6].array_count = 1;
+    shd_desc.uniform_blocks[1].glsl_uniforms[7].glsl_name = "material_shininess";
+    shd_desc.uniform_blocks[1].glsl_uniforms[7].type = SG_UNIFORMTYPE_FLOAT;
+    shd_desc.uniform_blocks[1].glsl_uniforms[7].array_count = 1;
+    shd_desc.uniform_blocks[1].glsl_uniforms[8].glsl_name = "camera_pos";
+    shd_desc.uniform_blocks[1].glsl_uniforms[8].type = SG_UNIFORMTYPE_FLOAT3;
+    shd_desc.uniform_blocks[1].glsl_uniforms[8].array_count = 1;
 
     // Vertex attributes: position(0) float3, color0(1) float3, normal(2) float3.
     shd_desc.attrs[0].glsl_name = "position";
@@ -392,14 +499,33 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
 // Draw
 // ---------------------------------------------------------------------------
 
-void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh, const glm::mat4 &mvp) {
+void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
+                              const glm::mat4 &mvp,
+                              const glm::mat4 &model,
+                              const glm::vec3 &camera_pos) {
     if (!mesh.vertex_buffer.id || !mesh.index_buffer.id || mesh.index_count == 0) {
         return;
     }
 
-    const vs_params_t vs_params = { .mvp = mvp };
+    const vs_params_t vs_params = {
+        .mvp = mvp,
+        .model = model,
+    };
+    const fs_params_t fs_params = {
+        .light_direction = glm::vec4(light_.direction, 0.0f),
+        .light_ambient = glm::vec4(light_.ambient, 0.0f),
+        .light_diffuse = glm::vec4(light_.diffuse, 0.0f),
+        .light_specular = glm::vec4(light_.specular, 0.0f),
+        .material_ambient = glm::vec4(material_.ambient, 0.0f),
+        .material_diffuse = glm::vec4(material_.diffuse, 0.0f),
+        .material_specular_shininess =
+            glm::vec4(material_.specular, material_.shininess),
+        .camera_pos = glm::vec4(camera_pos, 0.0f),
+    };
     const sg_range vs_range = SG_RANGE(vs_params);
+    const sg_range fs_range = SG_RANGE(fs_params);
     sg_apply_uniforms(0, &vs_range);
+    sg_apply_uniforms(1, &fs_range);
     sg_bindings bind = {};
     bind.vertex_buffers[0] = mesh.vertex_buffer;
     bind.index_buffer = mesh.index_buffer;
@@ -511,25 +637,27 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         sg_apply_viewport(vx, vy, vw, vh, true);
         const glm::mat4 p = view.camera.projection(static_cast<float>(vw) / static_cast<float>(vh));
         const glm::mat4 vp = p * view.camera.view();
+        const glm::mat4 model = glm::mat4(1.0f);
+        const glm::vec3 camera_pos = view.camera.transform.position;
 
         // Opaque geometry
         sg_apply_pipeline(pipelines_.opaque);
-        draw_mesh(transient_mesh_, vp);
+        draw_mesh(transient_mesh_, vp, model, camera_pos);
 
         const Frustum frustum = extract_frustum(vp);
         for (const auto &[id, mesh] : cached_meshes_) {
             if (aabb_in_frustum(frustum, mesh.bounds_min, mesh.bounds_max)) {
-                draw_mesh(mesh, vp);
+                draw_mesh(mesh, vp, model, camera_pos);
             }
         }
 
         // Debug world (x-ray or normal)
         sg_apply_pipeline(ctx.debug_xray ? pipelines_.debug_xray : pipelines_.opaque);
-        draw_mesh(debug_world_mesh_, vp);
+        draw_mesh(debug_world_mesh_, vp, model, camera_pos);
 
         // Screen-space overlay
         sg_apply_pipeline(pipelines_.screen);
-        draw_mesh(debug_screen_mesh_, glm::mat4(1.0f));
+        draw_mesh(debug_screen_mesh_, glm::mat4(1.0f), model, camera_pos);
     }
 
     sg_end_pass();

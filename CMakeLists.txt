@@ -48,7 +48,6 @@ if(ANDROID)
 
     add_library(voxov_android SHARED
         src/game/android_main.cpp
-        src/platform/sokol/sokol_impl.cpp
         src/engine_runtime/runtime_session_controller.cpp
         src/platform/platform_services.cpp
         src/platform/android_platform.cpp
@@ -80,14 +79,10 @@ if(ANDROID)
         dependencies/glm
         dependencies/cgltf
         dependencies/enet/include
-        ${VOXOV_SOKOL_DIR}
-        ${VOXOV_SOKOL_UTIL_DIR}
         ${VOXOV_ANDROID_GLUE_DIR}
     )
     target_compile_definitions(voxov_android PRIVATE
         VOXOV_PLATFORM_ANDROID=1
-        SOKOL_GLES3
-        VOXOV_HAS_RENDER_SOKOL=1
         GLM_ENABLE_EXPERIMENTAL
     )
 

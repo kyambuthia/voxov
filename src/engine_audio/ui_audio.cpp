@@ -1,5 +1,15 @@
 #include "engine_audio/ui_audio.hpp"
 
+#if defined(VOXOV_PLATFORM_ANDROID)
+
+// Android uses its own audio path. Stub out sokol audio.
+bool UiAudio::init()     { return false; }
+void UiAudio::shutdown() {}
+void UiAudio::play_move() {}
+void UiAudio::play_click() {}
+
+#else
+
 #include "sokol_audio.h"
 #include "sokol_log.h"
 
@@ -121,3 +131,5 @@ void UiAudio::play_click() {
     }
     start_voice(impl->state.click, 980.0f, impl->state.sample_rate / 24);
 }
+
+#endif

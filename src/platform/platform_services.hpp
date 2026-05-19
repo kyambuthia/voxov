@@ -11,6 +11,7 @@ public:
     PlatformServices() = default;
 
     static PlatformServices desktop_default();
+    static PlatformServices web();
     static PlatformServices android(const char *internal_data_path);
 
     std::filesystem::path session_state_path() const;

@@ -104,6 +104,8 @@ std::filesystem::path executable_directory() {
     return fs::path(std::string(path.data(), len)).parent_path();
   }
   return fs::path(".");
+#elif defined(__EMSCRIPTEN__)
+  return fs::path("/");
 #elif defined(__linux__)
   std::array<char, 4096> path{};
   const ssize_t len = readlink("/proc/self/exe", path.data(), path.size() - 1);

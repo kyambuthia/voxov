@@ -142,7 +142,7 @@ void voxov_init() {
     g_runtime = new GameRuntime();
     g_runtime_platform = new WebRuntimePlatformAdapter(*g_platform);
     g_runtime_input = new WebRuntimeInputAdapter(*g_platform);
-    g_platform_services = new PlatformServices(PlatformServices::desktop_default());
+    g_platform_services = new PlatformServices(PlatformServices::web());
 
     GameRuntimeInitParams init_params{};
     init_params.platform = RuntimePlatform::Web;

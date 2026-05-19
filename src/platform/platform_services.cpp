@@ -25,6 +25,8 @@ fs::path executable_directory() {
         return fs::path(std::string(path.data(), len)).parent_path();
     }
     return fs::path(".");
+#elif defined(__EMSCRIPTEN__)
+    return fs::path("/");
 #elif defined(__linux__)
     std::array<char, 4096> path{};
     const ssize_t len = readlink("/proc/self/exe", path.data(), path.size() - 1);
@@ -96,6 +98,16 @@ PlatformServices PlatformServices::desktop_default() {
         exe_dir / "save",
         exe_dir / "tmp",
         std::move(asset_roots));
+}
+
+PlatformServices PlatformServices::web() {
+    return PlatformServices(
+        fs::path("/save"),
+        fs::path("/tmp"),
+        std::vector<fs::path>{
+            fs::path("/"),
+            fs::path("."),
+        });
 }
 
 PlatformServices PlatformServices::android(const char *internal_data_path) {

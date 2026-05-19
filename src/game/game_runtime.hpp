@@ -7,7 +7,7 @@
 
 #include <memory>
 
-struct PlatformServices;
+class PlatformServices;
 
 struct GameRuntimeOptions {
     PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;

@@ -59,8 +59,8 @@ void sync_local_animation_runtime(PlayerEntity &player,
 
 void Engine::init(const EngineRuntimeOptions &options) {
   runtime_options = options;
-  session_state_.gameplay_started = false;
-  session_state_.menu_open = true;
+  session_state_.gameplay_started = true;
+  session_state_.menu_open = false;
   session_state_.selected_character = GuiMenu::Character::Capsule;
 
   platform_services = runtime_options.platform_services != nullptr

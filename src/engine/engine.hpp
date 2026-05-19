@@ -80,6 +80,10 @@ private:
   EventBus event_bus_;
   PhysicsWorld physics;
   uint64_t collision_count_ = 0;
+  uint32_t net_events_seen_ = 0;
+  std::string last_net_status_;
+  NetClientConnectionState last_net_connection_state_ =
+      NetClientConnectionState::Disconnected;
 
   VoxelChunk world_chunk;
   VoxelCollisionWorld collision_world{nullptr};

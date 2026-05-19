@@ -117,6 +117,18 @@ bool Engine::init(const EngineRuntimeOptions &options) {
                             " (" +
                             std::to_string(event.duration_seconds) + "s)";
       });
+  event_bus_.subscribe<NetworkClientConnectedEvent>(
+      EventPhase::Frame,
+      [this](const NetworkClientConnectedEvent &, const EventContext &) {
+        ++net_events_seen_;
+        last_net_status_ = "Connected";
+      });
+  event_bus_.subscribe<NetworkClientDisconnectedEvent>(
+      EventPhase::Frame,
+      [this](const NetworkClientDisconnectedEvent &, const EventContext &) {
+        ++net_events_seen_;
+        last_net_status_ = "Disconnected";
+      });
 
   EnginePhysicsSettings settings{};
   settings.solver_backend = runtime_options.physics_backend;
@@ -219,6 +231,20 @@ void Engine::tick(double frame_dt,
             });
           }};
   game_session.advance(frame_dt, callbacks);
+
+  const RuntimeSessionSnapshot snapshot = session_snapshot();
+  if (snapshot.connection_state != last_net_connection_state_) {
+    if (snapshot.connection_state == NetClientConnectionState::Connected) {
+      event_bus_.enqueue_frame(NetworkClientConnectedEvent{.client_id = 0});
+    } else if (snapshot.connection_state ==
+               NetClientConnectionState::Disconnected) {
+      event_bus_.enqueue_frame(NetworkClientDisconnectedEvent{
+          .client_id = 0,
+          .reason = 0,
+      });
+    }
+    last_net_connection_state_ = snapshot.connection_state;
+  }
 
   input_frame.primary.jump_pressed = false;
   input_frame.primary.interact_pressed = false;
@@ -343,7 +369,9 @@ void Engine::refresh_overlay_text() {
   scene.debug_screen = RenderMesh{};
   std::string overlay_text =
       "Frame events: " + std::to_string(presentation_frame_events_seen_) +
-      "\nCollisions: " + std::to_string(collision_count_);
+      "\nCollisions: " + std::to_string(collision_count_) +
+      "\nNetwork events: " + std::to_string(net_events_seen_) +
+      "\nNetwork status: " + last_net_status_;
   if (!last_hud_message_.empty()) {
     overlay_text += "\n" + last_hud_message_;
   }

@@ -55,8 +55,7 @@ static const char *kSceneFsSrc = R"(
     }
 )";
 #elif defined(SOKOL_GLES3)
-static const char *kSceneVsSrc = R"(
-    #version 300 es
+static const char *kSceneVsSrc = R"(#version 300 es
     uniform mat4 mvp;
     layout(location=0) in vec3 position;
     layout(location=1) in vec3 color0;
@@ -69,8 +68,7 @@ static const char *kSceneVsSrc = R"(
         gl_Position = mvp * vec4(position, 1.0);
     }
 )";
-static const char *kSceneFsSrc = R"(
-    #version 300 es
+static const char *kSceneFsSrc = R"(#version 300 es
     precision mediump float;
     in vec3 v_color;
     in vec3 v_normal;

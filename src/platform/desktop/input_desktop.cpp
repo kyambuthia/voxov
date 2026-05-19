@@ -12,6 +12,7 @@ void DesktopInputBackend::set_pointer_lock(bool enabled) {
         return;
     }
     pointer_locked = enabled;
+    platform_.set_mouse_lock(enabled);
     mouse_initialized = false;
 }
 
@@ -19,18 +20,16 @@ InputState DesktopInputBackend::poll() {
     const PlatformInputSnapshot &snap = platform_.input();
     InputState out{};
 
-    const bool rmb_down = snap.mouse_down.test(1); // GLFW_MOUSE_BUTTON_RIGHT
+    const bool rmb_down = snap.mouse_down.test(1); // SAPP_MOUSEBUTTON_RIGHT
+    const bool any_mouse_down = snap.mouse_down.any();
     const bool rmb_pressed = rmb_down && !prev_rmb_down;
     prev_rmb_down = rmb_down;
 
-    if (rmb_pressed) {
+    if (rmb_pressed || any_mouse_down) {
         look_capture_enabled = true;
     }
-    if (!rmb_down) {
-        look_capture_enabled = false;
-    }
 
-    const bool active_look_mode = snap.focused && rmb_down && look_capture_enabled;
+    const bool active_look_mode = snap.focused && look_capture_enabled;
     set_pointer_lock(active_look_mode);
     out.look_mode = active_look_mode;
     out.rmb_down = rmb_down;

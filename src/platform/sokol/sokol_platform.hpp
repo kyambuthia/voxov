@@ -36,6 +36,7 @@ public:
     bool is_fullscreen() const override { return fullscreen_; }
     void toggle_fullscreen() override;
     bool should_close() const override;
+    void set_mouse_lock(bool enabled);
 
     // ── Legacy query helpers (kept for incremental migration) ────────
     // Prefer platform.input() for new code.
@@ -49,6 +50,7 @@ private:
     PlatformInputSnapshot input_{};
     bool fullscreen_ = false;
     bool should_close_ = false;
+    bool mouse_locked_ = false;
 };
 
 /// Global accessor used by sokol_app callbacks (which are C function pointers

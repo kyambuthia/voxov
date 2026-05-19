@@ -92,8 +92,8 @@ void DesktopPlatform::process_event(const sapp_event &event) {
         const double new_x = event.mouse_x;
         const double new_y = event.mouse_y;
         // Accumulate deltas across multiple move events per frame
-        input_.mouse_delta.x += static_cast<float>(new_x - input_.mouse_pos.x);
-        input_.mouse_delta.y += static_cast<float>(new_y - input_.mouse_pos.y);
+        input_.mouse_delta.x += event.mouse_dx;
+        input_.mouse_delta.y += event.mouse_dy;
         input_.mouse_pos.x = static_cast<float>(new_x);
         input_.mouse_pos.y = static_cast<float>(new_y);
         break;
@@ -145,6 +145,14 @@ void DesktopPlatform::set_fullscreen(bool enabled) {
 void DesktopPlatform::toggle_fullscreen() {
     sapp_toggle_fullscreen();
     fullscreen_ = !fullscreen_;
+}
+
+void DesktopPlatform::set_mouse_lock(bool enabled) {
+    if (mouse_locked_ == enabled) {
+        return;
+    }
+    mouse_locked_ = enabled;
+    sapp_lock_mouse(enabled);
 }
 
 // ── Legacy query helpers (bridge for incremental migration) ───────────

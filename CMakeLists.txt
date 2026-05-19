@@ -157,6 +157,7 @@ endif()
 add_library(engine_world STATIC
     src/engine_world/planet_debug.cpp
     src/engine_world/planet_math.cpp
+    src/engine_world/planet_terrain.cpp
     src/engine_world/voxel_chunk.cpp
     src/engine_world/world_gen.cpp
     src/engine_world/physics/voxel_collision.cpp

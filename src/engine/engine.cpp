@@ -6,6 +6,7 @@
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
 #include "engine_world/planet_debug.hpp"
+#include "engine_world/planet_terrain.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -154,11 +155,21 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   build_static_scene();
   debug_planet_.center = glm::dvec3(0.0, 18.0, -72.0);
   debug_planet_.radius = 14.0;
+  debug_planet_.voxel_size = 0.45;
+  debug_planet_.chunks_per_face = 1;
   RenderMesh debug_planet_mesh = build_debug_planet_mesh(debug_planet_, 12);
   append_mesh(debug_planet_mesh,
               build_debug_planet_grid_mesh(debug_planet_, 8, 0.025f));
   debug_planet_mesh.mesh_id = 0x5658504c414e4554ull;
   scene.opaque_meshes.push_back(debug_planet_mesh);
+  PlanetChunkId top_chunk{};
+  top_chunk.face = PlanetFace::PosY;
+  top_chunk.x = 0;
+  top_chunk.y = 0;
+  top_chunk.lod = 0;
+  RenderMesh top_terrain =
+      build_single_face_planet_terrain_mesh(debug_planet_, top_chunk);
+  scene.opaque_meshes.push_back(top_terrain);
   local_player = PlayerControllerSystem::spawn_player(collision_world);
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);

@@ -2,6 +2,7 @@
 
 #include "engine_core/memory.hpp"
 #include "engine_core/timing.hpp"
+#include "engine_presentation/debug_scene_builder.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
 
@@ -82,6 +83,17 @@ void enqueue_animation_runtime_events(EventBus &events,
     }
   }
 }
+
+RenderMesh build_local_player_debug_mesh(
+    const PlayerEntity &player,
+    const PlayerAnimationRuntime &animation_runtime,
+    bool devhud_enabled) {
+  RuntimeDebugSceneSnapshot snapshot{};
+  snapshot.devhud_enabled = devhud_enabled;
+  snapshot.local_player = &player;
+  snapshot.local_player_animation = &animation_runtime;
+  return DebugSceneBuilder{}.build(snapshot);
+}
 } // namespace
 
 bool Engine::init(const EngineRuntimeOptions &options) {
@@ -143,6 +155,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
   update_third_person_camera(local_player, camera);
+  scene.debug_world = build_local_player_debug_mesh(
+      local_player, local_player_animation, session_state_.devhud_enabled);
   refresh_overlay_text();
 
   spdlog::info("Engine init: flat world, capsule player, backend={}",
@@ -319,6 +333,8 @@ void Engine::tick(double frame_dt,
   render_stats.profiling.memory_current_bytes = memory_stats.current_bytes;
   render_stats.profiling.memory_total_bytes = memory_stats.total_bytes;
 
+  scene.debug_world = build_local_player_debug_mesh(
+      local_player, local_player_animation, session_state_.devhud_enabled);
   refresh_overlay_text();
   renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
 
@@ -413,7 +429,6 @@ void Engine::update_third_person_camera(PlayerEntity &player,
 }
 
 void Engine::refresh_overlay_text() {
-  scene.debug_world = RenderMesh{};
   scene.debug_screen = RenderMesh{};
   if (!session_state_.devhud_enabled) {
     return;

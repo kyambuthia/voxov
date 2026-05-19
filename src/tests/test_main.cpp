@@ -6,6 +6,7 @@
 #include "engine_net_proto/net_protocol_helpers.hpp"
 #include "engine_net_proto/net_types.hpp"
 #include "engine_world/net_chunk_state.hpp"
+#include "engine_world/planet_math.hpp"
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_physics/vehicle/aircraft_controller.hpp"
 #include "engine_physics/vehicle/ground_vehicle_controller.hpp"
@@ -190,6 +191,75 @@ void test_chunk_runtime_helpers() {
   info.max_players = 8;
   info.flags = net_session_flag(NetSessionFlags::LanAdvertised);
   assert(net_session_status_line(info) == "LAN Session [2/8] WI-FI");
+}
+
+void test_planet_face_uv_to_direction_unit_vectors() {
+  const PlanetFace faces[] = {PlanetFace::PosX, PlanetFace::NegX,
+                              PlanetFace::PosY, PlanetFace::NegY,
+                              PlanetFace::PosZ, PlanetFace::NegZ};
+  for (const PlanetFace face : faces) {
+    const glm::dvec3 direction = face_uv_to_direction(face, 0.25, -0.5);
+    assert(std::fabs(glm::length(direction) - 1.0) < 1.0e-9);
+  }
+}
+
+void test_planet_direction_to_face() {
+  assert(direction_to_face(glm::dvec3(2.0, 0.5, 0.25)) == PlanetFace::PosX);
+  assert(direction_to_face(glm::dvec3(-2.0, 0.5, 0.25)) == PlanetFace::NegX);
+  assert(direction_to_face(glm::dvec3(0.25, 2.0, 0.5)) == PlanetFace::PosY);
+  assert(direction_to_face(glm::dvec3(0.25, -2.0, 0.5)) == PlanetFace::NegY);
+  assert(direction_to_face(glm::dvec3(0.25, 0.5, 2.0)) == PlanetFace::PosZ);
+  assert(direction_to_face(glm::dvec3(0.25, 0.5, -2.0)) == PlanetFace::NegZ);
+}
+
+void test_planet_direction_to_face_uv_roundtrip() {
+  const PlanetFace faces[] = {PlanetFace::PosX, PlanetFace::NegX,
+                              PlanetFace::PosY, PlanetFace::NegY,
+                              PlanetFace::PosZ, PlanetFace::NegZ};
+  for (const PlanetFace face : faces) {
+    const glm::dvec3 direction = face_uv_to_direction(face, -0.375, 0.625);
+    const PlanetFaceUV uv = direction_to_face_uv(direction);
+    assert(uv.face == face);
+    assert(std::fabs(uv.u + 0.375) < 1.0e-9);
+    assert(std::fabs(uv.v - 0.625) < 1.0e-9);
+  }
+}
+
+void test_planet_radial_up_and_world_pos() {
+  PlanetDefinition planet{};
+  planet.center = glm::dvec3(10.0, -5.0, 2.0);
+  planet.radius = 1000.0;
+
+  const glm::dvec3 surface =
+      voxel_world_pos(planet, PlanetFace::PosY, 0.0, 0.0, 12.5);
+  assert(std::fabs(glm::distance(surface, planet.center) - 1012.5) < 1.0e-9);
+
+  const glm::dvec3 up = radial_up(planet, surface);
+  assert(std::fabs(glm::length(up) - 1.0) < 1.0e-9);
+  assert(glm::dot(up, surface - planet.center) > 0.0);
+}
+
+void test_planet_tangent_basis_orthonormal() {
+  const PlanetTangentBasis basis = tangent_basis(glm::dvec3(0.0, 1.0, 0.0));
+  assert(std::fabs(glm::length(basis.up) - 1.0) < 1.0e-9);
+  assert(std::fabs(glm::length(basis.east) - 1.0) < 1.0e-9);
+  assert(std::fabs(glm::length(basis.north) - 1.0) < 1.0e-9);
+  assert(std::fabs(glm::dot(basis.east, basis.up)) < 1.0e-9);
+  assert(std::fabs(glm::dot(basis.north, basis.up)) < 1.0e-9);
+  assert(std::fabs(glm::dot(basis.east, basis.north)) < 1.0e-9);
+}
+
+void test_planet_neighbor_within_face_bounds() {
+  const PlanetChunkId id{PlanetFace::PosZ, 4, 7, 1};
+  const PlanetChunkId neighbor = neighbor_chunk_id(id, 2, -3, 16);
+  assert(neighbor.face == PlanetFace::PosZ);
+  assert(neighbor.x == 6);
+  assert(neighbor.y == 4);
+  assert(neighbor.lod == 1);
+
+  const PlanetChunkId clamped = neighbor_chunk_id(id, -20, 30, 16);
+  assert(clamped.x == 0);
+  assert(clamped.y == 15);
 }
 
 void test_net_header_validation() {
@@ -1150,6 +1220,12 @@ int main() {
   test_session_info_serialization();
   test_chunk_state_serialization();
   test_chunk_runtime_helpers();
+  test_planet_face_uv_to_direction_unit_vectors();
+  test_planet_direction_to_face();
+  test_planet_direction_to_face_uv_roundtrip();
+  test_planet_radial_up_and_world_pos();
+  test_planet_tangent_basis_orthonormal();
+  test_planet_neighbor_within_face_bounds();
   test_net_header_validation();
   test_chunk_meshing();
   test_chunk_world_footprint();

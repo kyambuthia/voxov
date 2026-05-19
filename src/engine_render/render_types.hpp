@@ -22,7 +22,12 @@ struct RenderMesh {
     uint8_t material = 0;
 };
 
+struct CameraRelativeOrigin {
+    glm::dvec3 world_origin{0.0};
+};
+
 struct RenderScene {
+    CameraRelativeOrigin camera_origin{};
     std::vector<RenderMesh> opaque_meshes;
     RenderMesh debug_world;
     RenderMesh debug_screen;

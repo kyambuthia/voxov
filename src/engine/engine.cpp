@@ -63,7 +63,9 @@ void Engine::init(const EngineRuntimeOptions &options) {
   session_state_.menu_open = true;
   session_state_.selected_character = GuiMenu::Character::Capsule;
 
-  platform_services = PlatformServices::desktop_default();
+  platform_services = runtime_options.platform_services != nullptr
+                          ? *runtime_options.platform_services
+                          : PlatformServices::desktop_default();
   game_session.reset();
 
   EnginePhysicsSettings settings{};
@@ -100,7 +102,9 @@ void Engine::shutdown() {
   physics.shutdown();
 }
 
-void Engine::tick(double frame_dt, EngineInputFrame input_frame) {
+void Engine::tick(double frame_dt,
+                  EngineInputFrame input_frame,
+                  const RenderSurface &surface) {
   const PerfClock::time_point frame_cpu_start = PerfClock::now();
   const FixedStep &fixed = game_session.fixed_step();
   last_frame_dt = frame_dt;
@@ -168,11 +172,6 @@ void Engine::tick(double frame_dt, EngineInputFrame input_frame) {
   ctx.debug_xray = false;
 
   const PerfClock::time_point render_cpu_start = PerfClock::now();
-  const RenderSurface surface{
-      .width = 1280,
-      .height = 720,
-      .dpi_scale = 1.0f,
-  };
   renderer.render_frame(ctx, render_stats, surface);
 
   const double render_cpu_ms = elapsed_ms(render_cpu_start, PerfClock::now());

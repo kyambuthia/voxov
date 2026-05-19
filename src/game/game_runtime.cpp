@@ -31,7 +31,9 @@ public:
         input_adapter = params.input_adapter;
         platform_adapter = params.platform_adapter;
         session_controller.set_gameplay_started(false);
-        engine.init(to_engine_options(params.options));
+        EngineRuntimeOptions engine_options = to_engine_options(params.options);
+        engine_options.platform_services = params.platform_services;
+        engine.init(engine_options);
         ui_audio.init();
         gui_menu.set_character(engine.preferred_character());
         sync_session_state();
@@ -87,13 +89,15 @@ public:
         session_flow.update(engine, frame_dt);
         sync_session_state();
 
+        const RenderSurface surface = platform_adapter->surface();
         engine.tick(
             frame_dt,
             EngineInputFrame{
                 .primary = input_frame.primary,
                 .secondary = input_frame.secondary,
                 .touch_mode = input_frame.touch_mode,
-            });
+            },
+            surface);
         const double previous_fps = runtime_stats.fps;
         runtime_stats = engine.stats();
         runtime_stats.fps = previous_fps;

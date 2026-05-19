@@ -20,6 +20,7 @@
 struct EngineRuntimeOptions {
   PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
   RenderBackendType render_backend = RenderBackendType::Sokol;
+  const PlatformServices *platform_services = nullptr;
 };
 
 struct EngineInputFrame {
@@ -46,7 +47,8 @@ public:
   void init(const EngineRuntimeOptions &options);
   EngineConnectResult connect(const char *host, uint16_t port);
   void shutdown();
-  void tick(double frame_dt, EngineInputFrame input_frame);
+  void tick(double frame_dt, EngineInputFrame input_frame,
+            const RenderSurface &surface);
   const RenderStats &stats() const;
   void set_session_state(const EngineSessionState &state);
   RuntimeSessionSnapshot session_snapshot() const;

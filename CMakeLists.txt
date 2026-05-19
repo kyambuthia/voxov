@@ -30,27 +30,6 @@ option(VOXOV_ENABLE_XR "Compile XR session scaffold" OFF)
 set(VOXOV_SOKOL_DIR "${CMAKE_SOURCE_DIR}/dependencies/sokol")
 set(VOXOV_SOKOL_UTIL_DIR "${VOXOV_SOKOL_DIR}/util")
 
-# ── Web (Emscripten) ───────────────────────────────────────────────────
-if(EMSCRIPTEN)
-    message(STATUS "Configuring VOXOV for Web (Emscripten)")
-    add_executable(voxov_web
-        src/game/web_main.cpp
-        src/game/web_session_flow.cpp
-        src/engine_runtime/runtime_session_controller.cpp
-        src/platform/web_platform.cpp
-        src/engine_ui/gui_menu.cpp
-    )
-    target_include_directories(voxov_web PRIVATE src dependencies/glm)
-    target_compile_definitions(voxov_web PRIVATE VOXOV_PLATFORM_WEB=1)
-    target_link_options(voxov_web PRIVATE
-        "-sUSE_WEBGL2=1" "-sMIN_WEBGL_VERSION=2" "-sMAX_WEBGL_VERSION=2"
-        "-sALLOW_MEMORY_GROWTH=1" "-sWASM=1"
-        "--shell-file=${CMAKE_SOURCE_DIR}/assets/web/shell.html"
-    )
-    set_target_properties(voxov_web PROPERTIES OUTPUT_NAME "voxov_web" SUFFIX ".html")
-    return()
-endif()
-
 # ── Compiler flags ─────────────────────────────────────────────────────
 if(MSVC)
     add_compile_options(/W4)
@@ -91,6 +70,10 @@ if(ANDROID)
     endif()
     add_compile_definitions(VOXOV_PLATFORM_ANDROID=1)
     add_compile_definitions(SOKOL_GLES3)
+elseif(EMSCRIPTEN)
+    message(STATUS "Configuring VOXOV for Web (Emscripten)")
+    add_compile_definitions(VOXOV_PLATFORM_WEB=1)
+    add_compile_definitions(SOKOL_GLES3)
 elseif(NOT EMSCRIPTEN)
     message(STATUS "Platform backend: sokol_app + sokol_gfx")
     if(APPLE)
@@ -113,6 +96,8 @@ target_include_directories(sokol_gfx_impl PUBLIC
 )
 if(ANDROID)
     target_compile_definitions(sokol_gfx_impl PUBLIC SOKOL_GLES3 VOXOV_PLATFORM_ANDROID=1)
+elseif(EMSCRIPTEN)
+    target_compile_definitions(sokol_gfx_impl PUBLIC SOKOL_GLES3 VOXOV_PLATFORM_WEB=1)
 endif()
 
 if(NOT ANDROID)
@@ -128,7 +113,10 @@ if(NOT ANDROID)
         ${VOXOV_SOKOL_UTIL_DIR}
     )
     target_link_libraries(platform_desktop PUBLIC sokol_gfx_impl glm::glm)
-    if(UNIX AND NOT APPLE)
+    if(EMSCRIPTEN)
+        target_compile_definitions(platform_desktop PUBLIC SOKOL_GLES3 VOXOV_PLATFORM_WEB=1)
+    endif()
+    if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
         target_link_libraries(platform_desktop PUBLIC
             OpenGL::GL X11 Xi Xcursor m dl asound
         )
@@ -196,6 +184,8 @@ target_link_libraries(engine_render_sokol PUBLIC glm::glm sokol_gfx_impl)
 target_compile_definitions(engine_render_sokol PUBLIC VOXOV_HAS_RENDER_SOKOL=1)
 if(ANDROID)
     target_compile_definitions(engine_render_sokol PUBLIC SOKOL_GLES3 VOXOV_PLATFORM_ANDROID=1)
+elseif(EMSCRIPTEN)
+    target_compile_definitions(engine_render_sokol PUBLIC SOKOL_GLES3 VOXOV_PLATFORM_WEB=1)
 endif()
 target_compile_definitions(engine_render_core PUBLIC VOXOV_HAS_RENDER_SOKOL=1)
 target_link_libraries(engine_render_core PRIVATE engine_render_sokol)
@@ -332,6 +322,8 @@ add_library(game_runtime STATIC
 )
 if(ANDROID)
     target_sources(game_runtime PRIVATE src/game/android_runtime_adapter.cpp src/platform/android/input_android.cpp)
+elseif(EMSCRIPTEN)
+    target_sources(game_runtime PRIVATE src/game/web_runtime_adapter.cpp)
 else()
     target_sources(game_runtime PRIVATE src/game/desktop_runtime_adapter.cpp)
 endif()
@@ -379,6 +371,36 @@ if(ANDROID)
     )
     set_target_properties(voxov_android PROPERTIES OUTPUT_NAME "voxov")
     install(TARGETS voxov_android LIBRARY DESTINATION lib)
+    return()
+endif()
+
+if(EMSCRIPTEN)
+    add_executable(voxov_web
+        src/game/web_main.cpp
+    )
+    target_include_directories(voxov_web PRIVATE
+        src
+        ${VOXOV_SOKOL_DIR}
+        ${VOXOV_SOKOL_UTIL_DIR}
+    )
+    target_compile_definitions(voxov_web PRIVATE
+        VOXOV_PLATFORM_WEB=1
+        SOKOL_GLES3
+        GLM_ENABLE_EXPERIMENTAL
+    )
+    target_link_libraries(voxov_web PRIVATE
+        game_runtime
+        engine
+        sokol_gfx_impl
+        fmt::fmt
+        spdlog::spdlog
+    )
+    target_link_options(voxov_web PRIVATE
+        "-sUSE_WEBGL2=1" "-sMIN_WEBGL_VERSION=2" "-sMAX_WEBGL_VERSION=2"
+        "-sALLOW_MEMORY_GROWTH=1" "-sWASM=1"
+        "--shell-file=${CMAKE_SOURCE_DIR}/assets/web/shell.html"
+    )
+    set_target_properties(voxov_web PROPERTIES OUTPUT_NAME "voxov_web" SUFFIX ".html")
     return()
 endif()
 

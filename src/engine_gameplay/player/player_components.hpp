@@ -16,11 +16,11 @@ struct TransformComponent {
 struct CharacterController {
     float capsuleRadius = 0.35f;
     float capsuleHeight = 1.8f;
-    float walkSpeed = 3.2f;
-    float sprintSpeed = 5.8f;
+    float walkSpeed = 5.5f;
+    float sprintSpeed = 9.0f;
     float crawlSpeed = 2.2f;
-    float jumpVelocity = 5.5f;
-    float gravity = -19.62f;
+    float jumpVelocity = 9.0f;
+    float gravity = -24.0f;
     float maxSlopeDeg = 50.0f;
     bool grounded = false;
     glm::vec3 velocity = glm::vec3(0.0f);
@@ -44,15 +44,15 @@ enum class PlayerLocomotionState : uint8_t {
 };
 
 struct LocomotionTuningData {
-    float walk_speed = 3.2f;
-    float run_speed = 5.8f;
-    float ground_accel = 28.0f;
-    float ground_decel = 32.0f;
-    float air_accel = 9.0f;
+    float walk_speed = 5.5f;
+    float run_speed = 9.0f;
+    float ground_accel = 36.0f;
+    float ground_decel = 42.0f;
+    float air_accel = 12.0f;
     float turn_rate = 540.0f;
     float gravity = 24.0f;
     float fall_multiplier = 1.25f;
-    float jump_velocity = 6.0f;
+    float jump_velocity = 9.0f;
     float jump_cut_gravity_multiplier = 2.1f;
     float coyote_time = 0.10f;
     float jump_buffer_time = 0.12f;

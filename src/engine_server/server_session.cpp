@@ -64,12 +64,13 @@ ServerClientState &ServerSession::connect_client(_ENetPeer *peer) {
     state.player.transform.position.x += spawn_offset.x;
     state.player.transform.position.z += spawn_offset.y;
     state.player.transform.position.y =
-        collision_world.find_spawn_height(
-            glm::vec2(state.player.transform.position.x,
-                      state.player.transform.position.z),
-            state.player.controller.capsuleRadius,
-            state.player.controller.capsuleHeight) +
-        0.05f;
+        std::max(2.0f,
+                 collision_world.find_spawn_height(
+                     glm::vec2(state.player.transform.position.x,
+                               state.player.transform.position.z),
+                     state.player.controller.capsuleRadius,
+                     state.player.controller.capsuleHeight) +
+                     0.05f);
     state.player.locomotion.facing_yaw_deg = state.player.camera_rig.yaw;
     state.player.locomotion.desired_yaw_deg = state.player.camera_rig.yaw;
     state.player.transform.rotation =

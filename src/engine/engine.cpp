@@ -294,9 +294,7 @@ void Engine::tick(double frame_dt,
         .alpha = alpha,
     });
   }
-  const glm::vec3 local_player_render_position = glm::mix(
-      local_player_prev_position, local_player.transform.position, alpha);
-  update_third_person_camera(local_player, local_player_render_position,
+  update_third_person_camera(local_player, local_player.transform.position,
                              camera);
 
   render_stats.frame_ms =

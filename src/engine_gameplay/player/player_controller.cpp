@@ -318,11 +318,11 @@ PlayerEntity PlayerControllerSystem::spawn_player(const VoxelCollisionWorld &col
     const glm::vec2 spawn_xz = find_flat_spawn_xz(collision_world, preferred_spawn);
     player.transform.position.x = spawn_xz.x;
     player.transform.position.z = spawn_xz.y;
-    player.transform.position.y = collision_world.find_spawn_height(
+    const float terrain_spawn_y = collision_world.find_spawn_height(
         glm::vec2(player.transform.position.x, player.transform.position.z),
         player.controller.capsuleRadius,
-        player.controller.capsuleHeight);
-    player.transform.position.y += 0.05f;
+        player.controller.capsuleHeight) + 0.05f;
+    player.transform.position.y = std::max(2.0f, terrain_spawn_y);
     player.locomotion.facing_yaw_deg = player.camera_rig.yaw;
     player.locomotion.desired_yaw_deg = player.camera_rig.yaw;
     player.transform.rotation = glm::angleAxis(to_radians(player.locomotion.facing_yaw_deg), glm::vec3(0.0f, 1.0f, 0.0f));

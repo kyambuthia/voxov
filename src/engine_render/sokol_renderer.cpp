@@ -269,13 +269,13 @@ bool SokolRenderer::init(const RenderDeviceDesc &desc) {
         },
     };
 
-    // --- Debug triangle (screen-space, always visible) ---
+    // --- Debug triangle (screen-space, always visible in center) ---
     {
         RenderMesh tri;
         tri.vertices = {
-            {glm::vec3(-0.5f, -0.4f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f)},
-            {glm::vec3( 0.5f, -0.4f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f)},
-            {glm::vec3( 0.0f,  0.5f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f)},
+            {glm::vec3(-0.8f, -0.6f, 0.0f), glm::vec3(1.0f, 0.0f, 0.0f), glm::vec3(0.0f)},
+            {glm::vec3( 0.8f, -0.6f, 0.0f), glm::vec3(0.0f, 1.0f, 0.0f), glm::vec3(0.0f)},
+            {glm::vec3( 0.0f,  0.7f, 0.0f), glm::vec3(0.0f, 0.0f, 1.0f), glm::vec3(0.0f)},
         };
         tri.indices = {0, 1, 2};
         upload_mesh(debug_triangle_mesh_, tri, false);

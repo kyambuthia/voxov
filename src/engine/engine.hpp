@@ -15,6 +15,7 @@
 #include "engine_runtime/runtime_world_state.hpp"
 #include "engine_ui/gui_menu.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
+#include "engine_world/planet_types.hpp"
 #include "engine_world/voxel_chunk.hpp"
 #include "platform/platform_services.hpp"
 
@@ -96,6 +97,8 @@ private:
   PlayerAnimationRuntime local_player_animation;
 
   RenderScene scene;
+  PlanetDefinition debug_planet_;
+  PlanetFace debug_planet_camera_face_ = PlanetFace::PosZ;
   RenderStats render_stats;
   EngineSessionState session_state_{};
   EngineRuntimeOptions runtime_options{};

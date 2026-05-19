@@ -5,6 +5,7 @@
 #include "engine_presentation/debug_scene_builder.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
+#include "engine_world/planet_debug.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -151,12 +152,25 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   physics.init(settings);
 
   build_static_scene();
+  debug_planet_.center = glm::dvec3(0.0, 18.0, -72.0);
+  debug_planet_.radius = 14.0;
+  RenderMesh debug_planet_mesh = build_debug_planet_mesh(debug_planet_, 12);
+  append_mesh(debug_planet_mesh,
+              build_debug_planet_grid_mesh(debug_planet_, 8, 0.025f));
+  debug_planet_mesh.mesh_id = 0x5658504c414e4554ull;
+  scene.opaque_meshes.push_back(debug_planet_mesh);
   local_player = PlayerControllerSystem::spawn_player(collision_world);
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
   update_third_person_camera(local_player, camera);
+  debug_planet_camera_face_ = debug_planet_camera_face(
+      debug_planet_, glm::dvec3(camera.transform.position),
+      glm::dvec3(camera.forward()));
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled);
+  append_mesh(scene.debug_world,
+              build_debug_planet_face_highlight_mesh(
+                  debug_planet_, debug_planet_camera_face_, 0.055f));
   refresh_overlay_text();
 
   spdlog::info("Engine init: flat world, capsule player, backend={}",
@@ -297,6 +311,9 @@ void Engine::tick(double frame_dt,
   update_third_person_camera(local_player, local_player.transform.position,
                              camera);
   scene.camera_origin.world_origin = glm::dvec3(camera.transform.position);
+  debug_planet_camera_face_ = debug_planet_camera_face(
+      debug_planet_, glm::dvec3(camera.transform.position),
+      glm::dvec3(camera.forward()));
 
   render_stats.frame_ms =
       smooth_metric(render_stats.frame_ms, last_frame_dt * 1000.0, 0.20);
@@ -334,6 +351,9 @@ void Engine::tick(double frame_dt,
 
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled);
+  append_mesh(scene.debug_world,
+              build_debug_planet_face_highlight_mesh(
+                  debug_planet_, debug_planet_camera_face_, 0.055f));
   refresh_overlay_text();
   renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
 
@@ -462,7 +482,9 @@ void Engine::refresh_overlay_text() {
       "\nFrame events: " + std::to_string(presentation_frame_events_seen_) +
       "\nCollisions: " + std::to_string(collision_count_) +
       "\nNetwork events: " + std::to_string(net_events_seen_) +
-      "\nNetwork status: " + last_net_status_;
+      "\nNetwork status: " + last_net_status_ +
+      "\nPlanet face: " +
+      planet_face_debug_name(debug_planet_camera_face_);
   if (!last_hud_message_.empty()) {
     overlay_text += "\n" + last_hud_message_;
   }

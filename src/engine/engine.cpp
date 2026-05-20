@@ -161,13 +161,13 @@ bool Engine::init(const EngineRuntimeOptions &options) {
 
   scene = RenderScene{};
   collision_world = VoxelCollisionWorld{nullptr};
-  debug_planet_.center = glm::dvec3(0.0, -60.0, 0.0);
-  debug_planet_.radius = 128.0;
-  debug_planet_.voxel_size = 1.0;
-  debug_planet_.chunks_per_face = 4;
+  debug_planet_.center = glm::dvec3(0.0, -450.0, 0.0);
+  debug_planet_.radius = 512.0;
+  debug_planet_.voxel_size = 2.0;
+  debug_planet_.chunks_per_face = 8;
+  collision_world.set_planet_surface_collider(glm::vec3(debug_planet_.center),
+                                               static_cast<float>(debug_planet_.radius));
   RenderMesh debug_planet_mesh = build_debug_planet_mesh(debug_planet_, 24);
-  append_mesh(debug_planet_mesh,
-              build_debug_planet_grid_mesh(debug_planet_, 16, 0.025f));
   debug_planet_mesh.mesh_id = 0x5658504c414e4554ull;
   scene.opaque_meshes.push_back(debug_planet_mesh);
 
@@ -185,7 +185,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
         // Non-zero mesh IDs are cached by SokolRenderer::upload_scene(), and
         // cached meshes are frustum-culled with aabb_in_frustum() per frame.
         terrain.mesh_id =
-            static_cast<uint64_t>(1000 + face_index * 1000 +
+            static_cast<uint64_t>(1000 + face_index * chunks_per_face *
+                                             chunks_per_face +
                                   cy * chunks_per_face + cx);
         scene.opaque_meshes.push_back(terrain);
       }
@@ -198,13 +199,19 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   PlanetLODSelector selector;
   const glm::mat4 lod_test_vp = glm::mat4(1.0f);
   const LODSelectionResult lod_test = selector.select(
-      quadtree, debug_planet_.center + glm::dvec3(0.0, 20.0, 0.0),
+      quadtree,
+      debug_planet_.center +
+          glm::dvec3(0.0, debug_planet_.radius + 20.0, 0.0),
       lod_test_vp, 1080.0f);
   spdlog::info("LOD test: {} visible nodes, {} new nodes",
                lod_test.visible_nodes.size(), lod_test.new_nodes.size());
 
   local_player = PlayerControllerSystem::spawn_player(collision_world);
+  local_player.controller.capsuleRadius = 0.7f;
   local_player.transform.position = glm::vec3(0.0f, 70.0f, 0.0f);
+  local_player.camera_rig.pitch = -32.0f;
+  local_player.camera_rig.distance = 7.5f;
+  local_player.camera_rig.maxDistance = 24.0f;
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
   update_third_person_camera(local_player, camera);
@@ -448,8 +455,8 @@ void Engine::leave_session() {}
 
 void Engine::reset_camera() {
   local_player.camera_rig.yaw = 180.0f;
-  local_player.camera_rig.pitch = -12.0f;
-  local_player.camera_rig.distance = 5.0f;
+  local_player.camera_rig.pitch = -32.0f;
+  local_player.camera_rig.distance = 7.5f;
 }
 
 GuiMenu::Character Engine::preferred_character() const {

@@ -13,22 +13,23 @@
 
 namespace {
 constexpr int k_planet_chunk_size = 16;
+constexpr int k_planet_chunk_height = VoxelChunk::CHUNK_Y;
 
 float terrain_height(int x, int z, uint64_t seed) {
-  constexpr float base_height = 8.0f;
+  constexpr float base_height = 24.0f;
   const float seed_x = static_cast<float>(seed & 0xffffu) * 0.00019f;
   const float seed_z = static_cast<float>((seed >> 16u) & 0xffffu) * 0.00023f;
-  const float rolling = std::sin(static_cast<float>(x) * 0.73f + seed_x) * 2.0f;
-  const float ridge = std::cos(static_cast<float>(z) * 0.61f + seed_z) * 1.5f;
+  const float rolling = std::sin(static_cast<float>(x) * 0.73f + seed_x) * 5.5f;
+  const float ridge = std::cos(static_cast<float>(z) * 0.61f + seed_z) * 4.0f;
   const float detail =
-      std::sin(static_cast<float>(x + z) * 0.47f + seed_x * 2.3f) * 0.9f;
+      std::sin(static_cast<float>(x + z) * 0.47f + seed_x * 2.3f) * 2.0f;
   return std::clamp(base_height + rolling + ridge + detail, 1.0f,
-                    static_cast<float>(k_planet_chunk_size - 2));
+                    static_cast<float>(k_planet_chunk_height - 2));
 }
 
 glm::vec3 terrain_color(float voxel_y) {
   const float t =
-      std::clamp(voxel_y / static_cast<float>(k_planet_chunk_size), 0.0f, 1.0f);
+      std::clamp(voxel_y / static_cast<float>(k_planet_chunk_height), 0.0f, 1.0f);
   constexpr glm::vec3 low(0.42f, 0.27f, 0.13f);
   constexpr glm::vec3 mid(0.18f, 0.48f, 0.18f);
   constexpr glm::vec3 high(0.88f, 0.9f, 0.84f);
@@ -184,13 +185,13 @@ RenderMesh build_single_face_planet_terrain_mesh(
   RenderMesh mesh{};
   mesh.vertices.reserve(static_cast<size_t>(k_planet_chunk_size *
                                             k_planet_chunk_size *
-                                            k_planet_chunk_size * 6 * 4));
+                                            k_planet_chunk_height * 6 * 4));
   mesh.indices.reserve(static_cast<size_t>(k_planet_chunk_size *
                                            k_planet_chunk_size *
-                                           k_planet_chunk_size * 6 * 6));
+                                           k_planet_chunk_height * 6 * 6));
 
   for (int z = 0; z < k_planet_chunk_size; ++z) {
-    for (int y = 0; y < k_planet_chunk_size; ++y) {
+    for (int y = 0; y < k_planet_chunk_height; ++y) {
       for (int x = 0; x < k_planet_chunk_size; ++x) {
         if (!chunk.solid(x, y, z)) {
           continue;

@@ -598,6 +598,9 @@ void append_player_debug(RenderMesh &mesh, const PlayerEntity &player,
   const RenderMesh player_capsule = build_debug_capsule_mesh(
       player.transform.position, shape.radius, shape.height,
       player_color_from_id(player.network_id));
+  const RenderMesh feet_marker = build_debug_sphere_mesh(
+      player.transform.position, std::max(0.22f, shape.radius * 0.45f),
+      glm::vec3(1.0f, 0.92f, 0.05f));
   const RenderMesh target_marker = build_debug_sphere_mesh(
       player.transform.position + glm::vec3(0.0f, shape.pivot_height, 0.0f),
       target_radius, target_color);
@@ -605,6 +608,7 @@ void append_player_debug(RenderMesh &mesh, const PlayerEntity &player,
   if ((!render_skinned_avatar && !render_skeleton_only) || collision_debug_enabled ||
       devhud_enabled) {
     append_mesh(mesh, player_capsule);
+    append_mesh(mesh, feet_marker);
     append_mesh(mesh, target_marker);
   }
   if (render_skinned_avatar && selected_player_model != nullptr) {

@@ -33,6 +33,8 @@ public:
     explicit VoxelCollisionWorld(std::vector<VoxelCollisionChunk> chunks,
                                  float voxel_scale = 1.0f);
 
+    void set_planet_surface_collider(glm::vec3 center, float radius);
+
     bool is_solid_voxel(int x, int y, int z) const;
     bool raycast(glm::vec3 origin, glm::vec3 direction, float max_distance, float &out_hit_distance) const;
 
@@ -51,7 +53,11 @@ private:
     bool segment_intersects_aabb(glm::vec3 a, glm::vec3 b, glm::vec3 bmin, glm::vec3 bmax) const;
 
     const VoxelChunk *chunk_at(int x, int z, int &local_x, int &local_z) const;
+    bool planet_surface_height(glm::vec2 xz, float &out_y) const;
 
     std::vector<VoxelCollisionChunk> chunks_;
     float voxel_scale_ = 1.0f;
+    bool has_planet_surface_collider_ = false;
+    glm::vec3 planet_surface_center_ = glm::vec3(0.0f);
+    float planet_surface_radius_ = 0.0f;
 };

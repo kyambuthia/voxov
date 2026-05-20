@@ -20,6 +20,12 @@ VoxelCollisionWorld::VoxelCollisionWorld(std::vector<VoxelCollisionChunk> chunks
     : chunks_(std::move(chunks)),
       voxel_scale_(voxel_scale > 0.0f ? voxel_scale : 1.0f) {}
 
+void VoxelCollisionWorld::set_planet_surface_collider(glm::vec3 center, float radius) {
+    has_planet_surface_collider_ = radius > 0.0f;
+    planet_surface_center_ = center;
+    planet_surface_radius_ = std::max(0.0f, radius);
+}
+
 const VoxelChunk *VoxelCollisionWorld::chunk_at(int x, int z, int &local_x, int &local_z) const {
     for (const VoxelCollisionChunk &entry : chunks_) {
         if (entry.chunk == nullptr) {
@@ -35,6 +41,23 @@ const VoxelChunk *VoxelCollisionWorld::chunk_at(int x, int z, int &local_x, int 
         }
     }
     return nullptr;
+}
+
+bool VoxelCollisionWorld::planet_surface_height(glm::vec2 xz, float &out_y) const {
+    if (!has_planet_surface_collider_ || planet_surface_radius_ <= 0.0f) {
+        return false;
+    }
+
+    const float dx = xz.x - planet_surface_center_.x;
+    const float dz = xz.y - planet_surface_center_.z;
+    const float radius_sq = planet_surface_radius_ * planet_surface_radius_;
+    const float horizontal_sq = dx * dx + dz * dz;
+    if (horizontal_sq > radius_sq) {
+        return false;
+    }
+
+    out_y = planet_surface_center_.y + std::sqrt(radius_sq - horizontal_sq);
+    return true;
 }
 
 bool VoxelCollisionWorld::is_solid_voxel(int x, int y, int z) const {
@@ -233,6 +256,19 @@ CapsuleResolveResult VoxelCollisionWorld::resolve_capsule(
         }
     }
 
+    float surface_y = 0.0f;
+    if (planet_surface_height(glm::vec2(result.position.x, result.position.z),
+                              surface_y)) {
+        const float min_feet_y = surface_y + skin_width;
+        if (result.position.y < min_feet_y) {
+            const float correction = min_feet_y - result.position.y;
+            result.position.y += correction;
+            result.had_collision = true;
+            result.total_correction += correction;
+            result.contact_normal = glm::vec3(0.0f, 1.0f, 0.0f);
+        }
+    }
+
     const float ground_probe_dist = std::max(0.12f, skin_width + 0.03f);
     result.ground_ray_origin = result.position + glm::vec3(0.0f, skin_width + 0.02f, 0.0f);
     float hit_distance = 0.0f;
@@ -250,19 +286,40 @@ CapsuleResolveResult VoxelCollisionWorld::resolve_capsule(
 }
 
 bool VoxelCollisionWorld::raycast(glm::vec3 origin, glm::vec3 direction, float max_distance, float &out_hit_distance) const {
-    if (chunks_.empty()) {
-        return false;
-    }
-
     const float len = glm::length(direction);
     if (len < 0.0001f) {
         return false;
     }
 
     direction /= len;
+    bool hit = false;
+    out_hit_distance = max_distance;
+
+    if (has_planet_surface_collider_ && planet_surface_radius_ > 0.0f) {
+        const glm::vec3 oc = origin - planet_surface_center_;
+        const float b = 2.0f * glm::dot(oc, direction);
+        const float c = glm::dot(oc, oc) -
+                        planet_surface_radius_ * planet_surface_radius_;
+        const float discriminant = b * b - 4.0f * c;
+        if (discriminant >= 0.0f) {
+            const float root = std::sqrt(discriminant);
+            const float t0 = (-b - root) * 0.5f;
+            const float t1 = (-b + root) * 0.5f;
+            const float t = t0 >= 0.0f ? t0 : t1;
+            if (t >= 0.0f && t <= max_distance) {
+                out_hit_distance = t;
+                hit = true;
+            }
+        }
+    }
+
+    if (chunks_.empty()) {
+        return hit;
+    }
+
     const float step = voxel_scale_ * 0.05f;
     float d = 0.0f;
-    while (d <= max_distance) {
+    while (d <= std::min(max_distance, out_hit_distance)) {
         const glm::vec3 p = origin + direction * d;
         const float inv_scale = 1.0f / voxel_scale_;
         const int vx = static_cast<int>(std::floor(p.x * inv_scale));
@@ -275,11 +332,15 @@ bool VoxelCollisionWorld::raycast(glm::vec3 origin, glm::vec3 direction, float m
         d += step;
     }
 
-    return false;
+    return hit;
 }
 
 float VoxelCollisionWorld::find_spawn_height(glm::vec2 xz, float capsule_radius, float capsule_height) const {
     float spawn_y = 8.0f * voxel_scale_;
+    float planet_y = 0.0f;
+    if (planet_surface_height(xz, planet_y)) {
+        spawn_y = std::max(spawn_y, planet_y);
+    }
     const float inv_scale = 1.0f / voxel_scale_;
     const int vx = static_cast<int>(std::floor(xz.x * inv_scale));
     const int vz = static_cast<int>(std::floor(xz.y * inv_scale));

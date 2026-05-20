@@ -24,6 +24,23 @@ void VoxelCollisionWorld::set_planet_surface_collider(glm::vec3 center, float ra
     has_planet_surface_collider_ = radius > 0.0f;
     planet_surface_center_ = center;
     planet_surface_radius_ = std::max(0.0f, radius);
+    planet_surface_base_radius_ = planet_surface_radius_;
+    planet_surface_max_height_above_base_ = 0.0f;
+    planet_surface_height_at_direction_ = nullptr;
+}
+
+void VoxelCollisionWorld::set_planet_surface_collider(
+    glm::vec3 center,
+    float base_radius,
+    float max_height_above_base,
+    std::function<float(glm::vec3)> height_above_base_at_direction) {
+    has_planet_surface_collider_ = base_radius > 0.0f;
+    planet_surface_center_ = center;
+    planet_surface_base_radius_ = std::max(0.0f, base_radius);
+    planet_surface_max_height_above_base_ = std::max(0.0f, max_height_above_base);
+    planet_surface_radius_ =
+        planet_surface_base_radius_ + planet_surface_max_height_above_base_;
+    planet_surface_height_at_direction_ = std::move(height_above_base_at_direction);
 }
 
 const VoxelChunk *VoxelCollisionWorld::chunk_at(int x, int z, int &local_x, int &local_z) const {
@@ -50,13 +67,41 @@ bool VoxelCollisionWorld::planet_surface_height(glm::vec2 xz, float &out_y) cons
 
     const float dx = xz.x - planet_surface_center_.x;
     const float dz = xz.y - planet_surface_center_.z;
-    const float radius_sq = planet_surface_radius_ * planet_surface_radius_;
     const float horizontal_sq = dx * dx + dz * dz;
+
+    float surface_radius = planet_surface_radius_;
+    if (planet_surface_height_at_direction_) {
+        const float broad_radius = planet_surface_radius_;
+        if (horizontal_sq > broad_radius * broad_radius) {
+            return false;
+        }
+
+        float direction_y = std::sqrt(std::max(
+            0.0f, planet_surface_base_radius_ * planet_surface_base_radius_ -
+                      horizontal_sq));
+        for (int i = 0; i < 2; ++i) {
+            const glm::vec3 direction =
+                glm::normalize(glm::vec3(dx, direction_y, dz));
+            const float height = std::clamp(planet_surface_height_at_direction_(direction),
+                                            0.0f,
+                                            planet_surface_max_height_above_base_);
+            surface_radius = planet_surface_base_radius_ + height;
+            if (horizontal_sq > surface_radius * surface_radius) {
+                return false;
+            }
+            direction_y = std::sqrt(std::max(0.0f,
+                                             surface_radius * surface_radius -
+                                                 horizontal_sq));
+        }
+    }
+
+    const float radius_sq = surface_radius * surface_radius;
     if (horizontal_sq > radius_sq) {
         return false;
     }
 
-    out_y = planet_surface_center_.y + std::sqrt(radius_sq - horizontal_sq);
+    out_y = planet_surface_center_.y +
+            std::sqrt(std::max(0.0f, radius_sq - horizontal_sq));
     return true;
 }
 
@@ -296,19 +341,31 @@ bool VoxelCollisionWorld::raycast(glm::vec3 origin, glm::vec3 direction, float m
     out_hit_distance = max_distance;
 
     if (has_planet_surface_collider_ && planet_surface_radius_ > 0.0f) {
-        const glm::vec3 oc = origin - planet_surface_center_;
-        const float b = 2.0f * glm::dot(oc, direction);
-        const float c = glm::dot(oc, oc) -
-                        planet_surface_radius_ * planet_surface_radius_;
-        const float discriminant = b * b - 4.0f * c;
-        if (discriminant >= 0.0f) {
-            const float root = std::sqrt(discriminant);
-            const float t0 = (-b - root) * 0.5f;
-            const float t1 = (-b + root) * 0.5f;
-            const float t = t0 >= 0.0f ? t0 : t1;
+        float surface_y = 0.0f;
+        if (std::fabs(direction.y) > 0.0001f &&
+            planet_surface_height(glm::vec2(origin.x, origin.z), surface_y)) {
+            const float t = (surface_y - origin.y) / direction.y;
             if (t >= 0.0f && t <= max_distance) {
                 out_hit_distance = t;
                 hit = true;
+            }
+        }
+
+        if (!planet_surface_height_at_direction_) {
+            const glm::vec3 oc = origin - planet_surface_center_;
+            const float b = 2.0f * glm::dot(oc, direction);
+            const float c = glm::dot(oc, oc) -
+                            planet_surface_radius_ * planet_surface_radius_;
+            const float discriminant = b * b - 4.0f * c;
+            if (discriminant >= 0.0f) {
+                const float root = std::sqrt(discriminant);
+                const float t0 = (-b - root) * 0.5f;
+                const float t1 = (-b + root) * 0.5f;
+                const float t = t0 >= 0.0f ? t0 : t1;
+                if (t >= 0.0f && t <= max_distance) {
+                    out_hit_distance = t;
+                    hit = true;
+                }
             }
         }
     }

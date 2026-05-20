@@ -9,6 +9,7 @@
 #include "engine_world/planet_lod.hpp"
 #include "engine_world/planet_quadtree.hpp"
 #include "engine_world/planet_terrain.hpp"
+#include "engine_world/voxel_chunk.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -103,6 +104,22 @@ RenderMesh build_local_player_debug_mesh(
   snapshot.local_player_animation = &animation_runtime;
   return DebugSceneBuilder{}.build(snapshot);
 }
+
+void append_render_mesh(RenderMesh &dst, const RenderMesh &src) {
+  const uint32_t base = static_cast<uint32_t>(dst.vertices.size());
+  dst.vertices.insert(dst.vertices.end(), src.vertices.begin(),
+                      src.vertices.end());
+
+  if (src.use_16_bit_indices) {
+    for (const uint16_t index : src.indices16) {
+      dst.indices.push_back(base + static_cast<uint32_t>(index));
+    }
+  } else {
+    for (const uint32_t index : src.indices) {
+      dst.indices.push_back(base + index);
+    }
+  }
+}
 } // namespace
 
 bool Engine::init(const EngineRuntimeOptions &options) {
@@ -161,17 +178,28 @@ bool Engine::init(const EngineRuntimeOptions &options) {
 
   scene = RenderScene{};
   collision_world = VoxelCollisionWorld{nullptr};
-  debug_planet_.center = glm::dvec3(0.0, -52.0, 0.0);
-  debug_planet_.radius = 64.0;
+  debug_planet_.center = glm::dvec3(0.0, -116.0, 0.0);
+  debug_planet_.radius = 128.0;
   debug_planet_.voxel_size = 1.0;
-  debug_planet_.chunks_per_face = 1;
-  collision_world.set_planet_surface_collider(glm::vec3(debug_planet_.center),
-                                               static_cast<float>(debug_planet_.radius));
+  debug_planet_.chunks_per_face = 4;
+  const double terrain_collider_height =
+      planet_terrain_max_height_above_base(debug_planet_);
+  collision_world.set_planet_surface_collider(
+      glm::vec3(debug_planet_.center),
+      static_cast<float>(debug_planet_.radius),
+      static_cast<float>(terrain_collider_height),
+      [planet = debug_planet_](glm::vec3 direction) {
+        return static_cast<float>(planet_terrain_height_above_base_at_direction(
+            planet, glm::dvec3(direction)));
+      });
   RenderMesh debug_planet_mesh = build_debug_planet_mesh(debug_planet_, 24);
   debug_planet_mesh.mesh_id = 0x5658504c414e4554ull;
   scene.opaque_meshes.push_back(debug_planet_mesh);
 
   const int32_t chunks_per_face = debug_planet_.chunks_per_face;
+  RenderMesh planet_terrain_mesh{};
+  planet_terrain_mesh.mesh_id = 0x565850504c544552ull;
+  planet_terrain_mesh.material = static_cast<uint8_t>(VoxelMaterial::Grass);
   for (int32_t face_index = 0; face_index < 6; ++face_index) {
     for (int32_t cy = 0; cy < chunks_per_face; ++cy) {
       for (int32_t cx = 0; cx < chunks_per_face; ++cx) {
@@ -182,16 +210,11 @@ bool Engine::init(const EngineRuntimeOptions &options) {
         chunk_id.lod = 0;
         RenderMesh terrain =
             build_single_face_planet_terrain_mesh(debug_planet_, chunk_id);
-        // Non-zero mesh IDs are cached by SokolRenderer::upload_scene(), and
-        // cached meshes are frustum-culled with aabb_in_frustum() per frame.
-        terrain.mesh_id =
-            static_cast<uint64_t>(1000 + face_index * chunks_per_face *
-                                             chunks_per_face +
-                                  cy * chunks_per_face + cx);
-        scene.opaque_meshes.push_back(terrain);
+        append_render_mesh(planet_terrain_mesh, terrain);
       }
     }
   }
+  scene.opaque_meshes.push_back(std::move(planet_terrain_mesh));
 
   PlanetQuadtree quadtree;
   quadtree.init(debug_planet_, 4);
@@ -208,7 +231,11 @@ bool Engine::init(const EngineRuntimeOptions &options) {
 
   local_player = PlayerControllerSystem::spawn_player(collision_world);
   local_player.controller.capsuleRadius = 0.7f;
-  local_player.transform.position = glm::vec3(0.0f, 70.0f, 0.0f);
+  local_player.transform.position =
+      glm::vec3(0.0f, static_cast<float>(debug_planet_.center.y +
+                                         debug_planet_.radius +
+                                         terrain_collider_height + 4.0),
+                0.0f);
   local_player.camera_rig.pitch = -32.0f;
   local_player.camera_rig.distance = 7.5f;
   local_player.camera_rig.maxDistance = 24.0f;

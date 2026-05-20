@@ -3,6 +3,7 @@
 #include <glm/glm.hpp>
 
 #include <cstdint>
+#include <functional>
 #include <vector>
 
 class VoxelChunk;
@@ -34,6 +35,11 @@ public:
                                  float voxel_scale = 1.0f);
 
     void set_planet_surface_collider(glm::vec3 center, float radius);
+    void set_planet_surface_collider(
+        glm::vec3 center,
+        float base_radius,
+        float max_height_above_base,
+        std::function<float(glm::vec3)> height_above_base_at_direction);
 
     bool is_solid_voxel(int x, int y, int z) const;
     bool raycast(glm::vec3 origin, glm::vec3 direction, float max_distance, float &out_hit_distance) const;
@@ -60,4 +66,7 @@ private:
     bool has_planet_surface_collider_ = false;
     glm::vec3 planet_surface_center_ = glm::vec3(0.0f);
     float planet_surface_radius_ = 0.0f;
+    float planet_surface_base_radius_ = 0.0f;
+    float planet_surface_max_height_above_base_ = 0.0f;
+    std::function<float(glm::vec3)> planet_surface_height_at_direction_;
 };

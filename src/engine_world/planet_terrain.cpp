@@ -5,6 +5,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <cstdint>
 
@@ -320,4 +321,39 @@ RenderMesh build_single_face_planet_terrain_mesh(
   mesh.mesh_id = 0x5658504c54455252ull;
   mesh.material = static_cast<uint8_t>(VoxelMaterial::Grass);
   return mesh;
+}
+
+double planet_terrain_max_height_above_base(const PlanetDefinition &planet) {
+  const int32_t chunks_per_face = std::max(1, planet.chunks_per_face);
+  const int32_t columns_per_axis = chunks_per_face * k_planet_chunk_size_x;
+  int max_height_voxels = 0;
+
+  for (int32_t z = 0; z < columns_per_axis; ++z) {
+    for (int32_t x = 0; x < columns_per_axis; ++x) {
+      max_height_voxels =
+          std::max(max_height_voxels, terrain_height(x, z, planet.seed));
+    }
+  }
+
+  return static_cast<double>(max_height_voxels + 1) * planet.voxel_size;
+}
+
+double planet_terrain_height_above_base_at_direction(
+    const PlanetDefinition &planet, const glm::dvec3 &direction) {
+  const PlanetFaceUV uv = direction_to_face_uv(direction);
+  const int32_t chunks_per_face = std::max(1, planet.chunks_per_face);
+  const int32_t columns_per_axis = chunks_per_face * k_planet_chunk_size_x;
+  const double column_x =
+      (std::clamp(uv.u, -1.0, 1.0) + 1.0) * 0.5 *
+      static_cast<double>(columns_per_axis);
+  const double column_z =
+      (std::clamp(uv.v, -1.0, 1.0) + 1.0) * 0.5 *
+      static_cast<double>(columns_per_axis);
+  const int32_t world_x = std::clamp(
+      static_cast<int32_t>(std::floor(column_x)), 0, columns_per_axis - 1);
+  const int32_t world_z = std::clamp(
+      static_cast<int32_t>(std::floor(column_z)), 0, columns_per_axis - 1);
+
+  return static_cast<double>(terrain_height(world_x, world_z, planet.seed) + 1) *
+         planet.voxel_size;
 }

@@ -16,28 +16,32 @@ constexpr int k_planet_chunk_size = 16;
 constexpr int k_planet_chunk_height = VoxelChunk::CHUNK_Y;
 
 float terrain_height(int x, int z, uint64_t seed) {
-  constexpr float base_height = 24.0f;
+  constexpr float base_height = 14.0f;
   const float seed_x = static_cast<float>(seed & 0xffffu) * 0.00019f;
   const float seed_z = static_cast<float>((seed >> 16u) & 0xffffu) * 0.00023f;
-  const float rolling = std::sin(static_cast<float>(x) * 0.73f + seed_x) * 5.5f;
-  const float ridge = std::cos(static_cast<float>(z) * 0.61f + seed_z) * 4.0f;
+  const float rolling = std::sin(static_cast<float>(x) * 0.73f + seed_x) * 6.0f;
+  const float ridge = std::cos(static_cast<float>(z) * 0.61f + seed_z) * 5.0f;
   const float detail =
-      std::sin(static_cast<float>(x + z) * 0.47f + seed_x * 2.3f) * 2.0f;
+      std::sin(static_cast<float>(x + z) * 0.47f + seed_x * 2.3f) * 3.0f;
   return std::clamp(base_height + rolling + ridge + detail, 1.0f,
                     static_cast<float>(k_planet_chunk_height - 2));
 }
 
-glm::vec3 terrain_color(float voxel_y) {
-  const float t =
-      std::clamp(voxel_y / static_cast<float>(k_planet_chunk_height), 0.0f, 1.0f);
-  constexpr glm::vec3 low(0.42f, 0.27f, 0.13f);
-  constexpr glm::vec3 mid(0.18f, 0.48f, 0.18f);
-  constexpr glm::vec3 high(0.88f, 0.9f, 0.84f);
+glm::vec3 terrain_color(int voxel_x, int voxel_y, int voxel_z, int max_y_in_column,
+                        bool is_top_face) {
+  const float column_variation =
+      0.88f + 0.12f * std::sin(static_cast<float>(voxel_x * 7 + voxel_z * 11) * 0.43f);
+  constexpr glm::vec3 top_color(0.22f, 0.55f, 0.18f);
+  constexpr glm::vec3 side_color(0.48f, 0.35f, 0.22f);
+  constexpr glm::vec3 deep_color(0.35f, 0.32f, 0.28f);
 
-  if (t < 0.62f) {
-    return glm::mix(low, mid, t / 0.62f);
+  if (voxel_y >= max_y_in_column) {
+    return top_color * column_variation;
   }
-  return glm::mix(mid, high, (t - 0.62f) / 0.38f);
+  if (voxel_y >= max_y_in_column - 3) {
+    return side_color * column_variation;
+  }
+  return deep_color * (0.85f + 0.15f * column_variation);
 }
 
 void clear_chunk(VoxelChunk &chunk) {
@@ -190,6 +194,18 @@ RenderMesh build_single_face_planet_terrain_mesh(
                                            k_planet_chunk_size *
                                            k_planet_chunk_height * 6 * 6));
 
+  // Precompute max solid Y per column for top-face detection
+  int max_y_per_column[16][16]{};
+  for (int z = 0; z < k_planet_chunk_size; ++z) {
+    for (int x = 0; x < k_planet_chunk_size; ++x) {
+      int max_y = 0;
+      for (int y = 0; y < k_planet_chunk_height; ++y) {
+        if (chunk.solid(x, y, z)) max_y = y;
+      }
+      max_y_per_column[x][z] = max_y;
+    }
+  }
+
   for (int z = 0; z < k_planet_chunk_size; ++z) {
     for (int y = 0; y < k_planet_chunk_height; ++y) {
       for (int x = 0; x < k_planet_chunk_size; ++x) {
@@ -198,12 +214,14 @@ RenderMesh build_single_face_planet_terrain_mesh(
         }
 
         const glm::ivec3 voxel(x, y, z);
-        const glm::vec3 color = terrain_color(static_cast<float>(y));
+        const int max_y = max_y_per_column[x][z];
         for (const VoxelFaceDef &face : k_voxel_faces) {
           const glm::ivec3 neighbor = voxel + face.neighbor;
           if (chunk.solid(neighbor.x, neighbor.y, neighbor.z)) {
             continue;
           }
+          const bool is_top = (face.neighbor.y > 0);
+          const glm::vec3 color = terrain_color(x, y, z, max_y, is_top);
           append_planet_voxel_face(mesh, planet, chunk_id, voxel, face, color);
         }
       }

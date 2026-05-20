@@ -6,6 +6,8 @@
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
 #include "engine_world/planet_debug.hpp"
+#include "engine_world/planet_lod.hpp"
+#include "engine_world/planet_quadtree.hpp"
 #include "engine_world/planet_terrain.hpp"
 
 #include <spdlog/spdlog.h>
@@ -188,6 +190,18 @@ bool Engine::init(const EngineRuntimeOptions &options) {
       }
     }
   }
+
+  PlanetQuadtree quadtree;
+  quadtree.init(debug_planet_, 4);
+
+  PlanetLODSelector selector;
+  const glm::mat4 lod_test_vp = glm::mat4(1.0f);
+  const LODSelectionResult lod_test = selector.select(
+      quadtree, debug_planet_.center + glm::dvec3(0.0, 20.0, 0.0),
+      lod_test_vp, 1080.0f);
+  spdlog::info("LOD test: {} visible nodes, {} new nodes",
+               lod_test.visible_nodes.size(), lod_test.new_nodes.size());
+
   local_player = PlayerControllerSystem::spawn_player(collision_world);
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);

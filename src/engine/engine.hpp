@@ -12,11 +12,9 @@
 #include "engine_render/renderer.hpp"
 #include "engine_runtime/runtime_game_session.hpp"
 #include "engine_runtime/runtime_session_controller.hpp"
-#include "engine_runtime/runtime_world_state.hpp"
 #include "engine_ui/gui_menu.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/planet_types.hpp"
-#include "engine_world/voxel_chunk.hpp"
 #include "platform/platform_services.hpp"
 
 #include <string>
@@ -69,7 +67,6 @@ public:
   EventBus &events() { return event_bus_; }
 
 private:
-  void build_static_scene();
   void update_third_person_camera(PlayerEntity &player, Camera &out_camera);
   void update_third_person_camera(PlayerEntity &player,
                                   const glm::vec3 &render_position,
@@ -87,9 +84,7 @@ private:
   NetClientConnectionState last_net_connection_state_ =
       NetClientConnectionState::Disconnected;
 
-  VoxelChunk world_chunk;
   VoxelCollisionWorld collision_world{nullptr};
-  RuntimeWorldState world_state;
 
   Camera camera;
   PlayerEntity local_player;

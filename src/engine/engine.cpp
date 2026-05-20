@@ -159,19 +159,19 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   settings.solver_backend = runtime_options.physics_backend;
   physics.init(settings);
 
-  build_static_scene();
-  debug_planet_.center = glm::dvec3(0.0, 18.0, -72.0);
-  debug_planet_.radius = 14.0;
-  debug_planet_.voxel_size = 0.45;
-  debug_planet_.chunks_per_face = 1;
-  RenderMesh debug_planet_mesh = build_debug_planet_mesh(debug_planet_, 12);
+  scene = RenderScene{};
+  collision_world = VoxelCollisionWorld{nullptr};
+  debug_planet_.center = glm::dvec3(0.0, -60.0, 0.0);
+  debug_planet_.radius = 128.0;
+  debug_planet_.voxel_size = 1.0;
+  debug_planet_.chunks_per_face = 4;
+  RenderMesh debug_planet_mesh = build_debug_planet_mesh(debug_planet_, 24);
   append_mesh(debug_planet_mesh,
-              build_debug_planet_grid_mesh(debug_planet_, 8, 0.025f));
+              build_debug_planet_grid_mesh(debug_planet_, 16, 0.025f));
   debug_planet_mesh.mesh_id = 0x5658504c414e4554ull;
   scene.opaque_meshes.push_back(debug_planet_mesh);
 
-  const int32_t chunks_per_face = 1;
-  debug_planet_.chunks_per_face = chunks_per_face;
+  const int32_t chunks_per_face = debug_planet_.chunks_per_face;
   for (int32_t face_index = 0; face_index < 6; ++face_index) {
     for (int32_t cy = 0; cy < chunks_per_face; ++cy) {
       for (int32_t cx = 0; cx < chunks_per_face; ++cx) {
@@ -185,7 +185,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
         // Non-zero mesh IDs are cached by SokolRenderer::upload_scene(), and
         // cached meshes are frustum-culled with aabb_in_frustum() per frame.
         terrain.mesh_id =
-            static_cast<uint64_t>(1000 + face_index * 100 + cx + cy);
+            static_cast<uint64_t>(1000 + face_index * 1000 +
+                                  cy * chunks_per_face + cx);
         scene.opaque_meshes.push_back(terrain);
       }
     }
@@ -203,6 +204,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
                lod_test.visible_nodes.size(), lod_test.new_nodes.size());
 
   local_player = PlayerControllerSystem::spawn_player(collision_world);
+  local_player.transform.position = glm::vec3(0.0f, 70.0f, 0.0f);
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
   update_third_person_camera(local_player, camera);
@@ -216,7 +218,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
                   debug_planet_, debug_planet_camera_face_, 0.055f));
   refresh_overlay_text();
 
-  spdlog::info("Engine init: flat world, capsule player, backend={}",
+  spdlog::info("Engine init: planet terrain, capsule player, backend={}",
                runtime_options.render_backend == RenderBackendType::Sokol
                    ? "Sokol"
                    : "OpenGL");
@@ -367,8 +369,7 @@ void Engine::tick(double frame_dt,
   render_stats.fixed_cpu_ms = smooth_metric(
       render_stats.fixed_cpu_ms, game_session.fixed_cpu_ms(), 0.25);
   render_stats.fixed_steps = game_session.fixed_steps_last_frame();
-  render_stats.streamed_chunk_count =
-      static_cast<uint32_t>(world_state.streamed_chunks.size());
+  render_stats.streamed_chunk_count = 0;
   render_stats.profiling.gameplay_cpu_ms = smooth_metric(
       render_stats.profiling.gameplay_cpu_ms, profiling_sample.gameplay_cpu_ms,
       0.25);
@@ -453,12 +454,6 @@ void Engine::reset_camera() {
 
 GuiMenu::Character Engine::preferred_character() const {
   return GuiMenu::Character::Capsule;
-}
-
-void Engine::build_static_scene() {
-  world_state.initialize(world_chunk, collision_world, scene);
-  scene.debug_world = RenderMesh{};
-  scene.debug_screen = RenderMesh{};
 }
 
 void Engine::update_third_person_camera(PlayerEntity &player,

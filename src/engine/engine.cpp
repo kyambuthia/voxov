@@ -161,10 +161,10 @@ bool Engine::init(const EngineRuntimeOptions &options) {
 
   scene = RenderScene{};
   collision_world = VoxelCollisionWorld{nullptr};
-  debug_planet_.center = glm::dvec3(0.0, -450.0, 0.0);
-  debug_planet_.radius = 512.0;
-  debug_planet_.voxel_size = 2.0;
-  debug_planet_.chunks_per_face = 8;
+  debug_planet_.center = glm::dvec3(0.0, -52.0, 0.0);
+  debug_planet_.radius = 64.0;
+  debug_planet_.voxel_size = 1.0;
+  debug_planet_.chunks_per_face = 1;
   collision_world.set_planet_surface_collider(glm::vec3(debug_planet_.center),
                                                static_cast<float>(debug_planet_.radius));
   RenderMesh debug_planet_mesh = build_debug_planet_mesh(debug_planet_, 24);

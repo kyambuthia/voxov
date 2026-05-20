@@ -12,9 +12,12 @@
 #include <glm/geometric.hpp>
 
 namespace {
-constexpr int k_planet_chunk_size_x = VoxelChunk::CHUNK_X;
-constexpr int k_planet_chunk_size_z = VoxelChunk::CHUNK_Z;
+// Temporary terrain mesh budget tunables while planet chunk streaming matures.
+constexpr int k_planet_chunk_size_x = 8;
+constexpr int k_planet_chunk_size_z = 8;
 constexpr int k_planet_chunk_height = VoxelChunk::CHUNK_Y;
+constexpr int k_planet_max_terrain_height = 28;
+constexpr int k_planet_reserved_faces_per_column = 8;
 
 uint32_t hash_u32(uint32_t value) {
   value ^= value >> 16u;
@@ -60,7 +63,9 @@ int terrain_height(int32_t world_x, int32_t world_z, uint64_t seed) {
   }
 
   height = (height / 2) * 2;
-  return std::clamp(height, 2, k_planet_chunk_height - 3);
+  return std::clamp(height, 2,
+                    std::min(k_planet_max_terrain_height,
+                             k_planet_chunk_height - 3));
 }
 
 VoxelMaterial column_material(int32_t world_x, int32_t world_z, int voxel_y,
@@ -257,9 +262,13 @@ RenderMesh build_single_face_planet_terrain_mesh(
 
   RenderMesh mesh{};
   mesh.vertices.reserve(static_cast<size_t>(k_planet_chunk_size_x *
-                                            k_planet_chunk_size_z * 8 * 4));
+                                            k_planet_chunk_size_z *
+                                            k_planet_reserved_faces_per_column *
+                                            4));
   mesh.indices.reserve(static_cast<size_t>(k_planet_chunk_size_x *
-                                           k_planet_chunk_size_z * 8 * 6));
+                                           k_planet_chunk_size_z *
+                                           k_planet_reserved_faces_per_column *
+                                           6));
 
   // Precompute max solid Y per column for top-face detection
   int max_y_per_column[k_planet_chunk_size_x][k_planet_chunk_size_z]{};

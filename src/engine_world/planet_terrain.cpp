@@ -6,42 +6,109 @@
 #include <algorithm>
 #include <array>
 #include <cstddef>
-#include <cmath>
+#include <cstdint>
 
 #include <glm/common.hpp>
 #include <glm/geometric.hpp>
 
 namespace {
-constexpr int k_planet_chunk_size = 16;
+constexpr int k_planet_chunk_size_x = VoxelChunk::CHUNK_X;
+constexpr int k_planet_chunk_size_z = VoxelChunk::CHUNK_Z;
 constexpr int k_planet_chunk_height = VoxelChunk::CHUNK_Y;
 
-float terrain_height(int x, int z, uint64_t seed) {
-  constexpr float base_height = 14.0f;
-  const float seed_x = static_cast<float>(seed & 0xffffu) * 0.00019f;
-  const float seed_z = static_cast<float>((seed >> 16u) & 0xffffu) * 0.00023f;
-  const float rolling = std::sin(static_cast<float>(x) * 0.73f + seed_x) * 6.0f;
-  const float ridge = std::cos(static_cast<float>(z) * 0.61f + seed_z) * 5.0f;
-  const float detail =
-      std::sin(static_cast<float>(x + z) * 0.47f + seed_x * 2.3f) * 3.0f;
-  return std::clamp(base_height + rolling + ridge + detail, 1.0f,
-                    static_cast<float>(k_planet_chunk_height - 2));
+uint32_t hash_u32(uint32_t value) {
+  value ^= value >> 16u;
+  value *= 0x7feb352du;
+  value ^= value >> 15u;
+  value *= 0x846ca68bu;
+  value ^= value >> 16u;
+  return value;
 }
 
-glm::vec3 terrain_color(int voxel_x, int voxel_y, int voxel_z, int max_y_in_column,
-                        bool is_top_face) {
-  const float column_variation =
-      0.88f + 0.12f * std::sin(static_cast<float>(voxel_x * 7 + voxel_z * 11) * 0.43f);
-  constexpr glm::vec3 top_color(0.22f, 0.55f, 0.18f);
-  constexpr glm::vec3 side_color(0.48f, 0.35f, 0.22f);
-  constexpr glm::vec3 deep_color(0.35f, 0.32f, 0.28f);
+uint32_t hash_columns(int32_t x, int32_t z, uint64_t seed, uint32_t salt) {
+  uint32_t value = static_cast<uint32_t>(x) * 0x8da6b343u;
+  value ^= static_cast<uint32_t>(z) * 0xd8163841u;
+  value ^= static_cast<uint32_t>(seed);
+  value ^= static_cast<uint32_t>(seed >> 32u) * 0xcb1ab31fu;
+  value ^= salt;
+  return hash_u32(value);
+}
 
-  if (voxel_y >= max_y_in_column) {
-    return top_color * column_variation;
+int block_noise(int32_t world_x, int32_t world_z, uint64_t seed,
+                int32_t cell_size, uint32_t salt, int amplitude) {
+  const int32_t cell_x = world_x >= 0 ? world_x / cell_size
+                                      : (world_x - cell_size + 1) / cell_size;
+  const int32_t cell_z = world_z >= 0 ? world_z / cell_size
+                                      : (world_z - cell_size + 1) / cell_size;
+  const uint32_t hash = hash_columns(cell_x, cell_z, seed, salt);
+  return static_cast<int>(hash % static_cast<uint32_t>(amplitude * 2 + 1)) -
+         amplitude;
+}
+
+int terrain_height(int32_t world_x, int32_t world_z, uint64_t seed) {
+  int height = 12;
+  height += block_noise(world_x, world_z, seed, 24, 0x6d2b79f5u, 7);
+  height += block_noise(world_x, world_z, seed, 8, 0x1b56c4e9u, 4);
+  height += block_noise(world_x, world_z, seed, 3, 0xa511e9b3u, 2);
+
+  const uint32_t mesa_hash = hash_columns(world_x / 11, world_z / 11, seed,
+                                          0x4f1bbcdu);
+  if ((mesa_hash & 15u) == 0u) {
+    height += 8;
+  } else if ((mesa_hash & 31u) == 1u) {
+    height -= 7;
   }
-  if (voxel_y >= max_y_in_column - 3) {
-    return side_color * column_variation;
+
+  height = (height / 2) * 2;
+  return std::clamp(height, 2, k_planet_chunk_height - 3);
+}
+
+VoxelMaterial column_material(int32_t world_x, int32_t world_z, int voxel_y,
+                              int max_y_in_column, uint64_t seed) {
+  if (voxel_y < max_y_in_column - 5) {
+    return VoxelMaterial::Stone;
   }
-  return deep_color * (0.85f + 0.15f * column_variation);
+
+  const uint32_t hash = hash_columns(world_x, world_z, seed, 0x91e10da5u);
+  if (voxel_y == max_y_in_column && max_y_in_column >= 23) {
+    return VoxelMaterial::Stone;
+  }
+  if (voxel_y == max_y_in_column && (hash % 19u) == 0u) {
+    return VoxelMaterial::Stone;
+  }
+  if (voxel_y >= max_y_in_column - 2) {
+    return VoxelMaterial::Grass;
+  }
+  return VoxelMaterial::Dirt;
+}
+
+glm::vec3 terrain_color(VoxelMaterial material, int32_t world_x,
+                        int32_t world_z, int voxel_y, int max_y_in_column,
+                        const glm::ivec3 &face_normal) {
+  const float height_t = std::clamp(
+      static_cast<float>(voxel_y) / static_cast<float>(k_planet_chunk_height),
+      0.0f, 1.0f);
+  glm::vec3 color = VoxelChunk::material_color(material, face_normal.y > 0,
+                                               height_t);
+  if (material == VoxelMaterial::Grass && face_normal.y <= 0) {
+    color = glm::vec3(0.42f, 0.30f, 0.16f);
+  } else if (material == VoxelMaterial::Stone) {
+    color = glm::vec3(0.42f + height_t * 0.24f, 0.44f + height_t * 0.22f,
+                      0.45f + height_t * 0.18f);
+  }
+
+  const uint32_t hash = hash_columns(world_x, world_z, 0x56584f56u,
+                                     0xb5297a4du);
+  const float column_variation =
+      0.82f + static_cast<float>(hash & 0xffu) * (0.28f / 255.0f);
+  const float face_light = face_normal.y > 0   ? 1.10f
+                           : face_normal.x != 0 ? 0.82f
+                                                 : 0.92f;
+  if (voxel_y == max_y_in_column && ((hash >> 8u) & 7u) == 0u) {
+    color += glm::vec3(0.08f, 0.07f, 0.02f);
+  }
+  return glm::clamp(color * column_variation * face_light, glm::vec3(0.0f),
+                    glm::vec3(1.0f));
 }
 
 void clear_chunk(VoxelChunk &chunk) {
@@ -54,19 +121,21 @@ void clear_chunk(VoxelChunk &chunk) {
   }
 }
 
-void generate_heightfield(VoxelChunk &chunk, uint64_t seed) {
+void generate_heightfield(VoxelChunk &chunk, const PlanetChunkId &chunk_id,
+                          uint64_t seed) {
   clear_chunk(chunk);
 
-  for (int z = 0; z < k_planet_chunk_size; ++z) {
-    for (int x = 0; x < k_planet_chunk_size; ++x) {
-      const int max_y = static_cast<int>(std::floor(terrain_height(x, z, seed)));
+  for (int z = 0; z < k_planet_chunk_size_z; ++z) {
+    for (int x = 0; x < k_planet_chunk_size_x; ++x) {
+      const int32_t world_x = chunk_id.x * k_planet_chunk_size_x + x;
+      const int32_t world_z = chunk_id.y * k_planet_chunk_size_z + z;
+      const int max_y = terrain_height(world_x, world_z, seed);
       for (int y = 0; y <= max_y; ++y) {
-        chunk.set_material(x, y, z, VoxelMaterial::Dirt);
+        chunk.set_material(x, y, z,
+                           column_material(world_x, world_z, y, max_y, seed));
       }
     }
   }
-
-  chunk.refresh_surface_materials();
 }
 
 glm::vec3 remap_local_vertex(const PlanetDefinition &planet,
@@ -76,12 +145,12 @@ glm::vec3 remap_local_vertex(const PlanetDefinition &planet,
   const double face_span = 2.0 / static_cast<double>(chunks_per_face);
   const double u = -1.0 + face_span *
                               (static_cast<double>(chunk_id.x) +
-                               static_cast<double>(local.x) /
-                                   static_cast<double>(k_planet_chunk_size));
+                                   static_cast<double>(local.x) /
+                                   static_cast<double>(k_planet_chunk_size_x));
   const double v = -1.0 + face_span *
                               (static_cast<double>(chunk_id.y) +
                                static_cast<double>(local.z) /
-                                   static_cast<double>(k_planet_chunk_size));
+                                   static_cast<double>(k_planet_chunk_size_z));
   const double height = static_cast<double>(local.y) * planet.voxel_size;
   return glm::vec3(voxel_world_pos(planet, chunk_id.face, u, v, height));
 }
@@ -118,12 +187,12 @@ glm::vec3 sphere_normal_for_local(const PlanetDefinition &planet,
   const double face_span = 2.0 / static_cast<double>(chunks_per_face);
   const double u = -1.0 + face_span *
                               (static_cast<double>(chunk_id.x) +
-                               static_cast<double>(local.x) /
-                                   static_cast<double>(k_planet_chunk_size));
+                                   static_cast<double>(local.x) /
+                                   static_cast<double>(k_planet_chunk_size_x));
   const double v = -1.0 + face_span *
                               (static_cast<double>(chunk_id.y) +
                                static_cast<double>(local.z) /
-                                   static_cast<double>(k_planet_chunk_size));
+                                   static_cast<double>(k_planet_chunk_size_z));
   return glm::vec3(face_uv_to_direction(chunk_id.face, u, v));
 }
 
@@ -183,21 +252,19 @@ void stitch_face_edges(VoxelChunk &chunk, PlanetFace face, int32_t chunk_x,
 RenderMesh build_single_face_planet_terrain_mesh(
     const PlanetDefinition &planet, const PlanetChunkId &chunk_id) {
   VoxelChunk chunk;
-  generate_heightfield(chunk, planet.seed);
+  generate_heightfield(chunk, chunk_id, planet.seed);
   stitch_face_edges(chunk, chunk_id.face, chunk_id.x, chunk_id.y, planet);
 
   RenderMesh mesh{};
-  mesh.vertices.reserve(static_cast<size_t>(k_planet_chunk_size *
-                                            k_planet_chunk_size *
-                                            k_planet_chunk_height * 6 * 4));
-  mesh.indices.reserve(static_cast<size_t>(k_planet_chunk_size *
-                                           k_planet_chunk_size *
-                                           k_planet_chunk_height * 6 * 6));
+  mesh.vertices.reserve(static_cast<size_t>(k_planet_chunk_size_x *
+                                            k_planet_chunk_size_z * 8 * 4));
+  mesh.indices.reserve(static_cast<size_t>(k_planet_chunk_size_x *
+                                           k_planet_chunk_size_z * 8 * 6));
 
   // Precompute max solid Y per column for top-face detection
-  int max_y_per_column[16][16]{};
-  for (int z = 0; z < k_planet_chunk_size; ++z) {
-    for (int x = 0; x < k_planet_chunk_size; ++x) {
+  int max_y_per_column[k_planet_chunk_size_x][k_planet_chunk_size_z]{};
+  for (int z = 0; z < k_planet_chunk_size_z; ++z) {
+    for (int x = 0; x < k_planet_chunk_size_x; ++x) {
       int max_y = 0;
       for (int y = 0; y < k_planet_chunk_height; ++y) {
         if (chunk.solid(x, y, z)) max_y = y;
@@ -206,22 +273,35 @@ RenderMesh build_single_face_planet_terrain_mesh(
     }
   }
 
-  for (int z = 0; z < k_planet_chunk_size; ++z) {
+  for (int z = 0; z < k_planet_chunk_size_z; ++z) {
     for (int y = 0; y < k_planet_chunk_height; ++y) {
-      for (int x = 0; x < k_planet_chunk_size; ++x) {
+      for (int x = 0; x < k_planet_chunk_size_x; ++x) {
         if (!chunk.solid(x, y, z)) {
           continue;
         }
 
         const glm::ivec3 voxel(x, y, z);
+        const int32_t world_x = chunk_id.x * k_planet_chunk_size_x + x;
+        const int32_t world_z = chunk_id.y * k_planet_chunk_size_z + z;
         const int max_y = max_y_per_column[x][z];
         for (const VoxelFaceDef &face : k_voxel_faces) {
           const glm::ivec3 neighbor = voxel + face.neighbor;
-          if (chunk.solid(neighbor.x, neighbor.y, neighbor.z)) {
+          bool neighbor_solid = chunk.solid(neighbor.x, neighbor.y, neighbor.z);
+          if (!neighbor_solid &&
+              (neighbor.x < 0 || neighbor.x >= k_planet_chunk_size_x ||
+               neighbor.z < 0 || neighbor.z >= k_planet_chunk_size_z) &&
+              neighbor.y >= 0 && neighbor.y < k_planet_chunk_height) {
+            const int neighbor_height =
+                terrain_height(world_x + face.neighbor.x,
+                               world_z + face.neighbor.z, planet.seed);
+            neighbor_solid = neighbor.y <= neighbor_height;
+          }
+          if (neighbor_solid) {
             continue;
           }
-          const bool is_top = (face.neighbor.y > 0);
-          const glm::vec3 color = terrain_color(x, y, z, max_y, is_top);
+          const glm::vec3 color =
+              terrain_color(chunk.material(x, y, z), world_x, world_z, y,
+                            max_y, face.neighbor);
           append_planet_voxel_face(mesh, planet, chunk_id, voxel, face, color);
         }
       }

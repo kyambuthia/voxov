@@ -18,3 +18,11 @@ PlanetTangentBasis tangent_basis(
     const glm::dvec3 &world_up_or_pole_vector = glm::dvec3(0.0, 1.0, 0.0));
 glm::dvec3 voxel_world_pos(const PlanetDefinition &planet, PlanetFace face,
                            double u, double v, double height_above_base);
+glm::dvec3 local_face_voxel_to_cube_point(const PlanetDefinition &planet,
+                                          const LocalFaceVoxelCoords &coords);
+glm::dvec3 local_face_voxel_to_world_sphere(
+    const PlanetDefinition &planet, const LocalFaceVoxelCoords &coords);
+LocalFaceVoxelCoords world_sphere_to_local_face_voxel(
+    const PlanetDefinition &planet, const glm::dvec3 &world_pos);
+double cubed_sphere_distortion_factor(const LocalFaceVoxelCoords &coords,
+                                      double face_half_extent);

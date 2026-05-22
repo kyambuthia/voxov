@@ -37,6 +37,13 @@ struct PlanetFaceUV {
   double v = 0.0;
 };
 
+struct LocalFaceVoxelCoords {
+  PlanetFace face = PlanetFace::PosY;
+  // x/z are local face-plane offsets in world units from the face center.
+  // y is altitude above the planet base radius in world units.
+  glm::dvec3 xyz{0.0};
+};
+
 struct PlanetTangentBasis {
   glm::dvec3 east{1.0, 0.0, 0.0};
   glm::dvec3 north{0.0, 0.0, 1.0};

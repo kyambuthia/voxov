@@ -131,3 +131,62 @@ glm::dvec3 voxel_world_pos(const PlanetDefinition &planet, PlanetFace face,
   return planet.center +
          face_uv_to_direction(face, u, v) * (planet.radius + height_above_base);
 }
+
+glm::dvec3 local_face_voxel_to_cube_point(
+    const PlanetDefinition &planet, const LocalFaceVoxelCoords &coords) {
+  const double x = coords.xyz.x;
+  const double z = coords.xyz.z;
+  const double r = std::max(planet.radius, k_epsilon);
+
+  switch (coords.face) {
+  case PlanetFace::PosX:
+    return glm::dvec3(r, z, x);
+  case PlanetFace::NegX:
+    return glm::dvec3(-r, z, -x);
+  case PlanetFace::PosY:
+    return glm::dvec3(x, r, z);
+  case PlanetFace::NegY:
+    return glm::dvec3(x, -r, -z);
+  case PlanetFace::PosZ:
+    return glm::dvec3(x, z, r);
+  case PlanetFace::NegZ:
+    return glm::dvec3(-x, z, -r);
+  }
+
+  return glm::dvec3(x, r, z);
+}
+
+glm::dvec3 local_face_voxel_to_world_sphere(
+    const PlanetDefinition &planet, const LocalFaceVoxelCoords &coords) {
+  const glm::dvec3 cube_point =
+      local_face_voxel_to_cube_point(planet, coords);
+  const glm::dvec3 direction =
+      normalized_or(cube_point, glm::dvec3(0.0, 1.0, 0.0));
+  return planet.center + direction * (planet.radius + coords.xyz.y);
+}
+
+LocalFaceVoxelCoords world_sphere_to_local_face_voxel(
+    const PlanetDefinition &planet, const glm::dvec3 &world_pos) {
+  const glm::dvec3 offset = world_pos - planet.center;
+  const double radial_distance = std::sqrt(glm::dot(offset, offset));
+  const glm::dvec3 direction =
+      normalized_or(offset, glm::dvec3(0.0, 1.0, 0.0));
+  const PlanetFaceUV face_uv = direction_to_face_uv(direction);
+
+  LocalFaceVoxelCoords coords{};
+  coords.face = face_uv.face;
+  coords.xyz.x = face_uv.u * planet.radius;
+  coords.xyz.y = radial_distance - planet.radius;
+  coords.xyz.z = face_uv.v * planet.radius;
+  return coords;
+}
+
+double cubed_sphere_distortion_factor(const LocalFaceVoxelCoords &coords,
+                                      double face_half_extent) {
+  constexpr double k_corner_distortion_factor = 1.6180339887498948482;
+  const double extent = std::max(std::abs(face_half_extent), k_epsilon);
+  const double u = std::clamp(coords.xyz.x / extent, -1.0, 1.0);
+  const double v = std::clamp(coords.xyz.z / extent, -1.0, 1.0);
+  const double corner_t = std::clamp((u * u + v * v) * 0.5, 0.0, 1.0);
+  return 1.0 + (k_corner_distortion_factor - 1.0) * corner_t;
+}

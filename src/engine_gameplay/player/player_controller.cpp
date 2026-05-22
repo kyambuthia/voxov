@@ -57,6 +57,30 @@ float flat_length(glm::vec3 v) {
     return glm::length(glm::vec2(v.x, v.z));
 }
 
+glm::vec3 tangent_or_fallback(glm::vec3 value, glm::vec3 up, glm::vec3 fallback) {
+    value -= up * glm::dot(value, up);
+    const float len = glm::length(value);
+    if (len > 1.0e-5f) {
+        return value / len;
+    }
+
+    fallback -= up * glm::dot(fallback, up);
+    const float fallback_len = glm::length(fallback);
+    if (fallback_len > 1.0e-5f) {
+        return fallback / fallback_len;
+    }
+
+    return glm::vec3(1.0f, 0.0f, 0.0f);
+}
+
+glm::quat orientation_from_frame(glm::vec3 forward, glm::vec3 up) {
+    up = glm::normalize(up);
+    forward = tangent_or_fallback(forward, up, glm::vec3(0.0f, 0.0f, 1.0f));
+    const glm::vec3 right = glm::normalize(glm::cross(forward, up));
+    forward = glm::normalize(glm::cross(up, right));
+    return glm::quat_cast(glm::mat3(right, up, forward));
+}
+
 float move_direction_deg(glm::vec2 move_axis) {
     if (glm::length(move_axis) <= 1.0e-5f) {
         return 0.0f;
@@ -78,6 +102,10 @@ float sample_surface_height(const VoxelCollisionWorld &collision_world, int x, i
 }
 
 glm::vec3 estimate_ground_normal(const VoxelCollisionWorld &collision_world, glm::vec3 feet_position) {
+    if (collision_world.has_planet_surface_collider()) {
+        return collision_world.planet_up_at(feet_position);
+    }
+
     const int x = static_cast<int>(std::floor(feet_position.x));
     const int z = static_cast<int>(std::floor(feet_position.z));
     const float h_l = sample_surface_height(collision_world, x - 1, z);
@@ -159,10 +187,11 @@ CapsuleResolveResult simulate_capsule(
     PlayerEntity &player,
     const VoxelCollisionWorld &collision_world,
     glm::vec3 desired_flat_velocity,
+    glm::vec3 up,
     float dt) {
     const LocomotionTuningData &tuning = player.locomotion_tuning;
     glm::vec3 next_pos = player.transform.position + desired_flat_velocity * dt;
-    next_pos.y += player.locomotion.vertical_velocity * dt;
+    next_pos += up * (player.locomotion.vertical_velocity * dt);
 
     CapsuleResolveResult resolve = collision_world.resolve_capsule(
         next_pos,
@@ -172,9 +201,9 @@ CapsuleResolveResult simulate_capsule(
         8,
         1.2f);
 
-    if (player.controller.grounded && flat_length(desired_flat_velocity) > 0.001f && resolve.had_collision) {
+    if (player.controller.grounded && glm::length(desired_flat_velocity) > 0.001f && resolve.had_collision) {
         glm::vec3 step_lift = player.transform.position;
-        step_lift.y += tuning.step_offset;
+        step_lift += up * tuning.step_offset;
         CapsuleResolveResult step_lift_resolve = collision_world.resolve_capsule(
             step_lift,
             player.controller.capsuleRadius,
@@ -194,19 +223,22 @@ CapsuleResolveResult simulate_capsule(
             1.2f);
 
         float step_hit_distance = 0.0f;
-        const glm::vec3 step_origin = step_resolve.position + glm::vec3(0.0f, 0.12f, 0.0f);
-        if (collision_world.raycast(step_origin, glm::vec3(0.0f, -1.0f, 0.0f), tuning.step_offset + 0.25f, step_hit_distance)) {
-            step_resolve.position.y = step_origin.y - step_hit_distance + 0.02f;
+        const glm::vec3 step_up = collision_world.has_planet_surface_collider()
+                                      ? collision_world.planet_up_at(step_resolve.position)
+                                      : up;
+        const glm::vec3 step_origin = step_resolve.position + step_up * 0.12f;
+        if (collision_world.raycast(step_origin, -step_up, tuning.step_offset + 0.25f, step_hit_distance)) {
+            step_resolve.position = step_origin - step_up * step_hit_distance + step_up * 0.02f;
             step_resolve.grounded = true;
         }
 
-        const float base_progress = glm::length(glm::vec2(
-            resolve.position.x - player.transform.position.x,
-            resolve.position.z - player.transform.position.z));
-        const float step_progress = glm::length(glm::vec2(
-            step_resolve.position.x - player.transform.position.x,
-            step_resolve.position.z - player.transform.position.z));
-        const float step_height_gain = step_resolve.position.y - player.transform.position.y;
+        const glm::vec3 base_delta = resolve.position - player.transform.position;
+        const glm::vec3 step_delta = step_resolve.position - player.transform.position;
+        const float base_progress =
+            glm::length(base_delta - up * glm::dot(base_delta, up));
+        const float step_progress =
+            glm::length(step_delta - up * glm::dot(step_delta, up));
+        const float step_height_gain = glm::dot(step_resolve.position - player.transform.position, up);
         if (step_progress > base_progress + 0.01f ||
             (step_height_gain > 0.05f && step_progress > 0.01f)) {
             resolve = step_resolve;
@@ -369,7 +401,22 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
     PlayerCollisionDebug debug{};
     LocomotionTuningData &tuning = player.locomotion_tuning;
     PlayerLocomotionStateData &motion = player.locomotion;
-    const MovementDebug movement_debug = compute_movement_vectors(player.camera_rig.yaw, input.move);
+    const glm::vec3 up = collision_world.has_planet_surface_collider()
+                             ? collision_world.planet_up_at(player.transform.position)
+                             : glm::vec3(0.0f, 1.0f, 0.0f);
+    MovementDebug movement_debug = compute_movement_vectors(player.camera_rig.yaw, input.move);
+    if (collision_world.has_planet_surface_collider()) {
+        const float yaw_rad = to_radians(player.camera_rig.yaw);
+        const glm::vec3 north =
+            tangent_or_fallback(glm::vec3(0.0f, 0.0f, 1.0f), up,
+                                glm::vec3(1.0f, 0.0f, 0.0f));
+        const glm::vec3 east = glm::normalize(glm::cross(north, up));
+        movement_debug.forward =
+            glm::normalize(north * std::cos(yaw_rad) + east * std::sin(yaw_rad));
+        movement_debug.right = glm::normalize(glm::cross(movement_debug.forward, up));
+        movement_debug.desired =
+            movement_debug.forward * input.move.y + movement_debug.right * input.move.x;
+    }
     glm::vec3 desired_move = movement_debug.desired;
     const float input_len = glm::length(glm::vec2(input.move.x, input.move.y));
     motion.input_magnitude = std::clamp(input_len, 0.0f, 1.0f);
@@ -399,10 +446,14 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
     }
 
     if (noclip) {
-        const float noclip_speed = input.sprint_held ? tuning.run_speed : tuning.walk_speed;
+        (void)tuning;
+        const float noclip_speed = input.sprint_held ? 500000.0f : 80.0f;
         player.transform.position += (has_move_input ? desired_move : glm::vec3(0.0f)) * noclip_speed * dt;
         if (input.jump_held) {
-            player.transform.position.y += noclip_speed * dt;
+            player.transform.position += up * (noclip_speed * dt);
+        }
+        if (input.crouch_held) {
+            player.transform.position -= up * (noclip_speed * dt);
         }
         player.controller.grounded = false;
         player.controller.velocity = glm::vec3(0.0f);
@@ -454,7 +505,8 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
 
     const glm::vec3 start_position = player.transform.position;
     const float pre_solve_vertical = motion.vertical_velocity;
-    CapsuleResolveResult resolve = simulate_capsule(player, collision_world, motion.planar_velocity, dt);
+    CapsuleResolveResult resolve =
+        simulate_capsule(player, collision_world, motion.planar_velocity, up, dt);
     player.transform.position = resolve.position;
     player.controller.grounded = resolve.grounded;
     if (motion.state == PlayerLocomotionState::JumpStart && motion.vertical_velocity > 0.0f) {
@@ -464,8 +516,11 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
 
     motion.ground_normal = player.controller.grounded
         ? estimate_ground_normal(collision_world, player.transform.position)
-        : glm::vec3(0.0f, 1.0f, 0.0f);
-    motion.slope_angle_deg = glm::degrees(std::acos(std::clamp(glm::dot(motion.ground_normal, glm::vec3(0.0f, 1.0f, 0.0f)), -1.0f, 1.0f)));
+        : up;
+    const glm::vec3 slope_up = collision_world.has_planet_surface_collider()
+                                   ? collision_world.planet_up_at(player.transform.position)
+                                   : glm::vec3(0.0f, 1.0f, 0.0f);
+    motion.slope_angle_deg = glm::degrees(std::acos(std::clamp(glm::dot(motion.ground_normal, slope_up), -1.0f, 1.0f)));
     motion.stable_grounded = player.controller.grounded && motion.slope_angle_deg <= tuning.slope_limit_deg;
     if (player.controller.grounded && !motion.stable_grounded) {
         player.controller.grounded = false;
@@ -474,9 +529,12 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
 
     if (!player.controller.grounded && pre_solve_vertical <= 0.0f) {
         float snap_hit_distance = 0.0f;
-        const glm::vec3 snap_origin = player.transform.position + glm::vec3(0.0f, 0.10f, 0.0f);
-        if (collision_world.raycast(snap_origin, glm::vec3(0.0f, -1.0f, 0.0f), tuning.ledge_snap_distance, snap_hit_distance)) {
-            player.transform.position.y = snap_origin.y - snap_hit_distance + 0.02f;
+        const glm::vec3 snap_up = collision_world.has_planet_surface_collider()
+                                      ? collision_world.planet_up_at(player.transform.position)
+                                      : glm::vec3(0.0f, 1.0f, 0.0f);
+        const glm::vec3 snap_origin = player.transform.position + snap_up * 0.10f;
+        if (collision_world.raycast(snap_origin, -snap_up, tuning.ledge_snap_distance, snap_hit_distance)) {
+            player.transform.position = snap_origin - snap_up * snap_hit_distance + snap_up * 0.02f;
             player.controller.grounded = true;
             resolve.grounded = true;
         }
@@ -493,10 +551,14 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
     }
 
     const glm::vec3 actual_velocity = (player.transform.position - start_position) / std::max(0.0001f, dt);
-    motion.planar_velocity = glm::vec3(actual_velocity.x, 0.0f, actual_velocity.z);
-    motion.move_speed = flat_length(motion.planar_velocity);
+    const glm::vec3 current_up = collision_world.has_planet_surface_collider()
+                                     ? collision_world.planet_up_at(player.transform.position)
+                                     : glm::vec3(0.0f, 1.0f, 0.0f);
+    motion.planar_velocity = actual_velocity - current_up * glm::dot(actual_velocity, current_up);
+    motion.move_speed = glm::length(motion.planar_velocity);
     player.controller.velocity = actual_velocity;
-    player.controller.velocity.y = motion.vertical_velocity;
+    player.controller.velocity =
+        motion.planar_velocity + current_up * motion.vertical_velocity;
 
     if (player.controller.grounded) {
         motion.vertical_velocity = 0.0f;
@@ -553,7 +615,17 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
         }
     }
 
-    player.transform.rotation = glm::angleAxis(to_radians(motion.facing_yaw_deg), glm::vec3(0.0f, 1.0f, 0.0f));
+    const float facing_rad = to_radians(motion.facing_yaw_deg);
+    glm::vec3 facing_forward(std::sin(facing_rad), 0.0f, std::cos(facing_rad));
+    if (collision_world.has_planet_surface_collider()) {
+        const glm::vec3 north =
+            tangent_or_fallback(glm::vec3(0.0f, 0.0f, 1.0f), current_up,
+                                glm::vec3(1.0f, 0.0f, 0.0f));
+        const glm::vec3 east = glm::normalize(glm::cross(north, current_up));
+        facing_forward =
+            glm::normalize(north * std::cos(facing_rad) + east * std::sin(facing_rad));
+    }
+    player.transform.rotation = orientation_from_frame(facing_forward, current_up);
 
     player.procedural.spine_lean = std::clamp(motion.move_speed / std::max(0.1f, tuning.run_speed), 0.0f, 1.0f) * 0.25f;
     player.procedural.turn_bank = std::clamp(motion.turn_delta_deg / 90.0f, -1.0f, 1.0f) * (player.controller.grounded ? 0.18f : 0.08f);

@@ -160,6 +160,7 @@ add_library(engine_world STATIC
     src/engine_world/planet_lod.cpp
     src/engine_world/planet_math.cpp
     src/engine_world/planet_quadtree.cpp
+    src/engine_world/planet_streamer.cpp
     src/engine_world/planet_terrain.cpp
     src/engine_world/voxel_chunk.cpp
     src/engine_world/world_gen.cpp

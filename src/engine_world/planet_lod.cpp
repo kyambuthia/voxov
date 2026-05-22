@@ -189,12 +189,11 @@ void PlanetLODSelector::select_node(PlanetQuadtree &quadtree,
 
   const glm::dvec3 world_min = quadtree.planet().center + node->bounds_min;
   const glm::dvec3 world_max = quadtree.planet().center + node->bounds_max;
-  node->render_bounds_min = glm::vec3(world_min - camera_pos);
-  node->render_bounds_max = glm::vec3(world_max - camera_pos);
+  node->render_bounds_min = glm::vec3(world_min);
+  node->render_bounds_max = glm::vec3(world_max);
 
   const Frustum frustum = extract_frustum(view_projection);
-  if (!aabb_in_frustum(frustum, node->render_bounds_min,
-                       node->render_bounds_max)) {
+  if (!aabb_in_frustum(frustum, glm::vec3(world_min), glm::vec3(world_max))) {
     return;
   }
 
@@ -242,7 +241,8 @@ void PlanetLODSelector::select_node(PlanetQuadtree &quadtree,
   }
 
   last_lod_change_frame_ = frame_index_;
-  for (const int32_t child_index : node->children) {
+  const std::array<int32_t, 4> child_indices = node->children;
+  for (const int32_t child_index : child_indices) {
     select_node(quadtree, child_index, camera_pos, view_projection,
                 screen_height, threshold, result);
   }

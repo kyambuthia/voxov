@@ -6,7 +6,11 @@
 #include "engine_net_proto/net_protocol_helpers.hpp"
 #include "engine_net_proto/net_types.hpp"
 #include "engine_world/net_chunk_state.hpp"
+#include "engine_world/atmosphere_transition_manager.hpp"
 #include "engine_world/planet_math.hpp"
+#include "engine_world/planet_quadtree.hpp"
+#include "engine_world/planet_streamer.hpp"
+#include "engine_world/planet_terrain.hpp"
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_physics/vehicle/aircraft_controller.hpp"
 #include "engine_physics/vehicle/ground_vehicle_controller.hpp"
@@ -239,6 +243,35 @@ void test_planet_radial_up_and_world_pos() {
   assert(glm::dot(up, surface - planet.center) > 0.0);
 }
 
+void test_planet_local_face_world_roundtrip_and_distortion() {
+  PlanetDefinition planet{};
+  planet.center = glm::dvec3(3.0, -4.0, 7.0);
+  planet.radius = 512.0;
+
+  LocalFaceVoxelCoords local{};
+  local.face = PlanetFace::PosZ;
+  local.xyz = glm::dvec3(128.0, 42.0, -96.0);
+
+  const glm::dvec3 world =
+      local_face_voxel_to_world_sphere(planet, local);
+  const LocalFaceVoxelCoords roundtrip =
+      world_sphere_to_local_face_voxel(planet, world);
+
+  assert(roundtrip.face == local.face);
+  assert(std::fabs(roundtrip.xyz.x - local.xyz.x) < 1.0e-9);
+  assert(std::fabs(roundtrip.xyz.y - local.xyz.y) < 1.0e-9);
+  assert(std::fabs(roundtrip.xyz.z - local.xyz.z) < 1.0e-9);
+
+  LocalFaceVoxelCoords center{};
+  center.xyz = glm::dvec3(0.0);
+  LocalFaceVoxelCoords corner{};
+  corner.xyz = glm::dvec3(planet.radius, 0.0, planet.radius);
+  assert(std::fabs(cubed_sphere_distortion_factor(center, planet.radius) -
+                   1.0) < 1.0e-9);
+  assert(std::fabs(cubed_sphere_distortion_factor(corner, planet.radius) -
+                   1.6180339887498948) < 1.0e-9);
+}
+
 void test_planet_tangent_basis_orthonormal() {
   const PlanetTangentBasis basis = tangent_basis(glm::dvec3(0.0, 1.0, 0.0));
   assert(std::fabs(glm::length(basis.up) - 1.0) < 1.0e-9);
@@ -260,6 +293,400 @@ void test_planet_neighbor_within_face_bounds() {
   const PlanetChunkId clamped = neighbor_chunk_id(id, -20, 30, 16);
   assert(clamped.x == 0);
   assert(clamped.y == 15);
+}
+
+void test_planet_quadtree_roots_are_stable() {
+  PlanetDefinition planet{};
+  planet.radius = 512.0;
+  planet.voxel_size = 2.0;
+
+  PlanetQuadtree quadtree;
+  quadtree.init(planet, 3);
+
+  assert(quadtree.node_count() == 6);
+  const PlanetFace faces[] = {PlanetFace::PosX, PlanetFace::NegX,
+                              PlanetFace::PosY, PlanetFace::NegY,
+                              PlanetFace::PosZ, PlanetFace::NegZ};
+  for (int i = 0; i < 6; ++i) {
+    const int32_t root = quadtree.root_index(faces[i]);
+    assert(root == i);
+
+    const PlanetQuadtreeNode *node = quadtree.node(root);
+    assert(node != nullptr);
+    const PlanetChunkId expected_id{faces[i], 0, 0, 0};
+    assert(node->id == expected_id);
+    assert(node->parent == -1);
+    assert(node->state == QuadtreeNodeState::Empty);
+    assert(node->geometric_error > 0.0f);
+    assert(node->bounds_min.x <= node->bounds_max.x);
+    assert(node->bounds_min.y <= node->bounds_max.y);
+    assert(node->bounds_min.z <= node->bounds_max.z);
+    for (const int32_t child : node->children) {
+      assert(child == -1);
+    }
+  }
+
+  assert(quadtree.node(-1) == nullptr);
+  assert(quadtree.node(99) == nullptr);
+}
+
+void test_planet_quadtree_subdivision_child_ids() {
+  PlanetDefinition planet{};
+  planet.radius = 256.0;
+  planet.voxel_size = 1.0;
+
+  PlanetQuadtree quadtree;
+  quadtree.init(planet, 1);
+
+  const int32_t root = quadtree.root_index(PlanetFace::NegZ);
+  assert(quadtree.subdivide(root));
+  assert(quadtree.node_count() == 10);
+
+  const PlanetQuadtreeNode *parent = quadtree.node(root);
+  assert(parent != nullptr);
+  const PlanetChunkId expected_ids[] = {
+      {PlanetFace::NegZ, 0, 0, 1},
+      {PlanetFace::NegZ, 1, 0, 1},
+      {PlanetFace::NegZ, 0, 1, 1},
+      {PlanetFace::NegZ, 1, 1, 1},
+  };
+  for (int i = 0; i < 4; ++i) {
+    const int32_t child_index = parent->children[static_cast<size_t>(i)];
+    const PlanetQuadtreeNode *child = quadtree.node(child_index);
+    assert(child != nullptr);
+    assert(child->id == expected_ids[i]);
+    assert(child->parent == root);
+    assert(child->geometric_error < parent->geometric_error);
+  }
+
+  assert(quadtree.subdivide(root));
+  assert(quadtree.node_count() == 10);
+  assert(!quadtree.subdivide(parent->children[0]));
+  assert(!quadtree.subdivide(-1));
+}
+
+struct TerrainUvBounds {
+  double min_u = 0.0;
+  double max_u = 0.0;
+  double min_v = 0.0;
+  double max_v = 0.0;
+};
+
+TerrainUvBounds terrain_mesh_uv_bounds(const PlanetDefinition &planet,
+                                       const RenderMesh &mesh,
+                                       PlanetFace expected_face) {
+  assert(!mesh.vertices.empty());
+  const PlanetFaceUV first = direction_to_face_uv(
+      glm::dvec3(mesh.vertices.front().position) - planet.center);
+  assert(first.face == expected_face);
+
+  TerrainUvBounds bounds{first.u, first.u, first.v, first.v};
+  for (const RenderVertex &vertex : mesh.vertices) {
+    assert(std::isfinite(vertex.position.x));
+    assert(std::isfinite(vertex.position.y));
+    assert(std::isfinite(vertex.position.z));
+    const PlanetFaceUV uv =
+        direction_to_face_uv(glm::dvec3(vertex.position) - planet.center);
+    assert(uv.face == expected_face);
+    bounds.min_u = std::min(bounds.min_u, uv.u);
+    bounds.max_u = std::max(bounds.max_u, uv.u);
+    bounds.min_v = std::min(bounds.min_v, uv.v);
+    bounds.max_v = std::max(bounds.max_v, uv.v);
+  }
+  return bounds;
+}
+
+void assert_terrain_mesh_deterministic(const RenderMesh &a,
+                                       const RenderMesh &b) {
+  assert(!a.vertices.empty());
+  assert(!a.indices.empty());
+  assert(a.indices.size() % 3 == 0);
+  assert(a.vertices.size() == b.vertices.size());
+  assert(a.indices.size() == b.indices.size());
+  assert(a.mesh_id == b.mesh_id);
+  assert(a.material == b.material);
+  assert(a.mesh_id != 0);
+
+  for (size_t i = 0; i < a.vertices.size(); ++i) {
+    assert(glm::length(a.vertices[i].position - b.vertices[i].position) <
+           0.0001f);
+    assert(glm::length(a.vertices[i].normal - b.vertices[i].normal) <
+           0.0001f);
+    assert(glm::length(a.vertices[i].color - b.vertices[i].color) < 0.0001f);
+  }
+  for (size_t i = 0; i < a.indices.size(); ++i) {
+    assert(a.indices[i] == b.indices[i]);
+    assert(a.indices[i] < a.vertices.size());
+  }
+}
+
+void test_planet_terrain_root_chunk_covers_face() {
+  PlanetDefinition planet{};
+  planet.radius = 128.0;
+  planet.voxel_size = 0.5;
+  planet.chunks_per_face = 1;
+  planet.seed = 0x12345678u;
+
+  const PlanetChunkId root{PlanetFace::PosY, 0, 0, 0};
+  const RenderMesh mesh_a = build_single_face_planet_terrain_mesh(planet, root);
+  const RenderMesh mesh_b = build_single_face_planet_terrain_mesh(planet, root);
+  assert_terrain_mesh_deterministic(mesh_a, mesh_b);
+
+  const TerrainUvBounds bounds =
+      terrain_mesh_uv_bounds(planet, mesh_a, PlanetFace::PosY);
+  assert(bounds.min_u <= -0.99);
+  assert(bounds.max_u >= 0.99);
+  assert(bounds.min_v <= -0.99);
+  assert(bounds.max_v >= 0.99);
+
+  bool has_radial_normal = false;
+  for (const RenderVertex &vertex : mesh_a.vertices) {
+    const glm::vec3 radial =
+        glm::normalize(vertex.position - glm::vec3(planet.center));
+    if (glm::dot(glm::normalize(vertex.normal), radial) > 0.98f) {
+      has_radial_normal = true;
+      break;
+    }
+  }
+  assert(has_radial_normal);
+}
+
+void test_planet_terrain_lod_chunks_cover_expected_regions() {
+  PlanetDefinition planet{};
+  planet.radius = 128.0;
+  planet.voxel_size = 0.5;
+  planet.chunks_per_face = 2;
+  planet.seed = 0xabcdef01u;
+
+  const PlanetChunkId lower_left{PlanetFace::PosZ, 0, 0, 1};
+  const PlanetChunkId upper_right{PlanetFace::PosZ, 1, 1, 1};
+  const RenderMesh lower_mesh =
+      build_single_face_planet_terrain_mesh(planet, lower_left);
+  const RenderMesh upper_mesh =
+      build_single_face_planet_terrain_mesh(planet, upper_right);
+  assert(!lower_mesh.vertices.empty());
+  assert(!upper_mesh.vertices.empty());
+
+  const TerrainUvBounds lower =
+      terrain_mesh_uv_bounds(planet, lower_mesh, PlanetFace::PosZ);
+  const TerrainUvBounds upper =
+      terrain_mesh_uv_bounds(planet, upper_mesh, PlanetFace::PosZ);
+  constexpr double k_uv_epsilon = 0.015;
+  assert(lower.min_u >= -1.0 - k_uv_epsilon);
+  assert(lower.max_u <= 0.0 + k_uv_epsilon);
+  assert(lower.min_v >= -1.0 - k_uv_epsilon);
+  assert(lower.max_v <= 0.0 + k_uv_epsilon);
+  assert(upper.min_u >= 0.0 - k_uv_epsilon);
+  assert(upper.max_u <= 1.0 + k_uv_epsilon);
+  assert(upper.min_v >= 0.0 - k_uv_epsilon);
+  assert(upper.max_v <= 1.0 + k_uv_epsilon);
+
+  assert(lower.max_u <= upper.min_u + k_uv_epsilon);
+  assert(lower.max_v <= upper.min_v + k_uv_epsilon);
+}
+
+void test_planet_surface_flat_mesh_uses_local_plane() {
+  PlanetDefinition planet{};
+  planet.radius = 128.0;
+  planet.voxel_size = 1.0;
+  planet.chunks_per_face = 1;
+  planet.seed = 0x10203040u;
+
+  PlanetSurfaceRenderFrame surface_frame{};
+  surface_frame.face = PlanetFace::PosY;
+  surface_frame.camera_local_origin = glm::dvec3(0.0);
+  surface_frame.distortion_scale = 1.0;
+
+  const RenderMesh mesh = build_planet_terrain_mesh(
+      planet, PlanetChunkId{PlanetFace::PosY, 0, 0, 0},
+      PlanetTerrainRenderMode::SurfaceFlatFace, surface_frame);
+  assert(!mesh.vertices.empty());
+
+  float min_x = 100000.0f;
+  float max_x = -100000.0f;
+  float min_z = 100000.0f;
+  float max_z = -100000.0f;
+  for (const RenderVertex &vertex : mesh.vertices) {
+    min_x = std::min(min_x, vertex.position.x);
+    max_x = std::max(max_x, vertex.position.x);
+    min_z = std::min(min_z, vertex.position.z);
+    max_z = std::max(max_z, vertex.position.z);
+    assert(std::fabs(vertex.normal.x) < 1.001f);
+    assert(std::fabs(vertex.normal.y) < 1.001f);
+    assert(std::fabs(vertex.normal.z) < 1.001f);
+  }
+
+  assert(min_x >= -0.001f);
+  assert(max_x <= 16.001f);
+  assert(min_z >= -0.001f);
+  assert(max_z <= 16.001f);
+  assert(max_x - min_x >= 15.0f);
+  assert(max_z - min_z >= 15.0f);
+}
+
+void test_planet_streamer_returns_runtime_terrain_chunks() {
+  PlanetDefinition planet{};
+  planet.center = glm::dvec3(0.0);
+  planet.radius = 128.0;
+  planet.voxel_size = 0.5;
+  planet.chunks_per_face = 1;
+  planet.seed = 0x55667788u;
+
+  const glm::dvec3 camera_pos =
+      planet.center + glm::dvec3(0.0, 32.0, planet.radius * 4.0);
+  const glm::mat4 view =
+      glm::lookAt(glm::vec3(camera_pos), glm::vec3(planet.center),
+                  glm::vec3(0.0f, 1.0f, 0.0f));
+  const glm::mat4 projection =
+      glm::perspective(glm::radians(70.0f), 16.0f / 9.0f, 0.1f, 4096.0f);
+
+  PlanetStreamer streamer;
+  streamer.set_generation_budget_per_update(32);
+
+  PlanetRenderRequest request{};
+  request.planet = planet;
+  request.max_lod = 0;
+  request.camera_world_position = camera_pos;
+  request.view_projection = projection * view;
+  request.screen_height_pixels = 1080.0f;
+
+  const std::vector<RenderMesh> meshes_a = streamer.update(request);
+  assert(!meshes_a.empty());
+  assert(meshes_a.size() == streamer.render_meshes().size());
+
+  std::vector<uint64_t> first_mesh_ids;
+  first_mesh_ids.reserve(meshes_a.size());
+  for (const RenderMesh &mesh : meshes_a) {
+    assert(!mesh.vertices.empty());
+    assert(!mesh.indices.empty());
+    assert(mesh.mesh_id != 0);
+    first_mesh_ids.push_back(mesh.mesh_id);
+  }
+
+  int resident_root_count = 0;
+  const PlanetFace faces[] = {PlanetFace::PosX, PlanetFace::NegX,
+                              PlanetFace::PosY, PlanetFace::NegY,
+                              PlanetFace::PosZ, PlanetFace::NegZ};
+  for (const PlanetFace face : faces) {
+    const PlanetChunkId id{face, 0, 0, 0};
+    const RenderMesh *resident = streamer.resident_mesh(id);
+    if (resident == nullptr) {
+      continue;
+    }
+
+    RenderMesh expected = build_single_face_planet_terrain_mesh(planet, id);
+    expected.mesh_id = PlanetStreamer::stable_mesh_id(id);
+    assert_terrain_mesh_deterministic(*resident, expected);
+    ++resident_root_count;
+  }
+  assert(resident_root_count > 0);
+
+  const std::vector<RenderMesh> meshes_b = streamer.update(request);
+  assert(meshes_b.size() == first_mesh_ids.size());
+  for (size_t i = 0; i < meshes_b.size(); ++i) {
+    assert(meshes_b[i].mesh_id == first_mesh_ids[i]);
+  }
+}
+
+void test_planet_streamer_refines_near_surface() {
+  PlanetDefinition planet{};
+  planet.center = glm::dvec3(0.0);
+  planet.radius = 128.0;
+  planet.voxel_size = 1.0;
+  planet.chunks_per_face = 1;
+  planet.seed = 0x77889900u;
+
+  const glm::dvec3 camera_pos =
+      planet.center + glm::dvec3(0.0, planet.radius + 8.0, 0.0);
+  const glm::mat4 view =
+      glm::lookAt(glm::vec3(camera_pos), glm::vec3(16.0f, 128.0f, 16.0f),
+                  glm::vec3(0.0f, 0.0f, 1.0f));
+  const glm::mat4 projection =
+      glm::perspective(glm::radians(70.0f), 16.0f / 9.0f, 0.1f, 2048.0f);
+
+  PlanetStreamer streamer;
+  streamer.set_config(PlanetStreamerConfig{
+      .generation_budget_per_update = 256,
+      .max_visible_chunks = 256,
+      .lod_error_threshold_pixels = 2.0f,
+  });
+
+  PlanetRenderRequest request{};
+  request.planet = planet;
+  request.max_lod = 6;
+  request.camera_world_position = camera_pos;
+  request.view_projection = projection * view;
+  request.screen_height_pixels = 1080.0f;
+
+  for (int i = 0; i < 12; ++i) {
+    streamer.update(request);
+  }
+
+  int32_t deepest_resident_lod = 0;
+  for (int32_t i = 0; i < streamer.quadtree().node_count(); ++i) {
+    const PlanetQuadtreeNode *node = streamer.quadtree().node(i);
+    if (node != nullptr && streamer.is_chunk_resident(node->id)) {
+      deepest_resident_lod = std::max(deepest_resident_lod, node->id.lod);
+    }
+  }
+
+  assert(!streamer.render_meshes().empty());
+  assert(deepest_resident_lod >= 4);
+}
+
+void test_atmosphere_transition_manager_descent_and_ascent() {
+  PlanetDefinition planet{};
+  planet.radius = 100.0;
+
+  AtmosphereTransitionManager manager;
+  manager.configure(AtmosphereTransitionConfig{
+      .surface_altitude = 12.0,
+      .space_altitude = 24.0,
+      .fade_seconds = 1.0,
+  });
+  manager.reset_to_space();
+
+  const glm::dvec3 descent_pos = planet.center + glm::dvec3(0.0, 110.0, 0.0);
+  manager.update(planet, descent_pos, glm::dvec3(0.0, -5.0, 0.0), 0.0);
+  assert(manager.snapshot().state == PlanetRenderState::Descending);
+  assert(manager.snapshot().velocity_frozen);
+  assert(manager.snapshot().active_face == PlanetFace::PosY);
+
+  manager.update(planet, descent_pos, glm::dvec3(0.0), 1.0);
+  assert(manager.snapshot().state == PlanetRenderState::Surface);
+  assert(manager.snapshot().surface_alpha == 1.0);
+  assert(manager.snapshot().surface_physics_active);
+
+  const glm::dvec3 ascent_pos = planet.center + glm::dvec3(0.0, 126.0, 0.0);
+  manager.update(planet, ascent_pos, glm::dvec3(0.0, 5.0, 0.0), 0.0);
+  assert(manager.snapshot().state == PlanetRenderState::Ascending);
+  manager.update(planet, ascent_pos, glm::dvec3(0.0), 1.0);
+  assert(manager.snapshot().state == PlanetRenderState::Space);
+  assert(manager.snapshot().space_alpha == 1.0);
+}
+
+void test_planet_surface_raycast_radial_down_and_up() {
+  VoxelCollisionWorld collision_world;
+  const glm::vec3 center(3.0f, -2.0f, 5.0f);
+  const float radius = 64.0f;
+  collision_world.set_planet_surface_collider(center, radius);
+  assert(collision_world.has_planet_surface_collider());
+
+  const glm::vec3 up = glm::normalize(glm::vec3(0.25f, 1.0f, -0.5f));
+  const glm::vec3 origin = center + up * (radius + 12.0f);
+
+  float hit_distance = 0.0f;
+  assert(collision_world.raycast(origin, -up, 40.0f, hit_distance));
+  assert(std::fabs(hit_distance - 12.0f) < 0.05f);
+
+  assert(!collision_world.raycast(origin, up, 40.0f, hit_distance));
+
+  glm::vec3 surface_point(0.0f);
+  glm::vec3 surface_up(0.0f);
+  assert(collision_world.planet_surface_point(origin, surface_point,
+                                              surface_up));
+  assert(glm::length(surface_up - up) < 0.0001f);
+  assert(std::fabs(glm::length(surface_point - center) - radius) < 0.001f);
 }
 
 void test_net_header_validation() {
@@ -1224,8 +1651,18 @@ int main() {
   test_planet_direction_to_face();
   test_planet_direction_to_face_uv_roundtrip();
   test_planet_radial_up_and_world_pos();
+  test_planet_local_face_world_roundtrip_and_distortion();
   test_planet_tangent_basis_orthonormal();
   test_planet_neighbor_within_face_bounds();
+  test_planet_quadtree_roots_are_stable();
+  test_planet_quadtree_subdivision_child_ids();
+  test_planet_terrain_root_chunk_covers_face();
+  test_planet_terrain_lod_chunks_cover_expected_regions();
+  test_planet_surface_flat_mesh_uses_local_plane();
+  test_planet_streamer_returns_runtime_terrain_chunks();
+  test_planet_streamer_refines_near_surface();
+  test_atmosphere_transition_manager_descent_and_ascent();
+  test_planet_surface_raycast_radial_down_and_up();
   test_net_header_validation();
   test_chunk_meshing();
   test_chunk_world_footprint();

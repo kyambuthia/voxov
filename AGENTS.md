@@ -1,5 +1,62 @@
 # Repository Guidelines
 
+## Non-Negotiable Commit Discipline
+
+This repository values inspectable history over convenience. Do not create
+large mixed commits. Do not hide uncertainty in a commit. Do not claim a change
+is complete unless the verification proves the exact claim.
+
+Before committing, the agent must:
+
+- Run `git status --short` and inspect every changed and untracked path.
+- Split unrelated work into separate commits, even if the user asks to "commit".
+- Stage files intentionally with pathspecs or `git add -p`; never use `git add .`
+  for non-trivial work.
+- Review the staged diff with `git diff --cached --stat` and
+  `git diff --cached` before committing.
+- Tell the user the exact commit split when more than one logical change is
+  present.
+- Refuse to make a single commit when the diff mixes unrelated architecture,
+  gameplay, rendering, tests, build files, docs, or generated assets.
+- Preserve user edits. If a file has mixed user and agent edits, inspect it and
+  stage only the intended hunks.
+
+The following are not acceptable on `trunk`:
+
+- "Everything I touched" commits.
+- Rewrite commits that also include drive-by cleanup.
+- Test commits bundled with engine behavior unless the tests are inseparable
+  from the same small change.
+- Formatting churn mixed with behavior changes.
+- Submodule changes mixed with source changes.
+- Debug prints, temporary instrumentation, or placeholder assets unless the
+  commit subject says they are intentional development tooling.
+- Commits that pass only because broken or flaky tests were ignored without
+  saying so in the commit body.
+
+If the working tree is already messy, the agent must first produce a commit
+partition plan. The plan must list commit subjects and the files or hunks each
+commit owns. Only then stage the first commit.
+
+## Planet Rewrite Commit Rules
+
+Planet work is especially high-risk and must be split aggressively. The
+following areas require separate commits unless the diff is tiny and physically
+inseparable:
+
+- Coordinate math and data types.
+- Terrain generation and voxel meshing.
+- Planet streamer, quadtree, LOD selection, and residency.
+- Renderer resource management, shaders, GPU upload, and draw behavior.
+- Player movement, fly mode, camera alignment, and controls.
+- Collision, raycast, and physics integration.
+- Atmospheric transition state.
+- Tests and documentation.
+
+Do not commit fake planet behavior without naming it as scaffolding in the
+subject or body. Do not describe a debug shell, impostor, flat patch, analytic
+collider, or synchronous generator as a finished spherical voxel planet.
+
 ## Commit Strategy
 
 This repository is a single-developer, trunk-based C++ game engine project. The goal is a clean linear history where `trunk` is always buildable and every commit is useful to inspect or bisect.

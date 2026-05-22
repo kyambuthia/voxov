@@ -374,6 +374,7 @@ bool SokolRenderer::init(const RenderDeviceDesc &desc) {
 #else
     sgdesc.environment = sglue_environment();
 #endif
+    sgdesc.buffer_pool_size = 4096;
     sgdesc.logger.func = slog_func;
     sg_setup(&sgdesc);
     if (!sg_isvalid()) {
@@ -650,13 +651,6 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                                   const RenderStats &stats,
                                   const RenderSurface &surface) {
     (void)stats;
-    static int frame_count = 0;
-    if (frame_count < 2) {
-        std::fprintf(stderr, "render_frame #%d: surface=%dx%d views=%u sc_ready=%d\n",
-            frame_count, surface.width, surface.height, ctx.view_count,
-            pipelines_.screen.id != SG_INVALID_ID ? 1 : 0);
-        frame_count++;
-    }
     sg_pass pass = {};
     pass.action = pass_action_;
 #if defined(VOXOV_PLATFORM_ANDROID)

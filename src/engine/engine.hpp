@@ -13,7 +13,9 @@
 #include "engine_runtime/runtime_game_session.hpp"
 #include "engine_runtime/runtime_session_controller.hpp"
 #include "engine_ui/gui_menu.hpp"
+#include "engine_world/atmosphere_transition_manager.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
+#include "engine_world/planet_streamer.hpp"
 #include "engine_world/planet_types.hpp"
 #include "platform/platform_services.hpp"
 
@@ -71,6 +73,8 @@ private:
   void update_third_person_camera(PlayerEntity &player,
                                   const glm::vec3 &render_position,
                                   Camera &out_camera);
+  void update_planet_scene_meshes(PlanetRenderState render_state,
+                                  const RenderSurface &surface);
   void refresh_overlay_text();
 
   Renderer renderer;
@@ -93,7 +97,11 @@ private:
 
   RenderScene scene;
   PlanetDefinition debug_planet_;
+  PlanetStreamer planet_streamer_;
+  AtmosphereTransitionManager atmosphere_transition_;
+  PlanetRenderState active_planet_render_state_ = PlanetRenderState::Surface;
   PlanetFace debug_planet_camera_face_ = PlanetFace::PosZ;
+  bool debug_fly_mode_ = false;
   RenderStats render_stats;
   EngineSessionState session_state_{};
   EngineRuntimeOptions runtime_options{};

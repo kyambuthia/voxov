@@ -155,6 +155,7 @@ if(VOXOV_ENABLE_XR)
 endif()
 
 add_library(engine_world STATIC
+    src/engine_world/atmosphere_transition_manager.cpp
     src/engine_world/planet_debug.cpp
     src/engine_world/planet_lod.cpp
     src/engine_world/planet_math.cpp

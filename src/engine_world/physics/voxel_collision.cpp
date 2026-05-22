@@ -7,6 +7,16 @@
 #include <limits>
 #include <utility>
 
+namespace {
+glm::vec3 normalized_or(glm::vec3 value, glm::vec3 fallback) {
+    const float len_sq = glm::dot(value, value);
+    if (len_sq <= 1.0e-8f) {
+        return fallback;
+    }
+    return value / std::sqrt(len_sq);
+}
+} // namespace
+
 VoxelCollisionWorld::VoxelCollisionWorld(const VoxelChunk *chunk_data,
                                          float voxel_scale)
     : voxel_scale_(voxel_scale > 0.0f ? voxel_scale : 1.0f) {
@@ -103,6 +113,105 @@ bool VoxelCollisionWorld::planet_surface_height(glm::vec2 xz, float &out_y) cons
     out_y = planet_surface_center_.y +
             std::sqrt(std::max(0.0f, radius_sq - horizontal_sq));
     return true;
+}
+
+glm::vec3 VoxelCollisionWorld::planet_up_at(glm::vec3 world_position) const {
+    if (!has_planet_surface_collider_) {
+        return glm::vec3(0.0f, 1.0f, 0.0f);
+    }
+    return normalized_or(world_position - planet_surface_center_,
+                         glm::vec3(0.0f, 1.0f, 0.0f));
+}
+
+float VoxelCollisionWorld::planet_surface_radius_for_direction(glm::vec3 direction) const {
+    if (!has_planet_surface_collider_) {
+        return 0.0f;
+    }
+
+    const glm::vec3 up = normalized_or(direction, glm::vec3(0.0f, 1.0f, 0.0f));
+    float radius = planet_surface_base_radius_;
+    if (planet_surface_height_at_direction_) {
+        const float height = std::clamp(planet_surface_height_at_direction_(up),
+                                        0.0f,
+                                        planet_surface_max_height_above_base_);
+        radius += height;
+    } else {
+        radius = planet_surface_radius_;
+    }
+    return radius;
+}
+
+float VoxelCollisionWorld::planet_surface_signed_distance(glm::vec3 world_position) const {
+    if (!has_planet_surface_collider_) {
+        return std::numeric_limits<float>::max();
+    }
+
+    const glm::vec3 from_center = world_position - planet_surface_center_;
+    const float radial_distance = glm::length(from_center);
+    const glm::vec3 up = normalized_or(from_center, glm::vec3(0.0f, 1.0f, 0.0f));
+    return radial_distance - planet_surface_radius_for_direction(up);
+}
+
+bool VoxelCollisionWorld::planet_surface_point(glm::vec3 world_position,
+                                               glm::vec3 &out_surface_point,
+                                               glm::vec3 &out_up) const {
+    if (!has_planet_surface_collider_ || planet_surface_radius_ <= 0.0f) {
+        return false;
+    }
+
+    out_up = planet_up_at(world_position);
+    out_surface_point =
+        planet_surface_center_ +
+        out_up * planet_surface_radius_for_direction(out_up);
+    return true;
+}
+
+bool VoxelCollisionWorld::raycast_planet_surface(glm::vec3 origin,
+                                                 glm::vec3 direction,
+                                                 float max_distance,
+                                                 float &out_hit_distance) const {
+    if (!has_planet_surface_collider_ || max_distance <= 0.0f) {
+        return false;
+    }
+
+    const float start_distance = planet_surface_signed_distance(origin);
+    if (start_distance <= 0.0f) {
+        out_hit_distance = 0.0f;
+        return true;
+    }
+
+    float previous_t = 0.0f;
+    float previous_distance = start_distance;
+    constexpr int k_steps = 24;
+    for (int i = 1; i <= k_steps; ++i) {
+        const float t = max_distance * static_cast<float>(i) /
+                        static_cast<float>(k_steps);
+        const float distance = planet_surface_signed_distance(origin + direction * t);
+        if (distance <= 0.0f) {
+            float low = previous_t;
+            float high = t;
+            for (int j = 0; j < 8; ++j) {
+                const float mid = (low + high) * 0.5f;
+                const float mid_distance =
+                    planet_surface_signed_distance(origin + direction * mid);
+                if (mid_distance <= 0.0f) {
+                    high = mid;
+                } else {
+                    low = mid;
+                }
+            }
+            out_hit_distance = high;
+            return true;
+        }
+
+        if (distance > previous_distance && previous_distance > start_distance) {
+            break;
+        }
+        previous_t = t;
+        previous_distance = distance;
+    }
+
+    return false;
 }
 
 bool VoxelCollisionWorld::is_solid_voxel(int x, int y, int z) const {
@@ -301,30 +410,37 @@ CapsuleResolveResult VoxelCollisionWorld::resolve_capsule(
         }
     }
 
-    float surface_y = 0.0f;
-    if (planet_surface_height(glm::vec2(result.position.x, result.position.z),
-                              surface_y)) {
-        const float min_feet_y = surface_y + skin_width;
-        if (result.position.y < min_feet_y) {
-            const float correction = min_feet_y - result.position.y;
-            result.position.y += correction;
+    glm::vec3 planet_surface_point_value(0.0f);
+    glm::vec3 planet_up(0.0f, 1.0f, 0.0f);
+    if (planet_surface_point(result.position,
+                             planet_surface_point_value,
+                             planet_up)) {
+        const float signed_distance =
+            glm::dot(result.position - planet_surface_point_value, planet_up);
+        const float min_distance = skin_width;
+        if (signed_distance < min_distance) {
+            const float correction = min_distance - signed_distance;
+            result.position += planet_up * correction;
             result.had_collision = true;
             result.total_correction += correction;
-            result.contact_normal = glm::vec3(0.0f, 1.0f, 0.0f);
+            result.contact_normal = planet_up;
         }
     }
 
     const float ground_probe_dist = std::max(0.12f, skin_width + 0.03f);
-    result.ground_ray_origin = result.position + glm::vec3(0.0f, skin_width + 0.02f, 0.0f);
+    const glm::vec3 ground_up = has_planet_surface_collider_
+                                    ? planet_up_at(result.position)
+                                    : glm::vec3(0.0f, 1.0f, 0.0f);
+    result.ground_ray_origin = result.position + ground_up * (skin_width + 0.02f);
     float hit_distance = 0.0f;
-    if (raycast(result.ground_ray_origin, glm::vec3(0.0f, -1.0f, 0.0f), ground_probe_dist, hit_distance)) {
+    if (raycast(result.ground_ray_origin, -ground_up, ground_probe_dist, hit_distance)) {
         result.grounded = true;
         result.ground_distance = hit_distance;
-        result.ground_ray_hit = result.ground_ray_origin + glm::vec3(0.0f, -hit_distance, 0.0f);
+        result.ground_ray_hit = result.ground_ray_origin - ground_up * hit_distance;
     } else {
         result.grounded = false;
         result.ground_distance = ground_probe_dist;
-        result.ground_ray_hit = result.ground_ray_origin + glm::vec3(0.0f, -ground_probe_dist, 0.0f);
+        result.ground_ray_hit = result.ground_ray_origin - ground_up * ground_probe_dist;
     }
 
     return result;
@@ -341,11 +457,18 @@ bool VoxelCollisionWorld::raycast(glm::vec3 origin, glm::vec3 direction, float m
     out_hit_distance = max_distance;
 
     if (has_planet_surface_collider_ && planet_surface_radius_ > 0.0f) {
+        float planet_hit_distance = 0.0f;
+        if (raycast_planet_surface(origin, direction, max_distance,
+                                   planet_hit_distance)) {
+            out_hit_distance = planet_hit_distance;
+            hit = true;
+        }
+
         float surface_y = 0.0f;
         if (std::fabs(direction.y) > 0.0001f &&
             planet_surface_height(glm::vec2(origin.x, origin.z), surface_y)) {
             const float t = (surface_y - origin.y) / direction.y;
-            if (t >= 0.0f && t <= max_distance) {
+            if (t >= 0.0f && t <= max_distance && t <= out_hit_distance) {
                 out_hit_distance = t;
                 hit = true;
             }
@@ -362,7 +485,7 @@ bool VoxelCollisionWorld::raycast(glm::vec3 origin, glm::vec3 direction, float m
                 const float t0 = (-b - root) * 0.5f;
                 const float t1 = (-b + root) * 0.5f;
                 const float t = t0 >= 0.0f ? t0 : t1;
-                if (t >= 0.0f && t <= max_distance) {
+                if (t >= 0.0f && t <= max_distance && t <= out_hit_distance) {
                     out_hit_distance = t;
                     hit = true;
                 }

@@ -43,6 +43,11 @@ public:
 
     bool is_solid_voxel(int x, int y, int z) const;
     bool raycast(glm::vec3 origin, glm::vec3 direction, float max_distance, float &out_hit_distance) const;
+    bool has_planet_surface_collider() const { return has_planet_surface_collider_; }
+    glm::vec3 planet_up_at(glm::vec3 world_position) const;
+    bool planet_surface_point(glm::vec3 world_position,
+                              glm::vec3 &out_surface_point,
+                              glm::vec3 &out_up) const;
 
     CapsuleResolveResult resolve_capsule(
         glm::vec3 feet_position,
@@ -60,6 +65,12 @@ private:
 
     const VoxelChunk *chunk_at(int x, int z, int &local_x, int &local_z) const;
     bool planet_surface_height(glm::vec2 xz, float &out_y) const;
+    float planet_surface_radius_for_direction(glm::vec3 direction) const;
+    float planet_surface_signed_distance(glm::vec3 world_position) const;
+    bool raycast_planet_surface(glm::vec3 origin,
+                                glm::vec3 direction,
+                                float max_distance,
+                                float &out_hit_distance) const;
 
     std::vector<VoxelCollisionChunk> chunks_;
     float voxel_scale_ = 1.0f;

@@ -348,6 +348,148 @@ RenderMesh VoxelChunk::build_greedy_mesh(const glm::vec3 &origin,
   return mesh;
 }
 
+RenderMesh VoxelChunk::build_greedy_mesh(
+    const glm::vec3 &origin, float voxel_scale, int32_t world_base_x,
+    int32_t world_base_z,
+    const std::function<bool(int, int, int)> &world_solid_at) const {
+  RenderMesh mesh;
+  constexpr int dims[3] = {CHUNK_X, CHUNK_Y, CHUNK_Z};
+  constexpr int axis_u[3] = {1, 2, 0};
+  constexpr int axis_v[3] = {2, 0, 1};
+  const size_t max_mask_size = static_cast<size_t>(
+      std::max({CHUNK_X * CHUNK_Y, CHUNK_Y * CHUNK_Z, CHUNK_X * CHUNK_Z}));
+  std::vector<int16_t> mask(max_mask_size, 0);
+
+  uint32_t material_quads[4] = {0, 0, 0, 0};
+
+  for (int d = 0; d < 3; ++d) {
+    const int u = axis_u[d];
+    const int v = axis_v[d];
+    glm::ivec3 x(0);
+    glm::ivec3 q(0);
+    q[d] = 1;
+
+    for (x[d] = -1; x[d] < dims[d];) {
+      int n = 0;
+      for (x[v] = 0; x[v] < dims[v]; ++x[v]) {
+        for (x[u] = 0; x[u] < dims[u]; ++x[u], ++n) {
+          VoxelMaterial a = VoxelMaterial::Air;
+          if (x[d] >= 0) {
+            a = material(x.x, x.y, x.z);
+          } else if (world_solid_at) {
+            // Outside chunk on negative side — query neighbor chunk.
+            const int wx = world_base_x + x.x;
+            const int wy = x.y;
+            const int wz = world_base_z + x.z;
+            a = world_solid_at(wx, wy, wz) ? VoxelMaterial::Stone
+                                           : VoxelMaterial::Air;
+          }
+
+          VoxelMaterial b = VoxelMaterial::Air;
+          if (x[d] < dims[d] - 1) {
+            b = material(x.x + q.x, x.y + q.y, x.z + q.z);
+          } else if (world_solid_at) {
+            // Outside chunk on positive side — query neighbor chunk.
+            const int wx = world_base_x + x.x + q.x;
+            const int wy = x.y + q.y;
+            const int wz = world_base_z + x.z + q.z;
+            b = world_solid_at(wx, wy, wz) ? VoxelMaterial::Stone
+                                           : VoxelMaterial::Air;
+          }
+
+          if (a == b) {
+            mask[static_cast<size_t>(n)] = 0;
+          } else {
+            mask[static_cast<size_t>(n)] =
+                a != VoxelMaterial::Air
+                    ? static_cast<int16_t>(a)
+                    : static_cast<int16_t>(-static_cast<int16_t>(b));
+          }
+        }
+      }
+
+      ++x[d];
+      n = 0;
+      for (int j = 0; j < dims[v]; ++j) {
+        for (int i = 0; i < dims[u];) {
+          const int16_t face = mask[static_cast<size_t>(n)];
+          if (face == 0) {
+            ++i;
+            ++n;
+            continue;
+          }
+
+          int width = 1;
+          while ((i + width) < dims[u] &&
+                 mask[static_cast<size_t>(n + width)] == face) {
+            ++width;
+          }
+
+          int height = 1;
+          bool done = false;
+          while ((j + height) < dims[v] && !done) {
+            for (int k = 0; k < width; ++k) {
+              if (mask[static_cast<size_t>(n + k + height * dims[u])] != face) {
+                done = true;
+                break;
+              }
+            }
+            if (!done) {
+              ++height;
+            }
+          }
+
+          glm::ivec3 base(0);
+          base[d] = x[d];
+          base[u] = i;
+          base[v] = j;
+
+          glm::ivec3 du(0);
+          glm::ivec3 dv(0);
+          du[u] = width;
+          dv[v] = height;
+
+          const bool positive_face = face > 0;
+          const VoxelMaterial face_material =
+              static_cast<VoxelMaterial>(std::abs(face));
+          ++material_quads[static_cast<uint8_t>(face_material)];
+          const float surface_y =
+              static_cast<float>(std::max(0, positive_face ? x[d] - 1 : x[d]));
+          const float height_t =
+              std::clamp(surface_y / static_cast<float>(CHUNK_Y), 0.0f, 1.0f);
+          const bool top_face = d == 1 && positive_face;
+          const glm::vec3 color =
+              VoxelChunk::material_color(face_material, top_face, height_t);
+
+          append_greedy_quad(mesh, origin, base, q, du, dv, positive_face,
+                             color, voxel_scale);
+
+          for (int row = 0; row < height; ++row) {
+            for (int col = 0; col < width; ++col) {
+              mask[static_cast<size_t>(n + col + row * dims[u])] = 0;
+            }
+          }
+
+          i += width;
+          n += width;
+        }
+      }
+    }
+  }
+
+  uint8_t primary = 0;
+  uint32_t best = 0;
+  for (uint8_t m = 1; m < 4; ++m) {
+    if (material_quads[m] > best) {
+      best = material_quads[m];
+      primary = m;
+    }
+  }
+  mesh.material = primary;
+
+  return mesh;
+}
+
 RenderMesh VoxelChunk::build_sky_placeholder(float size) const {
   RenderMesh mesh;
   const float h = size * 0.5f;

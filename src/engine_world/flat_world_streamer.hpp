@@ -50,12 +50,16 @@ public:
     void init(uint64_t world_seed,
               const FlatStreamerConfig &config = {});
     void update(const glm::vec3 &camera_pos);
+    void set_view_projection(const glm::mat4 &vp) { view_projection_ = vp; }
     const std::vector<RenderMesh> &render_meshes() const;
     size_t streamed_chunk_count() const;
     const FlatStreamerConfig &config() const;
 
     float ground_height_at(float world_x, float world_z) const;
     static uint64_t chunk_mesh_id(int32_t cx, int32_t cz);
+
+    // Returns true if any resident chunk has a solid voxel at (wx,wy,wz).
+    bool is_solid_at_world(int wx, int wy, int wz) const;
 
     // Returns resident chunks within view radius for collision.
     std::vector<VoxelCollisionChunk>
@@ -64,6 +68,7 @@ public:
 private:
     void ensure_chunk(FlatChunkCoord coord);
     FlatChunkCoord world_to_chunk(const glm::vec3 &pos) const;
+    bool chunk_visible_in_frustum(FlatChunkCoord coord) const;
 
     uint64_t world_seed_ = 0;
     FlatStreamerConfig config_{};
@@ -71,4 +76,5 @@ private:
         chunks_{};
     std::vector<RenderMesh> visible_meshes_{};
     uint64_t frame_index_ = 0;
+    glm::mat4 view_projection_{1.0f};
 };

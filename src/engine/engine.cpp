@@ -172,6 +172,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   camera.z_far = 2000.0f;
   update_third_person_camera(local_player, camera);
 
+  flat_world_.set_view_projection(
+      camera.projection(16.0f / 9.0f) * camera.view());
   flat_world_.update(local_player.transform.position);
   scene.opaque_meshes = flat_world_.render_meshes();
 
@@ -331,6 +333,8 @@ void Engine::tick(double frame_dt,
   update_third_person_camera(local_player, local_player.transform.position,
                              camera);
   scene.camera_origin.world_origin = glm::dvec3(camera.transform.position);
+  flat_world_.set_view_projection(
+      camera.projection(16.0f / 9.0f) * camera.view());
   flat_world_.update(local_player.transform.position);
   scene.opaque_meshes = flat_world_.render_meshes();
   renderer.upload_scene(scene);

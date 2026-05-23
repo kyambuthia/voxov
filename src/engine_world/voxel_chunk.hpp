@@ -2,6 +2,7 @@
 
 #include <array>
 #include <cstdint>
+#include <functional>
 
 #include "engine_render/render_types.hpp"
 
@@ -34,6 +35,13 @@ public:
 
   RenderMesh build_greedy_mesh(const glm::vec3 &origin = glm::vec3(0.0f),
                                float voxel_scale = 1.0f) const;
+
+  // Variant with world-space solid query for inter-chunk face culling.
+  // world_solid_at(wx, wy, wz) → true if the voxel is solid in a neighbor chunk.
+  RenderMesh build_greedy_mesh(
+      const glm::vec3 &origin, float voxel_scale,
+      int32_t world_base_x, int32_t world_base_z,
+      const std::function<bool(int, int, int)> &world_solid_at) const;
   RenderMesh build_sky_placeholder(float size) const;
 
 private:

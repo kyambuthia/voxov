@@ -155,15 +155,10 @@ if(VOXOV_ENABLE_XR)
 endif()
 
 add_library(engine_world STATIC
-    src/engine_world/atmosphere_transition_manager.cpp
-    src/engine_world/planet_debug.cpp
-    src/engine_world/planet_lod.cpp
-    src/engine_world/planet_math.cpp
-    src/engine_world/planet_quadtree.cpp
-    src/engine_world/planet_streamer.cpp
-    src/engine_world/planet_terrain.cpp
+    src/engine_world/planet.cpp
     src/engine_world/voxel_chunk.cpp
     src/engine_world/world_gen.cpp
+    src/engine_world/flat_world_streamer.cpp
     src/engine_world/physics/voxel_collision.cpp
 )
 target_include_directories(engine_world PUBLIC src)

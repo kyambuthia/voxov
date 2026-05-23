@@ -18,6 +18,8 @@ struct SokolRenderVertex {
 struct SokolGpuMesh {
     sg_buffer vertex_buffer{};
     sg_buffer index_buffer{};
+    size_t vertex_buffer_size = 0;
+    size_t index_buffer_size = 0;
     uint32_t index_count = 0;
     sg_index_type index_type = SG_INDEXTYPE_UINT32;
     glm::vec3 bounds_min{};

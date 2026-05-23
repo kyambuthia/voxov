@@ -486,22 +486,30 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
     };
 
     if (stream) {
-        // Dynamic: create with stream_update usage if new, otherwise update.
-        if (dst.vertex_buffer.id == 0) {
+        // Dynamic: create or recreate if size grew.
+        const size_t new_vb_size = vbuf_range.size;
+        const size_t new_ib_size = ibuf_range.size;
+        if (dst.vertex_buffer.id == 0 ||
+            dst.vertex_buffer_size < new_vb_size) {
+            if (dst.vertex_buffer.id) sg_destroy_buffer(dst.vertex_buffer);
             sg_buffer_desc dvb_desc = {};
             dvb_desc.usage = { .vertex_buffer = true, .stream_update = true };
-            dvb_desc.size = vbuf_range.size;
+            dvb_desc.size = new_vb_size;
             dvb_desc.label = "voxov-dynamic-vbuf";
             dst.vertex_buffer = sg_make_buffer(&dvb_desc);
+            dst.vertex_buffer_size = new_vb_size;
         }
         sg_update_buffer(dst.vertex_buffer, &vbuf_range);
 
-        if (dst.index_buffer.id == 0) {
+        if (dst.index_buffer.id == 0 ||
+            dst.index_buffer_size < new_ib_size) {
+            if (dst.index_buffer.id) sg_destroy_buffer(dst.index_buffer);
             sg_buffer_desc dib_desc = {};
             dib_desc.usage = { .index_buffer = true, .stream_update = true };
-            dib_desc.size = ibuf_range.size;
+            dib_desc.size = new_ib_size;
             dib_desc.label = "voxov-dynamic-ibuf";
             dst.index_buffer = sg_make_buffer(&dib_desc);
+            dst.index_buffer_size = new_ib_size;
         }
         sg_update_buffer(dst.index_buffer, &ibuf_range);
     } else {

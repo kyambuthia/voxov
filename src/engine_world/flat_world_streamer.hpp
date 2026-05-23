@@ -51,6 +51,9 @@ public:
     size_t streamed_chunk_count() const;
     const FlatStreamerConfig &config() const;
 
+    float ground_height_at(float world_x, float world_z) const;
+    static uint64_t chunk_mesh_id(int32_t cx, int32_t cz);
+
 private:
     void ensure_chunk(FlatChunkCoord coord);
     FlatChunkCoord world_to_chunk(const glm::vec3 &pos) const;

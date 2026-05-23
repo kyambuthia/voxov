@@ -95,6 +95,7 @@ void FlatWorldStreamer::ensure_chunk(FlatChunkCoord coord) {
         static_cast<float>(coord.x * VoxelChunk::CHUNK_X), 0.0f,
         static_cast<float>(coord.z * VoxelChunk::CHUNK_Z));
     resident.mesh = chunk.build_greedy_mesh(origin, 1.0f);
+    resident.mesh.mesh_id = chunk_mesh_id(coord.x, coord.z);
     resident.resident = true;
     chunks_[coord] = std::move(resident);
 }
@@ -105,4 +106,21 @@ FlatChunkCoord FlatWorldStreamer::world_to_chunk(const glm::vec3 &pos) const {
     const int32_t cz = static_cast<int32_t>(
         std::floor(pos.z / static_cast<float>(VoxelChunk::CHUNK_Z)));
     return {cx, cz};
+}
+
+float FlatWorldStreamer::ground_height_at(float world_x,
+                                          float world_z) const {
+    WorldGenerator gen(world_seed_);
+    return gen.sample_height(world_x, world_z);
+}
+
+uint64_t FlatWorldStreamer::chunk_mesh_id(int32_t cx, int32_t cz) {
+    // Stable id from chunk coordinates — never collides with 0 (transient).
+    uint64_t id = 0x464c4154574f524cull; // "FLATWORL"
+    id ^= static_cast<uint64_t>(static_cast<uint32_t>(cx)) << 20u;
+    id ^= static_cast<uint64_t>(static_cast<uint32_t>(cz));
+    id ^= id >> 27u;
+    id *= 0x94d049bb133111ebull;
+    id ^= id >> 31u;
+    return id | 0x8000000000000000ull; // ensure non-zero high bit
 }

@@ -89,12 +89,11 @@ void FlatWorldStreamer::ensure_chunk(FlatChunkCoord coord) {
     resident.coord = coord;
     resident.last_requested_frame = frame_index_;
 
-    VoxelChunk chunk;
-    generate_flat_world_locomotion_chunk(chunk, world_seed_, coord.x, coord.z);
+    generate_flat_world_locomotion_chunk(resident.voxels, world_seed_, coord.x, coord.z);
     const glm::vec3 origin(
         static_cast<float>(coord.x * VoxelChunk::CHUNK_X), 0.0f,
         static_cast<float>(coord.z * VoxelChunk::CHUNK_Z));
-    resident.mesh = chunk.build_greedy_mesh(origin, 1.0f);
+    resident.mesh = resident.voxels.build_greedy_mesh(origin, 1.0f);
     resident.mesh.mesh_id = chunk_mesh_id(coord.x, coord.z);
     resident.resident = true;
     chunks_[coord] = std::move(resident);
@@ -123,4 +122,19 @@ uint64_t FlatWorldStreamer::chunk_mesh_id(int32_t cx, int32_t cz) {
     id *= 0x94d049bb133111ebull;
     id ^= id >> 31u;
     return id | 0x8000000000000000ull; // ensure non-zero high bit
+}
+
+std::vector<VoxelCollisionChunk>
+FlatWorldStreamer::resident_collision_chunks() const {
+    std::vector<VoxelCollisionChunk> result;
+    result.reserve(chunks_.size());
+    for (const auto &[coord, resident] : chunks_) {
+        if (!resident.resident) continue;
+        VoxelCollisionChunk cc{};
+        cc.chunk = &resident.voxels;
+        cc.origin_x = coord.x * VoxelChunk::CHUNK_X;
+        cc.origin_z = coord.z * VoxelChunk::CHUNK_Z;
+        result.push_back(cc);
+    }
+    return result;
 }

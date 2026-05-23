@@ -1,6 +1,8 @@
 #pragma once
 
 #include "engine_render/render_types.hpp"
+#include "engine_world/voxel_chunk.hpp"
+#include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/world_gen.hpp"
 
 #include <cstdint>
@@ -30,6 +32,7 @@ struct FlatChunkCoordHash {
 
 struct FlatResidentChunk {
     FlatChunkCoord coord{};
+    VoxelChunk voxels{};
     RenderMesh mesh{};
     bool resident = false;
     uint64_t last_requested_frame = 0;
@@ -53,6 +56,10 @@ public:
 
     float ground_height_at(float world_x, float world_z) const;
     static uint64_t chunk_mesh_id(int32_t cx, int32_t cz);
+
+    // Returns resident chunks within view radius for collision.
+    std::vector<VoxelCollisionChunk>
+    resident_collision_chunks() const;
 
 private:
     void ensure_chunk(FlatChunkCoord coord);

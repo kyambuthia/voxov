@@ -238,6 +238,13 @@ void Engine::tick(double frame_dt,
 
   ProfilingSnapshot profiling_sample{};
   bool jump_consumed = false;
+  // Rebuild collision world with current resident chunks before fixed step.
+  {
+    auto chunks = flat_world_.resident_collision_chunks();
+    if (!chunks.empty()) {
+      collision_world = VoxelCollisionWorld(std::move(chunks), 1.0f);
+    }
+  }
   const RuntimeGameSessionCallbacks callbacks{
       .pump_server = []() {},
       .simulate_step =
@@ -320,16 +327,6 @@ void Engine::tick(double frame_dt,
         .dt = static_cast<float>(frame_dt),
         .alpha = alpha,
     });
-  }
-  // Flat world ground clamp: keep player above terrain.
-  if (!debug_fly_mode_) {
-    const float ground_y = flat_world_.ground_height_at(
-        local_player.transform.position.x,
-        local_player.transform.position.z);
-    if (local_player.transform.position.y < ground_y + 1.0f) {
-      local_player.transform.position.y = ground_y + 1.0f;
-      local_player.controller.velocity.y = 0.0f;
-    }
   }
   update_third_person_camera(local_player, local_player.transform.position,
                              camera);

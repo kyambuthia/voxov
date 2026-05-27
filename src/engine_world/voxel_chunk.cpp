@@ -69,12 +69,6 @@ void VoxelChunk::generate_heightmap_terrain_seeded(uint64_t world_seed,
                                                    int32_t chunk_x,
                                                    int32_t chunk_z) {
   voxels.fill(static_cast<uint8_t>(VoxelMaterial::Air));
-  constexpr float flat_height = 6.0f;
-  const float min_dim = static_cast<float>(std::min(CHUNK_X, CHUNK_Z));
-  const float inner = min_dim * 0.24f;
-  const float outer = min_dim * 0.39f;
-  const float cx = static_cast<float>(CHUNK_X - 1) * 0.5f;
-  const float cz = static_cast<float>(CHUNK_Z - 1) * 0.5f;
   const int32_t world_base_x = chunk_x * CHUNK_X;
   const int32_t world_base_z = chunk_z * CHUNK_Z;
   const WorldGenerator generator(world_seed);
@@ -83,16 +77,9 @@ void VoxelChunk::generate_heightmap_terrain_seeded(uint64_t world_seed,
     for (int x = 0; x < CHUNK_X; ++x) {
       const float world_x = static_cast<float>(world_base_x + x);
       const float world_z = static_cast<float>(world_base_z + z);
-      float h = generator.sample_height(world_x, world_z);
-      const float dx = static_cast<float>(x) - cx;
-      const float dz = static_cast<float>(z) - cz;
-      const float ring_d = std::max(std::fabs(dx), std::fabs(dz));
-      if (ring_d <= outer) {
-        const float t = std::clamp(
-            (ring_d - inner) / std::max(0.001f, outer - inner), 0.0f, 1.0f);
-        h = flat_height + (h - flat_height) * t;
-      }
-      int max_y = static_cast<int>(h);
+      const TerrainColumnSample sample =
+          generator.sample_column(world_x, world_z);
+      int max_y = static_cast<int>(std::floor(sample.surface_height));
       if (max_y < 1) {
         max_y = 1;
       }

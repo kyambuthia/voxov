@@ -16,6 +16,7 @@
 #include "engine_physics/vehicle/vehicle_sandbox_scene.hpp"
 #include "engine_physics/vehicle/voxel_vehicle_builder.hpp"
 #include "engine_physics/voxel/voxel_physics_bridge.hpp"
+#include "engine_world/flat_world_streamer.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
 #include "engine_world/world_gen.hpp"
@@ -802,6 +803,120 @@ void test_chunk_seed_determinism() {
                 std::fabs(pa.z - pc.z) > 0.0001f;
   }
   assert(different);
+}
+
+int highest_solid_y(const VoxelChunk &chunk, int x, int z) {
+  for (int y = VoxelChunk::CHUNK_Y - 1; y >= 0; --y) {
+    if (chunk.solid(x, y, z)) {
+      return y;
+    }
+  }
+  return -1;
+}
+
+void test_world_generator_hills_and_valleys_are_deterministic_and_bounded() {
+  const WorldGenerator generator(k_voxov_flat_world_seed);
+  const WorldGenerator same_seed(k_voxov_flat_world_seed);
+  const WorldGenerator different_seed(k_voxov_flat_world_seed + 1u);
+  float min_height = static_cast<float>(VoxelChunk::CHUNK_Y);
+  float max_height = 0.0f;
+  bool different_seed_changes_surface = false;
+  bool includes_valley_influence = false;
+
+  for (int z = -384; z <= 384; z += 24) {
+    for (int x = -384; x <= 384; x += 24) {
+      const TerrainColumnSample sample =
+          generator.sample_column(static_cast<float>(x), static_cast<float>(z));
+      const TerrainColumnSample repeat =
+          same_seed.sample_column(static_cast<float>(x), static_cast<float>(z));
+      const TerrainColumnSample other = different_seed.sample_column(
+          static_cast<float>(x), static_cast<float>(z));
+
+      assert(std::fabs(sample.surface_height - repeat.surface_height) < 0.0001f);
+      assert(std::fabs(sample.valley_factor - repeat.valley_factor) < 0.0001f);
+      assert(sample.surface_height >= 2.0f);
+      assert(sample.surface_height <=
+             static_cast<float>(VoxelChunk::CHUNK_Y - 3));
+      assert(sample.valley_factor >= 0.0f && sample.valley_factor <= 1.0f);
+
+      min_height = std::min(min_height, sample.surface_height);
+      max_height = std::max(max_height, sample.surface_height);
+      different_seed_changes_surface =
+          different_seed_changes_surface ||
+          std::fabs(sample.surface_height - other.surface_height) > 0.01f;
+      includes_valley_influence =
+          includes_valley_influence || sample.valley_factor > 0.5f;
+    }
+  }
+
+  assert(max_height - min_height >= 8.0f);
+  assert(different_seed_changes_surface);
+  assert(includes_valley_influence);
+}
+
+void test_heightmap_generation_samples_continuously_across_chunk_edges() {
+  const uint64_t seed = k_voxov_flat_world_seed;
+  const WorldGenerator generator(seed);
+  VoxelChunk left;
+  VoxelChunk right;
+  left.generate_heightmap_terrain_seeded(seed, 1, -2);
+  right.generate_heightmap_terrain_seeded(seed, 2, -2);
+
+  for (int z = 0; z < VoxelChunk::CHUNK_Z; ++z) {
+    const float world_z =
+        static_cast<float>(-2 * VoxelChunk::CHUNK_Z + z);
+    const int expected_left = static_cast<int>(std::floor(
+        generator.sample_height(static_cast<float>(2 * VoxelChunk::CHUNK_X - 1),
+                                world_z)));
+    const int expected_right = static_cast<int>(std::floor(
+        generator.sample_height(static_cast<float>(2 * VoxelChunk::CHUNK_X),
+                                world_z)));
+    const int generated_left =
+        highest_solid_y(left, VoxelChunk::CHUNK_X - 1, z);
+    const int generated_right = highest_solid_y(right, 0, z);
+
+    assert(generated_left == expected_left);
+    assert(generated_right == expected_right);
+    assert(std::abs(generated_left - generated_right) <= 2);
+  }
+}
+
+void test_flat_world_streamer_populates_radius_once() {
+  FlatWorldStreamer streamer;
+  streamer.init(k_voxov_flat_world_seed,
+                FlatStreamerConfig{
+                    .generation_budget_per_update = 9,
+                    .view_radius_chunks = 1,
+                });
+
+  const glm::vec3 player_position(32.0f, 12.0f, 32.0f);
+  streamer.update(player_position);
+  assert(streamer.streamed_chunk_count() == 9);
+  assert(streamer.render_meshes().size() == 9);
+
+  const uint64_t loaded_revision = streamer.mesh_set_revision();
+  assert(loaded_revision > 0);
+  streamer.update(player_position);
+  assert(streamer.streamed_chunk_count() == 9);
+  assert(streamer.mesh_set_revision() == loaded_revision);
+}
+
+void test_flat_world_streamer_keeps_overlap_when_budget_is_spent() {
+  FlatWorldStreamer streamer;
+  streamer.init(k_voxov_flat_world_seed,
+                FlatStreamerConfig{
+                    .generation_budget_per_update = 1,
+                    .view_radius_chunks = 1,
+                });
+
+  const glm::vec3 starting_position(32.0f, 12.0f, 32.0f);
+  for (int i = 0; i < 9; ++i) {
+    streamer.update(starting_position);
+  }
+  assert(streamer.streamed_chunk_count() == 9);
+
+  streamer.update(glm::vec3(96.0f, 12.0f, 32.0f));
+  assert(streamer.streamed_chunk_count() == 7);
 }
 
 void test_chunk_spherical_planet_generation() {
@@ -1664,6 +1779,10 @@ int main() {
   test_chunk_world_footprint();
   test_single_voxel_mesh_bounds();
   test_chunk_seed_determinism();
+  test_world_generator_hills_and_valleys_are_deterministic_and_bounded();
+  test_heightmap_generation_samples_continuously_across_chunk_edges();
+  test_flat_world_streamer_populates_radius_once();
+  test_flat_world_streamer_keeps_overlap_when_budget_is_spent();
   test_chunk_spherical_planet_generation();
   test_voxel_material_surface_assignment();
   test_voxel_material_custom_values_affect_mesh_colors();

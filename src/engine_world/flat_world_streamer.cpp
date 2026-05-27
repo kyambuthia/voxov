@@ -11,10 +11,12 @@ void FlatWorldStreamer::init(uint64_t world_seed,
     chunks_.clear();
     visible_meshes_.clear();
     frame_index_ = 0;
+    mesh_set_revision_ = 0;
 }
 
 void FlatWorldStreamer::update(const glm::vec3 &camera_pos) {
     ++frame_index_;
+    bool mesh_set_changed = false;
 
     const FlatChunkCoord center = world_to_chunk(camera_pos);
     const int32_t r = config_.view_radius_chunks;
@@ -38,7 +40,8 @@ void FlatWorldStreamer::update(const glm::vec3 &camera_pos) {
                   return da < db;
               });
 
-    // Generate new chunks up to budget, skipping frustum-culled ones.
+    // Generate nearby chunks gradually. Visibility culling belongs at draw
+    // time; skipping off-camera residency leaves terrain holes on camera turns.
     uint32_t generated = 0;
     for (const FlatChunkCoord &coord : desired) {
         const auto it = chunks_.find(coord);
@@ -47,13 +50,11 @@ void FlatWorldStreamer::update(const glm::vec3 &camera_pos) {
             continue;
         }
         if (generated >= config_.generation_budget_per_update) {
-            break;
-        }
-        if (!chunk_visible_in_frustum(coord)) {
-            continue; // skip chunks outside frustum
+            continue;
         }
         ensure_chunk(coord);
         ++generated;
+        mesh_set_changed = true;
     }
 
     // Evict chunks outside view radius
@@ -65,14 +66,21 @@ void FlatWorldStreamer::update(const glm::vec3 &camera_pos) {
     }
     for (const FlatChunkCoord &coord : to_evict) {
         chunks_.erase(coord);
+        mesh_set_changed = true;
     }
 
-    // Rebuild visible mesh list
+    if (mesh_set_changed) {
+        rebuild_visible_meshes();
+    }
+}
+
+void FlatWorldStreamer::rebuild_visible_meshes() {
     visible_meshes_.clear();
     visible_meshes_.reserve(chunks_.size());
     for (const auto &[coord, chunk] : chunks_) {
         visible_meshes_.push_back(chunk.mesh);
     }
+    ++mesh_set_revision_;
 }
 
 const std::vector<RenderMesh> &FlatWorldStreamer::render_meshes() const {
@@ -81,6 +89,10 @@ const std::vector<RenderMesh> &FlatWorldStreamer::render_meshes() const {
 
 size_t FlatWorldStreamer::streamed_chunk_count() const {
     return chunks_.size();
+}
+
+uint64_t FlatWorldStreamer::mesh_set_revision() const {
+    return mesh_set_revision_;
 }
 
 const FlatStreamerConfig &FlatWorldStreamer::config() const {
@@ -131,44 +143,6 @@ uint64_t FlatWorldStreamer::chunk_mesh_id(int32_t cx, int32_t cz) {
     id *= 0x94d049bb133111ebull;
     id ^= id >> 31u;
     return id | 0x8000000000000000ull; // ensure non-zero high bit
-}
-
-bool FlatWorldStreamer::chunk_visible_in_frustum(
-    FlatChunkCoord coord) const {
-    // Chunk bounding sphere: center + radius.
-    const float cx = (static_cast<float>(coord.x) + 0.5f) *
-                     static_cast<float>(VoxelChunk::CHUNK_X);
-    const float cy = static_cast<float>(VoxelChunk::CHUNK_Y) * 0.5f;
-    const float cz = (static_cast<float>(coord.z) + 0.5f) *
-                     static_cast<float>(VoxelChunk::CHUNK_Z);
-    const float radius = std::sqrt(
-        static_cast<float>(VoxelChunk::CHUNK_X * VoxelChunk::CHUNK_X +
-                           VoxelChunk::CHUNK_Y * VoxelChunk::CHUNK_Y +
-                           VoxelChunk::CHUNK_Z * VoxelChunk::CHUNK_Z)) *
-                         0.5f;
-
-    // Extract 6 frustum planes from view-projection matrix.
-    // glm::mat4 is column-major: M[col][row].
-    // Plane equation: dot(normal, point) + offset >= 0 for inside.
-    const float *m = &view_projection_[0][0];
-    for (int p = 0; p < 6; ++p) {
-        glm::vec4 plane;
-        if (p == 0)      plane = glm::vec4(m[12]+m[0], m[13]+m[1], m[14]+m[2], m[15]+m[3]); // left
-        else if (p == 1) plane = glm::vec4(m[12]-m[0], m[13]-m[1], m[14]-m[2], m[15]-m[3]); // right
-        else if (p == 2) plane = glm::vec4(m[12]+m[4], m[13]+m[5], m[14]+m[6], m[15]+m[7]); // bottom
-        else if (p == 3) plane = glm::vec4(m[12]-m[4], m[13]-m[5], m[14]-m[6], m[15]-m[7]); // top
-        else if (p == 4) plane = glm::vec4(m[12]+m[8], m[13]+m[9], m[14]+m[10], m[15]+m[11]); // near
-        else             plane = glm::vec4(m[12]-m[8], m[13]-m[9], m[14]-m[10], m[15]-m[11]); // far
-
-        const float len = glm::length(glm::vec3(plane));
-        if (len < 1.0e-6f) continue;
-        plane /= len;
-
-        const float dist = glm::dot(glm::vec3(plane), glm::vec3(cx, cy, cz)) +
-                           plane.w;
-        if (dist < -radius) return false; // sphere fully outside this plane
-    }
-    return true;
 }
 
 bool FlatWorldStreamer::is_solid_at_world(int wx, int wy, int wz) const {

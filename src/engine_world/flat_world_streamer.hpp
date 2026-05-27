@@ -50,9 +50,9 @@ public:
     void init(uint64_t world_seed,
               const FlatStreamerConfig &config = {});
     void update(const glm::vec3 &camera_pos);
-    void set_view_projection(const glm::mat4 &vp) { view_projection_ = vp; }
     const std::vector<RenderMesh> &render_meshes() const;
     size_t streamed_chunk_count() const;
+    uint64_t mesh_set_revision() const;
     const FlatStreamerConfig &config() const;
 
     float ground_height_at(float world_x, float world_z) const;
@@ -67,8 +67,8 @@ public:
 
 private:
     void ensure_chunk(FlatChunkCoord coord);
+    void rebuild_visible_meshes();
     FlatChunkCoord world_to_chunk(const glm::vec3 &pos) const;
-    bool chunk_visible_in_frustum(FlatChunkCoord coord) const;
 
     uint64_t world_seed_ = 0;
     FlatStreamerConfig config_{};
@@ -76,5 +76,5 @@ private:
         chunks_{};
     std::vector<RenderMesh> visible_meshes_{};
     uint64_t frame_index_ = 0;
-    glm::mat4 view_projection_{1.0f};
+    uint64_t mesh_set_revision_ = 0;
 };

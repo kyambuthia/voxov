@@ -157,7 +157,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
 
   flat_world_.init(k_voxov_flat_world_seed,
                    FlatStreamerConfig{
-                       .generation_budget_per_update = 4,
+                       .generation_budget_per_update = 1,
                        .view_radius_chunks = 3,
                    });
 
@@ -172,10 +172,9 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   camera.z_far = 2000.0f;
   update_third_person_camera(local_player, camera);
 
-  flat_world_.set_view_projection(
-      camera.projection(16.0f / 9.0f) * camera.view());
   flat_world_.update(local_player.transform.position);
   scene.opaque_meshes = flat_world_.render_meshes();
+  flat_world_mesh_set_revision_ = flat_world_.mesh_set_revision();
 
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled);
@@ -333,10 +332,11 @@ void Engine::tick(double frame_dt,
   update_third_person_camera(local_player, local_player.transform.position,
                              camera);
   scene.camera_origin.world_origin = glm::dvec3(camera.transform.position);
-  flat_world_.set_view_projection(
-      camera.projection(16.0f / 9.0f) * camera.view());
   flat_world_.update(local_player.transform.position);
-  scene.opaque_meshes = flat_world_.render_meshes();
+  if (flat_world_mesh_set_revision_ != flat_world_.mesh_set_revision()) {
+    scene.opaque_meshes = flat_world_.render_meshes();
+    flat_world_mesh_set_revision_ = flat_world_.mesh_set_revision();
+  }
   renderer.upload_scene(scene);
 
   render_stats.frame_ms =

@@ -93,6 +93,7 @@ private:
 
   RenderScene scene;
   FlatWorldStreamer flat_world_;
+  uint64_t flat_world_mesh_set_revision_ = 0;
   bool debug_fly_mode_ = false;
   RenderStats render_stats;
   EngineSessionState session_state_{};

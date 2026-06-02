@@ -47,7 +47,10 @@ android {
         if (!use_prebuilt_voxov_so) {
             externalNativeBuild {
                 cmake {
-                    arguments "-DVOXOV_ENABLE_VULKAN=OFF"
+                    arguments "-DVOXOV_ENABLE_VULKAN=OFF",
+                              "-DJPH_USE_VK=OFF",
+                              "-DJPH_USE_DX12=OFF",
+                              "-DJPH_USE_CPU_COMPUTE=OFF"
                     targets "voxov_android"
                 }
             }

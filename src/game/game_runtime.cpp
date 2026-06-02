@@ -27,7 +27,6 @@ public:
         fps_accumulator = 0.0;
         fps_frames = 0;
         platform = params.platform;
-        platform_services = params.platform_services;
         input_adapter = params.input_adapter;
         platform_adapter = params.platform_adapter;
         EngineRuntimeOptions engine_options = to_engine_options(params.options);
@@ -140,7 +139,6 @@ private:
     }
 
     RuntimePlatform platform = RuntimePlatform::Desktop;
-    const PlatformServices *platform_services = nullptr;
     Engine engine{};
     RuntimeSessionFlow session_flow{};
     RuntimeSessionController session_controller{};

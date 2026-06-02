@@ -19,6 +19,7 @@ struct GameRuntimeInitParams {
     GameRuntimeOptions options{};
     IRuntimeInputAdapter *input_adapter = nullptr;
     IRuntimePlatformAdapter *platform_adapter = nullptr;
+    // Borrowed only for the duration of GameRuntime::init.
     const PlatformServices *platform_services = nullptr;
 };
 

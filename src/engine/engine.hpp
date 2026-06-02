@@ -22,6 +22,7 @@
 struct EngineRuntimeOptions {
   PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
   RenderBackendType render_backend = RenderBackendType::Sokol;
+  // Borrowed only while Engine::init copies the platform configuration.
   const PlatformServices *platform_services = nullptr;
 };
 

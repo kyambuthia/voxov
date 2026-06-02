@@ -99,14 +99,15 @@ RenderMesh build_local_player_debug_mesh(
 } // namespace
 
 bool Engine::init(const EngineRuntimeOptions &options) {
+  platform_services = options.platform_services != nullptr
+                          ? *options.platform_services
+                          : PlatformServices::desktop_default();
   runtime_options = options;
+  runtime_options.platform_services = nullptr;
   session_state_.gameplay_started = true;
   session_state_.menu_open = false;
   session_state_.selected_character = GuiMenu::Character::Capsule;
 
-  platform_services = runtime_options.platform_services != nullptr
-                          ? *runtime_options.platform_services
-                          : PlatformServices::desktop_default();
   game_session.reset();
   event_bus_.clear();
   event_bus_.reserve(64, 1024, 2048);

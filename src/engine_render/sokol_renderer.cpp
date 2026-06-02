@@ -358,7 +358,7 @@ bool SokolRenderer::setup_pipelines() {
 // Init / Shutdown
 // ---------------------------------------------------------------------------
 
-bool SokolRenderer::init(const RenderDeviceDesc & /*desc*/) {
+bool SokolRenderer::init(const RenderDeviceDesc &desc) {
     sg_desc sgdesc = {};
 #if defined(VOXOV_PLATFORM_ANDROID)
     sgdesc.environment.defaults.color_format =
@@ -372,6 +372,7 @@ bool SokolRenderer::init(const RenderDeviceDesc & /*desc*/) {
     sgdesc.environment.defaults.sample_count =
         desc.sample_count > 0 ? desc.sample_count : 1;
 #else
+    (void)desc;
     sgdesc.environment = sglue_environment();
 #endif
     sgdesc.buffer_pool_size = 4096;

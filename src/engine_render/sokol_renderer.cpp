@@ -358,7 +358,7 @@ bool SokolRenderer::setup_pipelines() {
 // Init / Shutdown
 // ---------------------------------------------------------------------------
 
-bool SokolRenderer::init(const RenderDeviceDesc &desc) {
+bool SokolRenderer::init(const RenderDeviceDesc & /*desc*/) {
     sg_desc sgdesc = {};
 #if defined(VOXOV_PLATFORM_ANDROID)
     sgdesc.environment.defaults.color_format =
@@ -389,20 +389,13 @@ bool SokolRenderer::init(const RenderDeviceDesc &desc) {
     }
 
     // Default pass action
-    pass_action_ = (sg_pass_action){
-        .colors = {
-            [0] = {
-                .load_action = SG_LOADACTION_CLEAR,
-                .store_action = SG_STOREACTION_STORE,
-                .clear_value = { 0.08f, 0.10f, 0.14f, 1.0f },
-            },
-        },
-        .depth = {
-            .load_action = SG_LOADACTION_CLEAR,
-            .store_action = SG_STOREACTION_DONTCARE,
-            .clear_value = 1.0f,
-        },
-    };
+    pass_action_ = {};
+    pass_action_.colors[0].load_action = SG_LOADACTION_CLEAR;
+    pass_action_.colors[0].store_action = SG_STOREACTION_STORE;
+    pass_action_.colors[0].clear_value = { 0.08f, 0.10f, 0.14f, 1.0f };
+    pass_action_.depth.load_action = SG_LOADACTION_CLEAR;
+    pass_action_.depth.store_action = SG_STOREACTION_DONTCARE;
+    pass_action_.depth.clear_value = 1.0f;
 
     return true;
 }
@@ -493,7 +486,8 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
             dst.vertex_buffer_size < new_vb_size) {
             if (dst.vertex_buffer.id) sg_destroy_buffer(dst.vertex_buffer);
             sg_buffer_desc dvb_desc = {};
-            dvb_desc.usage = { .vertex_buffer = true, .stream_update = true };
+            dvb_desc.usage.vertex_buffer = true;
+            dvb_desc.usage.stream_update = true;
             dvb_desc.size = new_vb_size;
             dvb_desc.label = "voxov-dynamic-vbuf";
             dst.vertex_buffer = sg_make_buffer(&dvb_desc);
@@ -505,7 +499,8 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
             dst.index_buffer_size < new_ib_size) {
             if (dst.index_buffer.id) sg_destroy_buffer(dst.index_buffer);
             sg_buffer_desc dib_desc = {};
-            dib_desc.usage = { .index_buffer = true, .stream_update = true };
+            dib_desc.usage.index_buffer = true;
+            dib_desc.usage.stream_update = true;
             dib_desc.size = new_ib_size;
             dib_desc.label = "voxov-dynamic-ibuf";
             dst.index_buffer = sg_make_buffer(&dib_desc);
@@ -518,12 +513,12 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
         if (dst.index_buffer.id) sg_destroy_buffer(dst.index_buffer);
 
         sg_buffer_desc svb_desc = {};
-        svb_desc.usage = { .vertex_buffer = true };
+        svb_desc.usage.vertex_buffer = true;
         svb_desc.data = vbuf_range;
         svb_desc.label = "voxov-static-vbuf";
         dst.vertex_buffer = sg_make_buffer(&svb_desc);
         sg_buffer_desc sib_desc = {};
-        sib_desc.usage = { .index_buffer = true };
+        sib_desc.usage.index_buffer = true;
         sib_desc.data = ibuf_range;
         sib_desc.label = "voxov-static-ibuf";
         dst.index_buffer = sg_make_buffer(&sib_desc);

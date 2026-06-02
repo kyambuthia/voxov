@@ -1,13 +1,12 @@
 #pragma once
 
 enum class PhysicsSolverBackend {
-    Jolt,
     AvbdExperimental
 };
 
 struct EnginePhysicsSettings {
     float gravity = -9.81f;
-    PhysicsSolverBackend solver_backend = PhysicsSolverBackend::Jolt;
+    PhysicsSolverBackend solver_backend = PhysicsSolverBackend::AvbdExperimental;
 };
 
 class IPhysicsSolver {

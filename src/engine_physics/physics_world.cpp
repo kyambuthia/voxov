@@ -1,16 +1,13 @@
 #include "engine_physics/physics_world.hpp"
 
 #include "engine_physics/avbd_solver.hpp"
-#include "engine_physics/jolt_solver.hpp"
 
 namespace {
 std::unique_ptr<IPhysicsSolver> create_solver(PhysicsSolverBackend backend) {
     switch (backend) {
     case PhysicsSolverBackend::AvbdExperimental:
-        return std::make_unique<AvbdSolver>();
-    case PhysicsSolverBackend::Jolt:
     default:
-        return std::make_unique<JoltSolver>();
+        return std::make_unique<AvbdSolver>();
     }
 }
 }

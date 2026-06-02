@@ -146,7 +146,7 @@ void voxov_init() {
 
     GameRuntimeInitParams init_params{};
     init_params.platform = RuntimePlatform::Web;
-    init_params.options.physics_backend = PhysicsSolverBackend::Jolt;
+    init_params.options.physics_backend = PhysicsSolverBackend::AvbdExperimental;
     init_params.options.render_backend = RenderBackendType::Sokol;
     init_params.input_adapter = g_runtime_input;
     init_params.platform_adapter = g_runtime_platform;

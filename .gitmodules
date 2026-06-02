@@ -1,6 +1,3 @@
-[submodule "dependencies/JoltPhysics"]
-	path = dependencies/JoltPhysics
-	url = https://github.com/jrouwe/JoltPhysics.git
 [submodule "dependencies/enet"]
 	path = dependencies/enet
 	url = https://github.com/lsalzman/enet.git

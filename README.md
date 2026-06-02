@@ -63,7 +63,7 @@ ctest --test-dir build/desktop/main --output-on-failure
 - `src/engine/*` still owns most desktop simulation, rendering, networking, UI, and gameplay orchestration while the runtime extraction continues.
 - Networking is now split into protocol (`src/engine_net_proto/*`), ENet transport (`src/engine_net/*`), LAN discovery, and server-session layers.
 - `src/game/android_main.cpp` and `src/game/web_main.cpp` remain separate platform-specific runtime paths.
-- Core third-party dependencies are GLFW, ENet, Jolt Physics, Dear ImGui, GLM, fmt, and spdlog.
+- Core third-party dependencies are GLFW, ENet, Dear ImGui, GLM, fmt, and spdlog.
 
 The codebase is designed reasonably well for a fast-moving prototype: the desktop renderer is now aligned to an OpenGL-first, GLES3/WebGL2-class target, the build graph is split into engine modules, the dedicated server is separated into its own binary, and CI validates packaged artifacts. The main design debt is still architectural drift between the desktop runtime and the Android/Web runtimes, plus a large `Engine` orchestration layer that owns too many responsibilities behind the new runtime seam.
 

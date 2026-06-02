@@ -60,7 +60,6 @@ set(SPDLOG_BUILD_EXAMPLES OFF CACHE BOOL "" FORCE)
 set(SPDLOG_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 
 # ── Dependencies (always needed) ───────────────────────────────────────
-add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/JoltPhysics/Build" EXCLUDE_FROM_ALL)
 add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/enet" EXCLUDE_FROM_ALL)
 add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/glm" EXCLUDE_FROM_ALL)
 add_subdirectory("${CMAKE_SOURCE_DIR}/dependencies/fmt" EXCLUDE_FROM_ALL)
@@ -208,7 +207,6 @@ target_link_libraries(engine_render_core PRIVATE engine_render_sokol)
 # ── Remaining subsystems ───────────────────────────────────────────────
 add_library(engine_physics STATIC
     src/engine_physics/avbd_solver.cpp
-    src/engine_physics/jolt_solver.cpp
     src/engine_physics/vehicle/aircraft_controller.cpp
     src/engine_physics/vehicle/vehicle_damage_model.cpp
     src/engine_physics/vehicle/vehicle_sandbox_scene.cpp
@@ -219,8 +217,8 @@ add_library(engine_physics STATIC
     src/engine_physics/voxel/voxel_physics_bridge.cpp
     src/engine_physics/physics_world.cpp
 )
-target_include_directories(engine_physics PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/JoltPhysics)
-target_link_libraries(engine_physics PUBLIC Jolt fmt::fmt spdlog::spdlog glm::glm)
+target_include_directories(engine_physics PUBLIC src)
+target_link_libraries(engine_physics PUBLIC fmt::fmt spdlog::spdlog glm::glm)
 
 add_library(engine_gameplay STATIC
     src/engine_gameplay/animation/animation_runtime.cpp

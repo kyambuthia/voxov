@@ -10,7 +10,7 @@
 class PlatformServices;
 
 struct GameRuntimeOptions {
-    PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
+    PhysicsSolverBackend physics_backend = PhysicsSolverBackend::AvbdExperimental;
     RenderBackendType render_backend = RenderBackendType::Sokol;
 };
 

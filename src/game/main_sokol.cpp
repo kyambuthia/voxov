@@ -36,7 +36,7 @@ struct AppOptions {
     bool start_fullscreen = false;
     const char *connect_host = nullptr;
     uint16_t connect_port = 7777;
-    PhysicsSolverBackend physics_backend = PhysicsSolverBackend::Jolt;
+    PhysicsSolverBackend physics_backend = PhysicsSolverBackend::AvbdExperimental;
 };
 
 AppOptions g_opts{};

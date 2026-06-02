@@ -465,18 +465,18 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
     dst.index_type =
         use_16_bit_indices ? SG_INDEXTYPE_UINT16 : SG_INDEXTYPE_UINT32;
 
-    const sg_range vbuf_range = {
-        .ptr = vertices.data(),
-        .size = vertices.size() * sizeof(vertices[0]),
+    const sg_range vbuf_range{
+        vertices.data(),
+        vertices.size() * sizeof(vertices[0]),
     };
     const void *index_data =
         use_16_bit_indices ? static_cast<const void *>(src.indices16.data())
                            : static_cast<const void *>(src.indices.data());
     const size_t index_size =
         use_16_bit_indices ? sizeof(src.indices16[0]) : sizeof(src.indices[0]);
-    const sg_range ibuf_range = {
-        .ptr = index_data,
-        .size = index_count * index_size,
+    const sg_range ibuf_range{
+        index_data,
+        index_count * index_size,
     };
 
     if (stream) {
@@ -551,20 +551,16 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
     }
     const glm::vec3 relative_camera_pos =
         glm::vec3(glm::dvec3(camera_pos) - camera_relative_origin);
-    const vs_params_t vs_params = {
-        .mvp = mvp,
-        .model = model,
-    };
-    const fs_params_t fs_params = {
-        .light_direction = glm::vec4(light_.direction, 0.0f),
-        .light_ambient = glm::vec4(light_.ambient, 0.0f),
-        .light_diffuse = glm::vec4(light_.diffuse, 0.0f),
-        .light_specular = glm::vec4(light_.specular, 0.0f),
-        .material_ambient = glm::vec4(material_.ambient, 0.0f),
-        .material_diffuse = glm::vec4(material_.diffuse, 0.0f),
-        .material_specular_shininess =
-            glm::vec4(material_.specular, material_.shininess),
-        .camera_pos = glm::vec4(relative_camera_pos, 0.0f),
+    const vs_params_t vs_params{ mvp, model };
+    const fs_params_t fs_params{
+        glm::vec4(light_.direction, 0.0f),
+        glm::vec4(light_.ambient, 0.0f),
+        glm::vec4(light_.diffuse, 0.0f),
+        glm::vec4(light_.specular, 0.0f),
+        glm::vec4(material_.ambient, 0.0f),
+        glm::vec4(material_.diffuse, 0.0f),
+        glm::vec4(material_.specular, material_.shininess),
+        glm::vec4(relative_camera_pos, 0.0f),
     };
     const sg_range vs_range = SG_RANGE(vs_params);
     const sg_range fs_range = SG_RANGE(fs_params);

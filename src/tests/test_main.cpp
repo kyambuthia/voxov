@@ -631,6 +631,106 @@ void test_planet_streamer_refines_near_surface() {
   assert(deepest_resident_lod >= 4);
 }
 
+void test_planet_streamer_reports_budgeted_stats_and_revision() {
+  PlanetDefinition planet{};
+  planet.center = glm::dvec3(0.0);
+  planet.radius = 128.0;
+  planet.voxel_size = 1.0;
+  planet.chunks_per_face = 1;
+  planet.seed = 0x10203040u;
+
+  const glm::dvec3 camera_pos =
+      planet.center + glm::dvec3(0.0, 32.0, planet.radius * 4.0);
+  const glm::mat4 view =
+      glm::lookAt(glm::vec3(camera_pos), glm::vec3(planet.center),
+                  glm::vec3(0.0f, 1.0f, 0.0f));
+  const glm::mat4 projection =
+      glm::perspective(glm::radians(70.0f), 16.0f / 9.0f, 0.1f, 4096.0f);
+
+  PlanetStreamer streamer;
+  streamer.set_config(PlanetStreamerConfig{
+      .generation_budget_per_update = 1,
+      .max_visible_chunks = 256,
+      .lod_error_threshold_pixels = 2.0f,
+  });
+
+  PlanetRenderRequest request{};
+  request.planet = planet;
+  request.max_lod = 0;
+  request.camera_world_position = camera_pos;
+  request.view_projection = projection * view;
+  request.screen_height_pixels = 1080.0f;
+
+  streamer.update(request);
+  const PlanetStreamerStats first_stats = streamer.stats();
+  assert(first_stats.requested_chunk_count > first_stats.generated_chunk_count);
+  assert(first_stats.generated_chunk_count == 1);
+  assert(first_stats.resident_chunk_count == streamer.streamed_chunk_count());
+  assert(first_stats.visible_chunk_count == streamer.render_meshes().size());
+
+  streamer.set_generation_budget_per_update(32);
+  streamer.update(request);
+  assert(streamer.stats().resident_chunk_count == streamer.streamed_chunk_count());
+  assert(streamer.stats().visible_chunk_count == streamer.render_meshes().size());
+
+  const uint64_t stable_revision = streamer.mesh_set_revision();
+  streamer.update(request);
+  assert(streamer.stats().requested_chunk_count == 0);
+  assert(streamer.stats().generated_chunk_count == 0);
+  assert(streamer.stats().evicted_chunk_count == 0);
+  assert(streamer.stats().resident_chunk_count == streamer.streamed_chunk_count());
+  assert(streamer.stats().visible_chunk_count == streamer.render_meshes().size());
+  assert(streamer.mesh_set_revision() == stable_revision);
+}
+
+void test_planet_streamer_reports_evicted_chunks() {
+  PlanetDefinition planet{};
+  planet.center = glm::dvec3(0.0);
+  planet.radius = 128.0;
+  planet.voxel_size = 1.0;
+  planet.chunks_per_face = 1;
+  planet.seed = 0x50607080u;
+
+  const glm::dvec3 camera_pos =
+      planet.center + glm::dvec3(0.0, 32.0, planet.radius * 4.0);
+  const glm::mat4 toward_view =
+      glm::lookAt(glm::vec3(camera_pos), glm::vec3(planet.center),
+                  glm::vec3(0.0f, 1.0f, 0.0f));
+  const glm::mat4 away_view =
+      glm::lookAt(glm::vec3(camera_pos),
+                  glm::vec3(camera_pos + glm::dvec3(0.0, 0.0, 1.0)),
+                  glm::vec3(0.0f, 1.0f, 0.0f));
+  const glm::mat4 projection =
+      glm::perspective(glm::radians(70.0f), 16.0f / 9.0f, 0.1f, 4096.0f);
+
+  PlanetStreamer streamer;
+  streamer.set_config(PlanetStreamerConfig{
+      .generation_budget_per_update = 32,
+      .max_visible_chunks = 256,
+      .lod_error_threshold_pixels = 2.0f,
+  });
+
+  PlanetRenderRequest request{};
+  request.planet = planet;
+  request.max_lod = 0;
+  request.camera_world_position = camera_pos;
+  request.view_projection = projection * toward_view;
+  request.screen_height_pixels = 1080.0f;
+  streamer.update(request);
+  assert(streamer.streamed_chunk_count() > 0);
+
+  request.view_projection = projection * away_view;
+  uint32_t evicted = 0;
+  for (int i = 0; i < 601; ++i) {
+    streamer.update(request);
+    evicted += streamer.stats().evicted_chunk_count;
+  }
+
+  assert(evicted > 0);
+  assert(streamer.stats().resident_chunk_count == streamer.streamed_chunk_count());
+  assert(streamer.stats().visible_chunk_count == streamer.render_meshes().size());
+}
+
 void test_atmosphere_transition_manager_descent_and_ascent() {
   PlanetDefinition planet{};
   planet.radius = 100.0;
@@ -1772,6 +1872,8 @@ int main() {
   test_planet_surface_flat_mesh_uses_local_plane();
   test_planet_streamer_returns_runtime_terrain_chunks();
   test_planet_streamer_refines_near_surface();
+  test_planet_streamer_reports_budgeted_stats_and_revision();
+  test_planet_streamer_reports_evicted_chunks();
   test_atmosphere_transition_manager_descent_and_ascent();
   test_planet_surface_raycast_radial_down_and_up();
   test_net_header_validation();

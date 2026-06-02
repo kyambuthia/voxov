@@ -1168,6 +1168,9 @@ void PlanetStreamer::init(const PlanetDefinition &planet, uint32_t max_lod) {
   lod_selector_ = PlanetLODSelector{};
   resident_chunks_.clear();
   visible_meshes_.clear();
+  visible_mesh_ids_.clear();
+  stats_ = PlanetStreamerStats{};
+  mesh_set_revision_ = 0;
   frame_index_ = 0;
   initialized_ = true;
 }
@@ -1176,10 +1179,12 @@ void PlanetStreamer::update(const glm::dvec3 &camera_pos,
                             const glm::mat4 &view_projection,
                             float screen_height_pixels) {
   if (!initialized_) {
+    stats_ = PlanetStreamerStats{};
     return;
   }
 
   ++frame_index_;
+  stats_ = PlanetStreamerStats{};
   for (auto &[id, chunk] : resident_chunks_) {
     (void)id;
     chunk.requested = false;
@@ -1189,6 +1194,8 @@ void PlanetStreamer::update(const glm::dvec3 &camera_pos,
   LODSelectionResult selection = lod_selector_.select(
       quadtree_, camera_pos, view_projection, screen_height_pixels,
       config_.lod_error_threshold_pixels);
+  stats_.requested_chunk_count =
+      static_cast<uint32_t>(selection.new_nodes.size());
 
   for (const int32_t node_index : selection.new_nodes) {
     const PlanetQuadtreeNode *node = quadtree_.node(node_index);
@@ -1198,9 +1205,11 @@ void PlanetStreamer::update(const glm::dvec3 &camera_pos,
     ensure_requested_chunk(*node, node_index);
   }
 
-  generate_requested_chunks(selection.new_nodes);
+  stats_.generated_chunk_count = generate_requested_chunks(selection.new_nodes);
   rebuild_visible_meshes(selection.visible_nodes);
-  evict_chunks(selection.evict_nodes);
+  stats_.evicted_chunk_count = evict_chunks(selection.evict_nodes);
+  stats_.resident_chunk_count =
+      static_cast<uint32_t>(resident_chunks_.size());
 }
 
 const std::vector<RenderMesh> &
@@ -1273,7 +1282,7 @@ PlanetStreamer::ensure_requested_chunk(const PlanetQuadtreeNode &node,
   return chunk;
 }
 
-void PlanetStreamer::generate_requested_chunks(
+uint32_t PlanetStreamer::generate_requested_chunks(
     const std::vector<int32_t> &requested_nodes) {
   uint32_t generated = 0;
   for (const int32_t node_index : requested_nodes) {
@@ -1307,6 +1316,7 @@ void PlanetStreamer::generate_requested_chunks(
     node->mesh_handle = static_cast<int32_t>(chunk.mesh_id & 0x7fffffffu);
     ++generated;
   }
+  return generated;
 }
 
 void PlanetStreamer::rebuild_visible_meshes(
@@ -1314,6 +1324,8 @@ void PlanetStreamer::rebuild_visible_meshes(
   visible_meshes_.clear();
   const size_t max_visible = static_cast<size_t>(config_.max_visible_chunks);
   visible_meshes_.reserve(std::min(visible_nodes.size(), max_visible));
+  std::vector<uint64_t> next_visible_mesh_ids;
+  next_visible_mesh_ids.reserve(std::min(visible_nodes.size(), max_visible));
 
   for (const int32_t node_index : visible_nodes) {
     if (visible_meshes_.size() >= max_visible) {
@@ -1337,10 +1349,19 @@ void PlanetStreamer::rebuild_visible_meshes(
     node->state = QuadtreeNodeState::Resident;
     node->last_used_frame = frame_index_;
     visible_meshes_.push_back(chunk.mesh);
+    next_visible_mesh_ids.push_back(chunk.mesh_id);
+  }
+
+  stats_.visible_chunk_count =
+      static_cast<uint32_t>(visible_meshes_.size());
+  if (next_visible_mesh_ids != visible_mesh_ids_) {
+    visible_mesh_ids_ = std::move(next_visible_mesh_ids);
+    ++mesh_set_revision_;
   }
 }
 
-void PlanetStreamer::evict_chunks(const std::vector<int32_t> &evict_nodes) {
+uint32_t PlanetStreamer::evict_chunks(const std::vector<int32_t> &evict_nodes) {
+  uint32_t evicted = 0;
   for (const int32_t node_index : evict_nodes) {
     PlanetQuadtreeNode *node = quadtree_.node(node_index);
     if (node == nullptr) {
@@ -1355,7 +1376,9 @@ void PlanetStreamer::evict_chunks(const std::vector<int32_t> &evict_nodes) {
     resident_chunks_.erase(it);
     node->state = QuadtreeNodeState::Empty;
     node->mesh_handle = -1;
+    ++evicted;
   }
+  return evicted;
 }
 
 // ═══════════════════════════════════════════════════════════════════════════

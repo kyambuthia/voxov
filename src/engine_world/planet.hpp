@@ -239,6 +239,14 @@ struct PlanetStreamerConfig {
   float lod_error_threshold_pixels = 2.0f;
 };
 
+struct PlanetStreamerStats {
+  uint32_t requested_chunk_count = 0;
+  uint32_t resident_chunk_count = 0;
+  uint32_t visible_chunk_count = 0;
+  uint32_t generated_chunk_count = 0;
+  uint32_t evicted_chunk_count = 0;
+};
+
 struct PlanetRenderRequest {
   PlanetDefinition planet{};
   uint32_t max_lod = 0;
@@ -269,6 +277,8 @@ public:
   }
 
   size_t streamed_chunk_count() const { return resident_chunks_.size(); }
+  const PlanetStreamerStats &stats() const { return stats_; }
+  uint64_t mesh_set_revision() const { return mesh_set_revision_; }
 
   bool initialized() const { return initialized_; }
   const PlanetDefinition &planet() const { return planet_; }
@@ -290,10 +300,11 @@ private:
       std::unordered_map<PlanetChunkId, PlanetResidentChunk, PlanetChunkIdHash>;
 
   PlanetResidentChunk &ensure_requested_chunk(const PlanetQuadtreeNode &node,
-                                              int32_t node_index);
-  void generate_requested_chunks(const std::vector<int32_t> &requested_nodes);
+                                               int32_t node_index);
+  uint32_t
+  generate_requested_chunks(const std::vector<int32_t> &requested_nodes);
   void rebuild_visible_meshes(const std::vector<int32_t> &visible_nodes);
-  void evict_chunks(const std::vector<int32_t> &evict_nodes);
+  uint32_t evict_chunks(const std::vector<int32_t> &evict_nodes);
 
   PlanetDefinition planet_{};
   PlanetQuadtree quadtree_{};
@@ -301,6 +312,9 @@ private:
   PlanetStreamerConfig config_{};
   ResidentMap resident_chunks_{};
   std::vector<RenderMesh> visible_meshes_{};
+  std::vector<uint64_t> visible_mesh_ids_{};
+  PlanetStreamerStats stats_{};
+  uint64_t mesh_set_revision_ = 0;
   uint64_t frame_index_ = 0;
   bool initialized_ = false;
 };

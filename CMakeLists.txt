@@ -121,7 +121,9 @@ if(NOT ANDROID)
     if(EMSCRIPTEN)
         target_compile_definitions(platform_desktop PUBLIC SOKOL_GLES3 VOXOV_PLATFORM_WEB=1)
     endif()
-    if(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
+    if(WIN32)
+        target_link_libraries(platform_desktop PUBLIC d3d11 dxgi)
+    elseif(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
         target_link_libraries(platform_desktop PUBLIC
             OpenGL::GL X11 Xi Xcursor m dl asound
         )

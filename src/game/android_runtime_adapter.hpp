@@ -39,6 +39,11 @@ private:
         Sprint,
         Crouch,
         Menu,
+        GodMode,
+        GodF1,
+        GodF2,
+        GodF3,
+        GodF4,
     };
 
     PointerZone classify(float x, float y) const;
@@ -55,6 +60,14 @@ private:
     bool sprint_held_ = false;
     bool crouch_held_ = false;
     bool menu_toggle_ = false;
+    bool menu_up_ = false;
+    bool menu_down_ = false;
+    bool menu_select_ = false;
+    bool godmode_expanded_ = false;
+    bool debug_toggle_ = false;
+    bool debug_xray_toggle_ = false;
+    bool debug_collision_only_toggle_ = false;
+    bool debug_freeze_toggle_ = false;
 };
 
 class AndroidRuntimePlatformAdapter : public IRuntimePlatformAdapter {

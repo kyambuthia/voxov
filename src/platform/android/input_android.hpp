@@ -17,6 +17,10 @@ public:
     void set_menu_up(bool pressed);
     void set_menu_down(bool pressed);
     void set_menu_select(bool pressed);
+    void set_debug_toggle(bool pressed);
+    void set_debug_xray_toggle(bool pressed);
+    void set_debug_collision_only_toggle(bool pressed);
+    void set_debug_freeze_toggle(bool pressed);
 
 private:
     glm::vec2 left_stick = glm::vec2(0.0f);
@@ -33,4 +37,12 @@ private:
     bool prev_menu_down = false;
     bool menu_select = false;
     bool prev_menu_select = false;
+    bool debug_toggle = false;
+    bool prev_debug_toggle = false;
+    bool debug_xray_toggle = false;
+    bool prev_debug_xray_toggle = false;
+    bool debug_collision_only_toggle = false;
+    bool prev_debug_collision_only_toggle = false;
+    bool debug_freeze_toggle = false;
+    bool prev_debug_freeze_toggle = false;
 };

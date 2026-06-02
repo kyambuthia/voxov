@@ -96,6 +96,7 @@ private:
   FlatWorldStreamer flat_world_;
   uint64_t flat_world_mesh_set_revision_ = 0;
   bool debug_fly_mode_ = false;
+  bool touch_controls_visible_ = false;
   RenderStats render_stats;
   EngineSessionState session_state_{};
   EngineRuntimeOptions runtime_options{};

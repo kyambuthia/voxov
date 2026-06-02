@@ -35,6 +35,30 @@ double smooth_metric(double current, double sample, double alpha = 0.25) {
 
 uint64_t bytes_to_kib(uint64_t bytes) { return (bytes + 1023u) / 1024u; }
 
+void append_screen_rect(RenderMesh &dst, float x0, float y0, float x1,
+                        float y1, const glm::vec3 &color) {
+  RenderMesh rect{};
+  rect.vertices.push_back({glm::vec3(x0, y0, 0.0f), color});
+  rect.vertices.push_back({glm::vec3(x1, y0, 0.0f), color});
+  rect.vertices.push_back({glm::vec3(x1, y1, 0.0f), color});
+  rect.vertices.push_back({glm::vec3(x0, y1, 0.0f), color});
+  rect.indices.insert(rect.indices.end(), {0, 1, 2, 0, 2, 3});
+  append_mesh(dst, rect);
+}
+
+void append_screen_label(RenderMesh &dst, const std::string &text, float x,
+                         float y, float scale,
+                         const glm::vec3 &color = glm::vec3(0.92f, 0.96f,
+                                                            1.0f)) {
+  append_mesh(dst, build_screen_text_mesh(text, x, y, scale, color));
+}
+
+void append_touch_button_hint(RenderMesh &dst, float x0, float y0, float x1,
+                              float y1, const std::string &label) {
+  append_screen_rect(dst, x0, y0, x1, y1, glm::vec3(0.05f, 0.07f, 0.09f));
+  append_screen_label(dst, label, x0 + 0.025f, y0 - 0.045f, 0.0048f);
+}
+
 void disable_gameplay_actions(InputState &input) {
   input.move = glm::vec2(0.0f);
   input.jump_pressed = false;
@@ -233,6 +257,7 @@ void Engine::tick(double frame_dt,
     disable_gameplay_actions(gameplay_input);
     gameplay_input.look_delta = glm::vec2(0.0f);
   }
+  touch_controls_visible_ = input_frame.touch_mode;
 
   PlayerControllerSystem::update_camera_rig(
       local_player, gameplay_input, input_frame.touch_mode,
@@ -467,6 +492,64 @@ void Engine::update_third_person_camera(PlayerEntity &player,
 
 void Engine::refresh_overlay_text() {
   scene.debug_screen = RenderMesh{};
+
+  if (session_state_.menu_open) {
+    append_screen_rect(scene.debug_screen, -0.95f, 0.90f, 0.32f, -0.86f,
+                       glm::vec3(0.05f, 0.07f, 0.10f));
+    append_screen_rect(scene.debug_screen, -0.93f, 0.87f, 0.30f, -0.83f,
+                       glm::vec3(0.09f, 0.11f, 0.16f));
+
+    const GuiMenuView &menu = session_state_.menu_view;
+    float y = 0.80f;
+    if (!menu.title.empty()) {
+      append_screen_label(scene.debug_screen, menu.title, -0.88f, y, 0.0082f,
+                          glm::vec3(0.98f, 0.98f, 1.0f));
+      y -= 0.12f;
+    }
+    for (size_t i = 0; i < menu.items.size(); ++i) {
+      const bool selected = static_cast<int>(i) == menu.selected;
+      append_screen_label(scene.debug_screen,
+                          selected ? "> " + menu.items[i]
+                                   : "  " + menu.items[i],
+                          -0.86f, y, 0.0067f,
+                          selected ? glm::vec3(1.0f, 0.96f, 0.72f)
+                                   : glm::vec3(0.86f, 0.91f, 0.98f));
+      y -= 0.09f;
+    }
+    for (const std::string &line : menu.guide_lines) {
+      append_screen_label(scene.debug_screen, line, -0.86f, y, 0.0056f,
+                          glm::vec3(0.80f, 0.88f, 0.97f));
+      y -= 0.07f;
+    }
+    if (!menu.status.empty()) {
+      append_screen_label(scene.debug_screen, "STATUS: " + menu.status,
+                          -0.88f, -0.76f, 0.0055f,
+                          glm::vec3(0.88f, 0.93f, 0.99f));
+    }
+    if (touch_controls_visible_) {
+      append_screen_label(scene.debug_screen,
+                          "Touch: RUN=DOWN  CROUCH=UP  JUMP=SELECT  MENU=CLOSE",
+                          -0.88f, -0.64f, 0.0048f,
+                          glm::vec3(0.88f, 0.95f, 1.0f));
+    }
+    return;
+  }
+
+  if (touch_controls_visible_) {
+    append_screen_label(scene.debug_screen, "MENU", -0.92f, 0.86f, 0.0047f);
+    append_screen_label(scene.debug_screen, "GOD", 0.76f, 0.86f, 0.0047f,
+                        glm::vec3(1.0f, 0.85f, 0.4f));
+    append_screen_label(scene.debug_screen, "MOVE", -0.78f, -0.70f, 0.0062f);
+    append_screen_label(scene.debug_screen, "LOOK / DRAG", 0.26f, -0.70f,
+                        0.0054f);
+    append_touch_button_hint(scene.debug_screen, 0.71f, -0.59f, 0.93f, -0.77f,
+                             "JUMP");
+    append_touch_button_hint(scene.debug_screen, 0.46f, -0.59f, 0.68f, -0.77f,
+                             "RUN");
+    append_touch_button_hint(scene.debug_screen, 0.71f, -0.36f, 0.93f, -0.54f,
+                             "CROUCH");
+  }
+
   if (!session_state_.devhud_enabled) {
     return;
   }

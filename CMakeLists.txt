@@ -559,6 +559,8 @@ if(VOXOV_BUILD_TESTS)
             "-framework Cocoa" "-framework QuartzCore" "-framework Metal" "-framework MetalKit"
             "-framework AudioToolbox"
         )
+    elseif(WIN32)
+        target_link_libraries(voxov_sokol_smoke PRIVATE d3d11 dxgi)
     elseif(UNIX)
         target_link_libraries(voxov_sokol_smoke PRIVATE
             OpenGL::GL X11 Xi Xcursor m dl asound

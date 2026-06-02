@@ -46,6 +46,7 @@ inline glm::vec3 camera_relative_position(
 struct RenderScene {
     CameraRelativeOrigin camera_origin{};
     std::vector<RenderMesh> opaque_meshes;
+    std::vector<RenderMesh> wireframe_meshes;
     RenderMesh debug_world;
     RenderMesh debug_screen;
 };

@@ -15,6 +15,7 @@
 #include "engine_ui/gui_menu.hpp"
 #include "engine_world/flat_world_streamer.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
+#include "engine_world/planet.hpp"
 #include "platform/platform_services.hpp"
 
 #include <string>
@@ -100,6 +101,11 @@ private:
   RenderStats render_stats;
   EngineSessionState session_state_{};
   EngineRuntimeOptions runtime_options{};
+
+  // Wireframe voxel planet (visualization)
+  PlanetDefinition wireframe_planet_{};
+  RenderMesh wireframe_planet_mesh_{};
+  bool wireframe_planet_dirty_ = true;
 
   uint64_t frame_index = 0;
   uint64_t presentation_frame_events_seen_ = 0;

@@ -303,6 +303,23 @@ bool SokolRenderer::setup_pipelines() {
     opq_desc.label = "voxov-opaque-u16";
     pipelines_.opaque_u16 = sg_make_pipeline(&opq_desc);
 
+    // Wireframe pipeline (line list, no cull, depth-less-equal)
+    sg_pipeline_desc wire_desc = {};
+    wire_desc.shader = pipelines_.scene_shader;
+    wire_desc.layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT3;
+    wire_desc.layout.attrs[1].format = SG_VERTEXFORMAT_FLOAT3;
+    wire_desc.layout.attrs[2].format = SG_VERTEXFORMAT_FLOAT3;
+    wire_desc.index_type = SG_INDEXTYPE_UINT32;
+    wire_desc.primitive_type = SG_PRIMITIVETYPE_LINES;
+    wire_desc.cull_mode = SG_CULLMODE_NONE;
+    wire_desc.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;
+    wire_desc.depth.write_enabled = true;
+    wire_desc.label = "voxov-wireframe";
+    pipelines_.wireframe = sg_make_pipeline(&wire_desc);
+    wire_desc.index_type = SG_INDEXTYPE_UINT16;
+    wire_desc.label = "voxov-wireframe-u16";
+    pipelines_.wireframe_u16 = sg_make_pipeline(&wire_desc);
+
     // Debug no-cull pipeline
     sg_pipeline_desc dnc_desc = {};
     dnc_desc.shader = pipelines_.scene_shader;
@@ -403,6 +420,7 @@ bool SokolRenderer::init(const RenderDeviceDesc &desc) {
 
 void SokolRenderer::shutdown() {
     destroy_mesh(transient_mesh_);
+    destroy_mesh(wireframe_mesh_);
     destroy_mesh(debug_world_mesh_);
     destroy_mesh(debug_screen_mesh_);
     for (auto &[id, mesh] : cached_meshes_) {
@@ -413,6 +431,8 @@ void SokolRenderer::shutdown() {
     if (pipelines_.scene_shader.id) sg_destroy_shader(pipelines_.scene_shader);
     if (pipelines_.opaque.id) sg_destroy_pipeline(pipelines_.opaque);
     if (pipelines_.opaque_u16.id) sg_destroy_pipeline(pipelines_.opaque_u16);
+    if (pipelines_.wireframe.id) sg_destroy_pipeline(pipelines_.wireframe);
+    if (pipelines_.wireframe_u16.id) sg_destroy_pipeline(pipelines_.wireframe_u16);
     if (pipelines_.debug_no_cull.id) sg_destroy_pipeline(pipelines_.debug_no_cull);
     if (pipelines_.debug_no_cull_u16.id) sg_destroy_pipeline(pipelines_.debug_no_cull_u16);
     if (pipelines_.debug_xray.id) sg_destroy_pipeline(pipelines_.debug_xray);
@@ -573,6 +593,40 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
     sg_draw(0, static_cast<int>(mesh.index_count), 1);
 }
 
+void SokolRenderer::draw_wireframe(const SokolGpuMesh &mesh,
+                                     const glm::mat4 &mvp) {
+    if (!mesh.vertex_buffer.id || !mesh.index_buffer.id ||
+        mesh.index_count == 0) {
+        return;
+    }
+    sg_pipeline pipeline = (mesh.index_type == SG_INDEXTYPE_UINT16)
+                               ? pipelines_.wireframe_u16
+                               : pipelines_.wireframe;
+    if (pipeline.id != 0) {
+        sg_apply_pipeline(pipeline);
+    }
+    const vs_params_t vs_params{ mvp, glm::mat4(1.0f) };
+    const fs_params_t fs_params{
+        glm::vec4(light_.direction, 0.0f),
+        glm::vec4(light_.ambient, 0.0f),
+        glm::vec4(light_.diffuse, 0.0f),
+        glm::vec4(light_.specular, 0.0f),
+        glm::vec4(1.0f, 1.0f, 1.0f, 0.0f), // material_ambient (white → vertex color)
+        glm::vec4(1.0f, 1.0f, 1.0f, 0.0f), // material_diffuse (white → vertex color)
+        glm::vec4(0.0f, 0.0f, 0.0f, 0.0f), // material_specular (no specular)
+        glm::vec4(0.0f, 0.0f, 0.0f, 0.0f), // camera_pos (not used for wireframe)
+    };
+    const sg_range vs_range = SG_RANGE(vs_params);
+    const sg_range fs_range = SG_RANGE(fs_params);
+    sg_apply_uniforms(0, &vs_range);
+    sg_apply_uniforms(1, &fs_range);
+    sg_bindings bind = {};
+    bind.vertex_buffers[0] = mesh.vertex_buffer;
+    bind.index_buffer = mesh.index_buffer;
+    sg_apply_bindings(&bind);
+    sg_draw(0, static_cast<int>(mesh.index_count), 1);
+}
+
 // ---------------------------------------------------------------------------
 // Scene upload
 // ---------------------------------------------------------------------------
@@ -618,7 +672,25 @@ void SokolRenderer::upload_scene(const RenderScene &new_scene) {
         }
     }
 
+    // Merge all wireframe meshes into a single transient buffer.
+    RenderMesh wireframe_scene{};
+    for (const RenderMesh &mesh : new_scene.wireframe_meshes) {
+        const uint32_t base = static_cast<uint32_t>(wireframe_scene.vertices.size());
+        wireframe_scene.vertices.insert(wireframe_scene.vertices.end(),
+                                         mesh.vertices.begin(), mesh.vertices.end());
+        if (mesh.use_16_bit_indices) {
+            for (uint16_t idx : mesh.indices16) {
+                wireframe_scene.indices.push_back(base + idx);
+            }
+        } else {
+            for (uint32_t idx : mesh.indices) {
+                wireframe_scene.indices.push_back(base + idx);
+            }
+        }
+    }
+
     upload_mesh(transient_mesh_, transient_scene, true);
+    upload_mesh(wireframe_mesh_, wireframe_scene, false);
     upload_mesh(debug_world_mesh_, new_scene.debug_world, false);
     upload_mesh(debug_screen_mesh_, new_scene.debug_screen, false);
     last_debug_world_hash_ = mesh_size_token(new_scene.debug_world);
@@ -692,6 +764,9 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                           pipelines_.opaque, pipelines_.opaque_u16);
             }
         }
+
+        // Wireframe geometry (drawn over opaque, with depth)
+        draw_wireframe(wireframe_mesh_, vp);
 
         // Debug world (x-ray or normal)
         draw_mesh(debug_world_mesh_, vp, model, camera_pos,

@@ -6,6 +6,7 @@
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
 #include "engine_world/flat_world_streamer.hpp"
+#include "engine_world/wireframe_planet.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -186,6 +187,13 @@ bool Engine::init(const EngineRuntimeOptions &options) {
                        .view_radius_chunks = 3,
                    });
 
+  // Wireframe voxel planet visualization.
+  wireframe_planet_.center = glm::dvec3(0.0);
+  wireframe_planet_.radius = 128.0;
+  wireframe_planet_.voxel_size = 1.0;
+  wireframe_planet_.chunks_per_face = 8;
+  wireframe_planet_.seed = k_voxov_flat_world_seed;
+
   local_player = PlayerControllerSystem::spawn_player(collision_world);
   local_player.controller.capsuleRadius = 0.7f;
   local_player.transform.position = glm::vec3(32.0f, 12.0f, 32.0f);
@@ -363,6 +371,16 @@ void Engine::tick(double frame_dt,
     scene.opaque_meshes = flat_world_.render_meshes();
     flat_world_mesh_set_revision_ = flat_world_.mesh_set_revision();
   }
+
+  // Wireframe voxel planet — regenerate when dirty (e.g. after init).
+  if (wireframe_planet_dirty_) {
+    wireframe_planet_mesh_ = build_wireframe_voxel_planet_mesh(
+        wireframe_planet_, wireframe_planet_.chunks_per_face);
+    wireframe_planet_dirty_ = false;
+  }
+  scene.wireframe_meshes.clear();
+  scene.wireframe_meshes.push_back(wireframe_planet_mesh_);
+
   renderer.upload_scene(scene);
 
   render_stats.frame_ms =

@@ -7,6 +7,7 @@
 #include "engine_render/debug_text.hpp"
 #include "engine_world/wireframe_planet.hpp"
 #include "engine_world/world_gen.hpp"
+#include "engine_world/planet.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -123,6 +124,20 @@ RenderMesh build_local_player_debug_mesh(
 }
 } // namespace
 
+namespace {
+glm::mat4 build_view_projection(const Camera &camera, float aspect,
+                                float /*screen_height*/, float near_plane,
+                                float far_plane) {
+  const float fov_y = glm::radians(60.0f);
+  const glm::mat4 proj = glm::perspective(fov_y, aspect, near_plane, far_plane);
+  const glm::mat4 view =
+      glm::lookAt(camera.transform.position,
+                  camera.transform.position + camera.forward(),
+                  camera.up());
+  return proj * view;
+}
+} // namespace
+
 bool Engine::init(const EngineRuntimeOptions &options) {
   platform_services = options.platform_services != nullptr
                           ? *options.platform_services
@@ -181,29 +196,66 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   scene = RenderScene{};
   collision_world = VoxelCollisionWorld{nullptr};
 
-  // Wireframe voxel planet visualization.
-  wireframe_planet_.center = glm::dvec3(0.0);
-  wireframe_planet_.radius = 128.0;
-  wireframe_planet_.voxel_size = 1.0;
-  wireframe_planet_.chunks_per_face = 8;
-  wireframe_planet_.seed = k_voxov_flat_world_seed;
+  // ── Planet definition (2000 km radius) ─────────────────────────────
+  PlanetDefinition planet_def{};
+  planet_def.center = glm::dvec3(0.0);
+  planet_def.radius = 2000000.0; // 2000 km in meters
+  planet_def.voxel_size = 1.0;
+  planet_def.chunks_per_face = 64;
+  planet_def.seed = k_voxov_flat_world_seed;
 
+  // Wireframe planet for visual reference (coarser grid).
+  wireframe_planet_ = planet_def;
+  wireframe_planet_.chunks_per_face = 8;
+  wireframe_planet_dirty_ = true;
+
+  // Initialize planet terrain streamer.
+  planet_streamer_.init(planet_def, /*max_lod=*/10);
+  planet_streamer_.set_generation_budget_per_update(4);
+  planet_mesh_set_revision_ = 0;
+
+  // Set up planet-surface collision (gravity + foot placement).
+  collision_world.set_planet_surface_collider(
+      glm::vec3(planet_def.center),
+      static_cast<float>(planet_def.radius),
+      static_cast<float>(
+          planet_terrain_max_height_above_base(planet_def)),
+      [&planet = planet_streamer_.planet()](glm::vec3 direction) -> float {
+        return static_cast<float>(
+            planet_terrain_height_above_base_at_direction(
+                planet, glm::dvec3(direction)));
+      });
+
+  // Spawn player on the planet surface.
   local_player = PlayerControllerSystem::spawn_player(collision_world);
   local_player.controller.capsuleRadius = 0.7f;
-  local_player.transform.position = glm::vec3(32.0f, 12.0f, 32.0f);
-  local_player.camera_rig.pitch = -32.0f;
+  {
+    // Place player at equator on the +X face, 3 m above terrain.
+    const glm::vec3 equator_dir =
+        glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f));
+    const glm::vec3 surface_pos =
+        equator_dir *
+        static_cast<float>(planet_def.radius +
+                           planet_terrain_height_above_base_at_direction(
+                               planet_def, glm::dvec3(equator_dir)));
+    local_player.transform.position = surface_pos +
+        glm::normalize(surface_pos - glm::vec3(planet_def.center)) * 3.0f;
+  }
+  local_player.camera_rig.pitch = -16.0f;
   local_player.camera_rig.distance = 7.5f;
-  local_player.camera_rig.maxDistance = 24.0f;
+  local_player.camera_rig.maxDistance = 48.0f;
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
-  camera.z_far = 2000.0f;
+  camera.z_far = 5000000.0f;
+  camera.z_near = 0.5f;
   update_third_person_camera(local_player, camera);
 
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled);
   refresh_overlay_text();
 
-  spdlog::info("Engine init: wireframe planet, capsule player, backend={}",
+  spdlog::info("Engine init: planet r={:.0f}km, capsule player, backend={}",
+               planet_def.radius / 1000.0,
                runtime_options.render_backend == RenderBackendType::Sokol
                    ? "Sokol"
                    : "OpenGL");
@@ -350,7 +402,23 @@ void Engine::tick(double frame_dt,
                              camera);
   scene.camera_origin.world_origin = glm::dvec3(camera.transform.position);
 
-  // Wireframe voxel planet — regenerate when dirty (e.g. after init).
+  // ── Planet terrain streaming ───────────────────────────────────────
+  {
+    constexpr float k_screen_height = 1080.0f;
+    constexpr float k_aspect_ratio = 16.0f / 9.0f;
+    const glm::mat4 view_proj =
+        build_view_projection(camera, k_aspect_ratio, k_screen_height,
+                              camera.z_near, camera.z_far);
+    planet_streamer_.update(
+        scene.camera_origin.world_origin, view_proj, k_screen_height);
+
+    if (planet_mesh_set_revision_ != planet_streamer_.mesh_set_revision()) {
+      scene.opaque_meshes = planet_streamer_.render_meshes();
+      planet_mesh_set_revision_ = planet_streamer_.mesh_set_revision();
+    }
+  }
+
+  // Wireframe voxel planet — regenerate when dirty.
   if (wireframe_planet_dirty_) {
     wireframe_planet_mesh_ = build_wireframe_voxel_planet_mesh(
         wireframe_planet_, wireframe_planet_.chunks_per_face);
@@ -370,7 +438,8 @@ void Engine::tick(double frame_dt,
   render_stats.fixed_cpu_ms = smooth_metric(
       render_stats.fixed_cpu_ms, game_session.fixed_cpu_ms(), 0.25);
   render_stats.fixed_steps = game_session.fixed_steps_last_frame();
-  render_stats.streamed_chunk_count = 0;
+  render_stats.streamed_chunk_count =
+      static_cast<uint32_t>(planet_streamer_.streamed_chunk_count());
   render_stats.profiling.gameplay_cpu_ms = smooth_metric(
       render_stats.profiling.gameplay_cpu_ms, profiling_sample.gameplay_cpu_ms,
       0.25);

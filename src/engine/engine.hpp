@@ -93,6 +93,8 @@ private:
   PlayerAnimationRuntime local_player_animation;
 
   RenderScene scene;
+  PlanetStreamer planet_streamer_;
+  uint64_t planet_mesh_set_revision_ = 0;
   bool debug_fly_mode_ = false;
   bool touch_controls_visible_ = false;
   RenderStats render_stats;

@@ -194,8 +194,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
 
   BlockWorldConfig bw_cfg{};
   bw_cfg.planet = planet_def;
-  bw_cfg.surface_shells = 4;
-  bw_cfg.base_resolution = 64;  // 64 blocks/axis on innermost shell
+  bw_cfg.surface_shells = 8;
+  bw_cfg.base_resolution = 64;
   bw_cfg.block_size = 1.0;
   bw_cfg.chunk_size = 16;
   bw_cfg.seed = k_voxov_flat_world_seed;
@@ -206,7 +206,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   wireframe_planet_.chunks_per_face = 64;
   wireframe_planet_dirty_ = true;
 
-  // Planet-surface collision from heightfield (transitional until block collision).
+  // Planet-surface collision from block-world terrain.
   collision_world.set_planet_surface_collider(
       glm::vec3(planet_def.center),
       static_cast<float>(planet_def.radius),
@@ -216,19 +216,21 @@ bool Engine::init(const EngineRuntimeOptions &options) {
             bw.terrain_height_at(glm::dvec3(direction)));
       });
 
-  // Player spawn on outermost shell surface using terrain height.
+  // Player spawn on planet surface using outer shell terrain height.
   local_player = PlayerControllerSystem::spawn_player(collision_world);
   local_player.controller.capsuleRadius = 0.7f;
   {
     const glm::dvec3 equator_dir = glm::normalize(glm::dvec3(1.0, 0.0, 0.0));
-    const int32_t surf_h = block_world_.terrain_height_at(equator_dir);
+    const int32_t surf_voxels = block_world_.terrain_height_at(equator_dir);
     const ShellConfig &outer = block_world_.shell_config(
         block_world_.shell_count() - 1);
+    // Map terrain voxel count to a radius within the thin outer shell.
+    const double t = static_cast<double>(surf_voxels) /
+                     static_cast<double>(outer.vertical_layers);
     const double surface_r = outer.inner_radius +
-        (static_cast<double>(surf_h) / static_cast<double>(outer.vertical_layers)) *
-        (outer.outer_radius - outer.inner_radius);
-    const glm::dvec3 surface_pos = equator_dir * surface_r;
-    local_player.transform.position = glm::vec3(surface_pos + equator_dir * 3.0);
+        t * (outer.outer_radius - outer.inner_radius);
+    local_player.transform.position = glm::vec3(equator_dir * surface_r +
+                                                 equator_dir * 3.0);
   }
   local_player.camera_rig.pitch = -16.0f;
   local_player.camera_rig.distance = 7.5f;
@@ -415,24 +417,21 @@ void Engine::tick(double frame_dt,
       }
     }
 
-    // Generate new chunks (budget-limited).
-    uint32_t generated = 0;
+    // Generate new chunks (budget-limited). Track which are new.
+    std::vector<BlockAddress> new_chunks;
     for (const BlockAddress &addr : desired) {
-      if (generated >= chunk_generation_budget_) break;
+      if (new_chunks.size() >= chunk_generation_budget_) break;
       if (block_world_.find_chunk(addr) != nullptr) continue;
       block_world_.get_or_generate_chunk(addr);
-      ++generated;
-      ++block_mesh_revision_;
+      new_chunks.push_back(addr);
     }
 
-    // Build meshes for all loaded chunks.
-    if (block_mesh_revision_ > 0 || loaded_chunks_.empty()) {
-      scene.opaque_meshes.clear();
-      for (const BlockAddress &addr : desired) {
+    // Rebuild meshes only when new chunks arrive.
+    if (!new_chunks.empty()) {
+      for (const BlockAddress &addr : new_chunks) {
         const VoxelChunk *chunk = block_world_.find_chunk(addr);
         if (chunk == nullptr) continue;
 
-        // Solid-at query for face culling: check neighbor chunks.
         auto solid_at = [this](const BlockAddress &na) -> bool {
           const VoxelChunk *nc = block_world_.find_chunk(na);
           if (nc == nullptr) return false;
@@ -445,7 +444,6 @@ void Engine::tick(double frame_dt,
           scene.opaque_meshes.push_back(std::move(mesh));
         }
       }
-      block_mesh_revision_ = 0;
     }
   }
 

@@ -107,6 +107,11 @@ const char *block_dir_name(BlockDir dir) {
 
 // ============================================================================
 // Shell configuration
+//
+// Innermost shells cover the planet interior (logarithmic spacing).
+// The outermost shell is thin — just thick enough for the terrain
+// heightfield (surface only).  Only the outermost shell is used for
+// surface block generation; inner shells are reserved for future digging.
 // ============================================================================
 
 void BlockWorld::build_shells() {
@@ -114,21 +119,43 @@ void BlockWorld::build_shells() {
     const int32_t n = config_.surface_shells;
     shells_.reserve(static_cast<size_t>(n));
 
-    const double r0 = config_.planet.radius * 0.05;
-    const double r1 = config_.planet.radius + planet_terrain_max_height_above_base(config_.planet);
-    const double k = std::pow(r1 / r0, 1.0 / static_cast<double>(n));
+    const double max_terrain = planet_terrain_max_height_above_base(config_.planet);
+    const double surface_radius = config_.planet.radius + max_terrain;
+    const double r0 = config_.planet.radius * 0.05; // innermost core
 
-    for (int32_t i = 0; i < n; ++i) {
-        ShellConfig sh{};
-        sh.index = i;
-        sh.inner_radius = r0 * std::pow(k, static_cast<double>(i));
-        sh.outer_radius = r0 * std::pow(k, static_cast<double>(i + 1));
-        sh.horizontal_res = config_.base_resolution * (1 << i);
-        const double thickness = sh.outer_radius - sh.inner_radius;
-        sh.vertical_layers = std::max(4,
-            static_cast<int32_t>(std::ceil(thickness / config_.block_size)));
-        shells_.push_back(sh);
+    // Inner shells: equal log-spacing from core to just below surface.
+    const int32_t inner_count = n - 1;
+    const double inner_top = config_.planet.radius; // stop at base sphere
+
+    if (inner_count > 0) {
+        const double k = std::pow(inner_top / r0, 1.0 / static_cast<double>(inner_count));
+        for (int32_t i = 0; i < inner_count; ++i) {
+            ShellConfig sh{};
+            sh.index = i;
+            sh.inner_radius = r0 * std::pow(k, static_cast<double>(i));
+            sh.outer_radius = r0 * std::pow(k, static_cast<double>(i + 1));
+            sh.horizontal_res = config_.base_resolution * (1 << i);
+            sh.vertical_layers = std::max(2,
+                static_cast<int32_t>(std::ceil(
+                    (sh.outer_radius - sh.inner_radius) / config_.block_size)));
+            shells_.push_back(sh);
+        }
     }
+
+    // Outermost (surface) shell: thin layer from base sphere to max terrain height.
+    ShellConfig surface_sh{};
+    surface_sh.index = n - 1;
+    surface_sh.inner_radius = config_.planet.radius;
+    surface_sh.outer_radius = surface_radius;
+    // Horizontal resolution: target ~1 block per meter at the surface.
+    // Face edge = 4× radius ≈ 8,000,000 m.  We want ~block_size spacing.
+    // res = 2×radius / block_size ≈ 4,000,000 / 1.0 = 4,000,000.
+    // Use power-of-two: 2^22 = 4,194,304.
+    surface_sh.horizontal_res = static_cast<int32_t>(std::pow(2.0,
+        std::ceil(std::log2(2.0 * config_.planet.radius / config_.block_size))));
+    surface_sh.vertical_layers = std::max(4,
+        static_cast<int32_t>(std::ceil(max_terrain / config_.block_size)));
+    shells_.push_back(surface_sh);
 }
 
 const ShellConfig &BlockWorld::shell_config(int32_t shell) const {
@@ -246,9 +273,13 @@ VoxelMaterial BlockWorld::block_material_at(const BlockAddress &addr,
     const ShellConfig &sh = shell_config(addr.shell);
     const int32_t layer = addr.chunk.y * config_.chunk_size + addr.block.y;
 
-    const int32_t outermost_res = shell_config(shell_count() - 1).horizontal_res;
-    const double scale = static_cast<double>(sh.horizontal_res) / static_cast<double>(outermost_res);
-    const int32_t scaled_h = static_cast<int32_t>(std::ceil(static_cast<double>(surface_height) * scale));
+    // For the outermost (surface) shell, layer directly maps to height.
+    // For inner shells, scale proportionally.
+    const int32_t scaled_h = (addr.shell == shell_count() - 1)
+        ? surface_height
+        : static_cast<int32_t>(static_cast<double>(surface_height) *
+            static_cast<double>(sh.vertical_layers) /
+            static_cast<double>(shell_config(shell_count() - 1).vertical_layers));
 
     if (layer > scaled_h) return VoxelMaterial::Air;
     const int32_t depth = scaled_h - layer;

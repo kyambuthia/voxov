@@ -426,37 +426,30 @@ void Engine::tick(double frame_dt,
       new_chunks.push_back(addr);
     }
 
-    // Rebuild visible meshes from ALL desired chunks (not just new ones).
-    // This keeps the scene in sync as the player moves — old chunks that
-    // fell out of the desired set get their meshes removed.
-    scene.opaque_meshes.clear();
-    auto solid_at = [this](const BlockAddress &na) -> bool {
-      // Strip block index for chunk lookup — chunks are keyed by sector+shell+chunk only
-      BlockAddress chunk_key = na;
-      chunk_key.block = glm::ivec3(0);
-      const VoxelChunk *nc = block_world_.find_chunk(chunk_key);
-      if (nc == nullptr) return false;
-      return nc->solid(na.block.x, na.block.y, na.block.z);
-    };
-    for (const BlockAddress &addr : desired) {
-      const VoxelChunk *chunk = block_world_.find_chunk(addr);
-      if (chunk == nullptr) continue;
+    // Rebuild meshes only for newly generated chunks.
+    // Previously rebuilt ALL desired chunks every frame → 1.2M verts CPU work.
+    if (!new_chunks.empty()) {
+      for (const BlockAddress &addr : new_chunks) {
+        const VoxelChunk *chunk = block_world_.find_chunk(addr);
+        if (chunk == nullptr) continue;
 
-      RenderMesh mesh = block_world_.build_chunk_mesh(
-          addr, *chunk, solid_at);
-      if (!mesh.vertices.empty()) {
-        scene.opaque_meshes.push_back(std::move(mesh));
+        BlockAddress chunk_key = addr;
+        chunk_key.block = glm::ivec3(0);
+        auto solid_at = [this, &chunk_key, chunk](const BlockAddress &na) -> bool {
+          // Within-chunk neighbor: same key, different block index.
+          BlockAddress nk = na;
+          nk.block = glm::ivec3(0);
+          const VoxelChunk *nc = (nk == chunk_key) ? chunk : block_world_.find_chunk(nk);
+          if (nc == nullptr) return false;
+          return nc->solid(na.block.x, na.block.y, na.block.z);
+        };
+
+        RenderMesh mesh = block_world_.build_chunk_mesh(
+            addr, *chunk, solid_at);
+        if (!mesh.vertices.empty()) {
+          scene.opaque_meshes.push_back(std::move(mesh));
+        }
       }
-    }
-    // Diagnostic: log chunk/mesh counts first frame
-    static int diag_frame = 0;
-    if (diag_frame++ == 0) {
-      spdlog::info("Diag: {} chunks, {} desire, player_sector={} shell={}",
-                   block_world_.chunk_count(), desired.size(),
-                   static_cast<int>(player_addr.sector), player_addr.shell);
-      spdlog::info("Diag: {} opaque meshes, first mesh verts={}",
-                   scene.opaque_meshes.size(),
-                   scene.opaque_meshes.empty() ? 0 : scene.opaque_meshes[0].vertices.size());
     }
   }
 

@@ -845,7 +845,7 @@ VoxelMaterial terrain_column_material(int32_t world_x, int32_t world_z,
 
 glm::vec3 terrain_color_fn(VoxelMaterial material, int32_t world_x,
                            int32_t world_z, int voxel_y, int max_y_in_column,
-                           const glm::ivec3 &face_normal) {
+                           const glm::ivec3 &face_normal, uint64_t seed) {
   const float height_t =
       std::clamp(static_cast<float>(voxel_y) /
                      static_cast<float>(k_planet_chunk_height),
@@ -860,7 +860,7 @@ glm::vec3 terrain_color_fn(VoxelMaterial material, int32_t world_x,
   }
 
   const uint32_t hash =
-      terrain_hash_columns(world_x, world_z, 0x56584f56u, 0xb5297a4du);
+      terrain_hash_columns(world_x, world_z, seed, 0xb5297a4du);
   const float column_variation =
       0.82f + static_cast<float>(hash & 0xffu) * (0.28f / 255.0f);
   const float face_light = face_normal.y > 0    ? 1.10f
@@ -1001,11 +1001,6 @@ void terrain_append_planet_voxel_face(
   }
   local_center *= 0.25f;
 
-  glm::vec3 normal =
-      terrain_sphere_normal_for_local(chunk_id, range, local_center);
-  if (mode == PlanetTerrainRenderMode::SurfaceFlatFace) {
-    normal = glm::vec3(face.neighbor);
-  }
   const glm::vec3 expected =
       terrain_remap_local_vertex(
           planet, chunk_id, range,
@@ -1017,7 +1012,21 @@ void terrain_append_planet_voxel_face(
           surface_frame);
   const glm::vec3 geometric =
       glm::cross(positions[1] - positions[0], positions[2] - positions[0]);
-  const bool flip = glm::dot(geometric, expected) < 0.0f;
+  const float geometric_len2 = glm::dot(geometric, geometric);
+  const bool flip = geometric_len2 > 1.0e-10f &&
+                    glm::dot(geometric, expected) < 0.0f;
+
+  // Use the actual geometric face normal for correct per-face lighting.
+  // The sphere radial normal was wrong: it gave ALL faces the same outward
+  // direction, so side faces lit like top faces and bottom faces lit backwards.
+  glm::vec3 normal;
+  if (mode == PlanetTerrainRenderMode::SurfaceFlatFace) {
+    normal = glm::vec3(face.neighbor);
+  } else if (geometric_len2 > 1.0e-10f) {
+    normal = glm::normalize(flip ? -geometric : geometric);
+  } else {
+    normal = terrain_sphere_normal_for_local(chunk_id, range, local_center);
+  }
 
   const uint32_t start = static_cast<uint32_t>(mesh.vertices.size());
   for (const glm::vec3 &position : positions) {
@@ -1127,7 +1136,7 @@ RenderMesh build_planet_terrain_mesh(
           }
           const glm::vec3 color =
               terrain_color_fn(chunk.material(x, y, z), world_x, world_z, y,
-                               max_y, face.neighbor);
+                               max_y, face.neighbor, planet.seed);
           terrain_append_planet_voxel_face(mesh, planet, chunk_id, uv_range,
                                            voxel, face, color, mode,
                                            surface_frame);

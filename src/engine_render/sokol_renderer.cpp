@@ -762,17 +762,18 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         const glm::mat4 vp = p * view.camera.view();
         const glm::mat4 model = glm::mat4(1.0f);
         const glm::vec3 camera_pos = view.camera.transform.position;
+        const glm::dvec3 camera_origin = ctx.camera_origin.world_origin;
 
         // Opaque geometry
         draw_mesh(transient_mesh_, vp, model, camera_pos,
-                  glm::dvec3(0.0),
+                  camera_origin,
                   pipelines_.opaque, pipelines_.opaque_u16);
 
         const Frustum frustum = extract_frustum(vp);
         for (const auto &[id, mesh] : cached_meshes_) {
             if (aabb_in_frustum(frustum, mesh.bounds_min, mesh.bounds_max)) {
                 draw_mesh(mesh, vp, model, camera_pos,
-                          glm::dvec3(0.0),
+                          camera_origin,
                           pipelines_.opaque, pipelines_.opaque_u16);
             }
         }
@@ -782,7 +783,7 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
 
         // Debug world (x-ray or normal)
         draw_mesh(debug_world_mesh_, vp, model, camera_pos,
-                  glm::dvec3(0.0),
+                  camera_origin,
                   ctx.debug_xray ? pipelines_.debug_xray : pipelines_.opaque,
                   ctx.debug_xray ? pipelines_.debug_xray_u16
                                  : pipelines_.opaque_u16);

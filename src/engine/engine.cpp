@@ -124,25 +124,6 @@ RenderMesh build_local_player_debug_mesh(
 }
 } // namespace
 
-namespace {
-// Double-precision VP matrix for planet-scale LOD frustum culling.
-// float lookAt at 2M camera range loses ~0.25 units per component,
-// corrupting frustum planes → all quadtree nodes rejected.
-glm::dmat4 build_view_projection(const Camera &camera, float aspect,
-                                 float /*screen_height*/, float near_plane,
-                                 float far_plane) {
-  const float fov_y = glm::radians(60.0f);
-  const glm::dmat4 proj = glm::perspective(
-      static_cast<double>(fov_y), static_cast<double>(aspect),
-      static_cast<double>(near_plane), static_cast<double>(far_plane));
-  const glm::dmat4 view =
-      glm::lookAt(glm::dvec3(camera.transform.position),
-                  glm::dvec3(camera.transform.position + camera.forward()),
-                  glm::dvec3(camera.up()));
-  return proj * view;
-}
-} // namespace
-
 bool Engine::init(const EngineRuntimeOptions &options) {
   platform_services = options.platform_services != nullptr
                           ? *options.platform_services
@@ -201,75 +182,59 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   scene = RenderScene{};
   collision_world = VoxelCollisionWorld{nullptr};
 
-  // ── Planet definition (2000 km radius, ~Earth-scale) ────────────────
-  // Cube-sphere: 6 faces, each a quadtree of terrain heightfield chunks.
-  // chunks_per_face=64 × 16 voxels/chunk = 1024 terrain columns per face.
-  // max_lod=12 → finest columns are 4M/(1024·2^12) ≈ 0.95 m apart.
-  // The quadtree is sparse — only camera-nearby nodes subdivide to max LOD.
+  // ── Block-based voxel planet (Bowerbyte/Pec architecture) ───────────
+  // 6 cube-face sectors → shells (doubling resolution/axis) → 16³ chunks.
+  // 3D noise on sphere surface for seamless terrain.
   PlanetDefinition planet_def{};
   planet_def.center = glm::dvec3(0.0);
-  planet_def.radius = 2000000.0; // 2000 km in meters
-  planet_def.voxel_size = 1.0;   // 1 m per terrain column at base resolution
+  planet_def.radius = 2000000.0;
+  planet_def.voxel_size = 1.0;
   planet_def.chunks_per_face = 64;
   planet_def.seed = k_voxov_flat_world_seed;
 
-  // ── Wireframe debug overlay (same planet, coarser grid) ────────────
-  // 64 cells/face edge → each wireframe cell ≈ 62.5 km at 2000 km radius.
-  // Rendered as SG_PRIMITIVETYPE_LINES; 6 distinct face colors.
-  // Mesh regenerated once at init (dirty flag); GPU buffer cached by mesh_id.
+  BlockWorldConfig bw_cfg{};
+  bw_cfg.planet = planet_def;
+  bw_cfg.surface_shells = 4;
+  bw_cfg.base_resolution = 64;  // 64 blocks/axis on innermost shell
+  bw_cfg.block_size = 1.0;
+  bw_cfg.chunk_size = 16;
+  bw_cfg.seed = k_voxov_flat_world_seed;
+  block_world_.init(bw_cfg);
+
+  // Wireframe debug overlay.
   wireframe_planet_ = planet_def;
   wireframe_planet_.chunks_per_face = 64;
   wireframe_planet_dirty_ = true;
 
-  // ── Planet terrain streamer ─────────────────────────────────────────
-  // Manages quadtree LOD selection, chunk generation (heightfield→mesh),
-  // and eviction. generation_budget limits new chunks per frame to avoid
-  // frame spikes during LOD transitions.
-  planet_streamer_.init(planet_def, /*max_lod=*/12);
-  planet_streamer_.set_generation_budget_per_update(4);
-  planet_mesh_set_revision_ = 0;
-
-  // ── Planet-surface collision ────────────────────────────────────────
-  // Wires the terrain height function into VoxelCollisionWorld so
-  // capsule resolution (player foot placement, gravity) respects the
-  // spherical surface. The height function delegates to planet_terrain
-  // which samples the noise-based heightfield at the given direction.
-  // NOTE: float precision at 2M radius is ~0.2 units — collision can
-  // oscillate. Use F4 fly mode until double-precision collision is done.
+  // Planet-surface collision from heightfield (transitional until block collision).
   collision_world.set_planet_surface_collider(
       glm::vec3(planet_def.center),
       static_cast<float>(planet_def.radius),
-      static_cast<float>(
-          planet_terrain_max_height_above_base(planet_def)),
-      [&planet = planet_streamer_.planet()](glm::vec3 direction) -> float {
+      static_cast<float>(planet_terrain_max_height_above_base(planet_def)),
+      [&bw = block_world_](glm::vec3 direction) -> float {
         return static_cast<float>(
-            planet_terrain_height_above_base_at_direction(
-                planet, glm::dvec3(direction)));
+            bw.terrain_height_at(glm::dvec3(direction)));
       });
 
-  // ── Player spawn on planet surface ──────────────────────────────────
-  // Places the capsule player on the equator (+X direction), 3 m above
-  // the terrain height at that point. The player faces the planet
-  // interior (default yaw); camera is third-person behind.
+  // Player spawn on outermost shell surface using terrain height.
   local_player = PlayerControllerSystem::spawn_player(collision_world);
   local_player.controller.capsuleRadius = 0.7f;
   {
-    const glm::vec3 equator_dir =
-        glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f));
-    const glm::vec3 surface_pos =
-        equator_dir *
-        static_cast<float>(planet_def.radius +
-                           planet_terrain_height_above_base_at_direction(
-                               planet_def, glm::dvec3(equator_dir)));
-    local_player.transform.position = surface_pos +
-        glm::normalize(surface_pos - glm::vec3(planet_def.center)) * 3.0f;
+    const glm::dvec3 equator_dir = glm::normalize(glm::dvec3(1.0, 0.0, 0.0));
+    const int32_t surf_h = block_world_.terrain_height_at(equator_dir);
+    const ShellConfig &outer = block_world_.shell_config(
+        block_world_.shell_count() - 1);
+    const double surface_r = outer.inner_radius +
+        (static_cast<double>(surf_h) / static_cast<double>(outer.vertical_layers)) *
+        (outer.outer_radius - outer.inner_radius);
+    const glm::dvec3 surface_pos = equator_dir * surface_r;
+    local_player.transform.position = glm::vec3(surface_pos + equator_dir * 3.0);
   }
   local_player.camera_rig.pitch = -16.0f;
   local_player.camera_rig.distance = 7.5f;
   local_player.camera_rig.maxDistance = 48.0f;
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
-  // Far plane must span planet diameter for horizon visibility.
   camera.z_far = 5000000.0f;
   camera.z_near = 0.5f;
   update_third_person_camera(local_player, camera);
@@ -278,11 +243,9 @@ bool Engine::init(const EngineRuntimeOptions &options) {
       local_player, local_player_animation, session_state_.devhud_enabled);
   refresh_overlay_text();
 
-  spdlog::info("Engine init: planet r={:.0f}km, capsule player, backend={}",
+  spdlog::info("Engine init: block planet r={:.0f}km, shells={} fly=ON",
                planet_def.radius / 1000.0,
-               runtime_options.render_backend == RenderBackendType::Sokol
-                   ? "Sokol"
-                   : "OpenGL");
+               block_world_.shell_count());
 
   if (!renderer.init(RendererCreateInfo{
       .backend = runtime_options.render_backend,
@@ -424,40 +387,69 @@ void Engine::tick(double frame_dt,
   }
   update_third_person_camera(local_player, local_player.transform.position,
                              camera);
-  // ── Camera-relative origin for GPU precision ────────────────────────
-  // GPU vertex positions are stored as float. At planet scale (2M units
-  // from origin), float has ~0.25-unit precision. Subtracting the camera
-  // world position upstream keeps GPU-space vertices small.
-  // Currently set but NOT applied to mesh vertices in the renderer
-  // (see sokol_renderer.cpp — vertices uploaded in absolute world space).
-  // TODO: apply camera_relative_position() to all mesh vertices before upload.
   scene.camera_origin.world_origin = glm::dvec3(camera.transform.position);
 
-  // ── Planet terrain streaming ───────────────────────────────────────
-  // LOD selector uses screen-space error metric on the quadtree:
-  //   error_px = (node_world_diameter / distance) * screen_height
-  // Nodes with error > 2 px get subdivided → finer terrain near camera.
-  // Chunks generated via planet_terrain heightfield → greedy mesh on sphere.
-  // Meshes have stable mesh_ids → sokol renderer caches them in VRAM.
-  // Only uploaded when mesh_set_revision changes.
+  // ── Block world chunk streaming ─────────────────────────────────────
+  // Load surface chunks in a radius around the player.  Each frame
+  // generate up to chunk_generation_budget_ new chunks, mesh them,
+  // and collect visible meshes.
   {
-    constexpr float k_screen_height = 1080.0f;
-    constexpr float k_aspect_ratio = 16.0f / 9.0f;
-    const glm::dmat4 view_proj =
-        build_view_projection(camera, k_aspect_ratio, k_screen_height,
-                              camera.z_near, camera.z_far);
-    planet_streamer_.update(
-        scene.camera_origin.world_origin, view_proj, k_screen_height);
+    const BlockAddress player_addr =
+        block_world_.address_from_world(
+            glm::dvec3(local_player.transform.position));
+    const int32_t surface_shell = block_world_.shell_count() - 1;
+    const int32_t chunk_radius = 2; // load 5×5 grid around player
 
-    if (planet_mesh_set_revision_ != planet_streamer_.mesh_set_revision()) {
-      scene.opaque_meshes = planet_streamer_.render_meshes();
-      planet_mesh_set_revision_ = planet_streamer_.mesh_set_revision();
+    // Collect desired chunk addresses.
+    std::vector<BlockAddress> desired;
+    for (int32_t cz = -chunk_radius; cz <= chunk_radius; ++cz) {
+      for (int32_t cx = -chunk_radius; cx <= chunk_radius; ++cx) {
+        BlockAddress addr{};
+        addr.sector = player_addr.sector;
+        addr.shell  = surface_shell;
+        addr.chunk  = glm::ivec3(
+            player_addr.chunk.x + cx,
+            0, // surface layer
+            player_addr.chunk.z + cz);
+        desired.push_back(addr);
+      }
+    }
+
+    // Generate new chunks (budget-limited).
+    uint32_t generated = 0;
+    for (const BlockAddress &addr : desired) {
+      if (generated >= chunk_generation_budget_) break;
+      if (block_world_.find_chunk(addr) != nullptr) continue;
+      block_world_.get_or_generate_chunk(addr);
+      ++generated;
+      ++block_mesh_revision_;
+    }
+
+    // Build meshes for all loaded chunks.
+    if (block_mesh_revision_ > 0 || loaded_chunks_.empty()) {
+      scene.opaque_meshes.clear();
+      for (const BlockAddress &addr : desired) {
+        const VoxelChunk *chunk = block_world_.find_chunk(addr);
+        if (chunk == nullptr) continue;
+
+        // Solid-at query for face culling: check neighbor chunks.
+        auto solid_at = [this](const BlockAddress &na) -> bool {
+          const VoxelChunk *nc = block_world_.find_chunk(na);
+          if (nc == nullptr) return false;
+          return nc->solid(na.block.x, na.block.y, na.block.z);
+        };
+
+        RenderMesh mesh = block_world_.build_chunk_mesh(
+            addr, *chunk, solid_at);
+        if (!mesh.vertices.empty()) {
+          scene.opaque_meshes.push_back(std::move(mesh));
+        }
+      }
+      block_mesh_revision_ = 0;
     }
   }
 
-  // ── Wireframe overlay ───────────────────────────────────────────────
-  // Generated once at init via dirty flag. GPU upload cached by
-  // mesh_id hash in sokol renderer (last_wireframe_hash_).
+  // Wireframe overlay — regenerate when dirty.
   if (wireframe_planet_dirty_) {
     wireframe_planet_mesh_ = build_wireframe_voxel_planet_mesh(
         wireframe_planet_, wireframe_planet_.chunks_per_face);
@@ -478,7 +470,7 @@ void Engine::tick(double frame_dt,
       render_stats.fixed_cpu_ms, game_session.fixed_cpu_ms(), 0.25);
   render_stats.fixed_steps = game_session.fixed_steps_last_frame();
   render_stats.streamed_chunk_count =
-      static_cast<uint32_t>(planet_streamer_.streamed_chunk_count());
+      static_cast<uint32_t>(block_world_.chunk_count());
   render_stats.profiling.gameplay_cpu_ms = smooth_metric(
       render_stats.profiling.gameplay_cpu_ms, profiling_sample.gameplay_cpu_ms,
       0.25);

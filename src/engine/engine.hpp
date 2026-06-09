@@ -15,6 +15,7 @@
 #include "engine_ui/gui_menu.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/planet.hpp"
+#include "engine_world/planet_blocks.hpp"
 #include "platform/platform_services.hpp"
 
 #include <string>
@@ -94,15 +95,16 @@ private:
 
   RenderScene scene;
 
-  // ── Planet terrain (replaces FlatWorldStreamer) ─────────────────────
-  // 2000 km radius cube-sphere with 6-face quadtree LOD.
-  // Streams resident chunks near camera, generates terrain heightfield
-  // meshes via planet_terrain module, caches stable mesh_ids for GPU.
-  // Collision wired via set_planet_surface_collider() in init().
-  PlanetStreamer planet_streamer_;
-  uint64_t planet_mesh_set_revision_ = 0; // tracks mesh_set_revision() for upload
+  // ── Block-based voxel planet (Bowerbyte architecture) ───────────────
+  // 6 sectors → shells (doubling resolution) → 16³ chunks → blocks.
+  // 3D noise on sphere for seamless terrain, gravity-aligned block
+  // meshing with cross-face neighbor culling via cube net.
+  BlockWorld block_world_;
+  std::vector<BlockAddress> loaded_chunks_;    // currently resident chunks
+  uint64_t block_mesh_revision_ = 0;
+  uint32_t chunk_generation_budget_ = 4;
 
-  bool debug_fly_mode_ = false; // toggled by F4; bypasses collision at planet scale
+  bool debug_fly_mode_ = true; // start in fly mode (collision WIP)
   bool touch_controls_visible_ = false;
   RenderStats render_stats;
   EngineSessionState session_state_{};

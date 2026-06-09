@@ -426,23 +426,23 @@ void Engine::tick(double frame_dt,
       new_chunks.push_back(addr);
     }
 
-    // Rebuild meshes only when new chunks arrive.
-    if (!new_chunks.empty()) {
-      for (const BlockAddress &addr : new_chunks) {
-        const VoxelChunk *chunk = block_world_.find_chunk(addr);
-        if (chunk == nullptr) continue;
+    // Rebuild visible meshes from ALL desired chunks (not just new ones).
+    // This keeps the scene in sync as the player moves — old chunks that
+    // fell out of the desired set get their meshes removed.
+    scene.opaque_meshes.clear();
+    auto solid_at = [this](const BlockAddress &na) -> bool {
+      const VoxelChunk *nc = block_world_.find_chunk(na);
+      if (nc == nullptr) return false;
+      return nc->solid(na.block.x, na.block.y, na.block.z);
+    };
+    for (const BlockAddress &addr : desired) {
+      const VoxelChunk *chunk = block_world_.find_chunk(addr);
+      if (chunk == nullptr) continue;
 
-        auto solid_at = [this](const BlockAddress &na) -> bool {
-          const VoxelChunk *nc = block_world_.find_chunk(na);
-          if (nc == nullptr) return false;
-          return nc->solid(na.block.x, na.block.y, na.block.z);
-        };
-
-        RenderMesh mesh = block_world_.build_chunk_mesh(
-            addr, *chunk, solid_at);
-        if (!mesh.vertices.empty()) {
-          scene.opaque_meshes.push_back(std::move(mesh));
-        }
+      RenderMesh mesh = block_world_.build_chunk_mesh(
+          addr, *chunk, solid_at);
+      if (!mesh.vertices.empty()) {
+        scene.opaque_meshes.push_back(std::move(mesh));
       }
     }
   }

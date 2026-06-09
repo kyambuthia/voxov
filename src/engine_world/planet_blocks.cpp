@@ -290,13 +290,15 @@ VoxelMaterial BlockWorld::block_material_at(const BlockAddress &addr,
 }
 
 void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const {
-    const int32_t scx = addr.chunk.x * config_.chunk_size + config_.chunk_size / 2;
-    const int32_t scz = addr.chunk.z * config_.chunk_size + config_.chunk_size / 2;
-    const int32_t surf_h = terrain_height_at_face_uv(addr.sector, scx, scz);
+    const int32_t base_col_x = addr.chunk.x * config_.chunk_size;
+    const int32_t base_col_z = addr.chunk.z * config_.chunk_size;
 
     for (int32_t z = 0; z < config_.chunk_size; ++z)
         for (int32_t y = 0; y < config_.chunk_size; ++y)
             for (int32_t x = 0; x < config_.chunk_size; ++x) {
+                // Sample terrain height per-column, not per-chunk.
+                const int32_t surf_h = terrain_height_at_face_uv(
+                    addr.sector, base_col_x + x, base_col_z + z);
                 BlockAddress ba = addr;
                 ba.block = glm::ivec3(x, y, z);
                 out.set_material(x, y, z, block_material_at(ba, surf_h));
@@ -356,7 +358,12 @@ std::vector<BlockNeighbor> BlockWorld::neighbors(const BlockAddress &addr,
         (nb_block.z + config_.chunk_size) % config_.chunk_size);
 
     if (nc.x < 0 || nc.x >= hc || nc.z < 0 || nc.z >= hc ||
-        nc.y < 0 || nc.y >= vc) return result;
+        nc.y < 0 || nc.y >= vc) {
+        // TODO: Use CubeNet edge pairings to look up cross-sector neighbors.
+        // Currently returns empty → boundary faces always drawn (visible seams
+        // at cube-face edges). The edge_pairing() infrastructure is ready.
+        return result;
+    }
 
     BlockNeighbor nb{};
     nb.address.sector = addr.sector;
@@ -415,7 +422,6 @@ RenderMesh BlockWorld::build_chunk_mesh(
                 const VoxelMaterial mat = chunk.material(bx, by, bz);
                 if (mat == VoxelMaterial::Air) continue;
 
-                const glm::vec3 color = VoxelChunk::material_color(mat, false, 0.0f);
                 const int32_t gx = addr.chunk.x * config_.chunk_size + bx;
                 const int32_t gy = addr.chunk.y * config_.chunk_size + by;
                 const int32_t gz = addr.chunk.z * config_.chunk_size + bz;
@@ -434,6 +440,11 @@ RenderMesh BlockWorld::build_chunk_mesh(
                     -tb.east * hs + tb.north * hs,
                 };
 
+                const float height_t = std::clamp(
+                    static_cast<float>(gy) /
+                        static_cast<float>(std::max(1, sh.horizontal_res)),
+                    0.0f, 1.0f);
+
                 // Check each of 6 block faces.
                 for (int f = 0; f < 6; ++f) {
                     const BlockDir fd = static_cast<BlockDir>(f);
@@ -443,6 +454,10 @@ RenderMesh BlockWorld::build_chunk_mesh(
                         if (solid_at(nb.address)) { occluded = true; break; }
                     }
                     if (occluded) continue;
+
+                    const bool top_face = (fd == BlockDir::Up);
+                    const glm::vec3 color = VoxelChunk::material_color(
+                        mat, top_face, height_t);
 
                     glm::dvec3 fn;
                     if (fd == BlockDir::Up)         fn =  radial;

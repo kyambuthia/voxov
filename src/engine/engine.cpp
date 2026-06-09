@@ -206,7 +206,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
 
   // Wireframe planet for visual reference (coarser grid).
   wireframe_planet_ = planet_def;
-  wireframe_planet_.chunks_per_face = 256;
+  wireframe_planet_.chunks_per_face = 64;
   wireframe_planet_dirty_ = true;
 
   // Initialize planet terrain streamer.

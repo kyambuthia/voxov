@@ -93,15 +93,25 @@ private:
   PlayerAnimationRuntime local_player_animation;
 
   RenderScene scene;
+
+  // ── Planet terrain (replaces FlatWorldStreamer) ─────────────────────
+  // 2000 km radius cube-sphere with 6-face quadtree LOD.
+  // Streams resident chunks near camera, generates terrain heightfield
+  // meshes via planet_terrain module, caches stable mesh_ids for GPU.
+  // Collision wired via set_planet_surface_collider() in init().
   PlanetStreamer planet_streamer_;
-  uint64_t planet_mesh_set_revision_ = 0;
-  bool debug_fly_mode_ = false;
+  uint64_t planet_mesh_set_revision_ = 0; // tracks mesh_set_revision() for upload
+
+  bool debug_fly_mode_ = false; // toggled by F4; bypasses collision at planet scale
   bool touch_controls_visible_ = false;
   RenderStats render_stats;
   EngineSessionState session_state_{};
   EngineRuntimeOptions runtime_options{};
 
-  // Wireframe voxel planet (visualization)
+  // ── Wireframe debug overlay ─────────────────────────────────────────
+  // Same PlanetDefinition as terrain, coarser grid (64 cells/face = ~62 km/cell).
+  // Rendered as colored lines per face (red=+X, blue=-X, green=+Y, etc.).
+  // Generated once at init; GPU buffer cached by mesh_id in sokol renderer.
   PlanetDefinition wireframe_planet_{};
   RenderMesh wireframe_planet_mesh_{};
   bool wireframe_planet_dirty_ = true;

@@ -125,6 +125,11 @@ RenderMesh build_local_player_debug_mesh(
 } // namespace
 
 namespace {
+// ── Build view * projection for LOD selection & frustum culling ───────
+// PlanetStreamer::update() needs a view-projection matrix to compute
+// screen-space error per quadtree node. The far plane must span the
+// full planet diameter (~4M units) so distant faces aren't clipped
+// before LOD selection evaluates them.
 glm::mat4 build_view_projection(const Camera &camera, float aspect,
                                 float /*screen_height*/, float near_plane,
                                 float far_plane) {
@@ -196,25 +201,41 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   scene = RenderScene{};
   collision_world = VoxelCollisionWorld{nullptr};
 
-  // ── Planet definition (2000 km radius) ─────────────────────────────
+  // ── Planet definition (2000 km radius, ~Earth-scale) ────────────────
+  // Cube-sphere: 6 faces, each a quadtree of terrain heightfield chunks.
+  // chunks_per_face=64 × 16 voxels/chunk = 1024 terrain columns per face.
+  // max_lod=12 → finest columns are 4M/(1024·2^12) ≈ 0.95 m apart.
+  // The quadtree is sparse — only camera-nearby nodes subdivide to max LOD.
   PlanetDefinition planet_def{};
   planet_def.center = glm::dvec3(0.0);
   planet_def.radius = 2000000.0; // 2000 km in meters
-  planet_def.voxel_size = 1.0;
+  planet_def.voxel_size = 1.0;   // 1 m per terrain column at base resolution
   planet_def.chunks_per_face = 64;
   planet_def.seed = k_voxov_flat_world_seed;
 
-  // Wireframe planet for visual reference (coarser grid).
+  // ── Wireframe debug overlay (same planet, coarser grid) ────────────
+  // 64 cells/face edge → each wireframe cell ≈ 62.5 km at 2000 km radius.
+  // Rendered as SG_PRIMITIVETYPE_LINES; 6 distinct face colors.
+  // Mesh regenerated once at init (dirty flag); GPU buffer cached by mesh_id.
   wireframe_planet_ = planet_def;
   wireframe_planet_.chunks_per_face = 64;
   wireframe_planet_dirty_ = true;
 
-  // Initialize planet terrain streamer.
+  // ── Planet terrain streamer ─────────────────────────────────────────
+  // Manages quadtree LOD selection, chunk generation (heightfield→mesh),
+  // and eviction. generation_budget limits new chunks per frame to avoid
+  // frame spikes during LOD transitions.
   planet_streamer_.init(planet_def, /*max_lod=*/12);
   planet_streamer_.set_generation_budget_per_update(4);
   planet_mesh_set_revision_ = 0;
 
-  // Set up planet-surface collision (gravity + foot placement).
+  // ── Planet-surface collision ────────────────────────────────────────
+  // Wires the terrain height function into VoxelCollisionWorld so
+  // capsule resolution (player foot placement, gravity) respects the
+  // spherical surface. The height function delegates to planet_terrain
+  // which samples the noise-based heightfield at the given direction.
+  // NOTE: float precision at 2M radius is ~0.2 units — collision can
+  // oscillate. Use F4 fly mode until double-precision collision is done.
   collision_world.set_planet_surface_collider(
       glm::vec3(planet_def.center),
       static_cast<float>(planet_def.radius),
@@ -226,11 +247,13 @@ bool Engine::init(const EngineRuntimeOptions &options) {
                 planet, glm::dvec3(direction)));
       });
 
-  // Spawn player on the planet surface.
+  // ── Player spawn on planet surface ──────────────────────────────────
+  // Places the capsule player on the equator (+X direction), 3 m above
+  // the terrain height at that point. The player faces the planet
+  // interior (default yaw); camera is third-person behind.
   local_player = PlayerControllerSystem::spawn_player(collision_world);
   local_player.controller.capsuleRadius = 0.7f;
   {
-    // Place player at equator on the +X face, 3 m above terrain.
     const glm::vec3 equator_dir =
         glm::normalize(glm::vec3(1.0f, 0.0f, 0.0f));
     const glm::vec3 surface_pos =
@@ -246,6 +269,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   local_player.camera_rig.maxDistance = 48.0f;
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
+  // Far plane must span planet diameter for horizon visibility.
   camera.z_far = 5000000.0f;
   camera.z_near = 0.5f;
   update_third_person_camera(local_player, camera);
@@ -400,9 +424,22 @@ void Engine::tick(double frame_dt,
   }
   update_third_person_camera(local_player, local_player.transform.position,
                              camera);
+  // ── Camera-relative origin for GPU precision ────────────────────────
+  // GPU vertex positions are stored as float. At planet scale (2M units
+  // from origin), float has ~0.25-unit precision. Subtracting the camera
+  // world position upstream keeps GPU-space vertices small.
+  // Currently set but NOT applied to mesh vertices in the renderer
+  // (see sokol_renderer.cpp — vertices uploaded in absolute world space).
+  // TODO: apply camera_relative_position() to all mesh vertices before upload.
   scene.camera_origin.world_origin = glm::dvec3(camera.transform.position);
 
   // ── Planet terrain streaming ───────────────────────────────────────
+  // LOD selector uses screen-space error metric on the quadtree:
+  //   error_px = (node_world_diameter / distance) * screen_height
+  // Nodes with error > 2 px get subdivided → finer terrain near camera.
+  // Chunks generated via planet_terrain heightfield → greedy mesh on sphere.
+  // Meshes have stable mesh_ids → sokol renderer caches them in VRAM.
+  // Only uploaded when mesh_set_revision changes.
   {
     constexpr float k_screen_height = 1080.0f;
     constexpr float k_aspect_ratio = 16.0f / 9.0f;
@@ -418,7 +455,9 @@ void Engine::tick(double frame_dt,
     }
   }
 
-  // Wireframe voxel planet — regenerate when dirty.
+  // ── Wireframe overlay ───────────────────────────────────────────────
+  // Generated once at init via dirty flag. GPU upload cached by
+  // mesh_id hash in sokol renderer (last_wireframe_hash_).
   if (wireframe_planet_dirty_) {
     wireframe_planet_mesh_ = build_wireframe_voxel_planet_mesh(
         wireframe_planet_, wireframe_planet_.chunks_per_face);

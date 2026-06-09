@@ -94,6 +94,14 @@ private:
     // Hash tokens for O(1) change detection on dynamic meshes.
     uint64_t last_debug_world_hash_ = 0;
     uint64_t last_debug_screen_hash_ = 0;
+
+    // ── Wireframe upload deduplication ────────────────────────────────
+    // Wireframe meshes were merged+uploaded every frame regardless of
+    // content. At planet scale, the wireframe grid (64 cells/face,
+    // ~101K verts, ~2.8 MB) saturated GPU upload bandwidth → 1 FPS.
+    // Hash of mesh_id set detects when wireframe meshes actually change;
+    // upload skipped on hash match (retains previous GPU buffer).
     uint64_t last_wireframe_hash_ = 0;
+
     bool has_dynamic_mesh_hash_ = false;
 };

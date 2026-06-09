@@ -672,7 +672,11 @@ void SokolRenderer::upload_scene(const RenderScene &new_scene) {
         }
     }
 
-    // Merge all wireframe meshes — skip upload if unchanged since last frame.
+    // ── Wireframe mesh upload ─────────────────────────────────────────
+    // Hash the set of mesh_ids to detect changes. Wireframe planet uses
+    // a stable mesh_id (0x574952454652414d) and never changes after init.
+    // Skipping the re-upload avoids stalling the GPU command stream with
+    // 2.8 MB of vertex data every frame (was the cause of 1 FPS at planet scale).
     uint64_t wireframe_hash = 0;
     for (const RenderMesh &mesh : new_scene.wireframe_meshes) {
         wireframe_hash ^= mesh.mesh_id + 0x9e3779b97f4a7c15ull +

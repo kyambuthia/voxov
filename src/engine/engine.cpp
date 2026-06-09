@@ -125,20 +125,20 @@ RenderMesh build_local_player_debug_mesh(
 } // namespace
 
 namespace {
-// ── Build view * projection for LOD selection & frustum culling ───────
-// PlanetStreamer::update() needs a view-projection matrix to compute
-// screen-space error per quadtree node. The far plane must span the
-// full planet diameter (~4M units) so distant faces aren't clipped
-// before LOD selection evaluates them.
-glm::mat4 build_view_projection(const Camera &camera, float aspect,
-                                float /*screen_height*/, float near_plane,
-                                float far_plane) {
+// Double-precision VP matrix for planet-scale LOD frustum culling.
+// float lookAt at 2M camera range loses ~0.25 units per component,
+// corrupting frustum planes → all quadtree nodes rejected.
+glm::dmat4 build_view_projection(const Camera &camera, float aspect,
+                                 float /*screen_height*/, float near_plane,
+                                 float far_plane) {
   const float fov_y = glm::radians(60.0f);
-  const glm::mat4 proj = glm::perspective(fov_y, aspect, near_plane, far_plane);
-  const glm::mat4 view =
-      glm::lookAt(camera.transform.position,
-                  camera.transform.position + camera.forward(),
-                  camera.up());
+  const glm::dmat4 proj = glm::perspective(
+      static_cast<double>(fov_y), static_cast<double>(aspect),
+      static_cast<double>(near_plane), static_cast<double>(far_plane));
+  const glm::dmat4 view =
+      glm::lookAt(glm::dvec3(camera.transform.position),
+                  glm::dvec3(camera.transform.position + camera.forward()),
+                  glm::dvec3(camera.up()));
   return proj * view;
 }
 } // namespace
@@ -443,7 +443,7 @@ void Engine::tick(double frame_dt,
   {
     constexpr float k_screen_height = 1080.0f;
     constexpr float k_aspect_ratio = 16.0f / 9.0f;
-    const glm::mat4 view_proj =
+    const glm::dmat4 view_proj =
         build_view_projection(camera, k_aspect_ratio, k_screen_height,
                               camera.z_near, camera.z_far);
     planet_streamer_.update(

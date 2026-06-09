@@ -1,7 +1,6 @@
 #include "engine_runtime/runtime_world_state.hpp"
 
 #include "engine_net/net_runtime_shared.hpp"
-#include "engine_world/world_gen.hpp"
 
 #include <algorithm>
 #include <cmath>
@@ -20,40 +19,13 @@ int32_t render_chunk_key(NetChunkCoord coord) {
     return (static_cast<int32_t>(coord.x) << 16) ^
         static_cast<uint16_t>(coord.z);
 }
-
-void add_flat_world_boundary_walls(VoxelChunk &chunk, NetChunkCoord coord, int chunk_radius) {
-    constexpr int kWallTop = 18;
-    for (int y = 0; y <= kWallTop; ++y) {
-        if (coord.z == -chunk_radius) {
-            for (int x = 0; x < VoxelChunk::CHUNK_X; ++x) {
-                chunk.set_material(x, y, 0, VoxelMaterial::Stone);
-            }
-        }
-        if (coord.z == chunk_radius) {
-            for (int x = 0; x < VoxelChunk::CHUNK_X; ++x) {
-                chunk.set_material(x, y, VoxelChunk::CHUNK_Z - 1, VoxelMaterial::Stone);
-            }
-        }
-        if (coord.x == -chunk_radius) {
-            for (int z = 0; z < VoxelChunk::CHUNK_Z; ++z) {
-                chunk.set_material(0, y, z, VoxelMaterial::Stone);
-            }
-        }
-        if (coord.x == chunk_radius) {
-            for (int z = 0; z < VoxelChunk::CHUNK_Z; ++z) {
-                chunk.set_material(VoxelChunk::CHUNK_X - 1, y, z, VoxelMaterial::Stone);
-            }
-        }
-    }
-    chunk.refresh_surface_materials();
-}
 } // namespace
 
 void RuntimeWorldState::initialize(
     VoxelChunk &world_chunk,
     VoxelCollisionWorld &collision_world,
     RenderScene &scene) {
-    generate_flat_world_locomotion_chunk(world_chunk);
+    world_chunk.generate_spherical_planet_seeded(k_voxov_flat_world_seed);
 
     scene = RenderScene{};
     reset_streamed_chunks();
@@ -66,7 +38,6 @@ void RuntimeWorldState::initialize(
         (void)key;
         VoxelChunk chunk{};
         net_generate_chunk_from_state(chunk, streamed_chunk.state);
-        add_flat_world_boundary_walls(chunk, streamed_chunk.state.coord, k_world_chunk_radius);
 
         const NetChunkCoord coord = streamed_chunk.state.coord;
         const int32_t chunk_key = render_chunk_key(coord);
@@ -84,7 +55,6 @@ void RuntimeWorldState::initialize(
     }
     collision_world = VoxelCollisionWorld(std::move(collision_chunks));
     rebuild_streamed_chunk_scene(world_chunk, scene);
-
 }
 
 void RuntimeWorldState::reset_streamed_chunks() {
@@ -100,7 +70,7 @@ void RuntimeWorldState::reset_streamed_chunks() {
             coord.x = static_cast<int16_t>(chunk_x);
             coord.z = static_cast<int16_t>(chunk_z);
             streamed_chunks[render_chunk_key(coord)] =
-                RuntimeStreamedChunk{net_make_flat_chunk_state(coord)};
+                RuntimeStreamedChunk{net_make_spherical_chunk_state(coord)};
         }
     }
 }
@@ -137,7 +107,6 @@ void RuntimeWorldState::rebuild_streamed_chunk_scene(
         const RuntimeStreamedChunk &streamed_chunk =
             streamed_chunks.at(key);
         net_generate_chunk_from_state(render_chunk, streamed_chunk.state);
-        add_flat_world_boundary_walls(render_chunk, coord, k_world_chunk_radius);
         const glm::vec3 chunk_origin(
             static_cast<float>(coord.x) *
                 static_cast<float>(VoxelChunk::CHUNK_X),

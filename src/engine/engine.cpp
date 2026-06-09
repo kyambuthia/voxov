@@ -5,8 +5,8 @@
 #include "engine_presentation/debug_scene_builder.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
-#include "engine_world/flat_world_streamer.hpp"
 #include "engine_world/wireframe_planet.hpp"
+#include "engine_world/world_gen.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -181,12 +181,6 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   scene = RenderScene{};
   collision_world = VoxelCollisionWorld{nullptr};
 
-  flat_world_.init(k_voxov_flat_world_seed,
-                   FlatStreamerConfig{
-                       .generation_budget_per_update = 1,
-                       .view_radius_chunks = 3,
-                   });
-
   // Wireframe voxel planet visualization.
   wireframe_planet_.center = glm::dvec3(0.0);
   wireframe_planet_.radius = 128.0;
@@ -205,15 +199,11 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   camera.z_far = 2000.0f;
   update_third_person_camera(local_player, camera);
 
-  flat_world_.update(local_player.transform.position);
-  scene.opaque_meshes = flat_world_.render_meshes();
-  flat_world_mesh_set_revision_ = flat_world_.mesh_set_revision();
-
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled);
   refresh_overlay_text();
 
-  spdlog::info("Engine init: flat voxel world, capsule player, backend={}",
+  spdlog::info("Engine init: wireframe planet, capsule player, backend={}",
                runtime_options.render_backend == RenderBackendType::Sokol
                    ? "Sokol"
                    : "OpenGL");
@@ -273,13 +263,6 @@ void Engine::tick(double frame_dt,
 
   ProfilingSnapshot profiling_sample{};
   bool jump_consumed = false;
-  // Rebuild collision world with current resident chunks before fixed step.
-  {
-    auto chunks = flat_world_.resident_collision_chunks();
-    if (!chunks.empty()) {
-      collision_world = VoxelCollisionWorld(std::move(chunks), 1.0f);
-    }
-  }
   const RuntimeGameSessionCallbacks callbacks{
       .pump_server = []() {},
       .simulate_step =
@@ -366,11 +349,6 @@ void Engine::tick(double frame_dt,
   update_third_person_camera(local_player, local_player.transform.position,
                              camera);
   scene.camera_origin.world_origin = glm::dvec3(camera.transform.position);
-  flat_world_.update(local_player.transform.position);
-  if (flat_world_mesh_set_revision_ != flat_world_.mesh_set_revision()) {
-    scene.opaque_meshes = flat_world_.render_meshes();
-    flat_world_mesh_set_revision_ = flat_world_.mesh_set_revision();
-  }
 
   // Wireframe voxel planet — regenerate when dirty (e.g. after init).
   if (wireframe_planet_dirty_) {
@@ -392,8 +370,7 @@ void Engine::tick(double frame_dt,
   render_stats.fixed_cpu_ms = smooth_metric(
       render_stats.fixed_cpu_ms, game_session.fixed_cpu_ms(), 0.25);
   render_stats.fixed_steps = game_session.fixed_steps_last_frame();
-  render_stats.streamed_chunk_count =
-      static_cast<uint32_t>(flat_world_.streamed_chunk_count());
+  render_stats.streamed_chunk_count = 0;
   render_stats.profiling.gameplay_cpu_ms = smooth_metric(
       render_stats.profiling.gameplay_cpu_ms, profiling_sample.gameplay_cpu_ms,
       0.25);

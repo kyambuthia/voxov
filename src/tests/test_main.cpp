@@ -16,7 +16,6 @@
 #include "engine_physics/vehicle/vehicle_sandbox_scene.hpp"
 #include "engine_physics/vehicle/voxel_vehicle_builder.hpp"
 #include "engine_physics/voxel/voxel_physics_bridge.hpp"
-#include "engine_world/flat_world_streamer.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
 #include "engine_world/world_gen.hpp"
@@ -981,44 +980,6 @@ void test_heightmap_generation_samples_continuously_across_chunk_edges() {
   }
 }
 
-void test_flat_world_streamer_populates_radius_once() {
-  FlatWorldStreamer streamer;
-  streamer.init(k_voxov_flat_world_seed,
-                FlatStreamerConfig{
-                    .generation_budget_per_update = 9,
-                    .view_radius_chunks = 1,
-                });
-
-  const glm::vec3 player_position(32.0f, 12.0f, 32.0f);
-  streamer.update(player_position);
-  assert(streamer.streamed_chunk_count() == 9);
-  assert(streamer.render_meshes().size() == 9);
-
-  const uint64_t loaded_revision = streamer.mesh_set_revision();
-  assert(loaded_revision > 0);
-  streamer.update(player_position);
-  assert(streamer.streamed_chunk_count() == 9);
-  assert(streamer.mesh_set_revision() == loaded_revision);
-}
-
-void test_flat_world_streamer_keeps_overlap_when_budget_is_spent() {
-  FlatWorldStreamer streamer;
-  streamer.init(k_voxov_flat_world_seed,
-                FlatStreamerConfig{
-                    .generation_budget_per_update = 1,
-                    .view_radius_chunks = 1,
-                });
-
-  const glm::vec3 starting_position(32.0f, 12.0f, 32.0f);
-  for (int i = 0; i < 9; ++i) {
-    streamer.update(starting_position);
-  }
-  assert(streamer.streamed_chunk_count() == 9);
-
-  streamer.update(glm::vec3(96.0f, 12.0f, 32.0f));
-  assert(streamer.streamed_chunk_count() == 7);
-}
-
 void test_chunk_spherical_planet_generation() {
   VoxelChunk chunk;
   chunk.generate_spherical_planet_seeded(0xBEEF1234u);
@@ -1065,38 +1026,6 @@ void test_voxel_material_custom_values_affect_mesh_colors() {
     }
   }
   assert(found_stone_tint);
-}
-
-void test_locomotion_course_only_affects_origin_chunk() {
-  VoxelChunk origin_base;
-  VoxelChunk origin_course;
-  VoxelChunk adjacent_base;
-  VoxelChunk adjacent_course;
-
-  origin_base.generate_heightmap_terrain_seeded(k_voxov_flat_world_seed, 0, 0);
-  generate_flat_world_locomotion_chunk(origin_course, k_voxov_flat_world_seed,
-                                       0, 0);
-  adjacent_base.generate_heightmap_terrain_seeded(k_voxov_flat_world_seed, 1,
-                                                  0);
-  generate_flat_world_locomotion_chunk(adjacent_course, k_voxov_flat_world_seed,
-                                       1, 0);
-
-  int origin_diff = 0;
-  int adjacent_diff = 0;
-  for (int z = 0; z < VoxelChunk::CHUNK_Z; ++z) {
-    for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
-      for (int x = 0; x < VoxelChunk::CHUNK_X; ++x) {
-        origin_diff +=
-            origin_base.solid(x, y, z) != origin_course.solid(x, y, z) ? 1 : 0;
-        adjacent_diff +=
-            adjacent_base.solid(x, y, z) != adjacent_course.solid(x, y, z) ? 1
-                                                                           : 0;
-      }
-    }
-  }
-
-  assert(origin_diff > 0);
-  assert(adjacent_diff == 0);
 }
 
 void test_camera_yaw_response() {
@@ -1883,12 +1812,9 @@ int main() {
   test_chunk_seed_determinism();
   test_world_generator_hills_and_valleys_are_deterministic_and_bounded();
   test_heightmap_generation_samples_continuously_across_chunk_edges();
-  test_flat_world_streamer_populates_radius_once();
-  test_flat_world_streamer_keeps_overlap_when_budget_is_spent();
   test_chunk_spherical_planet_generation();
   test_voxel_material_surface_assignment();
   test_voxel_material_custom_values_affect_mesh_colors();
-  test_locomotion_course_only_affects_origin_chunk();
   test_camera_yaw_response();
   test_strafe_axis_sign();
   test_player_settles_on_ground();

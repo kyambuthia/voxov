@@ -13,7 +13,6 @@
 #include "engine_runtime/runtime_game_session.hpp"
 #include "engine_runtime/runtime_session_controller.hpp"
 #include "engine_ui/gui_menu.hpp"
-#include "engine_world/flat_world_streamer.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/planet.hpp"
 #include "platform/platform_services.hpp"
@@ -94,8 +93,6 @@ private:
   PlayerAnimationRuntime local_player_animation;
 
   RenderScene scene;
-  FlatWorldStreamer flat_world_;
-  uint64_t flat_world_mesh_set_revision_ = 0;
   bool debug_fly_mode_ = false;
   bool touch_controls_visible_ = false;
   RenderStats render_stats;

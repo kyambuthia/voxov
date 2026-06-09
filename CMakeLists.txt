@@ -164,7 +164,6 @@ add_library(engine_world STATIC
     src/engine_world/planet.cpp
     src/engine_world/voxel_chunk.cpp
     src/engine_world/world_gen.cpp
-    src/engine_world/flat_world_streamer.cpp
     src/engine_world/wireframe_planet.cpp
     src/engine_world/physics/voxel_collision.cpp
 )

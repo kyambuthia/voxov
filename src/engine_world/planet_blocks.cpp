@@ -306,7 +306,10 @@ void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const
 }
 
 VoxelChunk &BlockWorld::get_or_generate_chunk(const BlockAddress &addr) {
-    auto it = chunks_.find(addr);
+    // Strip block index for chunk-level key.
+    BlockAddress key = addr;
+    key.block = glm::ivec3(0);
+    auto it = chunks_.find(key);
     if (it != chunks_.end()) return it->second;
 
     VoxelChunk chunk{};
@@ -315,12 +318,15 @@ VoxelChunk &BlockWorld::get_or_generate_chunk(const BlockAddress &addr) {
             for (int32_t x = 0; x < config_.chunk_size; ++x)
                 chunk.set_material(x, y, z, VoxelMaterial::Air);
     generate_chunk(addr, chunk);
-    auto [ins, _] = chunks_.emplace(addr, std::move(chunk));
+    auto [ins, _] = chunks_.emplace(key, std::move(chunk));
     return ins->second;
 }
 
 const VoxelChunk *BlockWorld::find_chunk(const BlockAddress &addr) const {
-    auto it = chunks_.find(addr);
+    // Strip block index — chunks are keyed by sector+shell+chunk only.
+    BlockAddress key = addr;
+    key.block = glm::ivec3(0);
+    auto it = chunks_.find(key);
     return (it != chunks_.end()) ? &it->second : nullptr;
 }
 

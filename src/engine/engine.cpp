@@ -431,7 +431,10 @@ void Engine::tick(double frame_dt,
     // fell out of the desired set get their meshes removed.
     scene.opaque_meshes.clear();
     auto solid_at = [this](const BlockAddress &na) -> bool {
-      const VoxelChunk *nc = block_world_.find_chunk(na);
+      // Strip block index for chunk lookup — chunks are keyed by sector+shell+chunk only
+      BlockAddress chunk_key = na;
+      chunk_key.block = glm::ivec3(0);
+      const VoxelChunk *nc = block_world_.find_chunk(chunk_key);
       if (nc == nullptr) return false;
       return nc->solid(na.block.x, na.block.y, na.block.z);
     };
@@ -444,6 +447,16 @@ void Engine::tick(double frame_dt,
       if (!mesh.vertices.empty()) {
         scene.opaque_meshes.push_back(std::move(mesh));
       }
+    }
+    // Diagnostic: log chunk/mesh counts first frame
+    static int diag_frame = 0;
+    if (diag_frame++ == 0) {
+      spdlog::info("Diag: {} chunks, {} desire, player_sector={} shell={}",
+                   block_world_.chunk_count(), desired.size(),
+                   static_cast<int>(player_addr.sector), player_addr.shell);
+      spdlog::info("Diag: {} opaque meshes, first mesh verts={}",
+                   scene.opaque_meshes.size(),
+                   scene.opaque_meshes.empty() ? 0 : scene.opaque_meshes[0].vertices.size());
     }
   }
 

@@ -103,6 +103,7 @@ private:
   std::vector<BlockAddress> loaded_chunks_;    // currently resident chunks
   uint64_t block_mesh_revision_ = 0;
   uint32_t chunk_generation_budget_ = 4;
+  uint64_t last_chunk_center_hash_ = 0;        // detect player movement
 
   bool debug_fly_mode_ = true; // start in fly mode (collision WIP)
   bool touch_controls_visible_ = false;

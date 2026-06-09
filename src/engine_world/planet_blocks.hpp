@@ -135,6 +135,10 @@ public:
     const VoxelChunk *find_chunk(const BlockAddress &addr) const;
     size_t chunk_count() const { return chunks_.size(); }
 
+    // ── Stable mesh ID ──────────────────────────────────────────────────
+    // Deterministic uint64 from sector+shell+chunk for GPU cache key.
+    static uint64_t chunk_mesh_id(const BlockAddress &addr);
+
     // ── Shell info ─────────────────────────────────────────────────────
     const ShellConfig &shell_config(int32_t shell) const;
     int32_t shell_count() const { return static_cast<int32_t>(shells_.size()); }

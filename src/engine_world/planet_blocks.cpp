@@ -410,6 +410,10 @@ static uint64_t block_chunk_mesh_id(const BlockAddress &addr) {
     return h == 0 ? 0x424c4f434b504c54ull : h;
 }
 
+uint64_t BlockWorld::chunk_mesh_id(const BlockAddress &addr) {
+    return block_chunk_mesh_id(addr);
+}
+
 RenderMesh BlockWorld::build_chunk_mesh(
     const BlockAddress &addr,
     const VoxelChunk &chunk,

@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cmath>
 #include <string>
+#include <unordered_set>
 
 namespace {
 using PerfClock = std::chrono::steady_clock;
@@ -392,15 +393,23 @@ void Engine::tick(double frame_dt,
   scene.camera_origin.world_origin = glm::dvec3(camera.transform.position);
 
   // ── Block world chunk streaming ─────────────────────────────────────
-  // Load surface chunks in a radius around the player.  Each frame
-  // generate up to chunk_generation_budget_ new chunks, mesh them,
-  // and collect visible meshes.
+  // Load surface chunks in a radius around the player.  New chunks are
+  // generated+meshed each frame (budget-limited).  When the player moves
+  // to a new chunk center, stale meshes are evicted and the full desired
+  // set is rebuilt.
   {
     const BlockAddress player_addr =
         block_world_.address_from_world(
             glm::dvec3(local_player.transform.position));
     const int32_t surface_shell = block_world_.shell_count() - 1;
-    const int32_t chunk_radius = 2; // load 5×5 grid around player
+    const int32_t chunk_radius = 2;
+
+    // Hash the chunk center to detect player movement.
+    uint64_t center_hash =
+        (static_cast<uint64_t>(player_addr.chunk.x) << 32) ^
+        (static_cast<uint64_t>(static_cast<uint32_t>(player_addr.chunk.z))) ^
+        (static_cast<uint64_t>(static_cast<uint8_t>(player_addr.sector)) << 48);
+    const bool player_moved = (center_hash != last_chunk_center_hash_);
 
     // Collect desired chunk addresses.
     std::vector<BlockAddress> desired;
@@ -411,13 +420,13 @@ void Engine::tick(double frame_dt,
         addr.shell  = surface_shell;
         addr.chunk  = glm::ivec3(
             player_addr.chunk.x + cx,
-            0, // surface layer
+            0,
             player_addr.chunk.z + cz);
         desired.push_back(addr);
       }
     }
 
-    // Generate new chunks (budget-limited). Track which are new.
+    // Generate new chunks (budget-limited).
     std::vector<BlockAddress> new_chunks;
     for (const BlockAddress &addr : desired) {
       if (new_chunks.size() >= chunk_generation_budget_) break;
@@ -426,29 +435,58 @@ void Engine::tick(double frame_dt,
       new_chunks.push_back(addr);
     }
 
-    // Rebuild meshes only for newly generated chunks.
-    // Previously rebuilt ALL desired chunks every frame → 1.2M verts CPU work.
-    if (!new_chunks.empty()) {
-      for (const BlockAddress &addr : new_chunks) {
-        const VoxelChunk *chunk = block_world_.find_chunk(addr);
+    // Rebuild full mesh set when player moves to new chunk center
+    // or when new chunks are loaded.
+    if (player_moved || !new_chunks.empty()) {
+      if (player_moved) {
+        scene.opaque_meshes.clear();
+        last_chunk_center_hash_ = center_hash;
+      }
+
+      // Build set of desired mesh_ids for this frame.
+      std::unordered_set<uint64_t> desired_ids;
+      for (const BlockAddress &addr : desired) {
+        // Compute stable mesh_id from address (sector+shell+chunk only).
+        BlockAddress ck = addr;
+        ck.block = glm::ivec3(0);
+        const VoxelChunk *chunk = block_world_.find_chunk(ck);
         if (chunk == nullptr) continue;
 
-        BlockAddress chunk_key = addr;
-        chunk_key.block = glm::ivec3(0);
-        auto solid_at = [this, &chunk_key, chunk](const BlockAddress &na) -> bool {
-          // Within-chunk neighbor: same key, different block index.
+        uint64_t mid = BlockWorld::chunk_mesh_id(ck);
+        desired_ids.insert(mid);
+
+        // Only rebuild meshes for new chunks or when player moved.
+        if (!player_moved && new_chunks.empty()) continue;
+        bool is_new = false;
+        for (const auto &nc : new_chunks) {
+          BlockAddress nk = nc; nk.block = glm::ivec3(0);
+          if (nk == ck) { is_new = true; break; }
+        }
+        if (!player_moved && !is_new) continue;
+
+        auto solid_at = [this, &ck, chunk](const BlockAddress &na) -> bool {
           BlockAddress nk = na;
           nk.block = glm::ivec3(0);
-          const VoxelChunk *nc = (nk == chunk_key) ? chunk : block_world_.find_chunk(nk);
+          const VoxelChunk *nc = (nk == ck) ? chunk : block_world_.find_chunk(nk);
           if (nc == nullptr) return false;
           return nc->solid(na.block.x, na.block.y, na.block.z);
         };
 
-        RenderMesh mesh = block_world_.build_chunk_mesh(
-            addr, *chunk, solid_at);
+        RenderMesh mesh = block_world_.build_chunk_mesh(ck, *chunk, solid_at);
         if (!mesh.vertices.empty()) {
           scene.opaque_meshes.push_back(std::move(mesh));
         }
+      }
+
+      // Evict meshes no longer in the desired set (player moved away).
+      if (player_moved) {
+        auto &meshes = scene.opaque_meshes;
+        meshes.erase(
+            std::remove_if(meshes.begin(), meshes.end(),
+                           [&desired_ids](const RenderMesh &m) {
+                             return desired_ids.find(m.mesh_id) == desired_ids.end();
+                           }),
+            meshes.end());
       }
     }
   }

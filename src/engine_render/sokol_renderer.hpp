@@ -94,5 +94,6 @@ private:
     // Hash tokens for O(1) change detection on dynamic meshes.
     uint64_t last_debug_world_hash_ = 0;
     uint64_t last_debug_screen_hash_ = 0;
+    uint64_t last_wireframe_hash_ = 0;
     bool has_dynamic_mesh_hash_ = false;
 };

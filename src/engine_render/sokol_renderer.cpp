@@ -672,25 +672,33 @@ void SokolRenderer::upload_scene(const RenderScene &new_scene) {
         }
     }
 
-    // Merge all wireframe meshes into a single transient buffer.
-    RenderMesh wireframe_scene{};
+    // Merge all wireframe meshes — skip upload if unchanged since last frame.
+    uint64_t wireframe_hash = 0;
     for (const RenderMesh &mesh : new_scene.wireframe_meshes) {
-        const uint32_t base = static_cast<uint32_t>(wireframe_scene.vertices.size());
-        wireframe_scene.vertices.insert(wireframe_scene.vertices.end(),
-                                         mesh.vertices.begin(), mesh.vertices.end());
-        if (mesh.use_16_bit_indices) {
-            for (uint16_t idx : mesh.indices16) {
-                wireframe_scene.indices.push_back(base + idx);
-            }
-        } else {
-            for (uint32_t idx : mesh.indices) {
-                wireframe_scene.indices.push_back(base + idx);
+        wireframe_hash ^= mesh.mesh_id + 0x9e3779b97f4a7c15ull +
+                          (wireframe_hash << 6) + (wireframe_hash >> 2);
+    }
+    if (wireframe_hash != last_wireframe_hash_ || wireframe_hash == 0) {
+        RenderMesh wireframe_scene{};
+        for (const RenderMesh &mesh : new_scene.wireframe_meshes) {
+            const uint32_t base = static_cast<uint32_t>(wireframe_scene.vertices.size());
+            wireframe_scene.vertices.insert(wireframe_scene.vertices.end(),
+                                             mesh.vertices.begin(), mesh.vertices.end());
+            if (mesh.use_16_bit_indices) {
+                for (uint16_t idx : mesh.indices16) {
+                    wireframe_scene.indices.push_back(base + idx);
+                }
+            } else {
+                for (uint32_t idx : mesh.indices) {
+                    wireframe_scene.indices.push_back(base + idx);
+                }
             }
         }
+        upload_mesh(wireframe_mesh_, wireframe_scene, false);
+        last_wireframe_hash_ = wireframe_hash;
     }
 
     upload_mesh(transient_mesh_, transient_scene, true);
-    upload_mesh(wireframe_mesh_, wireframe_scene, false);
     upload_mesh(debug_world_mesh_, new_scene.debug_world, false);
     upload_mesh(debug_screen_mesh_, new_scene.debug_screen, false);
     last_debug_world_hash_ = mesh_size_token(new_scene.debug_world);

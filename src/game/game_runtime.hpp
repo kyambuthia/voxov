@@ -44,6 +44,8 @@ public:
 
     void connect(const char *host, uint16_t port);
 
+    bool capture_screenshot(const char *filepath, int width, int height);
+
 private:
     // Keep Engine behind a runtime-facing shell so platform extraction can proceed
     // before the simulation state is moved out of Engine.

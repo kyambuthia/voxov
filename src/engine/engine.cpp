@@ -250,6 +250,10 @@ bool Engine::init(const EngineRuntimeOptions &options) {
                planet_def.radius / 1000.0,
                block_world_.shell_count());
 
+  // Initialize camera-relative snap origin at player spawn position.
+  camera_snap_origin_ = glm::dvec3(local_player.transform.position);
+  snap_origin_dirty_ = true;
+
   if (!renderer.init(RendererCreateInfo{
       .backend = runtime_options.render_backend,
   })) {
@@ -271,6 +275,10 @@ EngineConnectResult Engine::connect(const char *host, uint16_t port) {
 void Engine::shutdown() {
   renderer.shutdown();
   physics.shutdown();
+}
+
+bool Engine::capture_screenshot(const char *filepath, int width, int height) {
+  return renderer.capture_screenshot(filepath, width, height);
 }
 
 void Engine::tick(double frame_dt,
@@ -390,7 +398,21 @@ void Engine::tick(double frame_dt,
   }
   update_third_person_camera(local_player, local_player.transform.position,
                              camera);
-  scene.camera_origin.world_origin = glm::dvec3(camera.transform.position);
+  // ── Camera-relative rendering origin ─────────────────────────────────
+  // Snap origin drifts when the camera moves >500 m from the current
+  // origin.  When updated, all chunk meshes must be rebuilt so vertices
+  // stay within float32 precision range (±500 m → sub-mm precision).
+  {
+    const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
+    const double drift = glm::distance(cam_pos, camera_snap_origin_);
+    if (drift > 500.0) {
+      camera_snap_origin_ = cam_pos;
+      snap_origin_dirty_ = true;
+    }
+  }
+  // Camera origin must be the snap origin so the GPU shader can compute
+  // correct camera-relative positions for lighting.
+  scene.camera_origin.world_origin = camera_snap_origin_;
 
   // ── Block world chunk streaming ─────────────────────────────────────
   // Load surface chunks in a radius around the player.  New chunks are
@@ -436,11 +458,12 @@ void Engine::tick(double frame_dt,
     }
 
     // Rebuild full mesh set when player moves to new chunk center
-    // or when new chunks are loaded.
-    if (player_moved || !new_chunks.empty()) {
-      if (player_moved) {
+    // or when new chunks are loaded, or when snap origin drifts.
+    if (player_moved || !new_chunks.empty() || snap_origin_dirty_) {
+      if (player_moved || snap_origin_dirty_) {
         scene.opaque_meshes.clear();
         last_chunk_center_hash_ = center_hash;
+        snap_origin_dirty_ = false;
       }
 
       // Build set of desired mesh_ids for this frame.
@@ -455,14 +478,14 @@ void Engine::tick(double frame_dt,
         uint64_t mid = BlockWorld::chunk_mesh_id(ck);
         desired_ids.insert(mid);
 
-        // Only rebuild meshes for new chunks or when player moved.
-        if (!player_moved && new_chunks.empty()) continue;
+        // Only rebuild meshes for new chunks or when player moved
+        // or when snap origin drifted.
         bool is_new = false;
         for (const auto &nc : new_chunks) {
           BlockAddress nk = nc; nk.block = glm::ivec3(0);
           if (nk == ck) { is_new = true; break; }
         }
-        if (!player_moved && !is_new) continue;
+        if (!player_moved && !is_new && !snap_origin_dirty_) continue;
 
         auto solid_at = [this, &ck, chunk](const BlockAddress &na) -> bool {
           BlockAddress nk = na;
@@ -472,7 +495,8 @@ void Engine::tick(double frame_dt,
           return nc->solid(na.block.x, na.block.y, na.block.z);
         };
 
-        RenderMesh mesh = block_world_.build_chunk_mesh(ck, *chunk, solid_at);
+        RenderMesh mesh = block_world_.build_chunk_mesh(ck, *chunk, solid_at,
+                                                        camera_snap_origin_);
         if (!mesh.vertices.empty()) {
           scene.opaque_meshes.push_back(std::move(mesh));
         }
@@ -545,7 +569,8 @@ void Engine::tick(double frame_dt,
   ctx.frame_index = frame_index++;
   ctx.alpha = fixed.accumulator / fixed.fixed_dt;
   ctx.delta_seconds = frame_dt;
-  ctx.aspect_ratio = 16.0f / 9.0f;
+  ctx.aspect_ratio = static_cast<float>(surface.width) /
+                     static_cast<float>(std::max(1, surface.height));
   ctx.camera_origin = scene.camera_origin;
   ctx.view_count = 1u;
   ctx.views[0].camera = camera;

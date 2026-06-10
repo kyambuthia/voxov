@@ -67,6 +67,7 @@ public:
   void reset_camera();
   GuiMenu::Character preferred_character() const;
   EventBus &events() { return event_bus_; }
+  bool capture_screenshot(const char *filepath, int width, int height);
 
 private:
   void update_third_person_camera(PlayerEntity &player, Camera &out_camera);
@@ -102,7 +103,7 @@ private:
   BlockWorld block_world_;
   std::vector<BlockAddress> loaded_chunks_;    // currently resident chunks
   uint64_t block_mesh_revision_ = 0;
-  uint32_t chunk_generation_budget_ = 4;
+  uint32_t chunk_generation_budget_ = 8;
   uint64_t last_chunk_center_hash_ = 0;        // detect player movement
 
   bool debug_fly_mode_ = true; // start in fly mode (collision WIP)
@@ -110,6 +111,14 @@ private:
   RenderStats render_stats;
   EngineSessionState session_state_{};
   EngineRuntimeOptions runtime_options{};
+
+  // ── Camera-relative rendering ────────────────────────────────────────
+  // Snap origin tracks the camera-relative float32 reference point.
+  // Mesh vertices are stored as offsets from this origin to preserve
+  // float32 sub-mm precision at 2000 km planet scale.  Updated when the
+  // camera moves >500 m from the current origin (forces mesh rebuild).
+  glm::dvec3 camera_snap_origin_{0.0};
+  bool snap_origin_dirty_ = true;       // force initial mesh build
 
   // ── Wireframe debug overlay ─────────────────────────────────────────
   // Same PlanetDefinition as terrain, coarser grid (64 cells/face = ~62 km/cell).

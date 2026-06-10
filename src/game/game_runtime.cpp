@@ -122,6 +122,10 @@ public:
         session_flow.connect(engine, host, port);
     }
 
+    bool capture_screenshot(const char *filepath, int width, int height) {
+        return engine.capture_screenshot(filepath, width, height);
+    }
+
 private:
     void sync_session_state() {
         const RuntimeSessionSnapshot snapshot =
@@ -187,4 +191,8 @@ const RenderStats &GameRuntime::stats() const {
 
 void GameRuntime::connect(const char *host, uint16_t port) {
     impl_->connect(host, port);
+}
+
+bool GameRuntime::capture_screenshot(const char *filepath, int width, int height) {
+    return impl_->capture_screenshot(filepath, width, height);
 }

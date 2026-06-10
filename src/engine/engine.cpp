@@ -233,8 +233,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
     local_player.transform.position = glm::vec3(equator_dir * surface_r +
                                                  equator_dir * 3.0);
   }
-  local_player.camera_rig.pitch = -16.0f;
-  local_player.camera_rig.distance = 7.5f;
+  local_player.camera_rig.pitch = -45.0f;  // look more "down" at local surface (with the local-up camera fix below, this now orients relative to radial)
+  local_player.camera_rig.distance = 10.0f;
   local_player.camera_rig.maxDistance = 48.0f;
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
@@ -632,8 +632,8 @@ void Engine::leave_session() {}
 
 void Engine::reset_camera() {
   local_player.camera_rig.yaw = 180.0f;
-  local_player.camera_rig.pitch = -32.0f;
-  local_player.camera_rig.distance = 7.5f;
+  local_player.camera_rig.pitch = -45.0f;  // consistent with spawn for looking at the spherical voxel surface
+  local_player.camera_rig.distance = 10.0f;
 }
 
 GuiMenu::Character Engine::preferred_character() const {
@@ -649,12 +649,33 @@ void Engine::update_third_person_camera(PlayerEntity &player,
                                         const glm::vec3 &render_position,
                                         Camera &out_camera) {
   out_camera.clear_view_override();
-  const glm::vec3 up = glm::vec3(0.0f, 1.0f, 0.0f);
+  // Use local radial "up" for the spherical voxel planet (center at origin).
+  // WHY: the previous hardcoded world +Y up + global orbit angles meant the
+  // third-person camera orbited in flat-world space. On the sphere (e.g. player
+  // at +X equator), this placed the camera on the wrong side or looking across
+  // the planet, so the local 1m voxel surface patch was never in view (only the
+  // coarse wireframe was visible, or black). Per AGENTS debugging checklist
+  // and sources (spherical gravity camera threads, local-up orbit rigs in voxel
+  // planet projects), camera must respect local up = radial for the surface to
+  // be visible and playable.
+  glm::vec3 local_up = glm::normalize(render_position);
+  if (glm::length(local_up) < 0.1f) local_up = glm::vec3(0.0f, 1.0f, 0.0f);
   const glm::vec3 pivot =
-      render_position + up * player.camera_rig.pivotHeight;
-  const glm::vec3 orbit_forward =
+      render_position + local_up * player.camera_rig.pivotHeight;
+  glm::vec3 orbit_forward =
       PlayerControllerSystem::orbit_forward_from_angles(
           player.camera_rig.yaw, player.camera_rig.pitch);
+  // Rebase the pitch component of the orbit direction along local_up while
+  // keeping the yaw-ish horizontal part in the tangent plane. This makes
+  // pitch control "elevation above the local surface" instead of global Y.
+  const glm::vec3 orig_up = glm::vec3(0.0f, 1.0f, 0.0f);
+  float vert_comp = glm::dot(orbit_forward, orig_up);
+  glm::vec3 horiz = orbit_forward - vert_comp * orig_up;
+  horiz -= local_up * glm::dot(horiz, local_up);
+  const float hlen = glm::length(horiz);
+  if (hlen > 1e-5f) horiz /= hlen;
+  else horiz = glm::vec3(1.0f, 0.0f, 0.0f);  // fallback tangent
+  orbit_forward = glm::normalize(horiz + vert_comp * local_up);
   float camera_distance = player.camera_rig.distance;
   float hit_distance = 0.0f;
   if (collision_world.raycast(pivot, -orbit_forward, player.camera_rig.distance,

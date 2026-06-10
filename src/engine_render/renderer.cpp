@@ -67,3 +67,8 @@ void Renderer::begin_frame(const RenderFrameContext &ctx,
 void Renderer::end_frame() {
     // Legacy path: no-op. Frame is committed in render_frame().
 }
+
+bool Renderer::capture_screenshot(const char *filepath, int width, int height) {
+    if (!backend) return false;
+    return backend->capture_screenshot(filepath, width, height);
+}

@@ -18,8 +18,10 @@ public:
     void update_dynamic_meshes(const RenderMesh &debug_world,
                                const RenderMesh &debug_screen);
     void render_frame(const RenderFrameContext &ctx,
-                      const RenderStats &stats,
-                      const RenderSurface &surface);
+                       const RenderStats &stats,
+                       const RenderSurface &surface);
+
+    bool capture_screenshot(const char *filepath, int width, int height);
 
     // Legacy compatibility during migration.
     void begin_frame(const RenderFrameContext &ctx, const RenderStats &stats);

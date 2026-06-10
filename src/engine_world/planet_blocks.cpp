@@ -365,9 +365,39 @@ std::vector<BlockNeighbor> BlockWorld::neighbors(const BlockAddress &addr,
 
     if (nc.x < 0 || nc.x >= hc || nc.z < 0 || nc.z >= hc ||
         nc.y < 0 || nc.y >= vc) {
-        // TODO: Use CubeNet edge pairings to look up cross-sector neighbors.
-        // Currently returns empty → boundary faces always drawn (visible seams
-        // at cube-face edges). The edge_pairing() infrastructure is ready.
+        if (nc.y < 0 || nc.y >= vc) {
+            // radial cross (different shell res) - not supported for surface play yet
+            return result;
+        }
+        // Cross-sector using CubeNet edge pairings.
+        // See k_edge_pairings and edge_pairing(). Matches the quad-sphere adjacency
+        // from research (Bowerbyte, Jacco, Dimitrijević 2016 cube projections paper).
+        CubeEdge crossed_edge;
+        if (nb_block.x < 0) crossed_edge = CubeEdge::Left;
+        else if (nb_block.x >= config_.chunk_size) crossed_edge = CubeEdge::Right;
+        else if (nb_block.z < 0) crossed_edge = CubeEdge::Bottom;
+        else crossed_edge = CubeEdge::Top;
+        const auto& p = edge_pairing(addr.sector, crossed_edge);
+        BlockNeighbor nb{};
+        nb.address.sector = p.to_face;
+        nb.address.shell  = addr.shell;
+        int tcx = nc.x;
+        int tcz = nc.z;
+        if (p.swap_uv) std::swap(tcx, tcz);
+        if (p.flip_u) tcx = hc - 1 - tcx;
+        if (p.flip_v) tcz = hc - 1 - tcz;
+        if (tcx < 0) tcx = 0;
+        if (tcx >= hc) tcx = hc-1;
+        if (tcz < 0) tcz = 0;
+        if (tcz >= hc) tcz = hc-1;
+        nb.address.chunk = glm::ivec3(tcx, nc.y, tcz);
+        int tbx = wr.x;
+        int tbz = wr.z;
+        if (p.swap_uv) std::swap(tbx, tbz);
+        if (p.flip_u) tbx = config_.chunk_size - 1 - tbx;
+        if (p.flip_v) tbz = config_.chunk_size - 1 - tbz;
+        nb.address.block = glm::ivec3(tbx, wr.y, tbz);
+        result.push_back(nb);
         return result;
     }
 
@@ -491,6 +521,48 @@ RenderMesh BlockWorld::build_chunk_mesh(
                         else if (nb_block.y >= config_.chunk_size) { nb_addr.chunk.y += 1; nb_addr.block.y -= config_.chunk_size; }
                         if (nb_block.z < 0) { nb_addr.chunk.z -= 1; nb_addr.block.z += config_.chunk_size; }
                         else if (nb_block.z >= config_.chunk_size) { nb_addr.chunk.z += 1; nb_addr.block.z -= config_.chunk_size; }
+
+                        // Cross-sector CubeNet remapping (using the 12 edge pairings).
+                        // WHY: without this, when a neighbor chunk coord goes outside the current face's chunk bounds,
+                        // find_chunk fails (wrong sector), solid_at returns false (air), so boundary faces are never culled.
+                        // This causes visible seams at the 6 cube-face edges, as noted in the TODO in neighbors().
+                        // The k_edge_pairings and edge_pairing() provide the mappings (from Bowerbyte quadsphere,
+                        // Jacco shell approach, and Dimitrijević 2016 cube map paper for low-distortion adjacency).
+                        // For surface play (small radius from face center), this is rarely hit, but required for
+                        // full seamless planetary voxel world when walking near edges or larger load areas.
+                        const ShellConfig &sh2 = shell_config(addr.shell);
+                        const int32_t face_hc = std::max(1, sh2.horizontal_res / config_.chunk_size);
+                        bool crossed = false;
+                        if (nb_addr.chunk.x < 0 || nb_addr.chunk.x >= face_hc ||
+                            nb_addr.chunk.z < 0 || nb_addr.chunk.z >= face_hc) {
+                          CubeEdge crossed_edge;
+                          if (nb_block.x < 0) crossed_edge = CubeEdge::Left;
+                          else if (nb_block.x >= config_.chunk_size) crossed_edge = CubeEdge::Right;
+                          else if (nb_block.z < 0) crossed_edge = CubeEdge::Bottom;
+                          else crossed_edge = CubeEdge::Top;
+                          const auto& p = edge_pairing(addr.sector, crossed_edge);
+                          nb_addr.sector = p.to_face;
+                          int tcx = nb_addr.chunk.x;
+                          int tcz = nb_addr.chunk.z;
+                          if (p.swap_uv) std::swap(tcx, tcz);
+                          if (p.flip_u) tcx = face_hc - 1 - tcx;
+                          if (p.flip_v) tcz = face_hc - 1 - tcz;
+                          if (tcx < 0) tcx = 0;
+                          if (tcx >= face_hc) tcx = face_hc-1;
+                          if (tcz < 0) tcz = 0;
+                          if (tcz >= face_hc) tcz = face_hc-1;
+                          nb_addr.chunk.x = tcx;
+                          nb_addr.chunk.z = tcz;
+                          // remap block too for consistency
+                          int tbx = nb_addr.block.x;
+                          int tbz = nb_addr.block.z;
+                          if (p.swap_uv) std::swap(tbx, tbz);
+                          if (p.flip_u) tbx = config_.chunk_size - 1 - tbx;
+                          if (p.flip_v) tbz = config_.chunk_size - 1 - tbz;
+                          nb_addr.block.x = tbx;
+                          nb_addr.block.z = tbz;
+                          crossed = true;
+                        }
                         occluded = solid_at(nb_addr);
                     }
                     if (occluded) continue;

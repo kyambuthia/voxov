@@ -48,6 +48,11 @@ public:
     virtual void update_dynamic_meshes(const RenderMesh &debug_world,
                                        const RenderMesh &debug_screen) = 0;
     virtual void render_frame(const RenderFrameContext &ctx,
-                              const RenderStats &stats,
-                              const RenderSurface &surface) = 0;
+                               const RenderStats &stats,
+                               const RenderSurface &surface) = 0;
+
+    // Captures the current framebuffer to a PNG file at the given path.
+    // Returns true on success. Only supported on OpenGL backends (GLES3/GL).
+    virtual bool capture_screenshot(const char *filepath,
+                                    int width, int height) = 0;
 };

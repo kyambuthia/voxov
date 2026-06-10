@@ -7,6 +7,15 @@
 #endif
 #include "sokol_log.h"
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+#if defined(SOKOL_GLCORE)
+#include <GL/gl.h>
+#elif defined(SOKOL_GLES3)
+#include <GLES3/gl3.h>
+#endif
+
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
@@ -770,8 +779,13 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                   pipelines_.opaque, pipelines_.opaque_u16);
 
         const Frustum frustum = extract_frustum(vp);
+        // Bounds are stored relative to planet center (camera_origin).
+        // Transform to world space for frustum culling.
+        const glm::vec3 origin_offset = glm::vec3(camera_origin);
         for (const auto &[id, mesh] : cached_meshes_) {
-            if (aabb_in_frustum(frustum, mesh.bounds_min, mesh.bounds_max)) {
+            const glm::vec3 world_bmin = mesh.bounds_min + origin_offset;
+            const glm::vec3 world_bmax = mesh.bounds_max + origin_offset;
+            if (aabb_in_frustum(frustum, world_bmin, world_bmax)) {
                 draw_mesh(mesh, vp, model, camera_pos,
                           camera_origin,
                           pipelines_.opaque, pipelines_.opaque_u16);
@@ -795,4 +809,39 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
 
     sg_end_pass();
     sg_commit();
+}
+
+// ---------------------------------------------------------------------------
+// Screenshot capture — reads framebuffer via glReadPixels, flips vertically,
+// and writes PNG via stb_image_write.
+// ---------------------------------------------------------------------------
+
+bool SokolRenderer::capture_screenshot(const char *filepath,
+                                       int width, int height) {
+    if (width <= 0 || height <= 0) return false;
+
+    // Allocate buffer for RGBA pixels
+    const size_t row_bytes = static_cast<size_t>(width) * 4;
+    std::vector<uint8_t> pixels(row_bytes * static_cast<size_t>(height));
+
+    // Read from the default framebuffer (sokol renders to FBO 0)
+    sg_commit(); // flush GPU commands
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+
+    // OpenGL has origin at bottom-left; PNG expects top-left.
+    // Flip the rows in-place.
+    std::vector<uint8_t> flipped(row_bytes * static_cast<size_t>(height));
+    for (int y = 0; y < height; ++y) {
+        const size_t src_row = static_cast<size_t>(height - 1 - y) * row_bytes;
+        const size_t dst_row = static_cast<size_t>(y) * row_bytes;
+        std::memcpy(flipped.data() + dst_row,
+                    pixels.data() + src_row,
+                    row_bytes);
+    }
+
+    const int result = stbi_write_png(filepath, width, height, 4,
+                                      flipped.data(),
+                                      static_cast<int>(row_bytes));
+    return result != 0;
 }

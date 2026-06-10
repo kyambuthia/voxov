@@ -66,6 +66,9 @@ public:
                       const RenderStats &stats,
                       const RenderSurface &surface) override;
 
+    bool capture_screenshot(const char *filepath,
+                            int width, int height) override;
+
 private:
     void upload_mesh(SokolGpuMesh &dst, const RenderMesh &src, bool stream);
     void destroy_mesh(SokolGpuMesh &mesh);

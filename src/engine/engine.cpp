@@ -426,25 +426,40 @@ void Engine::tick(double frame_dt,
     const int32_t surface_shell = block_world_.shell_count() - 1;
     const int32_t chunk_radius = 2;
 
-    // Hash the chunk center to detect player movement.
+    // Hash the chunk center (incl. radial y) to detect player movement to a
+    // new (x,z) column or crossing into a different radial chunk layer.
+    // WHY: surface terrain height spans ~1-2 chunk.y layers (chunk_size=16,
+    // terrain amp~22); forcing y=0 meant we generated only deep stone layers
+    // while the visible grass surface lived in y=1 chunks around the player.
     uint64_t center_hash =
         (static_cast<uint64_t>(player_addr.chunk.x) << 32) ^
         (static_cast<uint64_t>(static_cast<uint32_t>(player_addr.chunk.z))) ^
+        (static_cast<uint64_t>(static_cast<uint32_t>(player_addr.chunk.y)) << 16) ^
         (static_cast<uint64_t>(static_cast<uint8_t>(player_addr.sector)) << 48);
     const bool player_moved = (center_hash != last_chunk_center_hash_);
 
-    // Collect desired chunk addresses.
+    // Collect desired chunk addresses for the surface shell.
+    // WHY: must request the radial (chunk.y) layers that actually contain the
+    // terrain surface blocks for the columns around the player. We load the
+    // player's current y and one layer below (clamped) so top-of-terrain faces
+    // (Grass) are present and face-culled correctly from air above. x/z vary
+    // in a 5x5; y variation across the patch is covered by the +/- slab.
     std::vector<BlockAddress> desired;
-    for (int32_t cz = -chunk_radius; cz <= chunk_radius; ++cz) {
-      for (int32_t cx = -chunk_radius; cx <= chunk_radius; ++cx) {
-        BlockAddress addr{};
-        addr.sector = player_addr.sector;
-        addr.shell  = surface_shell;
-        addr.chunk  = glm::ivec3(
-            player_addr.chunk.x + cx,
-            0,
-            player_addr.chunk.z + cz);
-        desired.push_back(addr);
+    const int32_t player_cy = player_addr.chunk.y;
+    for (int32_t dy = -1; dy <= 0; ++dy) {
+      const int32_t cy = player_cy + dy;
+      if (cy < 0) continue;
+      for (int32_t cz = -chunk_radius; cz <= chunk_radius; ++cz) {
+        for (int32_t cx = -chunk_radius; cx <= chunk_radius; ++cx) {
+          BlockAddress addr{};
+          addr.sector = player_addr.sector;
+          addr.shell  = surface_shell;
+          addr.chunk  = glm::ivec3(
+              player_addr.chunk.x + cx,
+              cy,
+              player_addr.chunk.z + cz);
+          desired.push_back(addr);
+        }
       }
     }
 

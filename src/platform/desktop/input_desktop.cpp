@@ -107,6 +107,10 @@ InputState DesktopInputBackend::poll() {
     out.debug_reconcile_toggle_pressed = f5_down && !prev_f5_down;
     prev_f5_down = f5_down;
 
+    const bool f12_down = k(PlatformKey::F12);
+    out.screenshot_requested = f12_down && !prev_f12_down;
+    prev_f12_down = f12_down;
+
     out.sprint_held = k(PlatformKey::LeftShift);
     out.crouch_held = k(PlatformKey::C) || k(PlatformKey::LeftControl);
 

@@ -44,7 +44,7 @@ enum class PlatformKey : uint16_t {
 
     // Function
     F1,  F2,  F3,  F4,  F5,
-    F11,
+    F11, F12,
 
     // Misc
     Slash,

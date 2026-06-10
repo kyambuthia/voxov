@@ -38,6 +38,7 @@ static PlatformKey map_sokol_key(int sokol_key) {
     case SAPP_KEYCODE_F4:           return PlatformKey::F4;
     case SAPP_KEYCODE_F5:           return PlatformKey::F5;
     case SAPP_KEYCODE_F11:          return PlatformKey::F11;
+    case SAPP_KEYCODE_F12:          return PlatformKey::F12;
     case SAPP_KEYCODE_LEFT_SHIFT:   return PlatformKey::LeftShift;
     case SAPP_KEYCODE_RIGHT_SHIFT:  return PlatformKey::RightShift;
     case SAPP_KEYCODE_LEFT_CONTROL: return PlatformKey::LeftControl;
@@ -192,6 +193,7 @@ bool DesktopPlatform::is_key_down(int key_code) const {
         case 293: return PlatformKey::F4;
         case 294: return PlatformKey::F5;
         case 303: return PlatformKey::F11;
+        case 304: return PlatformKey::F12;
         case 340: return PlatformKey::LeftShift;
         case 341: return PlatformKey::LeftControl;
         case 47:  return PlatformKey::Slash;

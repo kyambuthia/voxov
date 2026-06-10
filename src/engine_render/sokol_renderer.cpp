@@ -773,26 +773,41 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         const glm::vec3 camera_pos = view.camera.transform.position;
         const glm::dvec3 camera_origin = ctx.camera_origin.world_origin;
 
-        // Opaque geometry
-        draw_mesh(transient_mesh_, vp, model, camera_pos,
+        // Camera-relative adjustment for planet voxel meshes.
+        // WHY: build_chunk_mesh now emits verts as (world - snap_origin) for
+        // float32 precision at 2M km scale (sub-mm vs ~0.25 m jitter). The
+        // incoming vp + frustum are computed in absolute world space from the
+        // camera's world transform. To place small relative verts correctly we
+        // left-multiply a translate(+origin) so gl_Position = (vp * T) * v_rel
+        // == vp * (v_rel + origin). Wireframe and debug meshes remain absolute
+        // world and use raw vp. This completes the camera-relative vertex fix.
+        const glm::mat4 origin_t = glm::translate(glm::mat4(1.0f), glm::vec3(camera_origin));
+        const glm::mat4 rel_vp = vp * origin_t;
+
+        // Opaque geometry (planet block meshes are relative to camera_origin)
+        draw_mesh(transient_mesh_, rel_vp, model, camera_pos,
                   camera_origin,
                   pipelines_.opaque, pipelines_.opaque_u16);
 
         const Frustum frustum = extract_frustum(vp);
-        // Bounds are stored relative to planet center (camera_origin).
-        // Transform to world space for frustum culling.
+        // Bounds stored in GPU mesh are in the same space as the submitted
+        // vertices (relative to camera_origin/snap for planet cached meshes).
+        // Adding the origin gives world-space AABB for testing against the
+        // world-space frustum extracted from vp.
         const glm::vec3 origin_offset = glm::vec3(camera_origin);
         for (const auto &[id, mesh] : cached_meshes_) {
             const glm::vec3 world_bmin = mesh.bounds_min + origin_offset;
             const glm::vec3 world_bmax = mesh.bounds_max + origin_offset;
             if (aabb_in_frustum(frustum, world_bmin, world_bmax)) {
-                draw_mesh(mesh, vp, model, camera_pos,
+                draw_mesh(mesh, rel_vp, model, camera_pos,
                           camera_origin,
                           pipelines_.opaque, pipelines_.opaque_u16);
             }
         }
 
-        // Wireframe geometry (drawn over opaque, with depth)
+        // Wireframe geometry (drawn over opaque, with depth).
+        // Wireframe verts are absolute world (see build_wireframe_... and
+        // its mesh_id caching); must use raw vp.
         draw_wireframe(wireframe_mesh_, vp);
 
         // Debug world (x-ray or normal)

@@ -188,7 +188,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   // 3D noise on sphere surface for seamless terrain.
   PlanetDefinition planet_def{};
   planet_def.center = glm::dvec3(0.0);
-  planet_def.radius = 2000000.0;
+  planet_def.radius = 1000000.0;  // 1000 km (reduced from 2000 km for better float32 precision + playable scale)
   planet_def.voxel_size = 1.0;
   planet_def.chunks_per_face = 64;
   planet_def.seed = k_voxov_flat_world_seed;

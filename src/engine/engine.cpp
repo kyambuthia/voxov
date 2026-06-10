@@ -497,14 +497,12 @@ void Engine::tick(double frame_dt,
                  scene.opaque_meshes.size(), player_cy);
   }
 
-  // Wireframe overlay — regenerate when dirty.
-  if (wireframe_planet_dirty_) {
-    wireframe_planet_mesh_ = build_wireframe_voxel_planet_mesh(
-        wireframe_planet_, wireframe_planet_.chunks_per_face);
-    wireframe_planet_dirty_ = false;
-  }
+  // Wireframe overlay — TEMPORARILY suppressed during voxel surface debugging so the
+  // 1 m block meshes (if any are being submitted) are not hidden under the coarse
+  // grid. Restore the push once we confirm voxels appear.
   scene.wireframe_meshes.clear();
-  scene.wireframe_meshes.push_back(wireframe_planet_mesh_);
+  // (wireframe push commented out for diagnosis)
+  // scene.wireframe_meshes.push_back(wireframe_planet_mesh_);
 
   renderer.upload_scene(scene);
 

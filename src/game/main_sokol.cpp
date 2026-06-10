@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <thread>
 
 // ---------------------------------------------------------------------------
@@ -115,6 +116,34 @@ void voxov_frame() {
     }
 
     g_runtime->tick(g_pacer->frame_dt());
+
+    // F12 screenshot capture
+    static bool f12_was_down = false;
+    if (g_platform) {
+        const bool f12_down = g_platform->input().keys_down.test(
+            static_cast<size_t>(PlatformKey::F12));
+        if (f12_down && !f12_was_down) {
+            // Ensure screenshots directory exists.
+            std::system("mkdir -p screenshots 2>/dev/null");
+            char filepath[256]{};
+            const auto now = std::chrono::system_clock::now();
+            const auto t = std::chrono::system_clock::to_time_t(now);
+            std::tm tm{};
+            localtime_r(&t, &tm);
+            std::snprintf(filepath, sizeof(filepath),
+                          "screenshots/voxov_%04d%02d%02d_%02d%02d%02d.png",
+                          tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                          tm.tm_hour, tm.tm_min, tm.tm_sec);
+            const int w = sapp_width();
+            const int h = sapp_height();
+            if (g_runtime->capture_screenshot(filepath, w, h)) {
+                spdlog::info("Screenshot saved: {}", filepath);
+            } else {
+                spdlog::warn("Screenshot failed: {}", filepath);
+            }
+        }
+        f12_was_down = f12_down;
+    }
 
     // F11 fullscreen toggle
     static bool f11_was_down = false;

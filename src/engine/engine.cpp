@@ -424,28 +424,11 @@ void Engine::tick(double frame_dt,
         block_world_.address_from_world(
             glm::dvec3(local_player.transform.position));
     const int32_t surface_shell = block_world_.shell_count() - 1;
-    const int32_t chunk_radius = 3;  // 7x7 xz grid (~112 m patch at 1 m blocks) for playable local surface
+    const int32_t chunk_radius = 4;  // larger local footprint for playable area of 1m voxels
 
-    // Hash the chunk center (incl. radial y) to detect player movement to a
-    // new (x,z) column or crossing into a different radial chunk layer.
-    // WHY: surface terrain height spans ~1-2 chunk.y layers (chunk_size=16,
-    // terrain amp~22); forcing y=0 meant we generated only deep stone layers
-    // while the visible grass surface lived in y=1 chunks around the player.
-    uint64_t center_hash =
-        (static_cast<uint64_t>(player_addr.chunk.x) << 32) ^
-        (static_cast<uint64_t>(static_cast<uint32_t>(player_addr.chunk.z))) ^
-        (static_cast<uint64_t>(static_cast<uint32_t>(player_addr.chunk.y)) << 16) ^
-        (static_cast<uint64_t>(static_cast<uint8_t>(player_addr.sector)) << 48);
-    const bool player_moved = (center_hash != last_chunk_center_hash_);
-
-    // Collect desired chunk addresses for the surface shell.
-    // WHY (at 1000 km radius): must request the radial (chunk.y) layers containing
-    // the actual terrain surface for columns around the player so that 1 m voxels
-    // with per-column noise height are generated and meshed. Load player_cy and
-    // the layer below (clamped) + a 7x7 xz footprint gives a decent playable
-    // patch of surface to walk/fly on and see 3D variation instead of a tiny
-    // 5x5=~80 m island. (Larger radius + streaming budget will be tuned for the
-    // 25-chunk perf target later.)
+    // Collect desired chunk addresses for the surface shell around the player.
+    // We use a generous xz radius + the relevant radial y layers (player_cy and below)
+    // so that the actual terrain surface blocks exist in memory.
     std::vector<BlockAddress> desired;
     const int32_t player_cy = player_addr.chunk.y;
     for (int32_t dy = -1; dy <= 0; ++dy) {
@@ -465,71 +448,53 @@ void Engine::tick(double frame_dt,
       }
     }
 
-    // Generate new chunks (budget-limited).
+    // Generate missing chunks (budgeted). Higher budget here to fill the local
+    // playable surface patch quickly for debugging/visibility.
+    const uint32_t gen_budget = 32;
     std::vector<BlockAddress> new_chunks;
     for (const BlockAddress &addr : desired) {
-      if (new_chunks.size() >= chunk_generation_budget_) break;
+      if (new_chunks.size() >= gen_budget) break;
       if (block_world_.find_chunk(addr) != nullptr) continue;
       block_world_.get_or_generate_chunk(addr);
       new_chunks.push_back(addr);
     }
 
-    // Rebuild full mesh set when player moves to new chunk center
-    // or when new chunks are loaded, or when snap origin drifts.
-    if (player_moved || !new_chunks.empty() || snap_origin_dirty_) {
-      if (player_moved || snap_origin_dirty_) {
-        scene.opaque_meshes.clear();
-        last_chunk_center_hash_ = center_hash;
-        snap_origin_dirty_ = false;
-      }
+    // FORCE population of scene.opaque_meshes from current desired every frame.
+    // WHY: previous smart "only on moved/new/dirty + incremental append + prune"
+    // logic + initial hash + snap_dirty interactions could leave opaque_meshes
+    // empty or stale even when chunks existed with surface data. For getting a
+    // visible voxel surface first, we clear and rebuild the list for exactly the
+    // player-local desired chunks every tick. This is wasteful (we'll optimize
+    // back to incremental + dirty tracking once the surface is confirmed visible
+    // and playable). Combined with the renderer bypass of world-frustum culling
+    // on the local resident set, this guarantees that if build_chunk_mesh
+    // produces non-empty meshes, they will be submitted and drawn via rel_vp.
+    scene.opaque_meshes.clear();
+    for (const BlockAddress &addr : desired) {
+      BlockAddress ck = addr;
+      ck.block = glm::ivec3(0);
+      const VoxelChunk *chunk = block_world_.find_chunk(ck);
+      if (chunk == nullptr) continue;
 
-      // Build set of desired mesh_ids for this frame.
-      std::unordered_set<uint64_t> desired_ids;
-      for (const BlockAddress &addr : desired) {
-        // Compute stable mesh_id from address (sector+shell+chunk only).
-        BlockAddress ck = addr;
-        ck.block = glm::ivec3(0);
-        const VoxelChunk *chunk = block_world_.find_chunk(ck);
-        if (chunk == nullptr) continue;
+      auto solid_at = [this, &ck, chunk](const BlockAddress &na) -> bool {
+        BlockAddress nk = na;
+        nk.block = glm::ivec3(0);
+        const VoxelChunk *nc = (nk == ck) ? chunk : block_world_.find_chunk(nk);
+        if (nc == nullptr) return false;
+        return nc->solid(na.block.x, na.block.y, na.block.z);
+      };
 
-        uint64_t mid = BlockWorld::chunk_mesh_id(ck);
-        desired_ids.insert(mid);
-
-        // Only rebuild meshes for new chunks or when player moved
-        // or when snap origin drifted.
-        bool is_new = false;
-        for (const auto &nc : new_chunks) {
-          BlockAddress nk = nc; nk.block = glm::ivec3(0);
-          if (nk == ck) { is_new = true; break; }
-        }
-        if (!player_moved && !is_new && !snap_origin_dirty_) continue;
-
-        auto solid_at = [this, &ck, chunk](const BlockAddress &na) -> bool {
-          BlockAddress nk = na;
-          nk.block = glm::ivec3(0);
-          const VoxelChunk *nc = (nk == ck) ? chunk : block_world_.find_chunk(nk);
-          if (nc == nullptr) return false;
-          return nc->solid(na.block.x, na.block.y, na.block.z);
-        };
-
-        RenderMesh mesh = block_world_.build_chunk_mesh(ck, *chunk, solid_at,
-                                                        camera_snap_origin_);
-        if (!mesh.vertices.empty()) {
-          scene.opaque_meshes.push_back(std::move(mesh));
-        }
-      }
-
-      // Evict meshes no longer in the desired set (player moved away).
-      if (player_moved) {
-        auto &meshes = scene.opaque_meshes;
-        meshes.erase(
-            std::remove_if(meshes.begin(), meshes.end(),
-                           [&desired_ids](const RenderMesh &m) {
-                             return desired_ids.find(m.mesh_id) == desired_ids.end();
-                           }),
-            meshes.end());
+      RenderMesh mesh = block_world_.build_chunk_mesh(ck, *chunk, solid_at,
+                                                      camera_snap_origin_);
+      if (!mesh.vertices.empty()) {
+        spdlog::info("VOXEL: built+submitted mesh sector={} shell={} cy={} cxz=({},{}) verts={}",
+                     (int)ck.sector, ck.shell, ck.chunk.y, ck.chunk.x, ck.chunk.z,
+                     mesh.vertices.size());
+        scene.opaque_meshes.push_back(std::move(mesh));
       }
     }
+    spdlog::info("VOXEL: opaque_meshes now has {} entries (desired around player cy={})",
+                 scene.opaque_meshes.size(), player_cy);
   }
 
   // Wireframe overlay — regenerate when dirty.

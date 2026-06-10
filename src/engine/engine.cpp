@@ -431,7 +431,7 @@ void Engine::tick(double frame_dt,
         block_world_.address_from_world(
             glm::dvec3(local_player.transform.position));
     const int32_t surface_shell = block_world_.shell_count() - 1;
-    const int32_t chunk_radius = 2;  // 5x5 xz ~25 chunks per radial layer; target ~25-50 total for 30+FPS per AGENTS perf goal. Playable local ~64m patch at 1m.
+    const int32_t chunk_radius = 3;  // 7x7 xz ~49 chunks per radial layer; larger playable local patch (~100m) now safe with proper incremental streaming (only mesh new/moved, not every frame). Still aims for interactive rates per AGENTS 30+FPS target with ~25+ chunks visible.
 
     // Hash the chunk center (incl. radial y) to detect player movement to a
     // new (x,z) column or crossing into a different radial chunk layer.

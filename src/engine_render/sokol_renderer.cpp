@@ -774,13 +774,11 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         const glm::dvec3 camera_origin = ctx.camera_origin.world_origin;
 
         // Camera-relative adjustment for planet voxel meshes.
-        // WHY: build_chunk_mesh now emits verts as (world - snap_origin) for
-        // float32 precision at 2M km scale (sub-mm vs ~0.25 m jitter). The
-        // incoming vp + frustum are computed in absolute world space from the
-        // camera's world transform. To place small relative verts correctly we
-        // left-multiply a translate(+origin) so gl_Position = (vp * T) * v_rel
-        // == vp * (v_rel + origin). Wireframe and debug meshes remain absolute
-        // world and use raw vp. This completes the camera-relative vertex fix.
+        // WHY: build_chunk_mesh emits verts as (world - snap_origin) for
+        // float32 sub-mm precision at 1000 km planetary scale. The incoming
+        // vp + frustum come from the world-space camera. We use rel_vp =
+        // vp * translate(+origin) so the shader's mvp * v_rel lands at the
+        // correct surface location. Wireframe/debug stay on raw vp (absolute).
         const glm::mat4 origin_t = glm::translate(glm::mat4(1.0f), glm::vec3(camera_origin));
         const glm::mat4 rel_vp = vp * origin_t;
 
@@ -790,19 +788,25 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                   pipelines_.opaque, pipelines_.opaque_u16);
 
         const Frustum frustum = extract_frustum(vp);
-        // Bounds stored in GPU mesh are in the same space as the submitted
-        // vertices (relative to camera_origin/snap for planet cached meshes).
-        // Adding the origin gives world-space AABB for testing against the
-        // world-space frustum extracted from vp.
+        // WHY no frustum test on cached here: our streaming already restricts
+        // scene.opaque_meshes (and thus live cached_meshes_ after upload
+        // live_ids + eviction) to a small player-centric patch (the only
+        // chunks we *want* for the local voxel surface). At planetary scale
+        // even "local" world_b = (small_bounds + snap) + float vp/frustum
+        // planes (extracted from camera at ~1 M m) suffer rounding that can
+        // falsely cull near chunks (the classic large-world float problem
+        // confirmed in voxel dev prior art). Unconditionally drawing the
+        // (already tiny local) resident set guarantees the 1 m noise terrain
+        // surface is visible while wireframe remains the debug overlay.
+        // (Proper relative-space frustum can be a later perf commit.)
         const glm::vec3 origin_offset = glm::vec3(camera_origin);
         for (const auto &[id, mesh] : cached_meshes_) {
             const glm::vec3 world_bmin = mesh.bounds_min + origin_offset;
             const glm::vec3 world_bmax = mesh.bounds_max + origin_offset;
-            if (aabb_in_frustum(frustum, world_bmin, world_bmax)) {
-                draw_mesh(mesh, rel_vp, model, camera_pos,
-                          camera_origin,
-                          pipelines_.opaque, pipelines_.opaque_u16);
-            }
+            // (aabb test intentionally bypassed for local planet voxels)
+            draw_mesh(mesh, rel_vp, model, camera_pos,
+                      camera_origin,
+                      pipelines_.opaque, pipelines_.opaque_u16);
         }
 
         // Wireframe geometry (drawn over opaque, with depth).

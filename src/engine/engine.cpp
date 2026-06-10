@@ -424,7 +424,7 @@ void Engine::tick(double frame_dt,
         block_world_.address_from_world(
             glm::dvec3(local_player.transform.position));
     const int32_t surface_shell = block_world_.shell_count() - 1;
-    const int32_t chunk_radius = 2;
+    const int32_t chunk_radius = 3;  // 7x7 xz grid (~112 m patch at 1 m blocks) for playable local surface
 
     // Hash the chunk center (incl. radial y) to detect player movement to a
     // new (x,z) column or crossing into a different radial chunk layer.
@@ -439,11 +439,13 @@ void Engine::tick(double frame_dt,
     const bool player_moved = (center_hash != last_chunk_center_hash_);
 
     // Collect desired chunk addresses for the surface shell.
-    // WHY: must request the radial (chunk.y) layers that actually contain the
-    // terrain surface blocks for the columns around the player. We load the
-    // player's current y and one layer below (clamped) so top-of-terrain faces
-    // (Grass) are present and face-culled correctly from air above. x/z vary
-    // in a 5x5; y variation across the patch is covered by the +/- slab.
+    // WHY (at 1000 km radius): must request the radial (chunk.y) layers containing
+    // the actual terrain surface for columns around the player so that 1 m voxels
+    // with per-column noise height are generated and meshed. Load player_cy and
+    // the layer below (clamped) + a 7x7 xz footprint gives a decent playable
+    // patch of surface to walk/fly on and see 3D variation instead of a tiny
+    // 5x5=~80 m island. (Larger radius + streaming budget will be tuned for the
+    // 25-chunk perf target later.)
     std::vector<BlockAddress> desired;
     const int32_t player_cy = player_addr.chunk.y;
     for (int32_t dy = -1; dy <= 0; ++dy) {

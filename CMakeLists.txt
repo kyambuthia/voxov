@@ -191,6 +191,7 @@ target_include_directories(engine_render_sokol PUBLIC
     src
     ${VOXOV_SOKOL_DIR}
     ${VOXOV_SOKOL_UTIL_DIR}
+    ${CMAKE_SOURCE_DIR}/dependencies/stb
 )
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_compile_options(engine_render_sokol PRIVATE -fpermissive)

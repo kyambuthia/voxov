@@ -417,13 +417,24 @@ uint64_t BlockWorld::chunk_mesh_id(const BlockAddress &addr) {
 RenderMesh BlockWorld::build_chunk_mesh(
     const BlockAddress &addr,
     const VoxelChunk &chunk,
-    const std::function<bool(const BlockAddress&)> &solid_at) const {
+    const std::function<bool(const BlockAddress&)> &solid_at,
+    const glm::dvec3 &camera_relative_origin) const {
 
     RenderMesh mesh{};
     mesh.mesh_id = block_chunk_mesh_id(addr);
 
     const ShellConfig &sh = shell_config(addr.shell);
     const double bw = config_.block_size;
+
+    // Pre-compute tangent basis for the chunk center (approximate —
+    // each block will re-compute for accuracy, but this avoids
+    // redundant normalize calls for blocks at the same height).
+    const glm::dvec3 chunk_center_dir = glm::normalize(
+        block_world_center(addr.sector, addr.shell,
+            addr.chunk.x * config_.chunk_size + config_.chunk_size / 2,
+            addr.chunk.z * config_.chunk_size + config_.chunk_size / 2,
+            addr.chunk.y * config_.chunk_size + config_.chunk_size / 2) -
+        config_.planet.center);
 
     for (int32_t bz = 0; bz < config_.chunk_size; ++bz) {
         for (int32_t by = 0; by < config_.chunk_size; ++by) {
@@ -458,10 +469,29 @@ RenderMesh BlockWorld::build_chunk_mesh(
                 // Check each of 6 block faces.
                 for (int f = 0; f < 6; ++f) {
                     const BlockDir fd = static_cast<BlockDir>(f);
-                    const auto nbs = neighbors(addr, fd);
+                    // Inline neighbor check to avoid vector allocation.
+                    const glm::ivec3 dv = block_dir_vector(fd);
+                    const glm::ivec3 nb_block = glm::ivec3(bx, by, bz) + dv;
+                    
                     bool occluded = false;
-                    for (const auto &nb : nbs) {
-                        if (solid_at(nb.address)) { occluded = true; break; }
+                    // Check if neighbor is within the same chunk.
+                    if (nb_block.x >= 0 && nb_block.x < config_.chunk_size &&
+                        nb_block.y >= 0 && nb_block.y < config_.chunk_size &&
+                        nb_block.z >= 0 && nb_block.z < config_.chunk_size) {
+                        // Same chunk - check directly.
+                        occluded = chunk.solid(nb_block.x, nb_block.y, nb_block.z);
+                    } else {
+                        // Different chunk - use solid_at callback.
+                        BlockAddress nb_addr = addr;
+                        nb_addr.block = nb_block;
+                        // Normalize block coordinates for cross-chunk lookup.
+                        if (nb_block.x < 0) { nb_addr.chunk.x -= 1; nb_addr.block.x += config_.chunk_size; }
+                        else if (nb_block.x >= config_.chunk_size) { nb_addr.chunk.x += 1; nb_addr.block.x -= config_.chunk_size; }
+                        if (nb_block.y < 0) { nb_addr.chunk.y -= 1; nb_addr.block.y += config_.chunk_size; }
+                        else if (nb_block.y >= config_.chunk_size) { nb_addr.chunk.y += 1; nb_addr.block.y -= config_.chunk_size; }
+                        if (nb_block.z < 0) { nb_addr.chunk.z -= 1; nb_addr.block.z += config_.chunk_size; }
+                        else if (nb_block.z >= config_.chunk_size) { nb_addr.chunk.z += 1; nb_addr.block.z -= config_.chunk_size; }
+                        occluded = solid_at(nb_addr);
                     }
                     if (occluded) continue;
 
@@ -480,8 +510,10 @@ RenderMesh BlockWorld::build_chunk_mesh(
                     const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
                     for (int ci = 0; ci < 4; ++ci) {
                         const glm::dvec3 corner = center + offsets[ci] + fn * hs;
+                        // Camera-relative vertex: offset from snap origin preserves
+                        // float32 sub-mm precision at 2000 km planet scale.
                         mesh.vertices.push_back(RenderVertex{
-                            glm::vec3(corner - config_.planet.center),
+                            glm::vec3(corner - camera_relative_origin),
                             color, glm::vec3(fn)});
                     }
                     mesh.indices.insert(mesh.indices.end(), {

@@ -188,7 +188,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   // 3D noise on sphere surface for seamless terrain.
   PlanetDefinition planet_def{};
   planet_def.center = glm::dvec3(0.0);
-  planet_def.radius = 2000000.0;  // 2000 km per primary objective for full planetary scale
+  planet_def.radius = 500.0;  // 500 m — small planet for debugging visibility
   planet_def.voxel_size = 1.0;
   planet_def.chunks_per_face = 64;
   planet_def.seed = k_voxov_flat_world_seed;
@@ -223,32 +223,35 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   {
     const glm::dvec3 equator_dir = glm::normalize(glm::dvec3(1.0, 0.0, 0.0));
     const int32_t surf_voxels = block_world_.terrain_height_at(equator_dir);
-    const ShellConfig &outer = block_world_.shell_config(
-        block_world_.shell_count() - 1);
-    // Map terrain voxel count to a radius within the thin outer shell.
-    const double t = static_cast<double>(surf_voxels) /
-                     static_cast<double>(outer.vertical_layers);
-    const double surface_r = outer.inner_radius +
-        t * (outer.outer_radius - outer.inner_radius);
-    local_player.transform.position = glm::vec3(equator_dir * surface_r +
-                                                 equator_dir * 3.0);
+    // Surface is at planet_radius + terrain_height_in_blocks * block_size.
+    // Player spawns a few blocks above that.
+    const double surface_r = block_world_.planet().radius +
+        static_cast<double>(surf_voxels) * block_world_.config().block_size;
+    local_player.transform.position = glm::vec3(equator_dir * (surface_r + 5.0));
   }
-  local_player.camera_rig.pitch = -45.0f;  // look more "down" at local surface (with the local-up camera fix below, this now orients relative to radial)
-  local_player.camera_rig.distance = 10.0f;
+  local_player.camera_rig.pitch = -30.0f;  // look down at surface at ~30 degrees
+  local_player.camera_rig.distance = 15.0f;
   local_player.camera_rig.maxDistance = 48.0f;
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
-  camera.z_far = 5000000.0f;
-  camera.z_near = 0.5f;
+  camera.z_far = 2000.0f;   // Scale z_far to planet size (500m radius → 2000m far)
+  camera.z_near = 0.5f;     // z_far/z_near ratio = 4000:1, good float32 depth precision
   update_third_person_camera(local_player, camera);
 
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled);
   refresh_overlay_text();
 
-  spdlog::info("Engine init: block planet r={:.0f}km, shells={} fly=ON",
-               planet_def.radius / 1000.0,
+  spdlog::info("Engine init: block planet r={:.0f}m, shells={}, fly=ON",
+               planet_def.radius,
                block_world_.shell_count());
+  spdlog::info("Player spawn: ({:.1f}, {:.1f}, {:.1f}), terrain_h={}, z_far={:.0f}",
+               local_player.transform.position.x,
+               local_player.transform.position.y,
+               local_player.transform.position.z,
+               block_world_.terrain_height_at(
+                   glm::normalize(glm::dvec3(local_player.transform.position))),
+               camera.z_far);
 
   // Initialize camera-relative snap origin at player spawn position.
   camera_snap_origin_ = glm::dvec3(local_player.transform.position);
@@ -431,7 +434,7 @@ void Engine::tick(double frame_dt,
         block_world_.address_from_world(
             glm::dvec3(local_player.transform.position));
     const int32_t surface_shell = block_world_.shell_count() - 1;
-    const int32_t chunk_radius = 3;  // 7x7 xz ~49 chunks per radial layer; larger playable local patch (~100m) now safe with proper incremental streaming (only mesh new/moved, not every frame). Still aims for interactive rates per AGENTS 30+FPS target with ~25+ chunks visible.
+    const int32_t chunk_radius = 2;  // 5x5 xz = 25 chunks per layer. Small for 500m planet to maintain FPS.
 
     // Hash the chunk center (incl. radial y) to detect player movement to a
     // new (x,z) column or crossing into a different radial chunk layer.
@@ -443,22 +446,19 @@ void Engine::tick(double frame_dt,
     const bool player_moved = (center_hash != last_chunk_center_hash_);
 
     // Collect desired chunk addresses for the surface shell.
+    // Only load the player's current y-layer for performance.
     std::vector<BlockAddress> desired;
     const int32_t player_cy = player_addr.chunk.y;
-    for (int32_t dy = -1; dy <= 0; ++dy) {
-      const int32_t cy = player_cy + dy;
-      if (cy < 0) continue;
-      for (int32_t cz = -chunk_radius; cz <= chunk_radius; ++cz) {
-        for (int32_t cx = -chunk_radius; cx <= chunk_radius; ++cx) {
-          BlockAddress addr{};
-          addr.sector = player_addr.sector;
-          addr.shell  = surface_shell;
-          addr.chunk  = glm::ivec3(
-              player_addr.chunk.x + cx,
-              cy,
-              player_addr.chunk.z + cz);
-          desired.push_back(addr);
-        }
+    for (int32_t cz = -chunk_radius; cz <= chunk_radius; ++cz) {
+      for (int32_t cx = -chunk_radius; cx <= chunk_radius; ++cx) {
+        BlockAddress addr{};
+        addr.sector = player_addr.sector;
+        addr.shell  = surface_shell;
+        addr.chunk  = glm::ivec3(
+            player_addr.chunk.x + cx,
+            player_cy,
+            player_addr.chunk.z + cz);
+        desired.push_back(addr);
       }
     }
 
@@ -474,10 +474,11 @@ void Engine::tick(double frame_dt,
 
     // Rebuild full mesh set when player moves to new chunk center
     // or when new chunks are loaded, or when snap origin drifts.
-    // (Restored from debug force-every-frame which caused 2 FPS by re-meshing
-    // the entire local patch every tick.)
+    // NOTE: We capture snap_origin_dirty_ BEFORE resetting it because the
+    // inner loop needs to know if all meshes should be rebuilt.
+    const bool need_full_rebuild = player_moved || snap_origin_dirty_;
     if (player_moved || !new_chunks.empty() || snap_origin_dirty_) {
-      if (player_moved || snap_origin_dirty_) {
+      if (need_full_rebuild) {
         scene.opaque_meshes.clear();
         last_chunk_center_hash_ = center_hash;
         snap_origin_dirty_ = false;
@@ -502,7 +503,7 @@ void Engine::tick(double frame_dt,
           BlockAddress nk = nc; nk.block = glm::ivec3(0);
           if (nk == ck) { is_new = true; break; }
         }
-        if (!player_moved && !is_new && !snap_origin_dirty_) continue;
+        if (!need_full_rebuild && !is_new) continue;
 
         auto solid_at = [this, &ck, chunk](const BlockAddress &na) -> bool {
           BlockAddress nk = na;
@@ -757,6 +758,12 @@ void Engine::refresh_overlay_text() {
   }
 
   const ProfilingSnapshot &profiling = render_stats.profiling;
+
+  // Get player block address for debug display.
+  const BlockAddress player_dbg_addr =
+      block_world_.address_from_world(
+          glm::dvec3(local_player.transform.position));
+
   std::string overlay_text =
       "FPS: " + std::to_string(static_cast<int>(render_stats.fps + 0.5)) +
       "\nCPU: " + std::to_string(render_stats.cpu_ms).substr(0, 5) +
@@ -789,6 +796,19 @@ void Engine::refresh_overlay_text() {
   overlay_text += debug_fly_mode_ ? "ON (F4)" : "OFF (F4)";
   overlay_text += "\nWorld chunks: ";
   overlay_text += std::to_string(render_stats.streamed_chunk_count);
+
+  // Player position and block address debug info.
+  overlay_text += "\nPos: (" +
+      std::to_string(static_cast<int>(local_player.transform.position.x)) + ", " +
+      std::to_string(static_cast<int>(local_player.transform.position.y)) + ", " +
+      std::to_string(static_cast<int>(local_player.transform.position.z)) + ")";
+  overlay_text += "\nSector: " + std::to_string(static_cast<int>(player_dbg_addr.sector)) +
+      " Shell: " + std::to_string(player_dbg_addr.shell);
+  overlay_text += "\nChunk: (" + std::to_string(player_dbg_addr.chunk.x) + ", " +
+      std::to_string(player_dbg_addr.chunk.y) + ", " +
+      std::to_string(player_dbg_addr.chunk.z) + ")";
+  overlay_text += "\nOpaques: " + std::to_string(scene.opaque_meshes.size());
+
   if (!last_hud_message_.empty()) {
     overlay_text += "\n" + last_hud_message_;
   }

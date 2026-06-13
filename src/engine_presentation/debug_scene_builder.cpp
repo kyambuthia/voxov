@@ -227,6 +227,10 @@ void append_player_debug(RenderMesh &mesh, const PlayerEntity &player,
                          const glm::vec3 &skeleton_color,
                          float skeleton_thickness,
                          float target_radius);
+void append_player_orientation_debug(RenderMesh &mesh,
+                                     const PlayerEntity &player,
+                                     float axis_length = 2.0f,
+                                     float thickness = 0.04f);
 void append_collision_debug(RenderMesh &mesh,
                             const RuntimeDebugSceneSnapshot &snapshot,
                             const PlayerEntity &local_player);
@@ -633,6 +637,40 @@ void append_player_debug(RenderMesh &mesh, const PlayerEntity &player,
   }
 }
 
+void append_player_orientation_debug(RenderMesh &mesh,
+                                     const PlayerEntity &player,
+                                     float axis_length,
+                                     float thickness) {
+  // Draw player's local coordinate frame (forward, up, right) as colored lines.
+  // WHY: On a spherical planet, the player's orientation is relative to the
+  // local surface normal (radial up), not world +Y. This visualization helps
+  // debug orientation issues where the player appears tilted or misaligned.
+  const glm::vec3 pos = player.transform.position;
+
+  // Extract orientation from player's rotation quaternion.
+  const glm::mat3 rot = glm::mat3_cast(player.transform.rotation);
+  const glm::vec3 forward = glm::normalize(rot[2]);  // Column 2 = forward
+  const glm::vec3 up = glm::normalize(rot[1]);       // Column 1 = up
+  const glm::vec3 right = glm::normalize(rot[0]);    // Column 0 = right
+
+  // Forward = Blue (Z-axis)
+  append_mesh(mesh, build_debug_line_mesh(pos, pos + forward * axis_length,
+                                          thickness, glm::vec3(0.2f, 0.4f, 1.0f)));
+  // Up = Green (Y-axis)
+  append_mesh(mesh, build_debug_line_mesh(pos, pos + up * axis_length,
+                                          thickness, glm::vec3(0.2f, 1.0f, 0.3f)));
+  // Right = Red (X-axis)
+  append_mesh(mesh, build_debug_line_mesh(pos, pos + right * axis_length,
+                                          thickness, glm::vec3(1.0f, 0.2f, 0.2f)));
+
+  // Also draw the radial up direction (planet surface normal) as yellow.
+  const glm::vec3 radial_up = glm::normalize(pos);
+  append_mesh(mesh, build_debug_line_mesh(pos + glm::vec3(0.0f, 0.1f, 0.0f),
+                                          pos + radial_up * (axis_length * 1.2f),
+                                          thickness * 0.75f,
+                                          glm::vec3(1.0f, 1.0f, 0.2f)));
+}
+
 void append_collision_debug(RenderMesh &mesh,
                             const RuntimeDebugSceneSnapshot &snapshot,
                             const PlayerEntity &local_player) {
@@ -729,6 +767,13 @@ RenderMesh DebugSceneBuilder::build(
                         render_skeleton_only, snapshot.collision_debug_enabled,
                         snapshot.devhud_enabled, glm::vec3(0.2f, 0.85f, 1.0f),
                         glm::vec3(0.95f, 0.97f, 1.0f), 0.012f, 0.12f);
+
+    // Always show player orientation axes when devhud is enabled.
+    // WHY: On a spherical planet, visualizing the player's local frame
+    // (forward/up/right) vs. the radial up helps debug orientation issues.
+    if (snapshot.devhud_enabled) {
+      append_player_orientation_debug(debug_world, local_player, 2.5f, 0.05f);
+    }
   }
 
   if (snapshot.splitscreen && snapshot.local_player_secondary != nullptr &&

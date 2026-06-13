@@ -573,6 +573,17 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
         return;
     }
 
+    // Debug: log first 5 draw calls to confirm GPU draw path executes.
+    // WHY: blocks invisible despite valid meshes in scene — need to verify
+    // sg_draw() is actually called with valid buffer handles and pipeline.
+    // TODO: remove once voxel rendering is confirmed working.
+    static int draw_count = 0;
+    if (draw_count < 5) {
+        std::fprintf(stderr, "draw_mesh[%d]: idx_count=%d vb.id=%d ib.id=%d pipeline_u32.id=%d\n",
+                     draw_count, mesh.index_count, mesh.vertex_buffer.id, mesh.index_buffer.id, pipeline_u32.id);
+        draw_count++;
+    }
+
     const sg_pipeline pipeline =
         mesh.index_type == SG_INDEXTYPE_UINT16 ? pipeline_u16 : pipeline_u32;
     if (pipeline.id != 0) {

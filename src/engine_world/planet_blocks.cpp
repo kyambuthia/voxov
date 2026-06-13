@@ -4,6 +4,7 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
+#include <cstdio>    // std::fprintf for debug diagnostics (TODO: remove)
 #include <cstring>
 
 // ============================================================================
@@ -297,6 +298,7 @@ void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const
     const int32_t base_col_x = addr.chunk.x * config_.chunk_size;
     const int32_t base_col_z = addr.chunk.z * config_.chunk_size;
 
+    int32_t solid_count = 0;
     for (int32_t z = 0; z < config_.chunk_size; ++z)
         for (int32_t y = 0; y < config_.chunk_size; ++y)
             for (int32_t x = 0; x < config_.chunk_size; ++x) {
@@ -305,8 +307,29 @@ void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const
                     addr.sector, base_col_x + x, base_col_z + z);
                 BlockAddress ba = addr;
                 ba.block = glm::ivec3(x, y, z);
-                out.set_material(x, y, z, block_material_at(ba, surf_h));
+                const VoxelMaterial mat = block_material_at(ba, surf_h);
+                out.set_material(x, y, z, mat);
+                if (mat != VoxelMaterial::Air) ++solid_count;
             }
+
+    // Debug: log first chunk generation to verify terrain produces solid blocks.
+    // WHY: blocks invisible on planet — need to confirm generate_chunk()
+    // actually fills voxels with non-Air materials at the expected heights.
+    // Logs once (static bool) to avoid per-chunk spam.
+    // TODO: remove once voxel rendering is confirmed working.
+    static bool logged_first = false;
+    if (!logged_first) {
+        logged_first = true;
+        const int32_t sample_h = terrain_height_at_face_uv(
+            addr.sector, base_col_x + 8, base_col_z + 8);
+        const ShellConfig &sh = shell_config(addr.shell);
+        std::fprintf(stderr, "Chunk gen: sector=%d shell=%d chunk=(%d,%d,%d) solid=%d/%d "
+                     "base_col=(%d, %d) sample_h=%d vlayers=%d\n",
+                     static_cast<int>(addr.sector), addr.shell,
+                     addr.chunk.x, addr.chunk.y, addr.chunk.z,
+                     solid_count, config_.chunk_size * config_.chunk_size * config_.chunk_size,
+                     base_col_x, base_col_z, sample_h, sh.vertical_layers);
+    }
 }
 
 VoxelChunk &BlockWorld::get_or_generate_chunk(const BlockAddress &addr) {
@@ -495,9 +518,13 @@ RenderMesh BlockWorld::build_chunk_mesh(
                     -tb.east * hs + tb.north * hs,
                 };
 
+                // Height fraction for color tinting: 0 = shell base, 1 = shell top.
+                // BUG FIX: was dividing by horizontal_res (~1024) making all
+                // grass nearly black. Must divide by vertical_layers (30) to get
+                // proper [0,1] range for height-based color variation.
                 const float height_t = std::clamp(
                     static_cast<float>(gy) /
-                        static_cast<float>(std::max(1, sh.horizontal_res)),
+                        static_cast<float>(std::max(1, sh.vertical_layers)),
                     0.0f, 1.0f);
 
                 // Check each of 6 block faces.
@@ -599,12 +626,29 @@ RenderMesh BlockWorld::build_chunk_mesh(
             }
         }
     }
+    // Debug: log first mesh build to verify build_chunk_mesh() produces geometry.
+    // WHY: chunks generated with 2155 solid blocks but blocks still invisible —
+    // need to confirm mesh has vertices/indices and camera-relative positions
+    // are reasonable (small offsets from snap origin).
+    // TODO: remove once voxel rendering is confirmed working.
+    static bool logged_mesh = false;
+    if (!logged_mesh) {
+        logged_mesh = true;
+        std::fprintf(stderr, "Mesh build: verts=%zu idxs=%zu tris=%zu camera_origin=(%.1f,%.1f,%.1f)\n",
+                     mesh.vertices.size(), mesh.indices.size(), mesh.indices.size() / 3,
+                     camera_relative_origin.x, camera_relative_origin.y, camera_relative_origin.z);
+        if (!mesh.vertices.empty()) {
+            const auto &v0 = mesh.vertices[0];
+            std::fprintf(stderr, "First vertex: pos=(%.3f,%.3f,%.3f) color=(%.2f,%.2f,%.2f)\n",
+                         v0.position.x, v0.position.y, v0.position.z,
+                         v0.color.x, v0.color.y, v0.color.z);
+        }
+    }
     return mesh;
 }
 
 // ============================================================================
 // SphereNoise3D
-// ============================================================================
 
 namespace {
 

@@ -417,6 +417,39 @@ void Engine::tick(double frame_dt,
   // correct camera-relative positions for lighting.
   scene.camera_origin.world_origin = camera_snap_origin_;
 
+  // ── Debug diagnostics ────────────────────────────────────────────────
+  // WHY: voxel blocks were invisible despite chunks being generated and meshes
+  // being built. These diagnostics trace the full pipeline: camera position,
+  // snap origin, mesh count, and whether the first vertex projects to a
+  // visible screen-space location. Logs every 60 frames to avoid spam.
+  // TODO: remove once voxel rendering is confirmed working.
+  if (frame_index % 60 == 0) {
+    std::fprintf(stderr, "Frame %lu: Camera pos=(%.1f,%.1f,%.1f) snap=(%.1f,%.1f,%.1f) opaques=%zu chunks=%zu wireframes=%zu\n",
+                 frame_index,
+                 camera.transform.position.x, camera.transform.position.y, camera.transform.position.z,
+                 camera_snap_origin_.x, camera_snap_origin_.y, camera_snap_origin_.z,
+                 scene.opaque_meshes.size(), block_world_.chunk_count(),
+                 scene.wireframe_meshes.size());
+
+    // Project first vertex to NDC to verify it lands on screen.
+    // WHY: confirms the camera-relative vertex offset + VP matrix produce
+    // valid clip coordinates. NDC in [-1,1] with z in [0,1] = visible.
+    if (!scene.opaque_meshes.empty() && !scene.opaque_meshes[0].vertices.empty()) {
+      const auto &v0 = scene.opaque_meshes[0].vertices[0];
+      const glm::vec3 rel_pos = v0.position; // already camera-relative
+      const glm::vec3 world_pos = rel_pos + glm::vec3(camera_snap_origin_);
+      const glm::mat4 p = camera.projection(16.0f / 9.0f);
+      const glm::mat4 vp = p * camera.view();
+      const glm::vec4 clip = vp * glm::vec4(world_pos, 1.0f);
+      const glm::vec3 ndc = (clip.w != 0.0f) ? glm::vec3(clip) / clip.w : glm::vec3(999.0f);
+      std::fprintf(stderr, "  Vertex0: world=(%.1f,%.1f,%.1f) clip=(%.2f,%.2f,%.2f,%.2f) ndc=(%.2f,%.2f,%.2f) %s\n",
+                   world_pos.x, world_pos.y, world_pos.z,
+                   clip.x, clip.y, clip.z, clip.w,
+                   ndc.x, ndc.y, ndc.z,
+                   (ndc.x >= -1 && ndc.x <= 1 && ndc.y >= -1 && ndc.y <= 1 && ndc.z >= 0 && ndc.z <= 1) ? "VISIBLE" : "CLIPPED");
+    }
+  }
+
   // ── Block world chunk streaming ─────────────────────────────────────
   // Load surface chunks in a radius around the player using the cube-sphere
   // shell architecture (6 sectors, radial shells doubling horizontal res,
@@ -517,6 +550,12 @@ void Engine::tick(double frame_dt,
                                                         camera_snap_origin_);
         if (!mesh.vertices.empty()) {
           scene.opaque_meshes.push_back(std::move(mesh));
+          // Debug: confirm mesh reaches the scene upload path.
+          spdlog::debug("Mesh uploaded: mid={} verts={} idxs={}",
+                        mid, mesh.vertices.size(), mesh.indices.size());
+        } else {
+          // Debug: mesh was built but has no geometry — all faces culled?
+          spdlog::debug("Mesh EMPTY: mid={}", mid);
         }
       }
 

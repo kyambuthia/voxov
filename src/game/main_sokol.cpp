@@ -117,6 +117,22 @@ void voxov_frame() {
 
     g_runtime->tick(g_pacer->frame_dt());
 
+    // Auto-screenshot after 120 frames (~2s) for debugging.
+    // WHY: external screenshot tools fail on this Wayland compositor.
+    // TODO: remove once voxel rendering is confirmed working.
+    static int frame_counter = 0;
+    frame_counter++;
+    if (frame_counter == 120) {
+        std::system("mkdir -p screenshots 2>/dev/null");
+        const int w = sapp_width();
+        const int h = sapp_height();
+        if (g_runtime->capture_screenshot("screenshots/voxov_debug.png", w, h)) {
+            spdlog::info("Auto-screenshot saved: screenshots/voxov_debug.png");
+        } else {
+            spdlog::warn("Auto-screenshot failed");
+        }
+    }
+
     // F12 screenshot capture
     static bool f12_was_down = false;
     if (g_platform) {

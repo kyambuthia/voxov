@@ -619,9 +619,13 @@ RenderMesh BlockWorld::build_chunk_mesh(
                             glm::vec3(corner - camera_relative_origin),
                             color, glm::vec3(fn)});
                     }
+                    // Winding order: CCW when viewed from outside the block
+                    // (along the face normal). Offsets[0-3] are BL, BR, TR, TL
+                    // in the tangent plane. Reversed from original to fix
+                    // back-face culling on spherical geometry.
                     mesh.indices.insert(mesh.indices.end(), {
-                        base, base + 1, base + 2,
-                        base, base + 2, base + 3});
+                        base, base + 2, base + 1,
+                        base, base + 3, base + 2});
                 }
             }
         }

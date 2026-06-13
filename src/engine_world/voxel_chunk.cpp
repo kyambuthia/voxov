@@ -45,15 +45,40 @@ glm::vec3 VoxelChunk::material_color(VoxelMaterial material, bool top_face,
   switch (material) {
   case VoxelMaterial::Grass:
     if (top_face) {
-      return glm::vec3(0.22f + height_t * 0.2f, 0.45f + height_t * 0.35f,
-                       0.16f);
+      // Height-based color contrast for visible terrain variation:
+      // - Low areas (height_t ~0): brownish-yellow-green (dry/low grass)
+      // - High areas (height_t ~1): rich vibrant green (high grass/vegetation)
+      // WHY: previous tint was 0.22..0.42 red, 0.45..0.80 green — only ~2x contrast.
+      // Even with height_t in [0,1], all grass looked the same shade. Fixed by making
+      // low areas visibly browner (more red, less green) and high areas vivid green.
+      const float low_green = 0.25f;   // brown-green at low elevation
+      const float high_green = 0.85f;  // vibrant green at high elevation
+      const float low_red = 0.35f;     // brownish at low elevation
+      const float high_red = 0.15f;    // less red at high elevation (purer green)
+
+      // Use height_t plus a slight non-linear boost to emphasize mid-range contrast.
+      const float t = height_t * height_t;  // quadratic emphasizes higher areas
+      return glm::vec3(
+          low_red + (high_red - low_red) * t,        // red: 0.35 → 0.15 (less red higher up)
+          low_green + (high_green - low_green) * t,  // green: 0.25 → 0.85 (more green higher up)
+          0.08f + height_t * 0.20f);                 // blue: slight increase with height
     }
-    return glm::vec3(0.33f, 0.42f, 0.18f);
+    // Side faces of grass blocks: slightly darker than top, with subtle height tint.
+    return glm::vec3(0.28f + height_t * 0.10f, 0.35f + height_t * 0.25f,
+                     0.12f + height_t * 0.08f);
   case VoxelMaterial::Stone:
-    return glm::vec3(0.46f, 0.48f, 0.5f);
+    // Stone with subtle height variation for visual interest.
+    return glm::vec3(
+        0.44f + height_t * 0.08f,
+        0.46f + height_t * 0.08f,
+        0.48f + height_t * 0.08f);
   case VoxelMaterial::Dirt:
   default:
-    return glm::vec3(0.38f, 0.27f, 0.18f);
+    // Dirt with height variation: lighter at higher elevations.
+    return glm::vec3(
+        0.35f + height_t * 0.15f,
+        0.25f + height_t * 0.12f,
+        0.15f + height_t * 0.10f);
   }
 }
 

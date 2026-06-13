@@ -1016,11 +1016,13 @@ void test_voxel_material_custom_values_affect_mesh_colors() {
   const RenderMesh mesh = chunk.build_greedy_mesh();
 
   assert(!mesh.vertices.empty());
+  // Stone at y=0 (height_t=0): (0.44, 0.46, 0.48) after terrain color contrast fix.
+  // The block sits at the bottom of the chunk (y=0) so height_t ≈ 0.
   bool found_stone_tint = false;
   for (const RenderVertex &vertex : mesh.vertices) {
-    if (std::fabs(vertex.color.r - 0.46f) < 0.001f &&
-        std::fabs(vertex.color.g - 0.48f) < 0.001f &&
-        std::fabs(vertex.color.b - 0.5f) < 0.001f) {
+    if (std::fabs(vertex.color.r - 0.44f) < 0.001f &&
+        std::fabs(vertex.color.g - 0.46f) < 0.001f &&
+        std::fabs(vertex.color.b - 0.48f) < 0.001f) {
       found_stone_tint = true;
       break;
     }

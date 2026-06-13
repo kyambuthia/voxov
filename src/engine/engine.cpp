@@ -229,7 +229,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
         static_cast<double>(surf_voxels) * block_world_.config().block_size;
     local_player.transform.position = glm::vec3(equator_dir * (surface_r + 5.0));
   }
-  local_player.camera_rig.pitch = -30.0f;  // look down at surface at ~30 degrees
+  local_player.camera_rig.pitch = -75.0f;  // look DOWN at surface (negative = above tangent, looking in)
   local_player.camera_rig.distance = 15.0f;
   local_player.camera_rig.maxDistance = 48.0f;
   local_player_prev_position = local_player.transform.position;
@@ -467,7 +467,7 @@ void Engine::tick(double frame_dt,
         block_world_.address_from_world(
             glm::dvec3(local_player.transform.position));
     const int32_t surface_shell = block_world_.shell_count() - 1;
-    const int32_t chunk_radius = 2;  // 5x5 xz = 25 chunks per layer. Small for 500m planet to maintain FPS.
+    const int32_t chunk_radius = 3;  // 7x7 xz = 49 chunks per layer. Increased from 2 (25) for better surface coverage near player.
 
     // Hash the chunk center (incl. radial y) to detect player movement to a
     // new (x,z) column or crossing into a different radial chunk layer.
@@ -672,7 +672,7 @@ void Engine::leave_session() {}
 
 void Engine::reset_camera() {
   local_player.camera_rig.yaw = 180.0f;
-  local_player.camera_rig.pitch = -45.0f;  // consistent with spawn for looking at the spherical voxel surface
+  local_player.camera_rig.pitch = -75.0f;  // look DOWN at surface from above-and-behind
   local_player.camera_rig.distance = 10.0f;
 }
 
@@ -690,32 +690,47 @@ void Engine::update_third_person_camera(PlayerEntity &player,
                                         Camera &out_camera) {
   out_camera.clear_view_override();
   // Use local radial "up" for the spherical voxel planet (center at origin).
-  // WHY: the previous hardcoded world +Y up + global orbit angles meant the
-  // third-person camera orbited in flat-world space. On the sphere (e.g. player
-  // at +X equator), this placed the camera on the wrong side or looking across
-  // the planet, so the local 1m voxel surface patch was never in view (only the
-  // coarse wireframe was visible, or black). Per AGENTS debugging checklist
-  // and sources (spherical gravity camera threads, local-up orbit rigs in voxel
-  // planet projects), camera must respect local up = radial for the surface to
-  // be visible and playable.
+  // WHY: the previous implementation used orbit_forward_from_angles() which
+  // computes the orbit direction in world-Y-up space, then tried to rebase
+  // onto local_up by decomposing/recomposing. This rebase was mathematically
+  // incorrect — when local_up=(1,0,0), pitch=-30°, yaw=180°, the camera ended
+  // up at the same radial height as the player, looking at the horizon rather
+  // than down at the surface.
+  //
+  // Fix: compute orbit direction directly in the local tangent frame.
+  //   - yaw rotates within the tangent plane (north-east)
+  //   - pitch elevates the camera above/below the tangent plane
+  //   - negative pitch = camera looks DOWN at the surface
+  // This produces correct behavior for any point on the sphere:
+  //   at equator +X: local_up=(1,0,0), yaw=180→behind, pitch=-75→above+behind
+  //   at north pole +Y: falls back naturally since local_up=(0,1,0)
   glm::vec3 local_up = glm::normalize(render_position);
   if (glm::length(local_up) < 0.1f) local_up = glm::vec3(0.0f, 1.0f, 0.0f);
+
+  // Build a local tangent basis at the player position.
+  // Use world +Y as an arbitrary reference for north, then Gram-Schmidt
+  // to get perpendicular east and north in the tangent plane.
+  glm::vec3 world_ref = glm::vec3(0.0f, 1.0f, 0.0f);
+  // If local_up is nearly parallel to world_ref, switch to +Z to avoid
+  // degenerate tangent basis near the poles.
+  if (std::abs(glm::dot(local_up, world_ref)) > 0.99f) {
+    world_ref = glm::vec3(0.0f, 0.0f, 1.0f);
+  }
+  const glm::vec3 east = glm::normalize(glm::cross(world_ref, local_up));
+  const glm::vec3 north = glm::normalize(glm::cross(local_up, east));
+
+  const float yaw_rad = glm::radians(player.camera_rig.yaw);
+  const float pitch_rad = glm::radians(player.camera_rig.pitch);
+
+  // Orbit forward: yaw turns in the tangent plane (north-east),
+  // pitch elevates the camera above (+) or below (-) the tangent plane.
+  // Negative pitch = look down at the surface (camera is above player).
+  const glm::vec3 orbit_forward =
+      std::cos(pitch_rad) * (std::sin(yaw_rad) * east + std::cos(yaw_rad) * north)
+      + std::sin(pitch_rad) * local_up;
+
   const glm::vec3 pivot =
       render_position + local_up * player.camera_rig.pivotHeight;
-  glm::vec3 orbit_forward =
-      PlayerControllerSystem::orbit_forward_from_angles(
-          player.camera_rig.yaw, player.camera_rig.pitch);
-  // Rebase the pitch component of the orbit direction along local_up while
-  // keeping the yaw-ish horizontal part in the tangent plane. This makes
-  // pitch control "elevation above the local surface" instead of global Y.
-  const glm::vec3 orig_up = glm::vec3(0.0f, 1.0f, 0.0f);
-  float vert_comp = glm::dot(orbit_forward, orig_up);
-  glm::vec3 horiz = orbit_forward - vert_comp * orig_up;
-  horiz -= local_up * glm::dot(horiz, local_up);
-  const float hlen = glm::length(horiz);
-  if (hlen > 1e-5f) horiz /= hlen;
-  else horiz = glm::vec3(1.0f, 0.0f, 0.0f);  // fallback tangent
-  orbit_forward = glm::normalize(horiz + vert_comp * local_up);
   float camera_distance = player.camera_rig.distance;
   float hit_distance = 0.0f;
   if (collision_world.raycast(pivot, -orbit_forward, player.camera_rig.distance,
@@ -847,6 +862,18 @@ void Engine::refresh_overlay_text() {
       std::to_string(player_dbg_addr.chunk.y) + ", " +
       std::to_string(player_dbg_addr.chunk.z) + ")";
   overlay_text += "\nOpaques: " + std::to_string(scene.opaque_meshes.size());
+
+  // Camera debug info for visual debugging.
+  const glm::vec3 local_up = glm::normalize(local_player.transform.position);
+  overlay_text += "\nCam pitch: " + std::to_string(static_cast<int>(local_player.camera_rig.pitch)) +
+      " yaw: " + std::to_string(static_cast<int>(local_player.camera_rig.yaw));
+  overlay_text += "\nCam dist: " + std::to_string(static_cast<int>(local_player.camera_rig.distance));
+  overlay_text += "\nLocal up: (" +
+      std::to_string(local_up.x).substr(0, 4) + ", " +
+      std::to_string(local_up.y).substr(0, 4) + ", " +
+      std::to_string(local_up.z).substr(0, 4) + ")";
+  overlay_text += "\nTerrain h: " + std::to_string(
+      block_world_.terrain_height_at(glm::dvec3(local_up)));
 
   if (!last_hud_message_.empty()) {
     overlay_text += "\n" + last_hud_message_;

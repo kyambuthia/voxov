@@ -19,6 +19,7 @@
 #include "engine_world/planet_blocks.hpp"
 #include "engine_world/planet_lod.hpp"
 #include "engine_world/atmosphere.hpp"
+#include "engine_world/coordinate_frames.hpp"
 #include "engine_world/solar_system.hpp"
 #include "platform/platform_services.hpp"
 
@@ -147,6 +148,18 @@ private:
     SolarSystem solar_system_;
     double solar_system_time_ = 0.0;  // accumulated simulation time (seconds)
     size_t last_celestial_mesh_count_ = 0; // meshes appended to opaque_meshes
+
+    // ── Coordinate frame manager ──────────────────────────────────────
+    // Handles frame transitions: Planet ↔ Orbital ↔ Solar.
+    // WHY: maintains float64 precision at solar scales by using
+    // hierarchical coordinate frames with relative positions.
+    CoordinateFrameManager frame_manager_;
+    CoordinateFrame active_frame_ = CoordinateFrame::Planet;
+    int32_t active_body_index_ = 1;  // 0=sun, 1=planet, 2=moon
+    const char* active_frame_label_ = "Planet";
+    // Hysteresis for frame transitions: prevent rapid toggling.
+    double frame_transition_cooldown_ = 0.0;
+    static constexpr double k_frame_transition_hysteresis = 2.0; // seconds
 
     // ── Atmosphere rendering (Rayleigh + Mie scattering) ───────────────
     // Computes sky color on CPU each frame; fragment shader applies

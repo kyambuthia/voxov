@@ -265,6 +265,15 @@ bool Engine::init(const EngineRuntimeOptions &options) {
     solar_system_.init();
     solar_system_time_ = 0.0;
 
+    // ── Coordinate frame manager initialization ───────────────────────
+    // Set up hierarchical frame transforms for inter-planetary travel.
+    // Player starts on planet surface → Planet frame.
+    frame_manager_.init();
+    active_frame_ = CoordinateFrame::Planet;
+    active_body_index_ = 1;  // Voxov planet
+    active_frame_label_ = "Planet";
+    frame_transition_cooldown_ = 0.0;
+
     // ── Atmosphere initialization ────────────────────────────────────────
     // Rayleigh + Mie scattering for sky color and aerial perspective.
     // Scale heights are reduced proportionally to our 500m planet radius
@@ -894,6 +903,119 @@ void Engine::tick(double frame_dt,
   solar_system_time_ += frame_dt;
   solar_system_.update(solar_system_time_);
 
+  // ── Coordinate frame update ─────────────────────────────────────────
+  // Sync frame transforms from solar system orbital positions.
+  // Then determine active frame based on vehicle/player altitude.
+  frame_manager_.update(solar_system_);
+
+  // Detect active coordinate frame based on altitude.
+  // Uses the flight vehicle position when spawned and altitude > 0,
+  // otherwise uses player position.
+  {
+    frame_transition_cooldown_ =
+        std::max(0.0, frame_transition_cooldown_ - frame_dt);
+
+    // Determine altitude: use vehicle if in flight, else player position.
+    // Planet radius is the block-world sphere radius.
+    const double planet_radius = block_world_.planet().radius;
+    double altitude = 0.0;
+    glm::dvec3 entity_pos = glm::dvec3(0.0);
+    if (flight_vehicle_spawned_) {
+      const auto& vs = flight_vehicle_.state();
+      entity_pos = vs.position;
+      altitude = glm::length(vs.position) - planet_radius;
+    } else {
+      entity_pos = glm::dvec3(local_player.transform.position);
+      altitude = glm::length(entity_pos) - planet_radius;
+    }
+
+    // Atmosphere height from atmosphere params.
+    const double atm_height =
+        static_cast<double>(atmosphere_.params().atmosphere_height);
+
+    // Compute desired frame.
+    const CoordinateFrame desired_frame =
+        frame_manager_.current_frame(altitude, atm_height);
+
+    // Apply hysteresis: require cooldown to expire before frame transition.
+    if (desired_frame != active_frame_ &&
+        frame_transition_cooldown_ <= 0.0) {
+      active_frame_ = desired_frame;
+      frame_transition_cooldown_ = k_frame_transition_hysteresis;
+
+      // Log frame transition for debugging.
+      switch (active_frame_) {
+        case CoordinateFrame::Planet:
+          active_frame_label_ = "Planet";
+          spdlog::info("Frame transition: Planet (altitude={:.1f}m, atm={:.1f}m)",
+                       altitude, atm_height);
+          break;
+        case CoordinateFrame::Orbital:
+          active_frame_label_ = "Orbital";
+          spdlog::info("Frame transition: Orbital (altitude={:.1f}m, atm={:.1f}m)",
+                       altitude, atm_height);
+          break;
+        case CoordinateFrame::Solar:
+          active_frame_label_ = "Solar";
+          spdlog::info("Frame transition: Solar (altitude={:.1f}m, atm={:.1f}m)",
+                       altitude, atm_height);
+          break;
+        default:
+          active_frame_label_ = "Local";
+          break;
+      }
+    }
+
+    // ── SOI detection for interplanetary travel ───────────────────────
+    // Check if the vehicle/player is in another body's SOI.
+    // Convert vehicle position to Solar (heliocentric) frame for SOI check.
+    const glm::dvec3 solar_pos = frame_manager_.transform(
+        entity_pos, active_frame_, CoordinateFrame::Solar, active_body_index_);
+    const int32_t soi_body = frame_manager_.detect_soi(solar_pos, solar_system_);
+
+    // If SOI detection finds a different body and cooldown expired, switch.
+    if (soi_body >= 0 && soi_body != active_body_index_ &&
+        frame_transition_cooldown_ <= 0.0) {
+      const auto& body = solar_system_.bodies()[static_cast<size_t>(soi_body)];
+      spdlog::info("SOI transition: entering {} SOI (body_index={})",
+                   body.name, soi_body);
+      active_body_index_ = soi_body;
+      frame_transition_cooldown_ = k_frame_transition_hysteresis;
+      // When entering a body's SOI, switch to its Orbital/Planet frame.
+      if (altitude < atm_height) {
+        active_frame_ = CoordinateFrame::Planet;
+        active_frame_label_ = "Planet";
+      } else {
+        active_frame_ = CoordinateFrame::Orbital;
+        active_frame_label_ = "Orbital";
+      }
+    }
+
+    // ── Camera-relative origin update for frame transitions ───────────
+    // When in Orbital frame, the camera-relative origin should include
+    // the planet's orbital position so that the voxel terrain (which is
+    // at planet centre 0,0,0 in Planet frame) appears at the correct
+    // location relative to the sun and other celestial bodies.
+    // In Planet frame, the origin stays at the player's world position
+    // as before (planet centre is at 0,0,0).
+    if (active_frame_ == CoordinateFrame::Orbital ||
+        active_frame_ == CoordinateFrame::Solar) {
+      // Transform the player/vehicle world position to Solar frame.
+      // The snap origin becomes the difference needed to bring
+      // planet-frame coordinates into solar-frame coordinates.
+      // Planet centre at (0,0,0) in Planet frame → planet orbital pos
+      // in Solar frame.
+      const glm::dvec3 planet_orbit = solar_system_.body_position(1);
+      // Adjust so planet surface coords are centered on the planet body.
+      const glm::dvec3 new_origin = planet_orbit;
+      const double drift = glm::distance(new_origin, camera_snap_origin_);
+      if (drift > 100.0) {
+        camera_snap_origin_ = new_origin;
+        snap_origin_dirty_ = true;
+      }
+    }
+  }
+
   // Update sun direction from solar system into atmosphere.
   // WHY: the planet orbits the sun (planet at calculated position,
   // voxel world centred at origin).  We offset the solar-system
@@ -1317,6 +1439,36 @@ void Engine::refresh_overlay_text() {
         std::to_string(static_cast<int>(planet_pos.z)) + ")";
   }
   overlay_text += "\nSolar time: " + std::to_string(static_cast<int>(solar_system_time_)) + "s";
+
+  // ── Coordinate frame HUD info ──────────────────────────────────────
+  overlay_text += "\nFrame: " + std::string(active_frame_label_);
+  overlay_text += "  Body: ";
+  {
+    const auto& bodies = solar_system_.bodies();
+    if (active_body_index_ >= 0 &&
+        active_body_index_ < static_cast<int32_t>(bodies.size())) {
+      overlay_text += bodies[static_cast<size_t>(active_body_index_)].name;
+    } else {
+      overlay_text += "?";
+    }
+  }
+  {
+    // Show altitude above current body surface.
+    const double planet_radius = block_world_.planet().radius;
+    double altitude = 0.0;
+    if (flight_vehicle_spawned_) {
+      altitude = glm::length(flight_vehicle_.state().position) - planet_radius;
+    } else {
+      altitude = glm::length(glm::dvec3(local_player.transform.position))
+                 - planet_radius;
+    }
+    overlay_text += "\nAltitude: " + std::to_string(static_cast<int>(altitude)) + "m";
+  }
+  // Frame transition cooldown timer.
+  if (frame_transition_cooldown_ > 0.0) {
+    overlay_text += "  Cooldown: " +
+        std::to_string(frame_transition_cooldown_).substr(0, 3) + "s";
+  }
 
   // ── Atmosphere HUD info ─────────────────────────────────────────────
   overlay_text += "\nAtmosphere: ";

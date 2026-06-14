@@ -117,23 +117,38 @@ void voxov_frame() {
 
     g_runtime->tick(g_pacer->frame_dt());
 
-    // Auto-screenshot after 120 frames (~2s) for debugging.
-    // WHY: external screenshot tools fail on this Wayland compositor.
-    // TODO: remove once voxel rendering is confirmed working.
+    // ── Debug screenshot system ──────────────────────────────────────
+    // Auto-screenshot at key moments for visual debugging with Mimo Omni.
+    // Also supports F5 for quick debug screenshot and F12 for timestamped.
     static int frame_counter = 0;
     frame_counter++;
-    if (frame_counter == 120) {
+
+    auto take_screenshot = [](const char *path) {
         std::system("mkdir -p screenshots 2>/dev/null");
         const int w = sapp_width();
         const int h = sapp_height();
-        if (g_runtime->capture_screenshot("screenshots/voxov_debug.png", w, h)) {
-            spdlog::info("Auto-screenshot saved: screenshots/voxov_debug.png");
-        } else {
-            spdlog::warn("Auto-screenshot failed");
+        if (g_runtime->capture_screenshot(path, w, h)) {
+            spdlog::info("Screenshot saved: {}", path);
         }
+    };
+
+    // Auto-screenshot after 120 frames (~2s) — terrain should be loaded.
+    if (frame_counter == 120) {
+        take_screenshot("screenshots/voxov_debug.png");
     }
 
-    // F12 screenshot capture
+    // F5: quick debug screenshot (overwrites same file for easy Mimo analysis).
+    static bool f5_was_down = false;
+    if (g_platform) {
+        const bool f5_down = g_platform->input().keys_down.test(
+            static_cast<size_t>(PlatformKey::F5));
+        if (f5_down && !f5_was_down) {
+            take_screenshot("screenshots/voxov_debug.png");
+        }
+        f5_was_down = f5_down;
+    }
+
+    // F12 screenshot capture (timestamped, keeps history).
     static bool f12_was_down = false;
     if (g_platform) {
         const bool f12_down = g_platform->input().keys_down.test(

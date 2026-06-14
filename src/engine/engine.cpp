@@ -991,6 +991,26 @@ void Engine::refresh_overlay_text() {
   overlay_text += "\nTerrain h: " + std::to_string(
       block_world_.terrain_height_at(glm::dvec3(local_up)));
 
+  // Gameplay state debug info.
+  overlay_text += "\nGrounded: " + std::string(local_player.controller.grounded ? "YES" : "NO");
+  overlay_text += "\nVel: " + std::to_string(static_cast<int>(
+      glm::length(local_player.controller.velocity)));
+  overlay_text += "\nLocomotion: " + std::string(
+      player_locomotion_state_name(local_player.locomotion.state));
+
+  // Block targeting debug info.
+  if (targeted_addr_.has_value()) {
+    const BlockAddress &ta = *targeted_addr_;
+    overlay_text += "\nTarget block: (" + std::to_string(ta.block.x) + "," +
+        std::to_string(ta.block.y) + "," + std::to_string(ta.block.z) + ")";
+    overlay_text += "\nFace normal: (" +
+        std::to_string(static_cast<int>(targeted_face_normal_.x)) + "," +
+        std::to_string(static_cast<int>(targeted_face_normal_.y)) + "," +
+        std::to_string(static_cast<int>(targeted_face_normal_.z)) + ")";
+  } else {
+    overlay_text += "\nTarget: NONE";
+  }
+
   if (!last_hud_message_.empty()) {
     overlay_text += "\n" + last_hud_message_;
   }

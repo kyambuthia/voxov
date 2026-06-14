@@ -10,6 +10,7 @@ mkdir -p "${ROOT}/screenshots"
 : > "${LOG}"
 
 export VOXOV_CAPTURE_DEMO=1
+export VOXOV_SKIP_ANALYZE=1
 
 echo "=== Voxov capture demo $(date -Is) ===" | tee -a "${LOG}"
 echo "Binary: ${BIN}" | tee -a "${LOG}"

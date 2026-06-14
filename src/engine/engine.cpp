@@ -859,11 +859,11 @@ void Engine::tick(double frame_dt,
     }
     chunk_gen_ms = elapsed_ms(chunk_gen_start, PerfClock::now());
 
-    // Rebuild full mesh set when player moves to new chunk center
-    // or when new chunks are loaded, or when snap origin drifts.
-    // NOTE: We capture snap_origin_dirty_ BEFORE resetting it because the
-    // inner loop needs to know if all meshes should be rebuilt.
-    const bool need_full_rebuild = player_moved || snap_origin_dirty_;
+    // Full vertex rebuild only when the camera snap origin shifts (all stored
+    // verts are offsets from snap). Player chunk changes are incremental:
+    // evict far meshes and mesh the new halo — clearing everything on every
+    // chunk step caused multi-second stalls and visible terrain holes.
+    const bool need_full_rebuild = snap_origin_dirty_;
     // ── Frame profiler: time mesh building (face culling + greedy meshing) ──
     const PerfClock::time_point mesh_build_start = PerfClock::now();
     std::unordered_set<uint64_t> remesh_targets;
@@ -897,8 +897,10 @@ void Engine::tick(double frame_dt,
         has_pending_meshes) {
       if (need_full_rebuild) {
         scene.opaque_meshes.clear();
-        last_chunk_center_hash_ = center_hash;
         snap_origin_dirty_ = false;
+      }
+      if (player_moved) {
+        last_chunk_center_hash_ = center_hash;
       }
 
       auto upsert_opaque_mesh = [&](RenderMesh &&mesh) {
@@ -949,8 +951,7 @@ void Engine::tick(double frame_dt,
         }
 
         const bool must_remesh =
-            need_full_rebuild || is_new || snap_origin_dirty_ ||
-            !mesh_in_scene(mid) ||
+            need_full_rebuild || is_new || !mesh_in_scene(mid) ||
             remesh_targets.find(mid) != remesh_targets.end();
         if (!must_remesh) {
           continue;
@@ -997,9 +998,16 @@ void Engine::tick(double frame_dt,
         }
       }
 
-      const uint32_t active_mesh_budget =
-          (frame_index < 180u) ? std::max(mesh_build_budget_, 48u)
-                               : mesh_build_budget_;
+      // Spread first-load mesh work across frames — meshing 90+ chunks on frame 0
+      // blocked the main loop for 10+ seconds and stalled screenshot capture.
+      uint32_t active_mesh_budget = mesh_build_budget_;
+      if (has_pending_meshes) {
+        const uint32_t pending_cap =
+            (frame_index < 5u) ? 32u : ((frame_index < 60u) ? 64u : 96u);
+        active_mesh_budget = std::max(mesh_build_budget_, pending_cap);
+      } else if (frame_index < 180u) {
+        active_mesh_budget = std::max(mesh_build_budget_, 48u);
+      }
       uint32_t mesh_count = 0;
       for (const MeshWorkItem &item : mesh_work) {
         if (!need_full_rebuild && mesh_count >= active_mesh_budget) {

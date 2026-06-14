@@ -69,12 +69,13 @@ InputState DesktopInputBackend::poll() {
         static uint32_t demo_frame = 0;
         ++demo_frame;
         const float t = static_cast<float>(demo_frame) * 0.016f;
+        // Gentle forward walk with slow yaw so screenshots catch loaded terrain.
         out.move = glm::normalize(glm::vec2(
-            std::sin(t * 0.55f) * 0.45f,
-            0.75f));
-        out.look_delta.x = std::cos(t * 0.35f) * 2.0f;
-        // Keep pitch aimed at the surface while orbiting yaw.
-        out.look_delta.y = std::sin(t * 0.18f) * 0.35f - 0.15f;
+            std::sin(t * 0.25f) * 0.2f + 0.55f,
+            0.35f));
+        out.look_delta.x = std::sin(t * 0.12f) * 1.5f;
+        // Small downward bias (positive look_delta.y lowers pitch).
+        out.look_delta.y = 0.6f;
         out.look_mode = true;
         out.look_enabled = true;
         out.pointer_locked = true;

@@ -835,13 +835,166 @@ RenderMesh BlockWorld::build_chunk_mesh(
             base, base + 2, base + 3});
     };
 
-    // Iterate all blocks in chunk at LOD stride.
-    for (int32_t bz = 0; bz < cs; bz += stride) {
-        for (int32_t by = 0; by < cs; by += stride) {
-            for (int32_t bx = 0; bx < cs; bx += stride) {
-                if (!chunk.solid(bx, by, bz)) continue;
+    const double res = static_cast<double>(sh.horizontal_res);
+    const double vlayers = static_cast<double>(std::max(1, sh.vertical_layers));
+    const int32_t grid_w = (cs + stride - 1) / stride;
+
+    auto up_face_visible = [&](int32_t bx, int32_t by, int32_t bz) -> bool {
+        if (!chunk.solid(bx, by, bz)) {
+            return false;
+        }
+        if (chunk.block_height(bx, by, bz) == 0) {
+            return false;
+        }
+        const glm::ivec3 dv = block_dir_vector(BlockDir::Up);
+        BlockAddress nb_addr = addr;
+        bool neighbor_exists = false;
+        const uint8_t nbh = get_neighbor_height(
+            bx + dv.x * stride, by + dv.y * stride, bz + dv.z * stride,
+            nb_addr, neighbor_exists);
+        return !(neighbor_exists && nbh > 0);
+    };
+
+    // Pass 1: greedy-merge exposed Up faces per horizontal slice (0fps-style).
+    // WHY: surface columns are mostly grass tops; merging cuts verts ~4-16x
+    // while each merged quad keeps true spherical corner positions.
+    std::vector<int16_t> up_mask(static_cast<size_t>(grid_w * grid_w), 0);
+    for (int32_t by = 0; by < cs; by += stride) {
+        std::fill(up_mask.begin(), up_mask.end(), 0);
+        for (int32_t iz = 0; iz < grid_w; ++iz) {
+            for (int32_t ix = 0; ix < grid_w; ++ix) {
+                const int32_t bx = ix * stride;
+                const int32_t bz = iz * stride;
+                if (!up_face_visible(bx, by, bz)) {
+                    continue;
+                }
                 const VoxelMaterial mat = chunk.material(bx, by, bz);
-                if (mat == VoxelMaterial::Air) continue;
+                if (mat == VoxelMaterial::Air) {
+                    continue;
+                }
+                up_mask[static_cast<size_t>(iz * grid_w + ix)] =
+                    static_cast<int16_t>(mat);
+            }
+        }
+
+        for (int32_t iz = 0; iz < grid_w; ++iz) {
+            for (int32_t ix = 0; ix < grid_w;) {
+                const int16_t face_mat =
+                    up_mask[static_cast<size_t>(iz * grid_w + ix)];
+                if (face_mat == 0) {
+                    ++ix;
+                    continue;
+                }
+
+                int32_t width = 1;
+                while (ix + width < grid_w &&
+                       up_mask[static_cast<size_t>(iz * grid_w + ix + width)] ==
+                           face_mat) {
+                    ++width;
+                }
+
+                int32_t height = 1;
+                bool done = false;
+                while (iz + height < grid_w && !done) {
+                    for (int32_t k = 0; k < width; ++k) {
+                        if (up_mask[static_cast<size_t>((iz + height) * grid_w +
+                                                        ix + k)] != face_mat) {
+                            done = true;
+                            break;
+                        }
+                    }
+                    if (!done) {
+                        ++height;
+                    }
+                }
+
+                const int32_t bx = ix * stride;
+                const int32_t bz = iz * stride;
+                const uint8_t bh = chunk.block_height(bx, by, bz);
+
+                const double gx0 = static_cast<double>(addr.chunk.x * cs + bx);
+                const double gx1 =
+                    static_cast<double>(addr.chunk.x * cs + bx + width * stride);
+                const double gy0 = static_cast<double>(addr.chunk.y * cs + by);
+                const double gy1 = gy0 + static_cast<double>(stride);
+                const double gz0 = static_cast<double>(addr.chunk.z * cs + bz);
+                const double gz1 =
+                    static_cast<double>(addr.chunk.z * cs + bz + height * stride);
+
+                const double u0 = -1.0 + gx0 / res * 2.0;
+                const double u1 = -1.0 + gx1 / res * 2.0;
+                const double v0 = -1.0 + gz0 / res * 2.0;
+                const double v1 = -1.0 + gz1 / res * 2.0;
+
+                const double r_cell0 =
+                    sh.inner_radius +
+                    (sh.outer_radius - sh.inner_radius) * (gy0 / vlayers);
+                const double r_cell1 =
+                    sh.inner_radius +
+                    (sh.outer_radius - sh.inner_radius) * (gy1 / vlayers);
+                const double r_top =
+                    r_cell0 + (r_cell1 - r_cell0) *
+                                  (static_cast<double>(bh) / kMaxH_d);
+
+                const glm::dvec3 d00 = face_uv_to_direction(addr.sector, u0, v0);
+                const glm::dvec3 d10 = face_uv_to_direction(addr.sector, u1, v0);
+                const glm::dvec3 d01 = face_uv_to_direction(addr.sector, u0, v1);
+                const glm::dvec3 d11 = face_uv_to_direction(addr.sector, u1, v1);
+
+                const glm::dvec3 v0w = config_.planet.center + d00 * r_top;
+                const glm::dvec3 v1w = config_.planet.center + d10 * r_top;
+                const glm::dvec3 v2w = config_.planet.center + d11 * r_top;
+                const glm::dvec3 v3w = config_.planet.center + d01 * r_top;
+
+                const float height_t = std::clamp(
+                    static_cast<float>(gy0) /
+                        static_cast<float>(std::max(1, sh.vertical_layers)),
+                    0.0f, 1.0f);
+                const glm::vec3 color = VoxelChunk::material_color(
+                    static_cast<VoxelMaterial>(face_mat), true, height_t);
+                const glm::dvec3 face_center = (v0w + v1w + v2w + v3w) * 0.25;
+                emit_quad(v0w, v1w, v2w, v3w, color,
+                          face_center - config_.planet.center);
+
+                for (int32_t row = 0; row < height; ++row) {
+                    for (int32_t col = 0; col < width; ++col) {
+                        up_mask[static_cast<size_t>((iz + row) * grid_w + ix + col)] =
+                            0;
+                    }
+                }
+                ix += width;
+            }
+        }
+    }
+
+    // Pass 2: side/down faces per column, top-down. Fully buried blocks below
+    // the exposed surface shell are skipped (Craft-style empty-space culling).
+    for (int32_t bz = 0; bz < cs; bz += stride) {
+        for (int32_t bx = 0; bx < cs; bx += stride) {
+            int32_t top_by = -1;
+            for (int32_t scan_y = cs - 1; scan_y >= 0; scan_y -= stride) {
+                if (!chunk.solid(bx, scan_y, bz)) {
+                    continue;
+                }
+                if (chunk.material(bx, scan_y, bz) == VoxelMaterial::Air) {
+                    continue;
+                }
+                top_by = scan_y;
+                break;
+            }
+            if (top_by < 0) {
+                continue;
+            }
+
+            for (int32_t by = top_by; by >= 0; by -= stride) {
+                const size_t verts_before = mesh.vertices.size();
+                if (!chunk.solid(bx, by, bz)) {
+                    break;
+                }
+                const VoxelMaterial mat = chunk.material(bx, by, bz);
+                if (mat == VoxelMaterial::Air) {
+                    break;
+                }
 
                 const uint8_t bh = chunk.block_height(bx, by, bz);
 
@@ -852,9 +1005,6 @@ RenderMesh BlockWorld::build_chunk_mesh(
                 const double gy1 = gy0 + stride;
                 const double gz0 = static_cast<double>(addr.chunk.z * cs + bz);
                 const double gz1 = gz0 + stride;
-
-                const double res = static_cast<double>(sh.horizontal_res);
-                const double vlayers = static_cast<double>(std::max(1, sh.vertical_layers));
 
                 const double u0 = -1.0 + (gx0) / res * 2.0;
                 const double u1 = -1.0 + (gx1) / res * 2.0;
@@ -996,36 +1146,7 @@ RenderMesh BlockWorld::build_chunk_mesh(
                             VoxelChunk::material_color(mat, top_face, height_t);
                         const glm::dvec3 face_center = (v0 + v1 + v2 + v3) * 0.25;
                         emit_quad(v0, v1, v2, v3, color, face_center - cell_mid);
-                    } else if (face.fd == BlockDir::Up) {
-                        // ── Up face (top): partial block top ──
-                        // Cull when a solid neighbor sits above — otherwise every
-                        // interior layer emits a horizontal band (striped pillars).
-                        if (bh == 0) continue;
-
-                        {
-                            const glm::ivec3 dv = block_dir_vector(face.fd);
-                            BlockAddress nb_addr = addr;
-                            bool neighbor_exists = false;
-                            const uint8_t nbh = get_neighbor_height(
-                                bx + dv.x * stride, by + dv.y * stride, bz + dv.z * stride,
-                                nb_addr, neighbor_exists);
-                            // Cull only when a solid block sits above; loaded air
-                            // chunks still set neighbor_exists=true and hid every top face.
-                            if (neighbor_exists && nbh > 0) continue;
-                        }
-
-                        const glm::dvec3 v0 = p_actual[face.corners[0]];
-                        const glm::dvec3 v1 = p_actual[face.corners[1]];
-                        const glm::dvec3 v2 = p_actual[face.corners[2]];
-                        const glm::dvec3 v3 = p_actual[face.corners[3]];
-
-                        const bool top_face = true;
-                        const glm::vec3 color =
-                            VoxelChunk::material_color(mat, top_face, height_t);
-                        const glm::dvec3 face_center = (v0 + v1 + v2 + v3) * 0.25;
-                        emit_quad(v0, v1, v2, v3, color,
-                                  face_center - config_.planet.center);
-                    } else {
+                    } else if (face.fd != BlockDir::Up) {
                         // ── Down face (bottom): original logic ──
                         // Bottom face of the block: emitted when neighbor below is
                         // not solid. The quad spans the full cell bottom.
@@ -1054,6 +1175,10 @@ RenderMesh BlockWorld::build_chunk_mesh(
                         emit_quad(v0, v1, v2, v3, color,
                                   config_.planet.center - face_center);
                     }
+                }
+
+                if (mesh.vertices.size() == verts_before) {
+                    break;
                 }
             }
         }

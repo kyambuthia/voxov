@@ -543,21 +543,18 @@ RenderMesh BlockWorld::build_chunk_mesh(
             const auto& p = edge_pairing(addr.sector, crossed_edge);
             nb_addr.sector = p.to_face;
             
-            int tcx = cx, tcz = cz;
-            if (p.swap_uv) std::swap(tcx, tcz);
-            if (p.flip_u) tcx = hc - 1 - tcx;
-            if (p.flip_v) tcz = hc - 1 - tcz;
-            tcx = std::clamp(tcx, 0, hc - 1);
-            tcz = std::clamp(tcz, 0, hc - 1);
-            
-            nb_addr.chunk = glm::ivec3(tcx, cy, tcz);
+            int u = cx * cs + bx_new;
+            int v = cz * cs + bz_new;
 
-            int tbx = bx_new, tbz = bz_new;
-            if (p.swap_uv) std::swap(tbx, tbz);
-            if (p.flip_u) tbx = cs - 1 - tbx;
-            if (p.flip_v) tbz = cs - 1 - tbz;
-            
-            nb_addr.block = glm::ivec3(tbx, by_new, tbz);
+            if (p.swap_uv) std::swap(u, v);
+            if (p.flip_u) u = sh.horizontal_res - 1 - u;
+            if (p.flip_v) v = sh.horizontal_res - 1 - v;
+
+            u = (u % sh.horizontal_res + sh.horizontal_res) % sh.horizontal_res;
+            v = (v % sh.horizontal_res + sh.horizontal_res) % sh.horizontal_res;
+
+            nb_addr.chunk = glm::ivec3(u / cs, cy, v / cs);
+            nb_addr.block = glm::ivec3(u % cs, by_new, v % cs);
         } else {
             nb_addr.chunk = glm::ivec3(cx, cy, cz);
             nb_addr.block = glm::ivec3(bx_new, by_new, bz_new);
@@ -571,8 +568,8 @@ RenderMesh BlockWorld::build_chunk_mesh(
         int corners[4]; // CCW order
     };
     static const FaceDef faces[6] = {
-        {BlockDir::Left,  {2, 0, 4, 6}},
-        {BlockDir::Right, {1, 3, 7, 5}},
+        {BlockDir::Left,  {0, 2, 6, 4}},
+        {BlockDir::Right, {1, 5, 7, 3}},
         {BlockDir::Down,  {0, 1, 3, 2}},
         {BlockDir::Up,    {4, 6, 7, 5}},
         {BlockDir::Back,  {0, 4, 5, 1}},

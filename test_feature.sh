@@ -40,12 +40,17 @@ echo ""
 
 # Run game briefly
 echo "Running game (10s)..."
-rm -f "$SCREENSHOT"
+rm -f "$SCREENSHOT" "screenshots/voxov_debug.png"
 timeout 13 "$GAME_BIN" > /dev/null 2>&1 &
 GAME_PID=$!
 
-# Wait for screenshot
-sleep 10
+# Wait for auto-screenshot (happens at frame 120, ~2s)
+sleep 12
+
+# Copy auto-screenshot to our test path
+if [ -f "screenshots/voxov_debug.png" ]; then
+    cp "screenshots/voxov_debug.png" "$SCREENSHOT"
+fi
 
 # Check for screenshot
 if [ ! -f "$SCREENSHOT" ]; then

@@ -171,7 +171,7 @@ void voxov_frame() {
         const bool f5_down = g_platform->input().keys_down.test(
             static_cast<size_t>(PlatformKey::F5));
         if (f5_down && !f5_was_down) {
-            take_screenshot("screenshots/debug_screenshot.png"); spdlog::info("Ready for analysis: screenshots/debug_screenshot.png");
+            take_screenshot("screenshots/debug_screenshot.png"); std::system("./auto_analyze.sh screenshots/debug_screenshot.png &"); spdlog::info("Auto-analysis started");
         }
         f5_was_down = f5_down;
     }

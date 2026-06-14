@@ -64,19 +64,13 @@ static const char *kSceneFsSrc = R"(
     uniform float material_shininess;
     uniform vec3 camera_pos;
 
-    // ── Atmosphere parameters (binding 2, std140 layout) ────────────────
-    // Rayleigh + Mie scattering uniforms for aerial perspective.
-    // The CPU pre-computes sky color for the view center and sets it as
-    // the clear color.  The fragment shader attenuates terrain fragments
-    // by atmosphere transmittance for aerial perspective (distant terrain
-    // appears bluer / hazier).
-    layout(std140) uniform atm_params {
-        vec4 planet_center_radius;      // xyz=planet center, w=radius
-        vec4 atm_params_1;              // x=atm_height, y=H_R, z=H_M, w=g
-        vec4 rayleigh_scatter_unused;   // xyz=beta_R
-        vec4 mie_scatter_pad;           // x=beta_M
-        vec4 sun_dir_intensity;         // xyz=sun_dir, w=intensity
-    };
+    // Loose uniforms (not a UBO block): sokol GL uploads via glGetUniformLocation
+    // on member names; std140 blocks leave gl_loc=-1 and transmittance never runs.
+    uniform vec4 planet_center_radius;      // xyz=planet center, w=radius
+    uniform vec4 atm_params_1;              // x=atm_height, y=H_R, z=H_M, w=g
+    uniform vec4 rayleigh_scatter_unused;   // xyz=beta_R
+    uniform vec4 mie_scatter_pad;           // x=beta_M
+    uniform vec4 sun_dir_intensity;         // xyz=sun_dir, w=intensity
 
     in vec3 v_color;
     in vec3 v_normal;
@@ -184,14 +178,11 @@ static const char *kSceneFsSrc = R"(#version 300 es
     uniform float material_shininess;
     uniform vec3 camera_pos;
 
-    // ── Atmosphere parameters ──────────────────────────────────────────
-    layout(std140) uniform atm_params {
-        vec4 planet_center_radius;
-        vec4 atm_params_1;
-        vec4 rayleigh_scatter_unused;
-        vec4 mie_scatter_pad;
-        vec4 sun_dir_intensity;
-    };
+    uniform vec4 planet_center_radius;
+    uniform vec4 atm_params_1;
+    uniform vec4 rayleigh_scatter_unused;
+    uniform vec4 mie_scatter_pad;
+    uniform vec4 sun_dir_intensity;
 
     in vec3 v_color;
     in vec3 v_normal;

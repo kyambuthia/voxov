@@ -48,7 +48,7 @@ struct SokolDirectionalLight {
     // all axes guarantees NdL ≈ 0.58 for any cube-face surface normal,
     // producing strong diffuse contrast that reveals height variation.
     glm::vec3 direction{0.577f, 0.577f, 0.577f};
-    glm::vec3 ambient{0.12f, 0.13f, 0.16f};
+    glm::vec3 ambient{0.28f, 0.30f, 0.34f};
     glm::vec3 diffuse{1.3f, 1.15f, 0.85f};
     glm::vec3 specular{0.45f, 0.48f, 0.55f};
 };

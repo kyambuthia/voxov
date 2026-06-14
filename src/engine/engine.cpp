@@ -576,6 +576,8 @@ void Engine::tick(double frame_dt,
   // WHY for playable: only near-player data can be loaded (full 2000km 1m
   // surface is ~10^13 blocks impossible); dy layers ensure the visible
   // terrain top (Grass) in the outer thin shell is meshed (not just deep stone).
+  double chunk_gen_ms = 0.0;
+  double mesh_build_ms = 0.0;
   {
     const BlockAddress player_addr =
         block_world_.address_from_world(
@@ -610,6 +612,8 @@ void Engine::tick(double frame_dt,
     }
 
     // Generate new chunks (budget-limited). Use modest budget to avoid frame spikes.
+    // ── Frame profiler: time chunk generation (noise sampling + voxel data) ──
+    const PerfClock::time_point chunk_gen_start = PerfClock::now();
     const uint32_t gen_budget = 8;
     std::vector<BlockAddress> new_chunks;
     for (const BlockAddress &addr : desired) {
@@ -618,12 +622,15 @@ void Engine::tick(double frame_dt,
       block_world_.get_or_generate_chunk(addr);
       new_chunks.push_back(addr);
     }
+    chunk_gen_ms = elapsed_ms(chunk_gen_start, PerfClock::now());
 
     // Rebuild full mesh set when player moves to new chunk center
     // or when new chunks are loaded, or when snap origin drifts.
     // NOTE: We capture snap_origin_dirty_ BEFORE resetting it because the
     // inner loop needs to know if all meshes should be rebuilt.
     const bool need_full_rebuild = player_moved || snap_origin_dirty_;
+    // ── Frame profiler: time mesh building (face culling + greedy meshing) ──
+    const PerfClock::time_point mesh_build_start = PerfClock::now();
     if (player_moved || !new_chunks.empty() || snap_origin_dirty_) {
       if (need_full_rebuild) {
         scene.opaque_meshes.clear();
@@ -684,6 +691,7 @@ void Engine::tick(double frame_dt,
             meshes.end());
       }
     }
+    mesh_build_ms = elapsed_ms(mesh_build_start, PerfClock::now());
   }
 
   // Wireframe overlay — regenerate when dirty. Only show when devhud enabled.
@@ -700,7 +708,10 @@ void Engine::tick(double frame_dt,
     scene.wireframe_meshes.push_back(wireframe_planet_mesh_);
   }
 
+  // ── Frame profiler: time GPU upload (buffer creation/update) ──
+  const PerfClock::time_point gpu_upload_start = PerfClock::now();
   renderer.upload_scene(scene);
+  const double gpu_upload_ms = elapsed_ms(gpu_upload_start, PerfClock::now());
 
   render_stats.frame_ms =
       smooth_metric(render_stats.frame_ms, last_frame_dt * 1000.0, 0.20);
@@ -735,6 +746,32 @@ void Engine::tick(double frame_dt,
       memory_stats.total_allocations;
   render_stats.profiling.memory_current_bytes = memory_stats.current_bytes;
   render_stats.profiling.memory_total_bytes = memory_stats.total_bytes;
+
+  // ── Frame profiler: smooth per-stage timings ─────────────────────────
+  // WHY: expose chunk gen, mesh build, and GPU upload costs for
+  // bottleneck identification in the dev HUD (F2). Smoothing prevents
+  // flickering numbers from frame-to-frame variance.
+  render_stats.chunk_gen_ms =
+      smooth_metric(render_stats.chunk_gen_ms, chunk_gen_ms);
+  render_stats.mesh_build_ms =
+      smooth_metric(render_stats.mesh_build_ms, mesh_build_ms);
+  render_stats.gpu_upload_ms =
+      smooth_metric(render_stats.gpu_upload_ms, gpu_upload_ms);
+
+  // Accumulate vertex/index counts from chunk meshes for HUD display.
+  // These represent application-level geometry for the voxel terrain.
+  uint32_t opaque_verts = 0;
+  uint32_t opaque_idxs = 0;
+  for (const RenderMesh &mesh : scene.opaque_meshes) {
+    opaque_verts += static_cast<uint32_t>(mesh.vertices.size());
+    if (mesh.use_16_bit_indices) {
+      opaque_idxs += static_cast<uint32_t>(mesh.indices16.size());
+    } else {
+      opaque_idxs += static_cast<uint32_t>(mesh.indices.size());
+    }
+  }
+  render_stats.total_vertices = opaque_verts;
+  render_stats.total_indices = opaque_idxs;
 
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled);
@@ -945,6 +982,13 @@ void Engine::refresh_overlay_text() {
       "\nRender: " + std::to_string(render_stats.render_cpu_ms).substr(0, 5) +
       " ms  Fixed: " + std::to_string(render_stats.fixed_cpu_ms).substr(0, 5) +
       " ms x" + std::to_string(render_stats.fixed_steps) +
+      "\nChunk gen: " + std::to_string(render_stats.chunk_gen_ms).substr(0, 5) +
+      " ms  Mesh build: " + std::to_string(render_stats.mesh_build_ms).substr(0, 5) +
+      " ms" +
+      "\nGPU upload: " + std::to_string(render_stats.gpu_upload_ms).substr(0, 5) +
+      " ms  Draw calls: " + std::to_string(render_stats.draw_call_count) +
+      "\nVertices: " + std::to_string(render_stats.total_vertices) +
+      "  Indices: " + std::to_string(render_stats.total_indices) +
       "\nGameplay: " +
       std::to_string(profiling.gameplay_cpu_ms).substr(0, 5) +
       " ms  Anim: " +

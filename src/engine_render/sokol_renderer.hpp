@@ -63,7 +63,7 @@ public:
     void update_dynamic_meshes(const RenderMesh &debug_world,
                                const RenderMesh &debug_screen) override;
     void render_frame(const RenderFrameContext &ctx,
-                      const RenderStats &stats,
+                      RenderStats &stats,
                       const RenderSurface &surface) override;
 
     bool capture_screenshot(const char *filepath,

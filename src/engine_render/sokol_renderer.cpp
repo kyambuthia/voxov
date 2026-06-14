@@ -752,9 +752,11 @@ void SokolRenderer::update_dynamic_meshes(const RenderMesh &debug_world,
 // ---------------------------------------------------------------------------
 
 void SokolRenderer::render_frame(const RenderFrameContext &ctx,
-                                  const RenderStats &stats,
+                                  RenderStats &stats,
                                   const RenderSurface &surface) {
-    (void)stats;
+    // Reset per-frame GPU counters.
+    uint32_t draw_calls = 0;
+
     sg_pass pass = {};
     pass.action = pass_action_;
 #if defined(VOXOV_PLATFORM_ANDROID)
@@ -793,7 +795,17 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         const glm::mat4 origin_t = glm::translate(glm::mat4(1.0f), glm::vec3(camera_origin));
         const glm::mat4 rel_vp = vp * origin_t;
 
+        // ── Draw call counting ──────────────────────────────────────────
+        // WHY: count every sg_draw issued per frame for the dev HUD
+        // (F2). Helps identify whether GPU is draw-call bound.
+        auto record_draw = [&](const SokolGpuMesh &mesh) {
+            if (mesh.index_count > 0) {
+                draw_calls++;
+            }
+        };
+
         // Opaque geometry (planet block meshes are relative to camera_origin)
+        record_draw(transient_mesh_);
         draw_mesh(transient_mesh_, rel_vp, model, camera_pos,
                   camera_origin,
                   pipelines_.opaque, pipelines_.opaque_u16);
@@ -815,6 +827,7 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
             const glm::vec3 world_bmin = mesh.bounds_min + origin_offset;
             const glm::vec3 world_bmax = mesh.bounds_max + origin_offset;
             // (aabb test intentionally bypassed for local planet voxels)
+            record_draw(mesh);
             draw_mesh(mesh, rel_vp, model, camera_pos,
                       camera_origin,
                       pipelines_.opaque, pipelines_.opaque_u16);
@@ -823,9 +836,11 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         // Wireframe geometry (drawn over opaque, with depth).
         // Wireframe verts are absolute world (see build_wireframe_... and
         // its mesh_id caching); must use raw vp.
+        record_draw(wireframe_mesh_);
         draw_wireframe(wireframe_mesh_, vp);
 
         // Debug world (x-ray or normal)
+        record_draw(debug_world_mesh_);
         draw_mesh(debug_world_mesh_, vp, model, camera_pos,
                   camera_origin,
                   ctx.debug_xray ? pipelines_.debug_xray : pipelines_.opaque,
@@ -833,9 +848,13 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                                  : pipelines_.opaque_u16);
 
         // Screen-space overlay
+        record_draw(debug_screen_mesh_);
         draw_mesh(debug_screen_mesh_, glm::mat4(1.0f), model, camera_pos,
                   glm::dvec3(0.0), pipelines_.screen, pipelines_.screen_u16);
     }
+
+    // Write GPU draw call count back so the dev HUD can display it.
+    stats.draw_call_count = draw_calls;
 
     sg_end_pass();
     sg_commit();

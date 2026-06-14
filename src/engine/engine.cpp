@@ -690,12 +690,30 @@ void Engine::tick(double frame_dt,
   // visible screen-space location. Logs every 60 frames to avoid spam.
   // TODO: remove once voxel rendering is confirmed working.
   if (frame_index % 60 == 0) {
-    std::fprintf(stderr, "Frame %lu: Camera pos=(%.1f,%.1f,%.1f) snap=(%.1f,%.1f,%.1f) FPS=%.0f opaques=%zu chunks=%zu wireframes=%zu\n",
-                 frame_index,
-                 camera.transform.position.x, camera.transform.position.y, camera.transform.position.z,
-                 camera_snap_origin_.x, camera_snap_origin_.y, camera_snap_origin_.z,
-                 render_stats.fps, scene.opaque_meshes.size(), block_world_.chunk_count(),
-                 scene.wireframe_meshes.size());
+    // AI debugging: log complete visual state each minute for AI agents.
+    // Includes camera orientation (to reconstruct view), player state,
+    // GPU workload, and LOD distribution — everything needed to understand
+    // what the player sees without a screen.
+    std::fprintf(stderr,
+        "Frame %lu | Cam(%.0f,%.0f,%.0f) pitch=%d yaw=%d alt=%.0fm | "
+        "Grounded=%s vel=%.0fm/s | "
+        "FPS=%.0f dt=%.1fms | "
+        "draw=%d verts=%d tris=%d | "
+        "LOD: %d/%d/%d/%d chunks=%zu opaques=%zu\n",
+        frame_index,
+        camera.transform.position.x, camera.transform.position.y, camera.transform.position.z,
+        static_cast<int>(local_player.camera_rig.pitch),
+        static_cast<int>(local_player.camera_rig.yaw),
+        glm::length(local_player.transform.position) - block_world_.planet().radius,
+        local_player.controller.grounded ? "yes" : "no",
+        static_cast<int>(glm::length(local_player.controller.velocity)),
+        render_stats.fps, render_stats.frame_ms,
+        static_cast<int>(render_stats.draw_call_count),
+        static_cast<int>(render_stats.total_vertices),
+        static_cast<int>(render_stats.total_indices) / 3,
+        render_stats.lod_chunk_count[0], render_stats.lod_chunk_count[1],
+        render_stats.lod_chunk_count[2], render_stats.lod_chunk_count[3],
+        block_world_.chunk_count(), scene.opaque_meshes.size());
 
     // Project first vertex to NDC to verify it lands on screen.
     // WHY: confirms the camera-relative vertex offset + VP matrix produce

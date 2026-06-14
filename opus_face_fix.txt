@@ -1,0 +1,18 @@
+Fix voxel face rendering in a spherical planet game (C++23, OpenGL 3.3, Sokol).
+
+PROBLEM: Voxel block faces render incorrectly. Terrain appears flat, faces look wrong, visible seams between blocks. Solid count is 618 out of 4096 blocks per chunk. Terrain height varies from 8 to 28 blocks.
+
+KEY FILES:
+- src/engine_world/planet_blocks.cpp: build_chunk_mesh() at line 474. Per-face mesh generation with tangent normals, face culling, quad corners, winding order, vertex/index generation.
+- src/engine_world/planet_blocks.cpp: generate_chunk() at line 297. Terrain height sampling, block material assignment.
+- src/engine_render/sokol_renderer.cpp: fragment shader at line 55. Lighting and final color output.
+
+FIX THESE:
+1. Face geometry for all 6 directions
+2. Face normals pointing outward
+3. Face culling logic (should_emit_face lambda)
+4. CCW winding order for all 6 faces
+5. Color/material rendering
+6. Gaps or seams between blocks
+
+Apply fixes directly. Build: cmake --build build/desktop/main --parallel

@@ -513,41 +513,70 @@ RenderMesh BlockWorld::build_chunk_mesh(
         if (nx >= 0 && nx < cs && ny >= 0 && ny < cs && nz >= 0 && nz < cs) {
             return !chunk.solid(nx, ny, nz);
         }
-        // Cross-chunk neighbor: resolve neighbor address and query solid_at.
-        // Only add the chunk address portion — sector and shell are already
-        // correct from the cross-chunk logic in the address.
+        
         BlockAddress nb_addr = addr;
-        nb_addr.chunk.x = addr.chunk.x + ((nx < 0) ? -1 : (nx >= cs) ? 1 : 0);
-        nb_addr.chunk.y = addr.chunk.y + ((ny < 0) ? -1 : (ny >= cs) ? 1 : 0);
-        nb_addr.chunk.z = addr.chunk.z + ((nz < 0) ? -1 : (nz >= cs) ? 1 : 0);
-        nb_addr.block.x = (nx + cs) % cs;
-        nb_addr.block.y = (ny + cs) % cs;
-        nb_addr.block.z = (nz + cs) % cs;
+        const int hc = std::max(1, sh.horizontal_res / cs);
+        const int vc = std::max(1, sh.vertical_layers / cs);
+
+        int cx = addr.chunk.x;
+        int cy = addr.chunk.y;
+        int cz = addr.chunk.z;
+
+        if (nx < 0) cx -= 1; else if (nx >= cs) cx += 1;
+        if (ny < 0) cy -= 1; else if (ny >= cs) cy += 1;
+        if (nz < 0) cz -= 1; else if (nz >= cs) cz += 1;
+
+        int bx_new = (nx % cs + cs) % cs;
+        int by_new = (ny % cs + cs) % cs;
+        int bz_new = (nz % cs + cs) % cs;
+
+        if (cx < 0 || cx >= hc || cz < 0 || cz >= hc || cy < 0 || cy >= vc) {
+            if (cy < 0 || cy >= vc) {
+                return true; 
+            }
+            CubeEdge crossed_edge;
+            if (cx < 0) crossed_edge = CubeEdge::Left;
+            else if (cx >= hc) crossed_edge = CubeEdge::Right;
+            else if (cz < 0) crossed_edge = CubeEdge::Bottom;
+            else crossed_edge = CubeEdge::Top;
+
+            const auto& p = edge_pairing(addr.sector, crossed_edge);
+            nb_addr.sector = p.to_face;
+            
+            int tcx = cx, tcz = cz;
+            if (p.swap_uv) std::swap(tcx, tcz);
+            if (p.flip_u) tcx = hc - 1 - tcx;
+            if (p.flip_v) tcz = hc - 1 - tcz;
+            tcx = std::clamp(tcx, 0, hc - 1);
+            tcz = std::clamp(tcz, 0, hc - 1);
+            
+            nb_addr.chunk = glm::ivec3(tcx, cy, tcz);
+
+            int tbx = bx_new, tbz = bz_new;
+            if (p.swap_uv) std::swap(tbx, tbz);
+            if (p.flip_u) tbx = cs - 1 - tbx;
+            if (p.flip_v) tbz = cs - 1 - tbz;
+            
+            nb_addr.block = glm::ivec3(tbx, by_new, tbz);
+        } else {
+            nb_addr.chunk = glm::ivec3(cx, cy, cz);
+            nb_addr.block = glm::ivec3(bx_new, by_new, bz_new);
+        }
+        
         return !solid_at(nb_addr);
     };
 
-    // Face direction info: which tangent basis vector is the face normal,
-    // and which two axes the quad corners sweep in.
-    // WHY per-face quad axes: On a sphere each block face must span the
-    // two directions perpendicular to the face normal. Left/Right faces
-    // span north×radial, Front/Back span east×radial, Up/Down span
-    // east×north. Previously all faces used east×north, making side
-    // faces degenerate (zero radial extent) — root cause of flat terrain.
-    struct FaceInfo {
+    struct FaceDef {
         BlockDir fd;
-        int fn_tb;    // 0=east, 1=north, 2=radial (face normal tangent basis)
-        int fn_sign;  // +1 or -1
-        int qu_tb;    // quad spanning axis U (index into tb_vecs)
-        int qv_tb;    // quad spanning axis V (index into tb_vecs)
+        int corners[4]; // CCW order
     };
-    static const FaceInfo face_infos[6] = {
-        // face dir    normal_axis sign  quad_U  quad_V
-        {BlockDir::Left,  0, -1,   1, 2},  // fn=-east,  quad spans north×radial
-        {BlockDir::Right, 0,  1,   1, 2},  // fn=+east,  quad spans north×radial
-        {BlockDir::Down,  2, -1,   0, 1},  // fn=-radial, quad spans east×north
-        {BlockDir::Up,    2,  1,   0, 1},  // fn=+radial, quad spans east×north
-        {BlockDir::Back,  1, -1,   0, 2},  // fn=-north, quad spans east×radial
-        {BlockDir::Front, 1,  1,   0, 2},  // fn=+north, quad spans east×radial
+    static const FaceDef faces[6] = {
+        {BlockDir::Left,  {2, 0, 4, 6}},
+        {BlockDir::Right, {1, 3, 7, 5}},
+        {BlockDir::Down,  {0, 1, 3, 2}},
+        {BlockDir::Up,    {4, 6, 7, 5}},
+        {BlockDir::Back,  {0, 4, 5, 1}},
+        {BlockDir::Front, {2, 3, 7, 6}}
     };
 
     // Iterate all blocks in chunk at LOD stride.
@@ -558,73 +587,71 @@ RenderMesh BlockWorld::build_chunk_mesh(
                 const VoxelMaterial mat = chunk.material(bx, by, bz);
                 if (mat == VoxelMaterial::Air) continue;
 
-                // Global block coordinates.
-                const double gx = static_cast<double>(addr.chunk.x) * cs + bx;
-                const double gy = static_cast<double>(addr.chunk.y) * cs + by;
-                const double gz = static_cast<double>(addr.chunk.z) * cs + bz;
+                // Evaluate 8 corners of the frustum block.
+                const double gx0 = static_cast<double>(addr.chunk.x * cs + bx);
+                const double gx1 = gx0 + stride;
+                const double gy0 = static_cast<double>(addr.chunk.y * cs + by);
+                const double gy1 = gy0 + stride;
+                const double gz0 = static_cast<double>(addr.chunk.z * cs + bz);
+                const double gz1 = gz0 + stride;
 
-                // World position of block center on sphere surface.
-                const double u = -1.0 + (gx + 0.5) / static_cast<double>(sh.horizontal_res) * 2.0;
-                const double v = -1.0 + (gz + 0.5) / static_cast<double>(sh.horizontal_res) * 2.0;
-                const double lt = std::clamp((gy + 0.5) / static_cast<double>(std::max(1, sh.vertical_layers)), 0.0, 1.0);
-                const double r = sh.inner_radius + (sh.outer_radius - sh.inner_radius) * lt;
-                const glm::dvec3 center = config_.planet.center + face_uv_to_direction(addr.sector, u, v) * r;
+                const double res = static_cast<double>(sh.horizontal_res);
+                const double vlayers = static_cast<double>(std::max(1, sh.vertical_layers));
 
-                // Per-block tangent basis for correct sphere normals.
-                // WHY face-aware reference: Using a global pole (0,1,0) for
-                // tangent_basis causes frame discontinuities near cube-sphere
-                // poles, producing black gaps between chunks. Use the face's
-                // natural reference axis instead for consistent orientation.
-                const glm::dvec3 radial = glm::normalize(center - config_.planet.center);
-                glm::dvec3 face_ref;
-                switch (addr.sector) {
-                case PlanetFace::PosX: case PlanetFace::NegX:
-                    face_ref = glm::dvec3(0.0, 1.0, 0.0); break;
-                case PlanetFace::PosY: case PlanetFace::NegY:
-                    face_ref = glm::dvec3(0.0, 0.0, 1.0); break;
-                case PlanetFace::PosZ: case PlanetFace::NegZ:
-                    face_ref = glm::dvec3(0.0, 1.0, 0.0); break;
-                }
-                const PlanetTangentBasis tb = tangent_basis(radial, face_ref);
-                const glm::dvec3 tb_vecs[3] = {tb.east, tb.north, radial};
+                const double u0 = -1.0 + (gx0) / res * 2.0;
+                const double u1 = -1.0 + (gx1) / res * 2.0;
+                const double v0 = -1.0 + (gz0) / res * 2.0;
+                const double v1 = -1.0 + (gz1) / res * 2.0;
+
+                const double r0 = sh.inner_radius + (sh.outer_radius - sh.inner_radius) * (gy0 / vlayers);
+                const double r1 = sh.inner_radius + (sh.outer_radius - sh.inner_radius) * (gy1 / vlayers);
+
+                const glm::dvec3 d00 = face_uv_to_direction(addr.sector, u0, v0);
+                const glm::dvec3 d10 = face_uv_to_direction(addr.sector, u1, v0);
+                const glm::dvec3 d01 = face_uv_to_direction(addr.sector, u0, v1);
+                const glm::dvec3 d11 = face_uv_to_direction(addr.sector, u1, v1);
+
+                const glm::dvec3 p[8] = {
+                    config_.planet.center + d00 * r0, // 0: 0,0,0
+                    config_.planet.center + d10 * r0, // 1: 1,0,0
+                    config_.planet.center + d01 * r0, // 2: 0,0,1
+                    config_.planet.center + d11 * r0, // 3: 1,0,1
+                    config_.planet.center + d00 * r1, // 4: 0,1,0
+                    config_.planet.center + d10 * r1, // 5: 1,1,0
+                    config_.planet.center + d01 * r1, // 6: 0,1,1
+                    config_.planet.center + d11 * r1  // 7: 1,1,1
+                };
 
                 // Height fraction for color tinting.
                 const float height_t = std::clamp(
-                    static_cast<float>(gy) / static_cast<float>(std::max(1, sh.vertical_layers)),
+                    static_cast<float>(gy0) / static_cast<float>(std::max(1, sh.vertical_layers)),
                     0.0f, 1.0f);
 
-                // Check each of 6 faces.
-                for (const FaceInfo &fi : face_infos) {
-                    if (!should_emit_face(bx, by, bz, fi.fd)) continue;
+                for (const auto &face : faces) {
+                    if (!should_emit_face(bx, by, bz, face.fd)) continue;
 
-                    const bool top_face = (fi.fd == BlockDir::Up);
+                    const bool top_face = (face.fd == BlockDir::Up);
                     const glm::vec3 color = VoxelChunk::material_color(mat, top_face, height_t);
 
-                    // Face normal: one of the tangent basis vectors.
-                    const glm::dvec3 fn = tb_vecs[fi.fn_tb] * static_cast<double>(fi.fn_sign);
+                    const glm::dvec3 v0 = p[face.corners[0]];
+                    const glm::dvec3 v1 = p[face.corners[1]];
+                    const glm::dvec3 v2 = p[face.corners[2]];
+                    const glm::dvec3 v3 = p[face.corners[3]];
 
-                    // Per-face quad corners: sweep in the two axes
-                    // perpendicular to the face normal.
-                    const glm::dvec3 qu = tb_vecs[fi.qu_tb];
-                    const glm::dvec3 qv = tb_vecs[fi.qv_tb];
-                    const glm::dvec3 face_offsets[4] = {
-                        -qu * hs - qv * hs,
-                         qu * hs - qv * hs,
-                         qu * hs + qv * hs,
-                        -qu * hs + qv * hs,
-                    };
+                    // Compute exact geometric face normal.
+                    glm::dvec3 fn = glm::normalize(glm::cross(v1 - v0, v2 - v0));
 
                     const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
-                    for (int ci = 0; ci < 4; ++ci) {
-                        const glm::dvec3 corner = center + face_offsets[ci] + fn * hs;
-                        mesh.vertices.push_back(RenderVertex{
-                            glm::vec3(corner - camera_relative_origin),
-                            color, glm::vec3(fn)});
-                    }
+                    
+                    mesh.vertices.push_back(RenderVertex{glm::vec3(v0 - camera_relative_origin), color, glm::vec3(fn)});
+                    mesh.vertices.push_back(RenderVertex{glm::vec3(v1 - camera_relative_origin), color, glm::vec3(fn)});
+                    mesh.vertices.push_back(RenderVertex{glm::vec3(v2 - camera_relative_origin), color, glm::vec3(fn)});
+                    mesh.vertices.push_back(RenderVertex{glm::vec3(v3 - camera_relative_origin), color, glm::vec3(fn)});
+
                     // CCW winding when viewed from outside (along face normal).
                     mesh.indices.insert(mesh.indices.end(), {
-                        base, base + 2, base + 1,
-                        base, base + 3, base + 2});
+                        base, base + 1, base + 2,
+                        base, base + 2, base + 3});
                 }
             }
         }

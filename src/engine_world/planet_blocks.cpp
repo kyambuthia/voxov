@@ -516,19 +516,27 @@ RenderMesh BlockWorld::build_chunk_mesh(
     };
 
     // Face direction info: which tangent basis vector is the face normal,
-    // and which vectors define the quad plane.
+    // and which two axes the quad corners sweep in.
+    // WHY per-face quad axes: On a sphere each block face must span the
+    // two directions perpendicular to the face normal. Left/Right faces
+    // span north×radial, Front/Back span east×radial, Up/Down span
+    // east×north. Previously all faces used east×north, making side
+    // faces degenerate (zero radial extent) — root cause of flat terrain.
     struct FaceInfo {
         BlockDir fd;
         int fn_tb;    // 0=east, 1=north, 2=radial (face normal tangent basis)
         int fn_sign;  // +1 or -1
+        int qu_tb;    // quad spanning axis U (index into tb_vecs)
+        int qv_tb;    // quad spanning axis V (index into tb_vecs)
     };
     static const FaceInfo face_infos[6] = {
-        {BlockDir::Left,  0, -1},  // fn = -east
-        {BlockDir::Right, 0,  1},  // fn = +east
-        {BlockDir::Down,  2, -1},  // fn = -radial
-        {BlockDir::Up,    2,  1},  // fn = +radial
-        {BlockDir::Back,  1, -1},  // fn = -north
-        {BlockDir::Front, 1,  1},  // fn = +north
+        // face dir    normal_axis sign  quad_U  quad_V
+        {BlockDir::Left,  0, -1,   1, 2},  // fn=-east,  quad spans north×radial
+        {BlockDir::Right, 0,  1,   1, 2},  // fn=+east,  quad spans north×radial
+        {BlockDir::Down,  2, -1,   0, 1},  // fn=-radial, quad spans east×north
+        {BlockDir::Up,    2,  1,   0, 1},  // fn=+radial, quad spans east×north
+        {BlockDir::Back,  1, -1,   0, 2},  // fn=-north, quad spans east×radial
+        {BlockDir::Front, 1,  1,   0, 2},  // fn=+north, quad spans east×radial
     };
 
     // Iterate all blocks in chunk at LOD stride.
@@ -552,17 +560,22 @@ RenderMesh BlockWorld::build_chunk_mesh(
                 const glm::dvec3 center = config_.planet.center + face_uv_to_direction(addr.sector, u, v) * r;
 
                 // Per-block tangent basis for correct sphere normals.
+                // WHY face-aware reference: Using a global pole (0,1,0) for
+                // tangent_basis causes frame discontinuities near cube-sphere
+                // poles, producing black gaps between chunks. Use the face's
+                // natural reference axis instead for consistent orientation.
                 const glm::dvec3 radial = glm::normalize(center - config_.planet.center);
-                const PlanetTangentBasis tb = tangent_basis(radial);
+                glm::dvec3 face_ref;
+                switch (addr.sector) {
+                case PlanetFace::PosX: case PlanetFace::NegX:
+                    face_ref = glm::dvec3(0.0, 1.0, 0.0); break;
+                case PlanetFace::PosY: case PlanetFace::NegY:
+                    face_ref = glm::dvec3(0.0, 0.0, 1.0); break;
+                case PlanetFace::PosZ: case PlanetFace::NegZ:
+                    face_ref = glm::dvec3(0.0, 1.0, 0.0); break;
+                }
+                const PlanetTangentBasis tb = tangent_basis(radial, face_ref);
                 const glm::dvec3 tb_vecs[3] = {tb.east, tb.north, radial};
-
-                // Quad corner offsets in tangent plane.
-                const glm::dvec3 offsets[4] = {
-                    -tb.east * hs - tb.north * hs,
-                     tb.east * hs - tb.north * hs,
-                     tb.east * hs + tb.north * hs,
-                    -tb.east * hs + tb.north * hs,
-                };
 
                 // Height fraction for color tinting.
                 const float height_t = std::clamp(
@@ -579,9 +592,20 @@ RenderMesh BlockWorld::build_chunk_mesh(
                     // Face normal: one of the tangent basis vectors.
                     const glm::dvec3 fn = tb_vecs[fi.fn_tb] * static_cast<double>(fi.fn_sign);
 
+                    // Per-face quad corners: sweep in the two axes
+                    // perpendicular to the face normal.
+                    const glm::dvec3 qu = tb_vecs[fi.qu_tb];
+                    const glm::dvec3 qv = tb_vecs[fi.qv_tb];
+                    const glm::dvec3 face_offsets[4] = {
+                        -qu * hs - qv * hs,
+                         qu * hs - qv * hs,
+                         qu * hs + qv * hs,
+                        -qu * hs + qv * hs,
+                    };
+
                     const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
                     for (int ci = 0; ci < 4; ++ci) {
-                        const glm::dvec3 corner = center + offsets[ci] + fn * hs;
+                        const glm::dvec3 corner = center + face_offsets[ci] + fn * hs;
                         mesh.vertices.push_back(RenderVertex{
                             glm::vec3(corner - camera_relative_origin),
                             color, glm::vec3(fn)});

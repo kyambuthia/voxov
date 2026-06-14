@@ -42,10 +42,15 @@ struct SokolPipelines {
 };
 
 struct SokolDirectionalLight {
-    glm::vec3 direction{0.0f, 0.3f, 0.954f};
-    glm::vec3 ambient{0.05f, 0.06f, 0.08f};
-    glm::vec3 diffuse{1.5f, 1.2f, 0.8f};
-    glm::vec3 specular{0.55f, 0.58f, 0.65f};
+    // WHY direction (0.58, 0.58, 0.58): Previous value (0, 0.3, 0.954) was
+    // nearly perpendicular to equatorial surface normals → zero diffuse
+    // lighting → terrain looked flat. A direction with equal components in
+    // all axes guarantees NdL ≈ 0.58 for any cube-face surface normal,
+    // producing strong diffuse contrast that reveals height variation.
+    glm::vec3 direction{0.577f, 0.577f, 0.577f};
+    glm::vec3 ambient{0.12f, 0.13f, 0.16f};
+    glm::vec3 diffuse{1.3f, 1.15f, 0.85f};
+    glm::vec3 specular{0.45f, 0.48f, 0.55f};
 };
 
 struct SokolMaterial {

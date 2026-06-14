@@ -18,6 +18,8 @@ public:
   static constexpr int CHUNK_X = 64;
   static constexpr int CHUNK_Y = 32;
   static constexpr int CHUNK_Z = 64;
+  // Sub-voxel height uses 6 bits in the voxel byte (0 = empty, 63 = full block).
+  static constexpr uint8_t kMaxBlockHeight = 63;
 
   void generate_heightmap_terrain();
   void generate_heightmap_terrain_seeded(uint64_t world_seed, int32_t chunk_x,
@@ -26,12 +28,12 @@ public:
   void generate_flat_ground(int ground_y);
   VoxelMaterial material(int x, int y, int z) const;
   bool solid(int x, int y, int z) const;
-  /// Returns sub-voxel height (0-15) encoded in the upper bits.
-  /// 0 means the block has zero height (air-like), 15 means full block height.
+  /// Returns sub-voxel height (0-63) encoded in bits [6:2].
+  /// 0 means the block has zero height (air-like), 63 means full block height.
   uint8_t block_height(int x, int y, int z) const;
   void set_material(int x, int y, int z, VoxelMaterial material);
-  /// Set material with sub-voxel height (0-15) for Ephilem-style terrain variation.
-  /// Height is clamped to [0, 15] and stored in bits [6:2] (6 bits reserved, 4 used).
+  /// Set material with sub-voxel height (0-63) for Ephilem-style terrain variation.
+  /// Height is clamped to [0, 63] and stored in bits [6:2].
   void set_material(int x, int y, int z, VoxelMaterial material, uint8_t height);
   void set_solid(int x, int y, int z, bool value);
   void refresh_surface_materials();

@@ -209,7 +209,7 @@ uint8_t VoxelChunk::block_height(int x, int y, int z) const {
   if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
     return 0;
   }
-  // Bits [6:2] encode sub-voxel height (0-15, shifted by 2).
+  // Bits [6:2] encode sub-voxel height (0-63, shifted by 2).
   return voxels[index(x, y, z)] >> 2u;
 }
 
@@ -226,8 +226,8 @@ void VoxelChunk::set_material(int x, int y, int z, VoxelMaterial material_value,
   if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
     return;
   }
-  // Encode: lower 2 bits = material, bits [6:2] = height clamped to [0, 15].
-  const uint8_t clamped_h = std::min(height, uint8_t(63)); // 6 bits = 0-63 range
+  // Encode: lower 2 bits = material, bits [6:2] = height clamped to [0, 63].
+  const uint8_t clamped_h = std::min(height, VoxelChunk::kMaxBlockHeight);
   voxels[index(x, y, z)] = (static_cast<uint8_t>(material_value) & 0x03u) | (clamped_h << 2u);
 }
 

@@ -690,11 +690,11 @@ void Engine::tick(double frame_dt,
   // visible screen-space location. Logs every 60 frames to avoid spam.
   // TODO: remove once voxel rendering is confirmed working.
   if (frame_index % 60 == 0) {
-    std::fprintf(stderr, "Frame %lu: Camera pos=(%.1f,%.1f,%.1f) snap=(%.1f,%.1f,%.1f) opaques=%zu chunks=%zu wireframes=%zu\n",
+    std::fprintf(stderr, "Frame %lu: Camera pos=(%.1f,%.1f,%.1f) snap=(%.1f,%.1f,%.1f) FPS=%.0f opaques=%zu chunks=%zu wireframes=%zu\n",
                  frame_index,
                  camera.transform.position.x, camera.transform.position.y, camera.transform.position.z,
                  camera_snap_origin_.x, camera_snap_origin_.y, camera_snap_origin_.z,
-                 scene.opaque_meshes.size(), block_world_.chunk_count(),
+                 render_stats.fps, scene.opaque_meshes.size(), block_world_.chunk_count(),
                  scene.wireframe_meshes.size());
 
     // Project first vertex to NDC to verify it lands on screen.

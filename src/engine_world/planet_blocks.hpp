@@ -137,6 +137,17 @@ public:
     const VoxelChunk *find_chunk(const BlockAddress &addr) const;
     size_t chunk_count() const { return chunks_.size(); }
 
+    // Offset a chunk address by (dcx, dcy, dcz) chunk steps, crossing cube-face
+    // sector boundaries via edge pairings. Returns false for radial shell bounds.
+    bool offset_chunk_address(const BlockAddress &origin,
+                              int32_t dcx, int32_t dcy, int32_t dcz,
+                              BlockAddress &out) const;
+
+    // Chunks to stream around a player position (includes adjacent sectors).
+    void collect_stream_chunks(const BlockAddress &player_addr,
+                               int32_t shell, int32_t radius,
+                               std::vector<BlockAddress> &out) const;
+
     // ── Stable mesh ID ──────────────────────────────────────────────────
     // Deterministic uint64 from sector+shell+chunk for GPU cache key.
     static uint64_t chunk_mesh_id(const BlockAddress &addr);
@@ -194,8 +205,17 @@ public:
                            float base_height = 12.0f,
                            float amplitude = 10.0f) const;
 
+    // Fractional part of terrain height within the top layer [0, 1).
+    // Used only on the surface block for sub-voxel vertical variation.
+    float terrain_surface_fraction(const glm::dvec3 &direction,
+                                   float base_height = 12.0f,
+                                   float amplitude = 10.0f) const;
+
 private:
     float value_noise(const glm::dvec3 &p) const;
+    float terrain_height_raw(const glm::dvec3 &direction,
+                             float base_height,
+                             float amplitude) const;
     uint64_t seed_ = 0;
 };
 

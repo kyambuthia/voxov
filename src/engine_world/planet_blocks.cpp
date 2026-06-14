@@ -7,6 +7,13 @@
 #include <cstdio>    // std::fprintf for debug diagnostics (TODO: remove)
 #include <cstring>
 
+namespace {
+// vertical_layers / chunk_size truncates; surface layers 16+ need a second chunk row.
+int32_t chunk_axis_count(int32_t axis_res, int32_t chunk_size) {
+    return std::max(1, (axis_res + chunk_size - 1) / chunk_size);
+}
+}  // namespace
+
 // ============================================================================
 // BlockAddressHash
 // ============================================================================
@@ -268,9 +275,8 @@ void BlockWorld::block_face_uv(PlanetFace face, int32_t shell_idx,
 
 int32_t BlockWorld::terrain_height_at(const glm::dvec3 &world_dir) const {
     SphereNoise3D noise(config_.seed);
-    // Increased amplitude from 10 to 25 for more visible terrain variation.
-    // Base height 15, amplitude 25 gives range [8, 40] clamped to [8, 28].
-    return noise.terrain_height(world_dir, 15.0f, 25.0f);
+    // Gentle rolling hills: direction×200 noise made 1-block-wide pillar spikes.
+    return noise.terrain_height(world_dir, 18.0f, 5.0f);
 }
 
 int32_t BlockWorld::terrain_height_at_face_uv(PlanetFace face, int32_t col_x,
@@ -310,25 +316,54 @@ VoxelMaterial BlockWorld::block_material_at(const BlockAddress &addr,
 void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const {
     const int32_t base_col_x = addr.chunk.x * config_.chunk_size;
     const int32_t base_col_z = addr.chunk.z * config_.chunk_size;
+    const ShellConfig &sh = shell_config(addr.shell);
+    const int32_t surface_layers =
+        shell_config(shell_count() - 1).vertical_layers;
 
     int32_t solid_count = 0;
-    for (int32_t z = 0; z < config_.chunk_size; ++z)
-        for (int32_t y = 0; y < config_.chunk_size; ++y)
-            for (int32_t x = 0; x < config_.chunk_size; ++x) {
-                // Sample terrain height per-column, not per-chunk.
-                const int32_t surf_h = terrain_height_at_face_uv(
-                    addr.sector, base_col_x + x, base_col_z + z);
+    for (int32_t z = 0; z < config_.chunk_size; ++z) {
+        for (int32_t x = 0; x < config_.chunk_size; ++x) {
+            // Sample terrain height per-column, not per-chunk.
+            const int32_t surf_h = terrain_height_at_face_uv(
+                addr.sector, base_col_x + x, base_col_z + z);
+            const int32_t scaled_h = (addr.shell == shell_count() - 1)
+                ? surf_h
+                : static_cast<int32_t>(static_cast<double>(surf_h) *
+                    static_cast<double>(sh.vertical_layers) /
+                    static_cast<double>(surface_layers));
+
+            // Sub-voxel height applies ONLY to the topmost solid block in the
+            // column. Interior blocks must be full height — assigning surf_h
+            // to every layer made each block partial, stacking visible side
+            // faces into tall striped pillars.
+            const int32_t res = shell_config(shell_count() - 1).horizontal_res;
+            const double u = -1.0 + (static_cast<double>(base_col_x + x) + 0.5)
+                / static_cast<double>(res) * 2.0;
+            const double v = -1.0 + (static_cast<double>(base_col_z + z) + 0.5)
+                / static_cast<double>(res) * 2.0;
+            const glm::dvec3 col_dir = face_uv_to_direction(addr.sector, u, v);
+            SphereNoise3D noise(config_.seed);
+            const float surface_frac = noise.terrain_surface_fraction(col_dir);
+            const uint8_t surface_h = static_cast<uint8_t>(std::clamp(
+                static_cast<int32_t>(std::round(surface_frac *
+                    static_cast<float>(VoxelChunk::kMaxBlockHeight))),
+                1, static_cast<int32_t>(VoxelChunk::kMaxBlockHeight)));
+
+            for (int32_t y = 0; y < config_.chunk_size; ++y) {
                 BlockAddress ba = addr;
                 ba.block = glm::ivec3(x, y, z);
                 const VoxelMaterial mat = block_material_at(ba, surf_h);
-                // Encode surface height as sub-voxel height for Ephilem-style
-                // terrain variation. Clamp to [0,15] — surf_h ranges [8,28].
-                // Height controls which side faces are emitted (revealing partial
-                // blocks) and how far side quads extend vertically.
-                const uint8_t block_h = static_cast<uint8_t>(std::clamp(surf_h, 0, 15));
+                const int32_t layer = addr.chunk.y * config_.chunk_size + y;
+                const bool is_surface =
+                    mat != VoxelMaterial::Air && layer == scaled_h;
+                const uint8_t block_h = is_surface
+                    ? surface_h
+                    : VoxelChunk::kMaxBlockHeight;
                 out.set_material(x, y, z, mat, block_h);
                 if (mat != VoxelMaterial::Air) ++solid_count;
             }
+        }
+    }
 
     // Debug: log terrain height range in first chunk.
     static bool logged_first = false;
@@ -379,6 +414,110 @@ const VoxelChunk *BlockWorld::find_chunk(const BlockAddress &addr) const {
 }
 
 // ============================================================================
+// Cross-sector chunk addressing (streaming)
+// ============================================================================
+
+bool BlockWorld::offset_chunk_address(const BlockAddress &origin,
+                                      int32_t dcx, int32_t dcy, int32_t dcz,
+                                      BlockAddress &out) const {
+    const ShellConfig &sh = shell_config(origin.shell);
+    const int32_t hc = chunk_axis_count(sh.horizontal_res, config_.chunk_size);
+    const int32_t vc = chunk_axis_count(sh.vertical_layers, config_.chunk_size);
+
+    int32_t cx = origin.chunk.x;
+    int32_t cy = origin.chunk.y + dcy;
+    int32_t cz = origin.chunk.z;
+    PlanetFace sector = origin.sector;
+
+    if (cy < 0 || cy >= vc) {
+        return false;
+    }
+
+    // Walk one chunk at a time so multi-step crossings stay consistent with
+    // neighbors() edge pairings (Bowerbyte cube-net seam rules).
+    auto step_axis = [&](int32_t &coord, int32_t delta,
+                         CubeEdge neg_edge, CubeEdge pos_edge) -> bool {
+        const int32_t steps = std::abs(delta);
+        const int32_t dir = (delta > 0) ? 1 : -1;
+        for (int32_t s = 0; s < steps; ++s) {
+            const int32_t next = coord + dir;
+            if (next >= 0 && next < hc) {
+                coord = next;
+                continue;
+            }
+
+            const CubeEdge edge = (dir > 0) ? pos_edge : neg_edge;
+            const auto &p = edge_pairing(sector, edge);
+            sector = p.to_face;
+
+            int32_t tcx = next;
+            int32_t tcz = cz;
+            if (p.swap_uv) {
+                std::swap(tcx, tcz);
+            }
+            if (p.flip_u) {
+                tcx = hc - 1 - tcx;
+            }
+            if (p.flip_v) {
+                tcz = hc - 1 - tcz;
+            }
+            tcx = std::clamp(tcx, 0, hc - 1);
+            tcz = std::clamp(tcz, 0, hc - 1);
+            coord = tcx;
+            cz = tcz;
+        }
+        return true;
+    };
+
+    if (!step_axis(cx, dcx, CubeEdge::Left, CubeEdge::Right)) {
+        return false;
+    }
+    if (!step_axis(cz, dcz, CubeEdge::Bottom, CubeEdge::Top)) {
+        return false;
+    }
+
+    out = origin;
+    out.sector = sector;
+    out.shell = origin.shell;
+    out.chunk = glm::ivec3(cx, cy, cz);
+    out.block = glm::ivec3(0);
+    return true;
+}
+
+void BlockWorld::collect_stream_chunks(const BlockAddress &player_addr,
+                                       int32_t shell, int32_t radius,
+                                       std::vector<BlockAddress> &out) const {
+    out.clear();
+    out.reserve(static_cast<size_t>((2 * radius + 1) * (2 * radius + 1)));
+
+    BlockAddress base = player_addr;
+    base.shell = shell;
+    base.block = glm::ivec3(0);
+
+    for (int32_t dz = -radius; dz <= radius; ++dz) {
+        for (int32_t dx = -radius; dx <= radius; ++dx) {
+            BlockAddress addr{};
+            if (!offset_chunk_address(base, dx, 0, dz, addr)) {
+                continue;
+            }
+
+            bool duplicate = false;
+            for (const BlockAddress &existing : out) {
+                if (existing.sector == addr.sector &&
+                    existing.shell == addr.shell &&
+                    existing.chunk == addr.chunk) {
+                    duplicate = true;
+                    break;
+                }
+            }
+            if (!duplicate) {
+                out.push_back(addr);
+            }
+        }
+    }
+}
+
+// ============================================================================
 // Neighbor lookup
 // ============================================================================
 
@@ -399,8 +538,8 @@ std::vector<BlockNeighbor> BlockWorld::neighbors(const BlockAddress &addr,
     }
 
     const ShellConfig &sh = shell_config(addr.shell);
-    const int32_t hc = std::max(1, sh.horizontal_res / config_.chunk_size);
-    const int32_t vc = std::max(1, sh.vertical_layers / config_.chunk_size);
+    const int32_t hc = chunk_axis_count(sh.horizontal_res, config_.chunk_size);
+    const int32_t vc = chunk_axis_count(sh.vertical_layers, config_.chunk_size);
     glm::ivec3 nc = addr.chunk;
     if (nb_block.x < 0) nc.x -= 1; else if (nb_block.x >= config_.chunk_size) nc.x += 1;
     if (nb_block.y < 0) nc.y -= 1; else if (nb_block.y >= config_.chunk_size) nc.y += 1;
@@ -501,6 +640,7 @@ RenderMesh BlockWorld::build_chunk_mesh(
 
     RenderMesh mesh{};
     mesh.mesh_id = block_chunk_mesh_id(addr);
+    (void)solid_at;  // retained for API compat; neighbor queries use find_chunk.
 
     const ShellConfig &sh = shell_config(addr.shell);
     const double bw = config_.block_size;
@@ -516,28 +656,21 @@ RenderMesh BlockWorld::build_chunk_mesh(
     // preserves per-block normals for correct sphere lighting.
 
     // Sub-voxel height terrain (Ephilem-style):
-    // Each solid block stores a height 0-15 in block_height(). A block with
-    // height=N occupies only the top N/16 of its cell. Side faces are only
-    // emitted where my_height > neighbor_height, and the visible part of the
-    // side spans from neighbor_height to my_height. Up/Down faces use the
-    // full cell but with sub-voxel vertical position.
-    //
-    // Neighbor height lookup: same-chunk uses chunk.block_height() directly;
-    // cross-chunk uses the solid_at callback but we extract the encoded height
-    // from the neighbor chunk's raw voxel storage. Since solid_at only returns
-    // bool, we fall back to a safe default of 0 for missing neighbors or 15
-    // for unknown solid neighbors — the sub-voxel detail is primarily an
-    // intra-chunk optimization.
-    auto get_neighbor_height = [&](int nx, int ny, int nz,
-                                   BlockAddress &nb_addr,
-                                   bool &neighbor_exists) -> uint8_t {
+    // Only the surface block in each column stores a fractional height in
+    // [1, kMaxBlockHeight]. Interior blocks are always full height.
+    constexpr uint8_t kMaxH = VoxelChunk::kMaxBlockHeight;
+    const double kMaxH_d = static_cast<double>(kMaxH);
+
+    auto resolve_neighbor_address = [&](int nx, int ny, int nz,
+                                        BlockAddress &nb_addr) -> bool {
         if (nx >= 0 && nx < cs && ny >= 0 && ny < cs && nz >= 0 && nz < cs) {
-            neighbor_exists = true;
-            return chunk.block_height(nx, ny, nz);
+            nb_addr = addr;
+            nb_addr.block = glm::ivec3(nx, ny, nz);
+            return true;
         }
-        // Cross-chunk: resolve neighbor address and query solid_at.
-        const int hc = std::max(1, sh.horizontal_res / cs);
-        const int vc = std::max(1, sh.vertical_layers / cs);
+
+        const int hc = chunk_axis_count(sh.horizontal_res, cs);
+        const int vc = chunk_axis_count(sh.vertical_layers, cs);
 
         int cx = addr.chunk.x;
         int cy = addr.chunk.y;
@@ -553,9 +686,7 @@ RenderMesh BlockWorld::build_chunk_mesh(
 
         if (cx < 0 || cx >= hc || cz < 0 || cz >= hc || cy < 0 || cy >= vc) {
             if (cy < 0 || cy >= vc) {
-                // Radial cross — neighbor doesn't exist.
-                neighbor_exists = false;
-                return 0;
+                return false;
             }
             CubeEdge crossed_edge;
             if (cx < 0) crossed_edge = CubeEdge::Left;
@@ -565,6 +696,7 @@ RenderMesh BlockWorld::build_chunk_mesh(
 
             const auto& p = edge_pairing(addr.sector, crossed_edge);
             nb_addr.sector = p.to_face;
+            nb_addr.shell = addr.shell;
 
             int scx = std::clamp(cx, 0, hc - 1);
             int scz = std::clamp(cz, 0, hc - 1);
@@ -582,29 +714,41 @@ RenderMesh BlockWorld::build_chunk_mesh(
             if (p.flip_v) tbz = cs - 1 - tbz;
 
             nb_addr.block = glm::ivec3(tbx, by_new, tbz);
-        } else {
-            nb_addr.chunk = glm::ivec3(cx, cy, cz);
-            nb_addr.block = glm::ivec3(bx_new, by_new, bz_new);
+            return true;
         }
-        neighbor_exists = true;
-        // We can't extract height from solid_at (returns bool only).
-        // Return 15 as conservative default — if the neighbor is solid, assume
-        // full height so side faces cull correctly (no gap for full neighbors).
-        return solid_at(nb_addr) ? 15 : 0;
+
+        nb_addr.sector = addr.sector;
+        nb_addr.shell = addr.shell;
+        nb_addr.chunk = glm::ivec3(cx, cy, cz);
+        nb_addr.block = glm::ivec3(bx_new, by_new, bz_new);
+        return true;
     };
 
-    // Resolve the neighbor radius for height-based quad extrusion.
-    // Side faces interpolate their bottom to neighbor_height and top to my_height.
-    auto face_radius_at_height = [&](int by, uint8_t height_fraction) -> double {
-        const double gy = static_cast<double>(addr.chunk.y * cs + by);
-        const double gy_next = gy + static_cast<double>(stride);
-        const double vlayers = static_cast<double>(std::max(1, sh.vertical_layers));
-        const double r0 = sh.inner_radius + (sh.outer_radius - sh.inner_radius) * (gy / vlayers);
-        const double r1 = sh.inner_radius + (sh.outer_radius - sh.inner_radius) * (gy_next / vlayers);
-        // Interpolate between r0 and r1 based on height fraction [0, 16].
-        // height_fraction=0 → r0, height_fraction=15 → r1.
-        const double t = static_cast<double>(height_fraction) / 15.0;
-        return r0 + (r1 - r0) * t;
+    auto get_neighbor_height = [&](int nx, int ny, int nz,
+                                   BlockAddress &nb_addr,
+                                   bool &neighbor_exists) -> uint8_t {
+        if (!resolve_neighbor_address(nx, ny, nz, nb_addr)) {
+            neighbor_exists = false;
+            return 0;
+        }
+
+        BlockAddress chunk_key = nb_addr;
+        chunk_key.block = glm::ivec3(0);
+        const VoxelChunk *nc = (chunk_key.sector == addr.sector &&
+                                chunk_key.shell == addr.shell &&
+                                chunk_key.chunk == addr.chunk)
+            ? &chunk
+            : find_chunk(chunk_key);
+        if (nc == nullptr) {
+            neighbor_exists = false;
+            return 0;
+        }
+
+        neighbor_exists = true;
+        if (!nc->solid(nb_addr.block.x, nb_addr.block.y, nb_addr.block.z)) {
+            return 0;
+        }
+        return nc->block_height(nb_addr.block.x, nb_addr.block.y, nb_addr.block.z);
     };
 
     struct FaceDef {
@@ -652,7 +796,7 @@ RenderMesh BlockWorld::build_chunk_mesh(
 
                 // Actual block top/bottom based on sub-voxel height.
                 // Block top radius interpolates from cell bottom to cell top based on height fraction.
-                const double r_block_top = r_cell0 + (r_cell1 - r_cell0) * (static_cast<double>(bh) / 15.0);
+                const double r_block_top = r_cell0 + (r_cell1 - r_cell0) * (static_cast<double>(bh) / kMaxH_d);
 
                 const glm::dvec3 d00 = face_uv_to_direction(addr.sector, u0, v0);
                 const glm::dvec3 d10 = face_uv_to_direction(addr.sector, u1, v0);
@@ -700,9 +844,6 @@ RenderMesh BlockWorld::build_chunk_mesh(
                     const bool side = is_side_face(face.fd);
 
                     if (side) {
-                        // ── Side face: Ephilem-style height comparison ──
-                        // Face visible only when my_height > neighbor_height.
-                        // The visible span goes from neighbor_height to my_height.
                         const glm::ivec3 dv = block_dir_vector(face.fd);
                         const int nx = bx + dv.x * stride;
                         const int ny = by + dv.y * stride;
@@ -711,15 +852,49 @@ RenderMesh BlockWorld::build_chunk_mesh(
                         BlockAddress nb_addr = addr;
                         bool neighbor_exists = false;
                         const uint8_t nbh = get_neighbor_height(nx, ny, nz, nb_addr, neighbor_exists);
+                        const bool neighbor_solid = neighbor_exists && nbh > 0;
 
-                        // Not visible if my height <= neighbor height (neighbor blocks the face).
+                        // Full-height interior blocks: standard solid-neighbor culling.
+                        // Ephilem height compare on bh=63 drew partial strips next to
+                        // shorter neighboring surface columns (striped pillar artifact).
+                        if (bh >= kMaxH) {
+                            if (neighbor_solid) continue;
+
+                            const glm::dvec3 v0 = p_full[face.corners[0]];
+                            const glm::dvec3 v1 = p_full[face.corners[1]];
+                            const glm::dvec3 v2 = p_full[face.corners[2]];
+                            const glm::dvec3 v3 = p_full[face.corners[3]];
+                            const bool top_face = false;
+                            const glm::vec3 color =
+                                VoxelChunk::material_color(mat, top_face, height_t);
+                            const glm::dvec3 fn =
+                                glm::normalize(glm::cross(v1 - v0, v2 - v0));
+                            const uint32_t base =
+                                static_cast<uint32_t>(mesh.vertices.size());
+                            mesh.vertices.push_back(RenderVertex{
+                                glm::vec3(v0 - camera_relative_origin), color,
+                                glm::vec3(fn)});
+                            mesh.vertices.push_back(RenderVertex{
+                                glm::vec3(v1 - camera_relative_origin), color,
+                                glm::vec3(fn)});
+                            mesh.vertices.push_back(RenderVertex{
+                                glm::vec3(v2 - camera_relative_origin), color,
+                                glm::vec3(fn)});
+                            mesh.vertices.push_back(RenderVertex{
+                                glm::vec3(v3 - camera_relative_origin), color,
+                                glm::vec3(fn)});
+                            mesh.indices.insert(mesh.indices.end(), {
+                                base, base + 1, base + 2,
+                                base, base + 2, base + 3});
+                            continue;
+                        }
+
+                        // ── Surface block: Ephilem-style height comparison ──
                         if (bh <= nbh) continue;
-                        // Also not visible if the neighbor is solid at full height (should never
-                        // happen with bh > nbh, but be safe).
                         if (bh == 0) continue;
 
                         // Compute radial position of neighbor's top for the face bottom.
-                        const double r_face_bottom = r_cell0 + (r_cell1 - r_cell0) * (static_cast<double>(nbh) / 15.0);
+                        const double r_face_bottom = r_cell0 + (r_cell1 - r_cell0) * (static_cast<double>(nbh) / kMaxH_d);
 
                         // Map face corners to the side quad.
                         // For Left(-X)/Right(+X): corners vary in Z (v-axis) and Y (radial).
@@ -776,9 +951,19 @@ RenderMesh BlockWorld::build_chunk_mesh(
                             base, base + 2, base + 3});
                     } else if (face.fd == BlockDir::Up) {
                         // ── Up face (top): partial block top ──
-                        // Top face is always visible (the top of a solid block is exposed
-                        // to air above). But if height < 15, the face is smaller.
+                        // Cull when a solid neighbor sits above — otherwise every
+                        // interior layer emits a horizontal band (striped pillars).
                         if (bh == 0) continue;
+
+                        {
+                            const glm::ivec3 dv = block_dir_vector(face.fd);
+                            BlockAddress nb_addr = addr;
+                            bool neighbor_exists = false;
+                            (void)get_neighbor_height(
+                                bx + dv.x * stride, by + dv.y * stride, bz + dv.z * stride,
+                                nb_addr, neighbor_exists);
+                            if (neighbor_exists) continue;
+                        }
 
                         const glm::dvec3 v0 = p_actual[face.corners[0]];
                         const glm::dvec3 v1 = p_actual[face.corners[1]];
@@ -812,8 +997,7 @@ RenderMesh BlockWorld::build_chunk_mesh(
 
                         // Down face visible when neighbor below has less than full height
                         // (creating a gap at the cell bottom) or neighbor is absent.
-                        // Always emit if no neighbor; otherwise only if neighbor height < 15.
-                        if (neighbor_exists && nbh >= 15) continue;
+                        if (neighbor_exists && nbh >= kMaxH) continue;
 
                         const glm::dvec3 v0 = p_full[face.corners[0]];
                         const glm::dvec3 v1 = p_full[face.corners[1]];
@@ -940,19 +1124,30 @@ float SphereNoise3D::fbm(const glm::dvec3 &direction, int octaves,
     return value / maxv;
 }
 
+float SphereNoise3D::terrain_height_raw(const glm::dvec3 &direction,
+                                        float base_height,
+                                        float amplitude) const {
+    // Face-UV noise keeps adjacent columns correlated; direction×200 was ~1-column spikes.
+    const PlanetFaceUV uv = direction_to_face_uv(direction);
+    const double seed_z =
+        static_cast<double>((seed_ >> 16u) & 0xFFFFu) * 0.001;
+    const glm::dvec3 macro_p(uv.u * 4.0, uv.v * 4.0, seed_z);
+    const glm::dvec3 detail_p(uv.u * 14.0, uv.v * 14.0, seed_z + 31.0);
+    const float macro = fbm(macro_p, 4, 2.0f, 0.5f);
+    const float detail = fbm(detail_p, 2, 2.0f, 0.5f);
+    return base_height + macro * amplitude + detail * amplitude * 0.2f;
+}
+
 int32_t SphereNoise3D::terrain_height(const glm::dvec3 &direction,
                                        float base_height,
                                        float amplitude) const {
-    // Noise frequencies tuned for per-block variation at 1024 horizontal_res.
-    // UV range per 16-block chunk: 16/1024 = 0.0156. Need frequencies high
-    // enough to produce multiple cycles within that range.
-    // freq=200 → 200*0.0156 = 3.1 cycles per chunk → good variation
-    // freq=80  → 80*0.0156 = 1.25 cycles per chunk → medium variation
-    // freq=30  → 30*0.0156 = 0.47 cycles per chunk → large hills
-    float h = base_height;
-    h += sample(direction, 200.0f) * amplitude * 0.5f;  // high-freq detail
-    h += sample(direction, 80.0f) * amplitude * 0.3f;   // medium detail
-    h += sample(direction, 30.0f) * amplitude * 0.2f;   // large hills
+    const float h = terrain_height_raw(direction, base_height, amplitude);
+    return std::clamp(static_cast<int32_t>(std::round(h)), 10, 26);
+}
 
-    return std::clamp(static_cast<int32_t>(std::round(h)), 8, 28);
+float SphereNoise3D::terrain_surface_fraction(const glm::dvec3 &direction,
+                                               float base_height,
+                                               float amplitude) const {
+    const float h = terrain_height_raw(direction, base_height, amplitude);
+    return h - std::floor(h);
 }

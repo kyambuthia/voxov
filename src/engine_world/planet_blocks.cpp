@@ -594,7 +594,13 @@ RenderMesh BlockWorld::build_chunk_mesh(
                           nb_addr.block.z = tbz;
                           crossed = true;
                         }
-                        occluded = solid_at(nb_addr);
+                        // Cross-chunk face culling: only trust solid_at if the
+                        // neighbor chunk has definitively been meshed.  Otherwise
+                        // emit the face to avoid visible seams when streaming
+                        // loads chunks asymmetrically (e.g. +x/+z before −x/−z).
+                        // TODO: track which chunks have built meshes so we can
+                        //       safely cull interior faces between loaded chunks.
+                        occluded = false;
                     }
                     // Debug: count culled faces per direction for first chunk.
                     static int culled_count[6] = {0};

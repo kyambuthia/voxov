@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <numbers>
 #include <utility>
 
 #include <glm/common.hpp>
@@ -33,9 +34,34 @@ glm::dvec3 math_normalized_or(const glm::dvec3 &value,
   }
   return value / std::sqrt(len2);
 }
+
+// Pre-distort UV coordinates using equi-angular mapping to reduce block
+// stretching near cube-sphere sector boundaries.
+// Maps u,v in [-1,1] to a pre-distorted position on the cube face.
+// Without this, normalizing cube-face vertices onto the sphere compresses
+// blocks near edges/corners.  The tan() warps the uniform grid so that
+// after normalization, blocks have more uniform size across the face.
+// Reference: Bowerbyte "Blocky Planet" equiangular cube-sphere projection.
+void pre_distort_uv(double &u, double &v) {
+  u = std::tan(u * (std::numbers::pi / 4.0));
+  v = std::tan(v * (std::numbers::pi / 4.0));
+}
+
+// Inverse of pre_distort_uv: converts pre-distorted cube-face coordinates
+// back to the original uniform UV grid.  Required in direction_to_face_uv()
+// so that the forward/inverse round-trip is consistent.
+void inverse_pre_distort_uv(double &u, double &v) {
+  u = (4.0 / std::numbers::pi) * std::atan(u);
+  v = (4.0 / std::numbers::pi) * std::atan(v);
+}
 } // namespace
 
 glm::dvec3 face_uv_to_direction(PlanetFace face, double u, double v) {
+  // Pre-distort UV to counteract block stretching near sector boundaries.
+  // The equi-angular mapping redistributes the uniform grid so that after
+  // sphere normalization, blocks are more uniformly sized across the face.
+  pre_distort_uv(u, v);
+
   glm::dvec3 direction(0.0);
   switch (face) {
   case PlanetFace::PosX:
@@ -110,6 +136,12 @@ PlanetFaceUV direction_to_face_uv(const glm::dvec3 &direction) {
 
   uv.u = std::clamp(uv.u, -1.0, 1.0);
   uv.v = std::clamp(uv.v, -1.0, 1.0);
+
+  // Apply inverse pre-distortion so that direction→UV→direction round-trips
+  // correctly.  face_uv_to_direction() applies pre_distort_uv(), so we must
+  // undo it here to return UV on the original uniform grid.
+  inverse_pre_distort_uv(uv.u, uv.v);
+
   return uv;
 }
 

@@ -112,7 +112,8 @@ private:
   PlanetLODSystem lod_system_;
   std::vector<BlockAddress> loaded_chunks_;    // currently resident chunks
   uint64_t block_mesh_revision_ = 0;
-  uint32_t chunk_generation_budget_ = 8;
+  uint32_t chunk_generation_budget_ = 32;
+  uint32_t mesh_build_budget_ = 24;
   uint64_t last_chunk_center_hash_ = 0;        // detect player movement
 
   bool debug_fly_mode_ = false; // false = surface walking (gravity toward planet center, capsule collision with voxel terrain)

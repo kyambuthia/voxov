@@ -26,6 +26,45 @@ double elapsed_ms(const PerfClock::time_point &start,
   return std::chrono::duration<double, std::milli>(end - start).count();
 }
 
+BlockAddress chunk_address_key(const BlockAddress &addr) {
+  BlockAddress key = addr;
+  key.block = glm::ivec3(0);
+  return key;
+}
+
+void collect_remesh_targets(const BlockWorld &world,
+                            const std::vector<BlockAddress> &new_chunks,
+                            const std::vector<BlockAddress> &desired,
+                            std::unordered_set<uint64_t> &out) {
+  std::unordered_set<uint64_t> desired_ids;
+  desired_ids.reserve(desired.size());
+  for (const BlockAddress &addr : desired) {
+    desired_ids.insert(BlockWorld::chunk_mesh_id(chunk_address_key(addr)));
+  }
+
+  for (const BlockAddress &nc : new_chunks) {
+    const BlockAddress base = chunk_address_key(nc);
+    out.insert(BlockWorld::chunk_mesh_id(base));
+    for (int32_t dcy = -1; dcy <= 1; ++dcy) {
+      for (int32_t dcz = -1; dcz <= 1; ++dcz) {
+        for (int32_t dcx = -1; dcx <= 1; ++dcx) {
+          if (dcx == 0 && dcy == 0 && dcz == 0) {
+            continue;
+          }
+          BlockAddress neighbor{};
+          if (!world.offset_chunk_address(base, dcx, dcy, dcz, neighbor)) {
+            continue;
+          }
+          const uint64_t mid = BlockWorld::chunk_mesh_id(neighbor);
+          if (desired_ids.find(mid) != desired_ids.end()) {
+            out.insert(mid);
+          }
+        }
+      }
+    }
+  }
+}
+
 double smooth_metric(double current, double sample, double alpha = 0.25) {
   if (sample < 0.0) {
     sample = 0.0;
@@ -783,19 +822,40 @@ void Engine::tick(double frame_dt,
     block_world_.collect_stream_chunks(player_addr, surface_shell,
                                        chunk_radius, desired);
 
-    // Generate new chunks (budget-limited). Use modest budget to avoid frame spikes.
-    // ── Frame profiler: time chunk generation (noise sampling + voxel data) ──
+    // Generate missing chunks nearest-first with a per-frame budget (Craft-style
+    // streaming: show something quickly, fill the halo over subsequent frames).
     const PerfClock::time_point chunk_gen_start = PerfClock::now();
-    // Slightly higher budget: near sector edges we stream adjacent-face chunks too.
-    // Generate every missing desired chunk this frame. The local patch is
-    // bounded (~2 radial rows × (2r+1)² xz) so a one-shot fill is cheap and
-    // avoids rectangular holes while a per-frame budget drains.
-    std::vector<BlockAddress> new_chunks;
-    new_chunks.reserve(desired.size());
+    const glm::dvec3 stream_anchor = glm::dvec3(local_player.transform.position);
+    auto chunk_dist_sq = [&](const BlockAddress &addr) -> double {
+      const glm::dvec3 center =
+          block_world_.world_from_address(chunk_address_key(addr));
+      const glm::dvec3 d = center - stream_anchor;
+      return glm::dot(d, d);
+    };
+
+    std::vector<BlockAddress> missing_chunks;
+    missing_chunks.reserve(desired.size());
     for (const BlockAddress &addr : desired) {
-      if (block_world_.find_chunk(addr) != nullptr) continue;
+      if (block_world_.find_chunk(addr) != nullptr) {
+        continue;
+      }
+      missing_chunks.push_back(addr);
+    }
+    std::sort(missing_chunks.begin(), missing_chunks.end(),
+              [&](const BlockAddress &a, const BlockAddress &b) {
+                return chunk_dist_sq(a) < chunk_dist_sq(b);
+              });
+
+    std::vector<BlockAddress> new_chunks;
+    new_chunks.reserve(missing_chunks.size());
+    uint32_t gen_count = 0;
+    for (const BlockAddress &addr : missing_chunks) {
+      if (gen_count >= chunk_generation_budget_) {
+        break;
+      }
       block_world_.get_or_generate_chunk(addr);
       new_chunks.push_back(addr);
+      ++gen_count;
     }
     chunk_gen_ms = elapsed_ms(chunk_gen_start, PerfClock::now());
 
@@ -806,7 +866,10 @@ void Engine::tick(double frame_dt,
     const bool need_full_rebuild = player_moved || snap_origin_dirty_;
     // ── Frame profiler: time mesh building (face culling + greedy meshing) ──
     const PerfClock::time_point mesh_build_start = PerfClock::now();
-    const bool remesh_for_neighbors = !new_chunks.empty();
+    std::unordered_set<uint64_t> remesh_targets;
+    if (!new_chunks.empty()) {
+      collect_remesh_targets(block_world_, new_chunks, desired, remesh_targets);
+    }
 
     auto mesh_in_scene = [&](uint64_t mid) -> bool {
       for (const RenderMesh &m : scene.opaque_meshes) {
@@ -830,7 +893,7 @@ void Engine::tick(double frame_dt,
       }
     }
 
-    if (player_moved || remesh_for_neighbors || snap_origin_dirty_ ||
+    if (player_moved || !remesh_targets.empty() || snap_origin_dirty_ ||
         has_pending_meshes) {
       if (need_full_rebuild) {
         scene.opaque_meshes.clear();
@@ -851,69 +914,121 @@ void Engine::tick(double frame_dt,
         scene.opaque_meshes.push_back(std::move(mesh));
       };
 
-      // Build set of desired mesh_ids for this frame.
-      std::unordered_set<uint64_t> desired_ids;
-      // Track LOD distribution for debug HUD.
-      uint32_t lod_distribution[4] = {0, 0, 0, 0};
-      for (const BlockAddress &addr : desired) {
-        // Compute stable mesh_id from address (sector+shell+chunk only).
-        BlockAddress ck = addr;
-        ck.block = glm::ivec3(0);
-        const VoxelChunk *chunk = block_world_.find_chunk(ck);
-        if (chunk == nullptr) continue;
+      struct MeshWorkItem {
+        BlockAddress chunk;
+        double dist_sq = 0.0;
+        ChunkLOD lod{};
+      };
+      std::vector<MeshWorkItem> mesh_work;
+      mesh_work.reserve(desired.size());
 
-        // ── LOD computation ─────────────────────────────────────────────
-        // Compute chunk center in world space for screen-error metric.
+      for (const BlockAddress &addr : desired) {
+        BlockAddress ck = chunk_address_key(addr);
+        const VoxelChunk *chunk = block_world_.find_chunk(ck);
+        if (chunk == nullptr) {
+          continue;
+        }
+
         const glm::dvec3 chunk_center = block_world_.world_from_address(ck);
         const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
-        const float screen_h = std::max(1.0f, static_cast<float>(
-            surface.height));
-        // Chunk world size = chunk_size * block_size (16 * 1.0 = 16m).
-        const double chunk_ws = static_cast<double>(block_world_.config().chunk_size) *
-                                block_world_.config().block_size;
+        const float screen_h =
+            std::max(1.0f, static_cast<float>(surface.height));
+        const double chunk_ws =
+            static_cast<double>(block_world_.config().chunk_size) *
+            block_world_.config().block_size;
         const ChunkLOD clod = lod_system_.compute_lod(
             chunk_center, cam_pos, screen_h, chunk_ws);
 
-        // Track LOD distribution.
+        const uint64_t mid = BlockWorld::chunk_mesh_id(ck);
+        bool is_new = false;
+        for (const BlockAddress &nc : new_chunks) {
+          if (chunk_address_key(nc) == ck) {
+            is_new = true;
+            break;
+          }
+        }
+
+        const bool must_remesh =
+            need_full_rebuild || is_new || snap_origin_dirty_ ||
+            !mesh_in_scene(mid) ||
+            remesh_targets.find(mid) != remesh_targets.end();
+        if (!must_remesh) {
+          continue;
+        }
+
+        MeshWorkItem item{};
+        item.chunk = ck;
+        item.dist_sq = chunk_dist_sq(ck);
+        // Surface row at the player layer fills in first (visible shell top).
+        if (ck.chunk.y == player_addr.chunk.y) {
+          item.dist_sq *= 0.25;
+        } else if (std::abs(ck.chunk.y - player_addr.chunk.y) == 1) {
+          item.dist_sq *= 0.5;
+        }
+        item.lod = clod;
+        mesh_work.push_back(item);
+      }
+
+      std::sort(mesh_work.begin(), mesh_work.end(),
+                [](const MeshWorkItem &a, const MeshWorkItem &b) {
+                  return a.dist_sq < b.dist_sq;
+                });
+
+      std::unordered_set<uint64_t> desired_ids;
+      uint32_t lod_distribution[4] = {0, 0, 0, 0};
+      for (const BlockAddress &addr : desired) {
+        BlockAddress ck = chunk_address_key(addr);
+        if (block_world_.find_chunk(ck) == nullptr) {
+          continue;
+        }
+        desired_ids.insert(BlockWorld::chunk_mesh_id(ck));
+
+        const glm::dvec3 chunk_center = block_world_.world_from_address(ck);
+        const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
+        const float screen_h =
+            std::max(1.0f, static_cast<float>(surface.height));
+        const double chunk_ws =
+            static_cast<double>(block_world_.config().chunk_size) *
+            block_world_.config().block_size;
+        const ChunkLOD clod = lod_system_.compute_lod(
+            chunk_center, cam_pos, screen_h, chunk_ws);
         if (clod.level >= 0 && clod.level <= 3) {
           lod_distribution[clod.level]++;
         }
+      }
 
-        uint64_t mid = BlockWorld::chunk_mesh_id(ck);
-        desired_ids.insert(mid);
-
-        // Only rebuild meshes for new chunks or when player moved
-        // or when snap origin drifted.
-        bool is_new = false;
-        for (const auto &nc : new_chunks) {
-          BlockAddress nk = nc; nk.block = glm::ivec3(0);
-          if (nk == ck) { is_new = true; break; }
+      const uint32_t active_mesh_budget =
+          (frame_index < 180u) ? std::max(mesh_build_budget_, 48u)
+                               : mesh_build_budget_;
+      uint32_t mesh_count = 0;
+      for (const MeshWorkItem &item : mesh_work) {
+        if (!need_full_rebuild && mesh_count >= active_mesh_budget) {
+          break;
         }
-        if (!need_full_rebuild && !is_new && !remesh_for_neighbors &&
-            mesh_in_scene(mid)) {
+
+        const BlockAddress &ck = item.chunk;
+        const VoxelChunk *chunk = block_world_.find_chunk(ck);
+        if (chunk == nullptr) {
           continue;
         }
 
         auto solid_at = [this, &ck, chunk](const BlockAddress &na) -> bool {
           BlockAddress nk = na;
           nk.block = glm::ivec3(0);
-          const VoxelChunk *nc = (nk == ck) ? chunk : block_world_.find_chunk(nk);
-          if (nc == nullptr) return false;
+          const VoxelChunk *nc =
+              (nk == ck) ? chunk : block_world_.find_chunk(nk);
+          if (nc == nullptr) {
+            return false;
+          }
           return nc->solid(na.block.x, na.block.y, na.block.z);
         };
 
-        RenderMesh mesh = block_world_.build_chunk_mesh(ck, *chunk, solid_at,
-                                                         camera_snap_origin_,
-                                                         clod.level);
+        RenderMesh mesh = block_world_.build_chunk_mesh(
+            ck, *chunk, solid_at, camera_snap_origin_, item.lod.level);
         if (!mesh.vertices.empty()) {
           upsert_opaque_mesh(std::move(mesh));
-          // Debug: confirm mesh reaches the scene upload path.
-          spdlog::debug("Mesh uploaded: mid={} verts={} idxs={} lod={}",
-                        mid, mesh.vertices.size(), mesh.indices.size(), clod.level);
-        } else {
-          // Debug: mesh was built but has no geometry — all faces culled?
-          spdlog::debug("Mesh EMPTY: mid={} lod={}", mid, clod.level);
         }
+        ++mesh_count;
       }
 
       // Save LOD distribution to render stats for HUD display.

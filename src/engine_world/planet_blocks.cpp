@@ -321,7 +321,12 @@ void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const
                 BlockAddress ba = addr;
                 ba.block = glm::ivec3(x, y, z);
                 const VoxelMaterial mat = block_material_at(ba, surf_h);
-                out.set_material(x, y, z, mat);
+                // Encode surface height as sub-voxel height for Ephilem-style
+                // terrain variation. Clamp to [0,15] — surf_h ranges [8,28].
+                // Height controls which side faces are emitted (revealing partial
+                // blocks) and how far side quads extend vertically.
+                const uint8_t block_h = static_cast<uint8_t>(std::clamp(surf_h, 0, 15));
+                out.set_material(x, y, z, mat, block_h);
                 if (mat != VoxelMaterial::Air) ++solid_count;
             }
 
@@ -500,8 +505,6 @@ RenderMesh BlockWorld::build_chunk_mesh(
     const ShellConfig &sh = shell_config(addr.shell);
     const double bw = config_.block_size;
     const int32_t cs = config_.chunk_size;
-    const double hs = bw * 0.5;
-
     // LOD stride: at LOD N, only every (2^N)th block is meshed.
     const int32_t stride = 1 << std::clamp(lod_level, 0, 3);
 
@@ -512,20 +515,27 @@ RenderMesh BlockWorld::build_chunk_mesh(
     // spherical curvature and makes terrain look flat. Per-face meshing
     // preserves per-block normals for correct sphere lighting.
 
-    // Intra-chunk face culling: emit face only if neighbor is NOT solid.
-    // Cross-chunk face culling: use the solid_at callback to check the
-    // neighboring chunk's block. This prevents floating quads at chunk
-    // boundaries when adjacent chunks are loaded, while still correctly
-    // culling faces against solid neighbors.
-    auto should_emit_face = [&](int bx, int by, int bz, BlockDir fd) -> bool {
-        const glm::ivec3 dv = block_dir_vector(fd);
-        const int nx = bx + dv.x * stride, ny = by + dv.y * stride, nz = bz + dv.z * stride;
-        // Same-chunk neighbor: check if solid.
+    // Sub-voxel height terrain (Ephilem-style):
+    // Each solid block stores a height 0-15 in block_height(). A block with
+    // height=N occupies only the top N/16 of its cell. Side faces are only
+    // emitted where my_height > neighbor_height, and the visible part of the
+    // side spans from neighbor_height to my_height. Up/Down faces use the
+    // full cell but with sub-voxel vertical position.
+    //
+    // Neighbor height lookup: same-chunk uses chunk.block_height() directly;
+    // cross-chunk uses the solid_at callback but we extract the encoded height
+    // from the neighbor chunk's raw voxel storage. Since solid_at only returns
+    // bool, we fall back to a safe default of 0 for missing neighbors or 15
+    // for unknown solid neighbors — the sub-voxel detail is primarily an
+    // intra-chunk optimization.
+    auto get_neighbor_height = [&](int nx, int ny, int nz,
+                                   BlockAddress &nb_addr,
+                                   bool &neighbor_exists) -> uint8_t {
         if (nx >= 0 && nx < cs && ny >= 0 && ny < cs && nz >= 0 && nz < cs) {
-            return !chunk.solid(nx, ny, nz);
+            neighbor_exists = true;
+            return chunk.block_height(nx, ny, nz);
         }
-        
-        BlockAddress nb_addr = addr;
+        // Cross-chunk: resolve neighbor address and query solid_at.
         const int hc = std::max(1, sh.horizontal_res / cs);
         const int vc = std::max(1, sh.vertical_layers / cs);
 
@@ -541,17 +551,11 @@ RenderMesh BlockWorld::build_chunk_mesh(
         const int by_new = (ny % cs + cs) % cs;
         const int bz_new = (nz % cs + cs) % cs;
 
-        // Cross-chunk neighbor resolution mirrors BlockWorld::neighbors().
-        // WHY: For same-face neighbors (cx,cz in bounds), we set chunk+block directly.
-        // For cross-sector neighbors (cx,cz out of bounds), we use cube-edge pairings
-        // to convert the source chunk+block coordinates onto the adjacent face.
-        // Critically, we clamp the out-of-range chunk index to the valid range BEFORE
-        // computing block coordinates, so that the edge-pairing flip/swap transforms
-        // are applied to valid source-face coordinates — not to garbage negative indices.
         if (cx < 0 || cx >= hc || cz < 0 || cz >= hc || cy < 0 || cy >= vc) {
             if (cy < 0 || cy >= vc) {
-                // Radial cross (different shell) — not supported for surface play.
-                return true;
+                // Radial cross — neighbor doesn't exist.
+                neighbor_exists = false;
+                return 0;
             }
             CubeEdge crossed_edge;
             if (cx < 0) crossed_edge = CubeEdge::Left;
@@ -562,21 +566,15 @@ RenderMesh BlockWorld::build_chunk_mesh(
             const auto& p = edge_pairing(addr.sector, crossed_edge);
             nb_addr.sector = p.to_face;
 
-            // Step 1: Clamp out-of-range chunk index to the valid range [0, hc-1].
-            // This gives us the chunk on the SOURCE face at the correct edge,
-            // which is the boundary neighbor of the adjacent face.
             int scx = std::clamp(cx, 0, hc - 1);
             int scz = std::clamp(cz, 0, hc - 1);
 
-            // Step 2: Apply edge-pairing transforms at the chunk-index level
-            // (same approach as BlockWorld::neighbors()).
             if (p.swap_uv) std::swap(scx, scz);
             if (p.flip_u) scx = hc - 1 - scx;
             if (p.flip_v) scz = hc - 1 - scz;
 
             nb_addr.chunk = glm::ivec3(scx, cy, scz);
 
-            // Step 3: Apply edge-pairing transforms at the block-within-chunk level.
             int tbx = bx_new;
             int tbz = bz_new;
             if (p.swap_uv) std::swap(tbx, tbz);
@@ -588,8 +586,25 @@ RenderMesh BlockWorld::build_chunk_mesh(
             nb_addr.chunk = glm::ivec3(cx, cy, cz);
             nb_addr.block = glm::ivec3(bx_new, by_new, bz_new);
         }
-        
-        return !solid_at(nb_addr);
+        neighbor_exists = true;
+        // We can't extract height from solid_at (returns bool only).
+        // Return 15 as conservative default — if the neighbor is solid, assume
+        // full height so side faces cull correctly (no gap for full neighbors).
+        return solid_at(nb_addr) ? 15 : 0;
+    };
+
+    // Resolve the neighbor radius for height-based quad extrusion.
+    // Side faces interpolate their bottom to neighbor_height and top to my_height.
+    auto face_radius_at_height = [&](int by, uint8_t height_fraction) -> double {
+        const double gy = static_cast<double>(addr.chunk.y * cs + by);
+        const double gy_next = gy + static_cast<double>(stride);
+        const double vlayers = static_cast<double>(std::max(1, sh.vertical_layers));
+        const double r0 = sh.inner_radius + (sh.outer_radius - sh.inner_radius) * (gy / vlayers);
+        const double r1 = sh.inner_radius + (sh.outer_radius - sh.inner_radius) * (gy_next / vlayers);
+        // Interpolate between r0 and r1 based on height fraction [0, 16].
+        // height_fraction=0 → r0, height_fraction=15 → r1.
+        const double t = static_cast<double>(height_fraction) / 15.0;
+        return r0 + (r1 - r0) * t;
     };
 
     struct FaceDef {
@@ -613,6 +628,8 @@ RenderMesh BlockWorld::build_chunk_mesh(
                 const VoxelMaterial mat = chunk.material(bx, by, bz);
                 if (mat == VoxelMaterial::Air) continue;
 
+                const uint8_t bh = chunk.block_height(bx, by, bz);
+
                 // Evaluate 8 corners of the frustum block.
                 const double gx0 = static_cast<double>(addr.chunk.x * cs + bx);
                 const double gx1 = gx0 + stride;
@@ -629,23 +646,41 @@ RenderMesh BlockWorld::build_chunk_mesh(
                 const double v0 = -1.0 + (gz0) / res * 2.0;
                 const double v1 = -1.0 + (gz1) / res * 2.0;
 
-                const double r0 = sh.inner_radius + (sh.outer_radius - sh.inner_radius) * (gy0 / vlayers);
-                const double r1 = sh.inner_radius + (sh.outer_radius - sh.inner_radius) * (gy1 / vlayers);
+                // Full-cell radial extents (0% and 100% height).
+                const double r_cell0 = sh.inner_radius + (sh.outer_radius - sh.inner_radius) * (gy0 / vlayers);
+                const double r_cell1 = sh.inner_radius + (sh.outer_radius - sh.inner_radius) * (gy1 / vlayers);
+
+                // Actual block top/bottom based on sub-voxel height.
+                // Block top radius interpolates from cell bottom to cell top based on height fraction.
+                const double r_block_top = r_cell0 + (r_cell1 - r_cell0) * (static_cast<double>(bh) / 15.0);
 
                 const glm::dvec3 d00 = face_uv_to_direction(addr.sector, u0, v0);
                 const glm::dvec3 d10 = face_uv_to_direction(addr.sector, u1, v0);
                 const glm::dvec3 d01 = face_uv_to_direction(addr.sector, u0, v1);
                 const glm::dvec3 d11 = face_uv_to_direction(addr.sector, u1, v1);
 
-                const glm::dvec3 p[8] = {
-                    config_.planet.center + d00 * r0, // 0: 0,0,0
-                    config_.planet.center + d10 * r0, // 1: 1,0,0
-                    config_.planet.center + d01 * r0, // 2: 0,0,1
-                    config_.planet.center + d11 * r0, // 3: 1,0,1
-                    config_.planet.center + d00 * r1, // 4: 0,1,0
-                    config_.planet.center + d10 * r1, // 5: 1,1,0
-                    config_.planet.center + d01 * r1, // 6: 0,1,1
-                    config_.planet.center + d11 * r1  // 7: 1,1,1
+                // p_full[0..3] = bottom face (r_cell0), p_full[4..7] = top full (r_cell1).
+                const glm::dvec3 p_full[8] = {
+                    config_.planet.center + d00 * r_cell0,
+                    config_.planet.center + d10 * r_cell0,
+                    config_.planet.center + d01 * r_cell0,
+                    config_.planet.center + d11 * r_cell0,
+                    config_.planet.center + d00 * r_cell1,
+                    config_.planet.center + d10 * r_cell1,
+                    config_.planet.center + d01 * r_cell1,
+                    config_.planet.center + d11 * r_cell1,
+                };
+
+                // p_actual[0..3] = bottom face (r_cell0), p_actual[4..7] = top (r_block_top).
+                const glm::dvec3 p_actual[8] = {
+                    config_.planet.center + d00 * r_cell0,
+                    config_.planet.center + d10 * r_cell0,
+                    config_.planet.center + d01 * r_cell0,
+                    config_.planet.center + d11 * r_cell0,
+                    config_.planet.center + d00 * r_block_top,
+                    config_.planet.center + d10 * r_block_top,
+                    config_.planet.center + d01 * r_block_top,
+                    config_.planet.center + d11 * r_block_top,
                 };
 
                 // Height fraction for color tinting.
@@ -653,31 +688,151 @@ RenderMesh BlockWorld::build_chunk_mesh(
                     static_cast<float>(gy0) / static_cast<float>(std::max(1, sh.vertical_layers)),
                     0.0f, 1.0f);
 
+                // Classify each face direction for sub-voxel height handling.
+                // Side faces = Left, Right, Back, Front (horizontal directions)
+                // Top/Bottom = Up, Down (radial directions)
+                auto is_side_face = [](BlockDir fd) -> bool {
+                    return fd == BlockDir::Left || fd == BlockDir::Right ||
+                           fd == BlockDir::Back || fd == BlockDir::Front;
+                };
+
                 for (const auto &face : faces) {
-                    if (!should_emit_face(bx, by, bz, face.fd)) continue;
+                    const bool side = is_side_face(face.fd);
 
-                    const bool top_face = (face.fd == BlockDir::Up);
-                    const glm::vec3 color = VoxelChunk::material_color(mat, top_face, height_t);
+                    if (side) {
+                        // ── Side face: Ephilem-style height comparison ──
+                        // Face visible only when my_height > neighbor_height.
+                        // The visible span goes from neighbor_height to my_height.
+                        const glm::ivec3 dv = block_dir_vector(face.fd);
+                        const int nx = bx + dv.x * stride;
+                        const int ny = by + dv.y * stride;
+                        const int nz = bz + dv.z * stride;
 
-                    const glm::dvec3 v0 = p[face.corners[0]];
-                    const glm::dvec3 v1 = p[face.corners[1]];
-                    const glm::dvec3 v2 = p[face.corners[2]];
-                    const glm::dvec3 v3 = p[face.corners[3]];
+                        BlockAddress nb_addr = addr;
+                        bool neighbor_exists = false;
+                        const uint8_t nbh = get_neighbor_height(nx, ny, nz, nb_addr, neighbor_exists);
 
-                    // Compute exact geometric face normal.
-                    glm::dvec3 fn = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+                        // Not visible if my height <= neighbor height (neighbor blocks the face).
+                        if (bh <= nbh) continue;
+                        // Also not visible if the neighbor is solid at full height (should never
+                        // happen with bh > nbh, but be safe).
+                        if (bh == 0) continue;
 
-                    const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
-                    
-                    mesh.vertices.push_back(RenderVertex{glm::vec3(v0 - camera_relative_origin), color, glm::vec3(fn)});
-                    mesh.vertices.push_back(RenderVertex{glm::vec3(v1 - camera_relative_origin), color, glm::vec3(fn)});
-                    mesh.vertices.push_back(RenderVertex{glm::vec3(v2 - camera_relative_origin), color, glm::vec3(fn)});
-                    mesh.vertices.push_back(RenderVertex{glm::vec3(v3 - camera_relative_origin), color, glm::vec3(fn)});
+                        // Compute radial position of neighbor's top for the face bottom.
+                        const double r_face_bottom = r_cell0 + (r_cell1 - r_cell0) * (static_cast<double>(nbh) / 15.0);
 
-                    // CCW winding when viewed from outside (along face normal).
-                    mesh.indices.insert(mesh.indices.end(), {
-                        base, base + 1, base + 2,
-                        base, base + 2, base + 3});
+                        // Map face corners to the side quad.
+                        // For Left(-X)/Right(+X): corners vary in Z (v-axis) and Y (radial).
+                        // For Back(-Z)/Front(+Z): corners vary in X (u-axis) and Y (radial).
+                        glm::dvec3 v0, v1, v2, v3;
+                        if (face.fd == BlockDir::Left || face.fd == BlockDir::Right) {
+                            // Side faces on X axis: v0/v1 at z0, v2/v3 at z1
+                            // Bottom edge at z0, Top edge at z0, Bottom at z1, Top at z1
+                            const glm::dvec3 p_side_z0[2] = {
+                                config_.planet.center + d00 * r_face_bottom,
+                                config_.planet.center + d00 * r_block_top,
+                            };
+                            const glm::dvec3 p_side_z1[2] = {
+                                config_.planet.center + d01 * r_face_bottom,
+                                config_.planet.center + d01 * r_block_top,
+                            };
+                            // CCW order depends on face direction.
+                            if (face.fd == BlockDir::Left) {
+                                v0 = p_side_z0[0]; v1 = p_side_z1[0];
+                                v2 = p_side_z1[1]; v3 = p_side_z0[1];
+                            } else {
+                                v0 = p_side_z1[0]; v1 = p_side_z0[0];
+                                v2 = p_side_z0[1]; v3 = p_side_z1[1];
+                            }
+                        } else { // Back or Front
+                            const glm::dvec3 p_side_x0[2] = {
+                                config_.planet.center + d00 * r_face_bottom,
+                                config_.planet.center + d00 * r_block_top,
+                            };
+                            const glm::dvec3 p_side_x1[2] = {
+                                config_.planet.center + d10 * r_face_bottom,
+                                config_.planet.center + d10 * r_block_top,
+                            };
+                            if (face.fd == BlockDir::Back) {
+                                v0 = p_side_x0[0]; v1 = p_side_x0[1];
+                                v2 = p_side_x1[1]; v3 = p_side_x1[0];
+                            } else {
+                                v0 = p_side_x1[0]; v1 = p_side_x1[1];
+                                v2 = p_side_x0[1]; v3 = p_side_x0[0];
+                            }
+                        }
+
+                        const bool top_face = false;
+                        const glm::vec3 color = VoxelChunk::material_color(mat, top_face, height_t);
+                        glm::dvec3 fn = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+
+                        const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+                        mesh.vertices.push_back(RenderVertex{glm::vec3(v0 - camera_relative_origin), color, glm::vec3(fn)});
+                        mesh.vertices.push_back(RenderVertex{glm::vec3(v1 - camera_relative_origin), color, glm::vec3(fn)});
+                        mesh.vertices.push_back(RenderVertex{glm::vec3(v2 - camera_relative_origin), color, glm::vec3(fn)});
+                        mesh.vertices.push_back(RenderVertex{glm::vec3(v3 - camera_relative_origin), color, glm::vec3(fn)});
+                        mesh.indices.insert(mesh.indices.end(), {
+                            base, base + 1, base + 2,
+                            base, base + 2, base + 3});
+                    } else if (face.fd == BlockDir::Up) {
+                        // ── Up face (top): partial block top ──
+                        // Top face is always visible (the top of a solid block is exposed
+                        // to air above). But if height < 15, the face is smaller.
+                        if (bh == 0) continue;
+
+                        const glm::dvec3 v0 = p_actual[face.corners[0]];
+                        const glm::dvec3 v1 = p_actual[face.corners[1]];
+                        const glm::dvec3 v2 = p_actual[face.corners[2]];
+                        const glm::dvec3 v3 = p_actual[face.corners[3]];
+
+                        const bool top_face = true;
+                        const glm::vec3 color = VoxelChunk::material_color(mat, top_face, height_t);
+                        glm::dvec3 fn = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+
+                        const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+                        mesh.vertices.push_back(RenderVertex{glm::vec3(v0 - camera_relative_origin), color, glm::vec3(fn)});
+                        mesh.vertices.push_back(RenderVertex{glm::vec3(v1 - camera_relative_origin), color, glm::vec3(fn)});
+                        mesh.vertices.push_back(RenderVertex{glm::vec3(v2 - camera_relative_origin), color, glm::vec3(fn)});
+                        mesh.vertices.push_back(RenderVertex{glm::vec3(v3 - camera_relative_origin), color, glm::vec3(fn)});
+                        mesh.indices.insert(mesh.indices.end(), {
+                            base, base + 1, base + 2,
+                            base, base + 2, base + 3});
+                    } else {
+                        // ── Down face (bottom): original logic ──
+                        // Bottom face of the block: emitted when neighbor below is
+                        // not solid. The quad spans the full cell bottom.
+                        const glm::ivec3 dv = block_dir_vector(face.fd);
+                        const int nx = bx + dv.x * stride;
+                        const int ny = by + dv.y * stride;
+                        const int nz = bz + dv.z * stride;
+
+                        BlockAddress nb_addr = addr;
+                        bool neighbor_exists = false;
+                        const uint8_t nbh = get_neighbor_height(nx, ny, nz, nb_addr, neighbor_exists);
+
+                        // Down face visible when neighbor below has less than full height
+                        // (creating a gap at the cell bottom) or neighbor is absent.
+                        // Always emit if no neighbor; otherwise only if neighbor height < 15.
+                        if (neighbor_exists && nbh >= 15) continue;
+
+                        const glm::dvec3 v0 = p_full[face.corners[0]];
+                        const glm::dvec3 v1 = p_full[face.corners[1]];
+                        const glm::dvec3 v2 = p_full[face.corners[2]];
+                        const glm::dvec3 v3 = p_full[face.corners[3]];
+
+                        const bool top_face = false;
+                        const glm::vec3 color = VoxelChunk::material_color(mat, top_face, height_t);
+                        glm::dvec3 fn = glm::normalize(glm::cross(v1 - v0, v2 - v0));
+
+                        const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+                        mesh.vertices.push_back(RenderVertex{glm::vec3(v0 - camera_relative_origin), color, glm::vec3(fn)});
+                        mesh.vertices.push_back(RenderVertex{glm::vec3(v1 - camera_relative_origin), color, glm::vec3(fn)});
+                        mesh.vertices.push_back(RenderVertex{glm::vec3(v2 - camera_relative_origin), color, glm::vec3(fn)});
+                        mesh.vertices.push_back(RenderVertex{glm::vec3(v3 - camera_relative_origin), color, glm::vec3(fn)});
+                        mesh.indices.insert(mesh.indices.end(), {
+                            base, base + 1, base + 2,
+                            base, base + 2, base + 3});
+                    }
                 }
             }
         }

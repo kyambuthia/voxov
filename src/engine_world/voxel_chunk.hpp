@@ -26,7 +26,13 @@ public:
   void generate_flat_ground(int ground_y);
   VoxelMaterial material(int x, int y, int z) const;
   bool solid(int x, int y, int z) const;
+  /// Returns sub-voxel height (0-15) encoded in the upper bits.
+  /// 0 means the block has zero height (air-like), 15 means full block height.
+  uint8_t block_height(int x, int y, int z) const;
   void set_material(int x, int y, int z, VoxelMaterial material);
+  /// Set material with sub-voxel height (0-15) for Ephilem-style terrain variation.
+  /// Height is clamped to [0, 15] and stored in bits [6:2] (6 bits reserved, 4 used).
+  void set_material(int x, int y, int z, VoxelMaterial material, uint8_t height);
   void set_solid(int x, int y, int z, bool value);
   void refresh_surface_materials();
 

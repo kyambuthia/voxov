@@ -52,6 +52,17 @@ static const CubeEdgePairing k_edge_pairings[12] = {
 const CubeEdgePairing &BlockWorld::edge_pairing(PlanetFace from, CubeEdge edge) {
     for (const auto &p : k_edge_pairings) {
         if (p.from_face == from && p.from_edge == edge) return p;
+        if (p.to_face == from && p.to_edge == edge) {
+            static thread_local CubeEdgePairing rev;
+            rev.from_face = p.to_face;
+            rev.from_edge = p.to_edge;
+            rev.to_face = p.from_face;
+            rev.to_edge = p.from_edge;
+            rev.swap_uv = p.swap_uv;
+            rev.flip_u = p.swap_uv ? p.flip_v : p.flip_u;
+            rev.flip_v = p.swap_uv ? p.flip_u : p.flip_v;
+            return rev;
+        }
     }
     static const CubeEdgePairing fallback{from, edge, from, edge, false, false, false};
     return fallback;
@@ -526,13 +537,21 @@ RenderMesh BlockWorld::build_chunk_mesh(
         if (ny < 0) cy -= 1; else if (ny >= cs) cy += 1;
         if (nz < 0) cz -= 1; else if (nz >= cs) cz += 1;
 
-        int bx_new = (nx % cs + cs) % cs;
-        int by_new = (ny % cs + cs) % cs;
-        int bz_new = (nz % cs + cs) % cs;
+        const int bx_new = (nx % cs + cs) % cs;
+        const int by_new = (ny % cs + cs) % cs;
+        const int bz_new = (nz % cs + cs) % cs;
 
+        // Cross-chunk neighbor resolution mirrors BlockWorld::neighbors().
+        // WHY: For same-face neighbors (cx,cz in bounds), we set chunk+block directly.
+        // For cross-sector neighbors (cx,cz out of bounds), we use cube-edge pairings
+        // to convert the source chunk+block coordinates onto the adjacent face.
+        // Critically, we clamp the out-of-range chunk index to the valid range BEFORE
+        // computing block coordinates, so that the edge-pairing flip/swap transforms
+        // are applied to valid source-face coordinates — not to garbage negative indices.
         if (cx < 0 || cx >= hc || cz < 0 || cz >= hc || cy < 0 || cy >= vc) {
             if (cy < 0 || cy >= vc) {
-                return true; 
+                // Radial cross (different shell) — not supported for surface play.
+                return true;
             }
             CubeEdge crossed_edge;
             if (cx < 0) crossed_edge = CubeEdge::Left;
@@ -542,19 +561,29 @@ RenderMesh BlockWorld::build_chunk_mesh(
 
             const auto& p = edge_pairing(addr.sector, crossed_edge);
             nb_addr.sector = p.to_face;
-            
-            int u = cx * cs + bx_new;
-            int v = cz * cs + bz_new;
 
-            if (p.swap_uv) std::swap(u, v);
-            if (p.flip_u) u = sh.horizontal_res - 1 - u;
-            if (p.flip_v) v = sh.horizontal_res - 1 - v;
+            // Step 1: Clamp out-of-range chunk index to the valid range [0, hc-1].
+            // This gives us the chunk on the SOURCE face at the correct edge,
+            // which is the boundary neighbor of the adjacent face.
+            int scx = std::clamp(cx, 0, hc - 1);
+            int scz = std::clamp(cz, 0, hc - 1);
 
-            u = (u % sh.horizontal_res + sh.horizontal_res) % sh.horizontal_res;
-            v = (v % sh.horizontal_res + sh.horizontal_res) % sh.horizontal_res;
+            // Step 2: Apply edge-pairing transforms at the chunk-index level
+            // (same approach as BlockWorld::neighbors()).
+            if (p.swap_uv) std::swap(scx, scz);
+            if (p.flip_u) scx = hc - 1 - scx;
+            if (p.flip_v) scz = hc - 1 - scz;
 
-            nb_addr.chunk = glm::ivec3(u / cs, cy, v / cs);
-            nb_addr.block = glm::ivec3(u % cs, by_new, v % cs);
+            nb_addr.chunk = glm::ivec3(scx, cy, scz);
+
+            // Step 3: Apply edge-pairing transforms at the block-within-chunk level.
+            int tbx = bx_new;
+            int tbz = bz_new;
+            if (p.swap_uv) std::swap(tbx, tbz);
+            if (p.flip_u) tbx = cs - 1 - tbx;
+            if (p.flip_v) tbz = cs - 1 - tbz;
+
+            nb_addr.block = glm::ivec3(tbx, by_new, tbz);
         } else {
             nb_addr.chunk = glm::ivec3(cx, cy, cz);
             nb_addr.block = glm::ivec3(bx_new, by_new, bz_new);

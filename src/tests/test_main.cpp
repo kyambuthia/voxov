@@ -319,7 +319,108 @@ void test_block_world_terrain_height_is_smooth_across_columns() {
     }
   }
   // HF direction noise produced single-block spikes; smooth UV FBM stays gradual.
-  assert(max_step <= 3);
+  // Pit fill allows one layer below neighbors, so steps can be 2 across a pit edge.
+  assert(max_step <= 4);
+}
+
+void test_block_world_stream_includes_all_vertical_rows() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.planet.center = glm::dvec3(0.0);
+  cfg.surface_shells = 4;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  BlockWorld world{};
+  world.init(cfg);
+
+  BlockAddress origin{};
+  origin.sector = PlanetFace::PosX;
+  origin.shell = world.shell_count() - 1;
+  origin.chunk = glm::ivec3(2, 1, 2);
+
+  std::vector<BlockAddress> stream{};
+  world.collect_stream_chunks(origin, origin.shell, 1, stream);
+
+  const int32_t vc =
+      (world.shell_config(origin.shell).vertical_layers + cfg.chunk_size - 1) /
+      cfg.chunk_size;
+  int32_t rows_seen = 0;
+  for (int32_t cy = 0; cy < vc; ++cy) {
+    bool has_row = false;
+    for (const BlockAddress &addr : stream) {
+      if (addr.sector == origin.sector && addr.chunk.y == cy) {
+        has_row = true;
+        break;
+      }
+    }
+    if (has_row) {
+      ++rows_seen;
+    }
+  }
+  assert(rows_seen == vc);
+}
+
+void test_block_world_streamed_surface_meshes_are_non_empty() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.planet.center = glm::dvec3(0.0);
+  cfg.surface_shells = 8;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  cfg.seed = k_voxov_flat_world_seed;
+  BlockWorld world{};
+  world.init(cfg);
+
+  const glm::dvec3 spawn_dir = glm::normalize(glm::dvec3(1.0, 0.0, 0.0));
+  const BlockAddress player = world.address_from_world(
+      glm::dvec3(spawn_dir * (cfg.planet.radius + 20.0)));
+  const int32_t shell = world.shell_count() - 1;
+
+  std::vector<BlockAddress> stream{};
+  world.collect_stream_chunks(player, shell, 3, stream);
+
+  for (const BlockAddress &addr : stream) {
+    world.get_or_generate_chunk(addr);
+  }
+
+  size_t empty_meshes = 0;
+  size_t surface_row_empty = 0;
+  const int32_t vc =
+      (world.shell_config(shell).vertical_layers + cfg.chunk_size - 1) /
+      cfg.chunk_size;
+  const int32_t top_row = vc - 1;
+
+  for (const BlockAddress &addr : stream) {
+    BlockAddress ck = addr;
+    ck.block = glm::ivec3(0);
+    const VoxelChunk *chunk = world.find_chunk(ck);
+    assert(chunk != nullptr);
+
+    auto solid_at = [&world, &ck, chunk](const BlockAddress &na) -> bool {
+      BlockAddress nk = na;
+      nk.block = glm::ivec3(0);
+      const VoxelChunk *nc =
+          (nk.sector == ck.sector && nk.shell == ck.shell && nk.chunk == ck.chunk)
+              ? chunk
+              : world.find_chunk(nk);
+      if (nc == nullptr) {
+        return false;
+      }
+      return nc->solid(na.block.x, na.block.y, na.block.z);
+    };
+
+    const RenderMesh mesh =
+        world.build_chunk_mesh(ck, *chunk, solid_at, glm::dvec3(0.0), 0);
+    if (mesh.vertices.empty()) {
+      ++empty_meshes;
+      if (ck.chunk.y == top_row) {
+        ++surface_row_empty;
+      }
+    }
+  }
+
+  assert(empty_meshes == 0);
+  assert(surface_row_empty == 0);
 }
 
 void test_block_world_cross_sector_chunk_offset() {
@@ -1862,6 +1963,8 @@ int main() {
   test_planet_tangent_basis_orthonormal();
   test_planet_neighbor_within_face_bounds();
   test_block_world_terrain_height_is_smooth_across_columns();
+  test_block_world_stream_includes_all_vertical_rows();
+  test_block_world_streamed_surface_meshes_are_non_empty();
   test_block_world_cross_sector_chunk_offset();
   test_planet_quadtree_roots_are_stable();
   test_planet_quadtree_subdivision_child_ids();

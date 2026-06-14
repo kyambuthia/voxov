@@ -132,9 +132,21 @@ void voxov_frame() {
         }
     };
 
-    // Auto-screenshot after 120 frames (~2s) — terrain should be loaded.
-    if (frame_counter == 120) {
-        take_screenshot("screenshots/voxov_debug.png");
+    // Frame 60 (~1s): initial view after spawn
+    if (frame_counter == 60) {
+        take_screenshot("screenshots/ss_initial.png");
+    }
+    // Frame 180 (~3s): after walking a bit
+    if (frame_counter == 180) {
+        take_screenshot("screenshots/ss_gameplay.png");
+    }
+    // Frame 360 (~6s): further exploration
+    if (frame_counter == 360) {
+        take_screenshot("screenshots/ss_exploration.png");
+    }
+    // Frame 600 (~10s): extended play
+    if (frame_counter == 600) {
+        take_screenshot("screenshots/ss_extended.png");
     }
 
     // F5: quick debug screenshot (overwrites same file for easy Mimo analysis).

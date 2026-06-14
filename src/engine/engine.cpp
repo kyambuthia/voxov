@@ -686,16 +686,19 @@ void Engine::tick(double frame_dt,
     }
   }
 
-  // Wireframe overlay — regenerate when dirty. Kept as debug reference for
-  // the spherical structure (coarse 64 cells/face) while voxels provide the
-  // 1m playable surface. Drawn after opaque with depth.
+  // Wireframe overlay — regenerate when dirty. Only show when devhud enabled.
+  // WHY: the wireframe planet mesh (colored lines per cube face) overlays
+  // the voxel terrain and creates confusing grid patterns. Disable for
+  // normal gameplay; enable with F2 for debugging.
   if (wireframe_planet_dirty_) {
     wireframe_planet_mesh_ = build_wireframe_voxel_planet_mesh(
         wireframe_planet_, wireframe_planet_.chunks_per_face);
     wireframe_planet_dirty_ = false;
   }
   scene.wireframe_meshes.clear();
-  scene.wireframe_meshes.push_back(wireframe_planet_mesh_);
+  if (session_state_.devhud_enabled) {
+    scene.wireframe_meshes.push_back(wireframe_planet_mesh_);
+  }
 
   renderer.upload_scene(scene);
 

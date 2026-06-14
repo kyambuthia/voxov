@@ -120,6 +120,9 @@ static const char *kSceneFsSrc = R"(
         // fragment.  Distant fragments get bluer (Rayleigh) and hazier (Mie).
         // Sky color is set as the clear color via CPU-side computation.
         vec3 atm_trans = atmosphere_transmittance(camera_pos, v_world_pos);
+        // Near-surface fragments were fully extinguished (black pits against
+        // black sky). Keep a floor so voxel faces stay visible at close range.
+        atm_trans = max(atm_trans, vec3(0.35));
 
         float normal_len2 = dot(v_normal, v_normal);
         if (normal_len2 < 0.001) {
@@ -223,6 +226,9 @@ static const char *kSceneFsSrc = R"(#version 300 es
 
     void main() {
         vec3 atm_trans = atmosphere_transmittance(camera_pos, v_world_pos);
+        // Near-surface fragments were fully extinguished (black pits against
+        // black sky). Keep a floor so voxel faces stay visible at close range.
+        atm_trans = max(atm_trans, vec3(0.35));
 
         float normal_len2 = dot(v_normal, v_normal);
         if (normal_len2 < 0.001) {
@@ -815,11 +821,25 @@ void SokolRenderer::upload_scene(const RenderScene &new_scene) {
     for (const RenderMesh &mesh : new_scene.opaque_meshes) {
         if (mesh.mesh_id == 0) {
             append_mesh(mesh);
-        } else if (cached_meshes_.find(mesh.mesh_id) == cached_meshes_.end()) {
-            SokolGpuMesh uploaded{};
-            upload_mesh(uploaded, mesh, false);
-            cached_meshes_[mesh.mesh_id] = uploaded;
+            continue;
         }
+        const auto it = cached_meshes_.find(mesh.mesh_id);
+        const uint32_t mesh_index_count = mesh.use_16_bit_indices
+            ? static_cast<uint32_t>(mesh.indices16.size())
+            : static_cast<uint32_t>(mesh.indices.size());
+        if (it != cached_meshes_.end()) {
+            // Remesh after neighbor chunks load: vertex/index counts change.
+            if (it->second.index_count == mesh_index_count &&
+                it->second.vertex_buffer_size ==
+                    mesh.vertices.size() * sizeof(SokolRenderVertex)) {
+                continue;
+            }
+            destroy_mesh(it->second);
+            cached_meshes_.erase(it);
+        }
+        SokolGpuMesh uploaded{};
+        upload_mesh(uploaded, mesh, false);
+        cached_meshes_[mesh.mesh_id] = uploaded;
     }
 
     // ── Wireframe mesh upload ─────────────────────────────────────────

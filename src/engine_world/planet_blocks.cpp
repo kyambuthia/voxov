@@ -479,7 +479,7 @@ uint64_t BlockWorld::chunk_mesh_id(const BlockAddress &addr) {
 RenderMesh BlockWorld::build_chunk_mesh(
     const BlockAddress &addr,
     const VoxelChunk &chunk,
-    [[maybe_unused]] const std::function<bool(const BlockAddress&)> &solid_at,
+    const std::function<bool(const BlockAddress&)> &solid_at,
     const glm::dvec3 &camera_relative_origin,
     int32_t lod_level) const {
 
@@ -501,9 +501,11 @@ RenderMesh BlockWorld::build_chunk_mesh(
     // spherical curvature and makes terrain look flat. Per-face meshing
     // preserves per-block normals for correct sphere lighting.
 
-    // Intra-chunk face culling: only cull faces whose neighbor is solid
-    // AND in the same chunk. Cross-chunk faces always emitted to avoid
-    // visible seams when streaming loads chunks asymmetrically.
+    // Intra-chunk face culling: emit face only if neighbor is NOT solid.
+    // Cross-chunk face culling: use the solid_at callback to check the
+    // neighboring chunk's block. This prevents floating quads at chunk
+    // boundaries when adjacent chunks are loaded, while still correctly
+    // culling faces against solid neighbors.
     auto should_emit_face = [&](int bx, int by, int bz, BlockDir fd) -> bool {
         const glm::ivec3 dv = block_dir_vector(fd);
         const int nx = bx + dv.x * stride, ny = by + dv.y * stride, nz = bz + dv.z * stride;
@@ -511,8 +513,17 @@ RenderMesh BlockWorld::build_chunk_mesh(
         if (nx >= 0 && nx < cs && ny >= 0 && ny < cs && nz >= 0 && nz < cs) {
             return !chunk.solid(nx, ny, nz);
         }
-        // Cross-chunk: always emit face (avoid seams).
-        return true;
+        // Cross-chunk neighbor: resolve neighbor address and query solid_at.
+        // Only add the chunk address portion — sector and shell are already
+        // correct from the cross-chunk logic in the address.
+        BlockAddress nb_addr = addr;
+        nb_addr.chunk.x = addr.chunk.x + ((nx < 0) ? -1 : (nx >= cs) ? 1 : 0);
+        nb_addr.chunk.y = addr.chunk.y + ((ny < 0) ? -1 : (ny >= cs) ? 1 : 0);
+        nb_addr.chunk.z = addr.chunk.z + ((nz < 0) ? -1 : (nz >= cs) ? 1 : 0);
+        nb_addr.block.x = (nx + cs) % cs;
+        nb_addr.block.y = (ny + cs) % cs;
+        nb_addr.block.z = (nz + cs) % cs;
+        return !solid_at(nb_addr);
     };
 
     // Face direction info: which tangent basis vector is the face normal,

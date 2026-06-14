@@ -334,33 +334,6 @@ void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const
                      addr.chunk.x, addr.chunk.y, addr.chunk.z,
                      solid_count, config_.chunk_size * config_.chunk_size * config_.chunk_size,
                      base_col_x, base_col_z, min_h, max_h, sh.vertical_layers);
-
-        // TASK 2: Print vertical slice — occupancy at (8, y, 8) for all y.
-        // Shows whether terrain height actually changes which blocks are solid.
-        std::fprintf(stderr, "Vertical slice at (8,y,8): ");
-        for (int32_t y = 0; y < config_.chunk_size; ++y) {
-            const VoxelMaterial m = out.material(8, y, 8);
-            std::fprintf(stderr, "%d", (m != VoxelMaterial::Air) ? 1 : 0);
-        }
-        const int32_t h_at_8_8 = terrain_height_at_face_uv(
-            addr.sector, base_col_x + 8, base_col_z + 8);
-        std::fprintf(stderr, " (terrain_h=%d, chunk_y=%d, global_y_range=[%d..%d])\n",
-                     h_at_8_8, addr.chunk.y,
-                     addr.chunk.y * config_.chunk_size,
-                     addr.chunk.y * config_.chunk_size + config_.chunk_size - 1);
-
-        // TASK 2: Print occupancy for several columns to show variation.
-        for (int32_t sample = 0; sample < 5; ++sample) {
-            const int32_t sx = sample * 3, sz = sample * 3;
-            const int32_t sh_val = terrain_height_at_face_uv(
-                addr.sector, base_col_x + sx, base_col_z + sz);
-            std::fprintf(stderr, "  col(%d,%d): terrain_h=%d occupancy=", sx, sz, sh_val);
-            for (int32_t y = 0; y < config_.chunk_size; ++y) {
-                const VoxelMaterial m = out.material(sx, y, sz);
-                std::fprintf(stderr, "%d", (m != VoxelMaterial::Air) ? 1 : 0);
-            }
-            std::fprintf(stderr, "\n");
-        }
     }
 }
 
@@ -558,12 +531,6 @@ RenderMesh BlockWorld::build_chunk_mesh(
         {BlockDir::Front, 1,  1},  // fn = +north
     };
 
-    // TASK 1: Track mesh radius range to verify geometry spans terrain height.
-    double mesh_min_radius = 1e18;
-    double mesh_max_radius = 0.0;
-    int normal_same_count = 0;
-    int normal_diff_count = 0;
-
     // Iterate all blocks in chunk at LOD stride.
     for (int32_t bz = 0; bz < cs; bz += stride) {
         for (int32_t by = 0; by < cs; by += stride) {
@@ -584,15 +551,18 @@ RenderMesh BlockWorld::build_chunk_mesh(
                 const double r = sh.inner_radius + (sh.outer_radius - sh.inner_radius) * lt;
                 const glm::dvec3 center = config_.planet.center + face_uv_to_direction(addr.sector, u, v) * r;
 
-                // TASK 1: Track radius range.
-                const double block_radius = glm::length(center - config_.planet.center);
-                mesh_min_radius = std::min(mesh_min_radius, block_radius);
-                mesh_max_radius = std::max(mesh_max_radius, block_radius);
-
                 // Per-block tangent basis for correct sphere normals.
                 const glm::dvec3 radial = glm::normalize(center - config_.planet.center);
                 const PlanetTangentBasis tb = tangent_basis(radial);
                 const glm::dvec3 tb_vecs[3] = {tb.east, tb.north, radial};
+
+                // Quad corner offsets in tangent plane.
+                const glm::dvec3 offsets[4] = {
+                    -tb.east * hs - tb.north * hs,
+                     tb.east * hs - tb.north * hs,
+                     tb.east * hs + tb.north * hs,
+                    -tb.east * hs + tb.north * hs,
+                };
 
                 // Height fraction for color tinting.
                 const float height_t = std::clamp(
@@ -602,21 +572,6 @@ RenderMesh BlockWorld::build_chunk_mesh(
                 // Check each of 6 faces.
                 for (const FaceInfo &fi : face_infos) {
                     if (!should_emit_face(bx, by, bz, fi.fd)) continue;
-
-                    // Quad corner offsets in the face's tangent plane.
-                    // The face normal uses basis vector fn_tb (0=east,1=north,2=radial).
-                    // The quad plane is formed by the other two basis vectors.
-                    // Up/Down (fn_tb=2): quad in east-north plane ✓
-                    // Left/Right (fn_tb=0): quad in north-radial plane
-                    // Front/Back (fn_tb=1): quad in east-radial plane
-                    const int qi = (fi.fn_tb + 1) % 3;  // first quad-plane axis
-                    const int qj = (fi.fn_tb + 2) % 3;  // second quad-plane axis
-                    const glm::dvec3 offsets[4] = {
-                        -tb_vecs[qi] * hs - tb_vecs[qj] * hs,
-                         tb_vecs[qi] * hs - tb_vecs[qj] * hs,
-                         tb_vecs[qi] * hs + tb_vecs[qj] * hs,
-                        -tb_vecs[qi] * hs + tb_vecs[qj] * hs,
-                    };
 
                     const bool top_face = (fi.fd == BlockDir::Up);
                     const glm::vec3 color = VoxelChunk::material_color(mat, top_face, height_t);
@@ -630,15 +585,6 @@ RenderMesh BlockWorld::build_chunk_mesh(
                         mesh.vertices.push_back(RenderVertex{
                             glm::vec3(corner - camera_relative_origin),
                             color, glm::vec3(fn)});
-                    }
-                    // TASK 6: Verify all 4 vertices on this face have identical normal.
-                    {
-                        const glm::vec3 n0 = mesh.vertices[base].normal;
-                        const glm::vec3 n1 = mesh.vertices[base+1].normal;
-                        const glm::vec3 n2 = mesh.vertices[base+2].normal;
-                        const glm::vec3 n3 = mesh.vertices[base+3].normal;
-                        if (n0 == n1 && n1 == n2 && n2 == n3) normal_same_count++;
-                        else normal_diff_count++;
                     }
                     // CCW winding when viewed from outside (along face normal).
                     mesh.indices.insert(mesh.indices.end(), {
@@ -656,12 +602,6 @@ RenderMesh BlockWorld::build_chunk_mesh(
         std::fprintf(stderr, "Mesh build: verts=%zu idxs=%zu tris=%zu camera_origin=(%.1f,%.1f,%.1f)\n",
                      mesh.vertices.size(), mesh.indices.size(), mesh.indices.size() / 3,
                      camera_relative_origin.x, camera_relative_origin.y, camera_relative_origin.z);
-        // TASK 1: Log mesh radius range — should span terrain height.
-        std::fprintf(stderr, "Mesh radius range: %.2f -> %.2f (delta=%.2f)\n",
-                     mesh_min_radius, mesh_max_radius, mesh_max_radius - mesh_min_radius);
-        // TASK 6: Log normal consistency.
-        std::fprintf(stderr, "Normal check: same=%d diff=%d (all faces should have identical per-vertex normals)\n",
-                     normal_same_count, normal_diff_count);
         if (!mesh.vertices.empty()) {
             const auto &v0 = mesh.vertices[0];
             std::fprintf(stderr, "First vertex: pos=(%.3f,%.3f,%.3f) color=(%.2f,%.2f,%.2f)\n",

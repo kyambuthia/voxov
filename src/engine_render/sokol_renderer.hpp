@@ -42,9 +42,9 @@ struct SokolPipelines {
 };
 
 struct SokolDirectionalLight {
-    glm::vec3 direction{0.318f, 0.848f, 0.424f};
-    glm::vec3 ambient{0.28f, 0.34f, 0.48f};
-    glm::vec3 diffuse{1.0f, 0.88f, 0.62f};
+    glm::vec3 direction{0.0f, 0.3f, 0.954f};
+    glm::vec3 ambient{0.05f, 0.06f, 0.08f};
+    glm::vec3 diffuse{1.5f, 1.2f, 0.8f};
     glm::vec3 specular{0.55f, 0.58f, 0.65f};
 };
 

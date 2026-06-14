@@ -766,7 +766,7 @@ void Engine::tick(double frame_dt,
         block_world_.address_from_world(
             glm::dvec3(local_player.transform.position));
     const int32_t surface_shell = block_world_.shell_count() - 1;
-    const int32_t chunk_radius = 3;  // 7x7 xz = 49 chunks per layer. Increased from 2 (25) for better surface coverage near player.
+    const int32_t chunk_radius = 5;  // 11x11 xz per radial row; +1 halo in collect_stream_chunks.
 
     // Hash the chunk center (incl. radial y) to detect player movement to a
     // new (x,z) column or crossing into a different radial chunk layer.
@@ -787,10 +787,12 @@ void Engine::tick(double frame_dt,
     // ── Frame profiler: time chunk generation (noise sampling + voxel data) ──
     const PerfClock::time_point chunk_gen_start = PerfClock::now();
     // Slightly higher budget: near sector edges we stream adjacent-face chunks too.
-    const uint32_t gen_budget = 12;
+    // Generate every missing desired chunk this frame. The local patch is
+    // bounded (~2 radial rows × (2r+1)² xz) so a one-shot fill is cheap and
+    // avoids rectangular holes while a per-frame budget drains.
     std::vector<BlockAddress> new_chunks;
+    new_chunks.reserve(desired.size());
     for (const BlockAddress &addr : desired) {
-      if (new_chunks.size() >= gen_budget) break;
       if (block_world_.find_chunk(addr) != nullptr) continue;
       block_world_.get_or_generate_chunk(addr);
       new_chunks.push_back(addr);
@@ -804,12 +806,50 @@ void Engine::tick(double frame_dt,
     const bool need_full_rebuild = player_moved || snap_origin_dirty_;
     // ── Frame profiler: time mesh building (face culling + greedy meshing) ──
     const PerfClock::time_point mesh_build_start = PerfClock::now();
-    if (player_moved || !new_chunks.empty() || snap_origin_dirty_) {
+    const bool remesh_for_neighbors = !new_chunks.empty();
+
+    auto mesh_in_scene = [&](uint64_t mid) -> bool {
+      for (const RenderMesh &m : scene.opaque_meshes) {
+        if (m.mesh_id == mid) {
+          return true;
+        }
+      }
+      return false;
+    };
+
+    bool has_pending_meshes = false;
+    for (const BlockAddress &addr : desired) {
+      BlockAddress ck = addr;
+      ck.block = glm::ivec3(0);
+      if (block_world_.find_chunk(ck) == nullptr) {
+        continue;
+      }
+      if (!mesh_in_scene(BlockWorld::chunk_mesh_id(ck))) {
+        has_pending_meshes = true;
+        break;
+      }
+    }
+
+    if (player_moved || remesh_for_neighbors || snap_origin_dirty_ ||
+        has_pending_meshes) {
       if (need_full_rebuild) {
         scene.opaque_meshes.clear();
         last_chunk_center_hash_ = center_hash;
         snap_origin_dirty_ = false;
       }
+
+      auto upsert_opaque_mesh = [&](RenderMesh &&mesh) {
+        if (mesh.vertices.empty()) {
+          return;
+        }
+        for (RenderMesh &existing : scene.opaque_meshes) {
+          if (existing.mesh_id == mesh.mesh_id) {
+            existing = std::move(mesh);
+            return;
+          }
+        }
+        scene.opaque_meshes.push_back(std::move(mesh));
+      };
 
       // Build set of desired mesh_ids for this frame.
       std::unordered_set<uint64_t> desired_ids;
@@ -849,7 +889,10 @@ void Engine::tick(double frame_dt,
           BlockAddress nk = nc; nk.block = glm::ivec3(0);
           if (nk == ck) { is_new = true; break; }
         }
-        if (!need_full_rebuild && !is_new) continue;
+        if (!need_full_rebuild && !is_new && !remesh_for_neighbors &&
+            mesh_in_scene(mid)) {
+          continue;
+        }
 
         auto solid_at = [this, &ck, chunk](const BlockAddress &na) -> bool {
           BlockAddress nk = na;
@@ -863,7 +906,7 @@ void Engine::tick(double frame_dt,
                                                          camera_snap_origin_,
                                                          clod.level);
         if (!mesh.vertices.empty()) {
-          scene.opaque_meshes.push_back(std::move(mesh));
+          upsert_opaque_mesh(std::move(mesh));
           // Debug: confirm mesh reaches the scene upload path.
           spdlog::debug("Mesh uploaded: mid={} verts={} idxs={} lod={}",
                         mid, mesh.vertices.size(), mesh.indices.size(), clod.level);

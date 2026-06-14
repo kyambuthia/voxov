@@ -680,6 +680,8 @@ RenderMesh BlockWorld::build_chunk_mesh(
     RenderMesh mesh{};
     mesh.mesh_id = block_chunk_mesh_id(addr);
     (void)solid_at;  // retained for API compat; neighbor queries use find_chunk.
+    mesh.vertices.reserve(8192);
+    mesh.indices.reserve(12288);
 
     const ShellConfig &sh = shell_config(addr.shell);
     const double bw = config_.block_size;
@@ -803,6 +805,36 @@ RenderMesh BlockWorld::build_chunk_mesh(
         {BlockDir::Front, {2, 3, 7, 6}}
     };
 
+    auto emit_quad = [&](glm::dvec3 v0, glm::dvec3 v1, glm::dvec3 v2, glm::dvec3 v3,
+                         const glm::vec3 &color, const glm::dvec3 &outward_hint) {
+        glm::dvec3 fn = glm::cross(v1 - v0, v2 - v0);
+        if (glm::dot(fn, fn) < 1e-18) {
+            return;
+        }
+        fn = glm::normalize(fn);
+
+        // Reconcile winding against an outward reference so back-face culling
+        // stays correct on curved cube-sphere blocks.
+        if (glm::dot(fn, outward_hint) < 0.0) {
+            std::swap(v1, v3);
+            fn = -fn;
+        }
+
+        const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+        const glm::dvec3 rel = camera_relative_origin;
+        mesh.vertices.push_back(RenderVertex{
+            glm::vec3(v0 - rel), color, glm::vec3(fn)});
+        mesh.vertices.push_back(RenderVertex{
+            glm::vec3(v1 - rel), color, glm::vec3(fn)});
+        mesh.vertices.push_back(RenderVertex{
+            glm::vec3(v2 - rel), color, glm::vec3(fn)});
+        mesh.vertices.push_back(RenderVertex{
+            glm::vec3(v3 - rel), color, glm::vec3(fn)});
+        mesh.indices.insert(mesh.indices.end(), {
+            base, base + 1, base + 2,
+            base, base + 2, base + 3});
+    };
+
     // Iterate all blocks in chunk at LOD stride.
     for (int32_t bz = 0; bz < cs; bz += stride) {
         for (int32_t by = 0; by < cs; by += stride) {
@@ -870,6 +902,11 @@ RenderMesh BlockWorld::build_chunk_mesh(
                 const float height_t = std::clamp(
                     static_cast<float>(gy0) / static_cast<float>(std::max(1, sh.vertical_layers)),
                     0.0f, 1.0f);
+
+                const glm::dvec3 cell_mid =
+                    (p_full[0] + p_full[1] + p_full[2] + p_full[3] +
+                     p_full[4] + p_full[5] + p_full[6] + p_full[7]) *
+                    0.125;
 
                 // Classify each face direction for sub-voxel height handling.
                 // Side faces = Left, Right, Back, Front (horizontal directions)
@@ -957,26 +994,8 @@ RenderMesh BlockWorld::build_chunk_mesh(
                         const bool top_face = false;
                         const glm::vec3 color =
                             VoxelChunk::material_color(mat, top_face, height_t);
-                        const glm::dvec3 fn =
-                            glm::normalize(glm::cross(v1 - v0, v2 - v0));
-
-                        const uint32_t base =
-                            static_cast<uint32_t>(mesh.vertices.size());
-                        mesh.vertices.push_back(RenderVertex{
-                            glm::vec3(v0 - camera_relative_origin), color,
-                            glm::vec3(fn)});
-                        mesh.vertices.push_back(RenderVertex{
-                            glm::vec3(v1 - camera_relative_origin), color,
-                            glm::vec3(fn)});
-                        mesh.vertices.push_back(RenderVertex{
-                            glm::vec3(v2 - camera_relative_origin), color,
-                            glm::vec3(fn)});
-                        mesh.vertices.push_back(RenderVertex{
-                            glm::vec3(v3 - camera_relative_origin), color,
-                            glm::vec3(fn)});
-                        mesh.indices.insert(mesh.indices.end(), {
-                            base, base + 1, base + 2,
-                            base, base + 2, base + 3});
+                        const glm::dvec3 face_center = (v0 + v1 + v2 + v3) * 0.25;
+                        emit_quad(v0, v1, v2, v3, color, face_center - cell_mid);
                     } else if (face.fd == BlockDir::Up) {
                         // ── Up face (top): partial block top ──
                         // Cull when a solid neighbor sits above — otherwise every
@@ -1001,17 +1020,11 @@ RenderMesh BlockWorld::build_chunk_mesh(
                         const glm::dvec3 v3 = p_actual[face.corners[3]];
 
                         const bool top_face = true;
-                        const glm::vec3 color = VoxelChunk::material_color(mat, top_face, height_t);
-                        glm::dvec3 fn = glm::normalize(glm::cross(v1 - v0, v2 - v0));
-
-                        const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
-                        mesh.vertices.push_back(RenderVertex{glm::vec3(v0 - camera_relative_origin), color, glm::vec3(fn)});
-                        mesh.vertices.push_back(RenderVertex{glm::vec3(v1 - camera_relative_origin), color, glm::vec3(fn)});
-                        mesh.vertices.push_back(RenderVertex{glm::vec3(v2 - camera_relative_origin), color, glm::vec3(fn)});
-                        mesh.vertices.push_back(RenderVertex{glm::vec3(v3 - camera_relative_origin), color, glm::vec3(fn)});
-                        mesh.indices.insert(mesh.indices.end(), {
-                            base, base + 1, base + 2,
-                            base, base + 2, base + 3});
+                        const glm::vec3 color =
+                            VoxelChunk::material_color(mat, top_face, height_t);
+                        const glm::dvec3 face_center = (v0 + v1 + v2 + v3) * 0.25;
+                        emit_quad(v0, v1, v2, v3, color,
+                                  face_center - config_.planet.center);
                     } else {
                         // ── Down face (bottom): original logic ──
                         // Bottom face of the block: emitted when neighbor below is
@@ -1035,17 +1048,11 @@ RenderMesh BlockWorld::build_chunk_mesh(
                         const glm::dvec3 v3 = p_full[face.corners[3]];
 
                         const bool top_face = false;
-                        const glm::vec3 color = VoxelChunk::material_color(mat, top_face, height_t);
-                        glm::dvec3 fn = glm::normalize(glm::cross(v1 - v0, v2 - v0));
-
-                        const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
-                        mesh.vertices.push_back(RenderVertex{glm::vec3(v0 - camera_relative_origin), color, glm::vec3(fn)});
-                        mesh.vertices.push_back(RenderVertex{glm::vec3(v1 - camera_relative_origin), color, glm::vec3(fn)});
-                        mesh.vertices.push_back(RenderVertex{glm::vec3(v2 - camera_relative_origin), color, glm::vec3(fn)});
-                        mesh.vertices.push_back(RenderVertex{glm::vec3(v3 - camera_relative_origin), color, glm::vec3(fn)});
-                        mesh.indices.insert(mesh.indices.end(), {
-                            base, base + 1, base + 2,
-                            base, base + 2, base + 3});
+                        const glm::vec3 color =
+                            VoxelChunk::material_color(mat, top_face, height_t);
+                        const glm::dvec3 face_center = (v0 + v1 + v2 + v3) * 0.25;
+                        emit_quad(v0, v1, v2, v3, color,
+                                  config_.planet.center - face_center);
                     }
                 }
             }

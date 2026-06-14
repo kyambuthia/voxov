@@ -406,11 +406,18 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
                              : glm::vec3(0.0f, 1.0f, 0.0f);
     MovementDebug movement_debug = compute_movement_vectors(player.camera_rig.yaw, input.move);
     if (collision_world.has_planet_surface_collider()) {
+        // Build tangent basis matching the first-person camera's frame.
+        // WHY: the camera uses world_ref=(0,1,0) with pole fallback to (0,0,1),
+        // then east=cross(world_ref, up), north=cross(up, east).
+        // Movement must use the same basis so WASD directions match the view.
+        glm::vec3 world_ref = glm::vec3(0.0f, 1.0f, 0.0f);
+        if (std::abs(glm::dot(up, world_ref)) > 0.99f) {
+            world_ref = glm::vec3(0.0f, 0.0f, 1.0f);
+        }
+        const glm::vec3 east = glm::normalize(glm::cross(world_ref, up));
+        const glm::vec3 north = glm::normalize(glm::cross(up, east));
+
         const float yaw_rad = to_radians(player.camera_rig.yaw);
-        const glm::vec3 north =
-            tangent_or_fallback(glm::vec3(0.0f, 0.0f, 1.0f), up,
-                                glm::vec3(1.0f, 0.0f, 0.0f));
-        const glm::vec3 east = glm::normalize(glm::cross(north, up));
         movement_debug.forward =
             glm::normalize(north * std::cos(yaw_rad) + east * std::sin(yaw_rad));
         movement_debug.right = glm::normalize(glm::cross(movement_debug.forward, up));
@@ -618,10 +625,13 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
     const float facing_rad = to_radians(motion.facing_yaw_deg);
     glm::vec3 facing_forward(std::sin(facing_rad), 0.0f, std::cos(facing_rad));
     if (collision_world.has_planet_surface_collider()) {
-        const glm::vec3 north =
-            tangent_or_fallback(glm::vec3(0.0f, 0.0f, 1.0f), current_up,
-                                glm::vec3(1.0f, 0.0f, 0.0f));
-        const glm::vec3 east = glm::normalize(glm::cross(north, current_up));
+        // Same tangent basis as camera and movement for consistent orientation.
+        glm::vec3 world_ref = glm::vec3(0.0f, 1.0f, 0.0f);
+        if (std::abs(glm::dot(current_up, world_ref)) > 0.99f) {
+            world_ref = glm::vec3(0.0f, 0.0f, 1.0f);
+        }
+        const glm::vec3 east = glm::normalize(glm::cross(world_ref, current_up));
+        const glm::vec3 north = glm::normalize(glm::cross(current_up, east));
         facing_forward =
             glm::normalize(north * std::cos(facing_rad) + east * std::sin(facing_rad));
     }

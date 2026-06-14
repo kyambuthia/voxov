@@ -255,10 +255,42 @@ bool Engine::init(const EngineRuntimeOptions &options) {
       local_player, local_player_animation, session_state_.devhud_enabled);
   refresh_overlay_text();
 
-  // Start with fly mode OFF — gravity walks on the sphere surface.
-  debug_fly_mode_ = false;
+    // Start with fly mode OFF — gravity walks on the sphere surface.
+    debug_fly_mode_ = false;
 
-  spdlog::info("Engine init: block planet r={:.0f}m, shells={}, fly=OFF",
+    // ── Solar system initialization ───────────────────────────────────
+    // Keplerian orbits: Sun at origin, Planet (our voxel world) at ~2000m,
+    // Moon at ~300m from planet.  The planet's orbital position determines
+    // sun direction; the planet centre stays at origin for block-world.
+    solar_system_.init();
+    solar_system_time_ = 0.0;
+
+    // ── Atmosphere initialization ────────────────────────────────────────
+    // Rayleigh + Mie scattering for sky color and aerial perspective.
+    // Scale heights are reduced proportionally to our 500m planet radius
+    // (Earth scale heights: H_R=8000m, H_M=1200m for 6360km radius).
+    // We use H_R=500m*8000/6360000=0.63m ≈ 1.0m, H_M=0.1m for visible effect.
+    {
+        AtmosphereParams atm_params{};
+        atm_params.planet_radius = planet_def.radius;  // 500m
+        atm_params.atmosphere_height = 40.0;            // 40m above surface
+        // Scale Rayleigh scattering for small planet — boost coefficients
+        // so the thin atmosphere has visible optical depth.
+        atm_params.rayleigh_scattering = glm::dvec3(5.8e-4, 13.5e-4, 33.1e-4); // 100× Earth
+        atm_params.mie_scattering = 21.0e-3;            // 100× Earth
+        atm_params.rayleigh_scale_height = 5.0;          // H_R scaled to 500m planet
+        atm_params.mie_scale_height = 2.0;               // H_M scaled
+        atm_params.mie_asymmetry = 0.76;
+        // Sun direction: initialise from solar system (planet at orbital pos at t=0).
+        atm_params.sun_direction = solar_system_.sun_direction_from(glm::dvec3(0.0));
+        atm_params.sun_intensity = 20.0;
+        atm_params.view_ray_samples = 12;
+        atm_params.light_ray_samples = 6;
+        atmosphere_.init(atm_params);
+        atmosphere_enabled_ = true;
+    }
+
+    spdlog::info("Engine init: block planet r={:.0f}m, shells={}, fly=OFF",
                planet_def.radius,
                block_world_.shell_count());
   spdlog::info("Player spawn: ({:.1f}, {:.1f}, {:.1f}), terrain_h={}, z_far={:.0f}",
@@ -754,6 +786,58 @@ void Engine::tick(double frame_dt,
     scene.wireframe_meshes.push_back(wireframe_planet_mesh_);
   }
 
+  // ── Solar system update ──────────────────────────────────────────────
+  // Advance orbital simulation with frame time and build celestial body
+  // meshes BEFORE upload_scene so they are uploaded to GPU this frame.
+  // WHY before upload: celestial meshes must reach the GPU for the
+  // current frame's render; after would cause a 1-frame lag.
+  solar_system_time_ += frame_dt;
+  solar_system_.update(solar_system_time_);
+
+  // Update sun direction from solar system into atmosphere.
+  // WHY: the planet orbits the sun (planet at calculated position,
+  // voxel world centred at origin).  We offset the solar-system
+  // positions so the planet-centre stays at world (0,0,0) for
+  // block-world compatibility, while the sun appears to move.
+  {
+    const glm::dvec3 planet_orbit_pos = solar_system_.body_position(1); // planet
+    const glm::dvec3 cam_world = glm::dvec3(camera.transform.position);
+    const glm::dvec3 sun_planet_centric = solar_system_.sun_position() - planet_orbit_pos;
+    const glm::dvec3 sun_dir = glm::normalize(sun_planet_centric - cam_world);
+    atmosphere_.set_sun_direction(sun_dir);
+  }
+
+  // ── Celestial body rendering ────────────────────────────────────────
+  // Strip previous frame's celestial meshes from the end of opaque_meshes,
+  // then append new camera-relative sphere meshes for the current frame.
+  {
+    if (last_celestial_mesh_count_ > 0 &&
+        last_celestial_mesh_count_ <= scene.opaque_meshes.size()) {
+      scene.opaque_meshes.erase(
+          scene.opaque_meshes.end() - static_cast<long>(last_celestial_mesh_count_),
+          scene.opaque_meshes.end());
+    }
+    last_celestial_mesh_count_ = 0;
+
+    const glm::dvec3 planet_orbit_pos = solar_system_.body_position(1);
+
+    for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
+      const CelestialBody& body = solar_system_.bodies()[i];
+      // Skip the planet body — the player is standing on the voxel planet.
+      if (i == 1) continue;
+
+      const glm::dvec3 body_world = body.position - planet_orbit_pos;
+      const glm::vec3 rel_pos = camera_relative_position(
+          body_world, scene.camera_origin);
+
+      const float radius = static_cast<float>(body.orbital.radius);
+      RenderMesh sphere = build_debug_sphere_mesh(rel_pos, radius, body.color);
+      sphere.mesh_id = 0; // transient — always re-upload
+      scene.opaque_meshes.push_back(std::move(sphere));
+      ++last_celestial_mesh_count_;
+    }
+  }
+
   // ── Frame profiler: time GPU upload (buffer creation/update) ──
   const PerfClock::time_point gpu_upload_start = PerfClock::now();
   renderer.upload_scene(scene);
@@ -824,6 +908,16 @@ void Engine::tick(double frame_dt,
   refresh_overlay_text();
   renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
 
+  // ── Atmosphere computation ──────────────────────────────────────────
+  // Compute sky color for the camera view direction.  This is used as the
+  // clear color (background sky).  The fragment shader applies aerial
+  // perspective (transmittance) for terrain fragments.
+  if (atmosphere_enabled_) {
+    const glm::dvec3 cam_world_pos = glm::dvec3(camera.transform.position);
+    const glm::dvec3 cam_dir = glm::dvec3(camera.forward());
+    atmosphere_state_ = atmosphere_.compute_sky_color(cam_world_pos, cam_dir);
+  }
+
   RenderFrameContext ctx{};
   ctx.frame_index = frame_index++;
   ctx.alpha = fixed.accumulator / fixed.fixed_dt;
@@ -835,6 +929,37 @@ void Engine::tick(double frame_dt,
   ctx.views[0].camera = camera;
   ctx.views[0].viewport = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
   ctx.debug_xray = false;
+
+  // ── Atmosphere uniforms for GPU ─────────────────────────────────────
+  // WHY camera-relative: terrain vertices are stored as offsets from
+  // camera_snap_origin_ for float32 precision.  Atmosphere params must
+  // use the same coordinate frame so the fragment shader can compute
+  // transmittance correctly.  Planet center at world (0,0,0) maps to
+  // (-snap_origin) in camera-relative space.
+  {
+    const auto& atm = atmosphere_.params();
+    const glm::vec3 rel_center = -glm::vec3(camera_snap_origin_);
+    ctx.atmosphere.planet_center_radius = glm::vec4(rel_center,
+        static_cast<float>(atm.planet_radius));
+    ctx.atmosphere.atm_params_1 = glm::vec4(
+        static_cast<float>(atm.atmosphere_height),
+        static_cast<float>(atm.rayleigh_scale_height),
+        static_cast<float>(atm.mie_scale_height),
+        static_cast<float>(atm.mie_asymmetry));
+    ctx.atmosphere.rayleigh_scatter = glm::vec4(
+        glm::vec3(atm.rayleigh_scattering), 0.0f);
+    ctx.atmosphere.mie_scatter = glm::vec4(
+        static_cast<float>(atm.mie_scattering), 0.0f, 0.0f, 0.0f);
+    ctx.atmosphere.sun_dir_intensity = glm::vec4(
+        glm::vec3(atm.sun_direction),
+        static_cast<float>(atm.sun_intensity));
+
+    // Sky color for clear color (tone-map from HDR).
+    // Simple Reinhard tone mapping: color / (1 + color).
+    glm::vec3 sc = atmosphere_state_.sky_color;
+    glm::vec3 tm = sc / (glm::vec3(1.0f) + sc);
+    ctx.atmosphere.sky_color = glm::vec4(tm, 1.0f);
+  }
 
   const PerfClock::time_point render_cpu_start = PerfClock::now();
   renderer.render_frame(ctx, render_stats, surface);
@@ -1076,6 +1201,31 @@ void Engine::refresh_overlay_text() {
       std::to_string(player_dbg_addr.chunk.y) + ", " +
       std::to_string(player_dbg_addr.chunk.z) + ")";
   overlay_text += "\nOpaques: " + std::to_string(scene.opaque_meshes.size());
+
+  // ── Solar system HUD info ───────────────────────────────────────────
+  overlay_text += "\nSolar system: ";
+  overlay_text += std::to_string(solar_system_.body_count()) + " bodies";
+  overlay_text += "\nSun dir: (" +
+      std::to_string(static_cast<int>(atmosphere_.params().sun_direction.x * 100.0) / 100.0) + ", " +
+      std::to_string(static_cast<int>(atmosphere_.params().sun_direction.y * 100.0) / 100.0) + ", " +
+      std::to_string(static_cast<int>(atmosphere_.params().sun_direction.z * 100.0) / 100.0) + ")";
+  {
+    const glm::dvec3 planet_pos = solar_system_.body_position(1);
+    overlay_text += "\nPlanet orbit pos: (" +
+        std::to_string(static_cast<int>(planet_pos.x)) + ", " +
+        std::to_string(static_cast<int>(planet_pos.y)) + ", " +
+        std::to_string(static_cast<int>(planet_pos.z)) + ")";
+  }
+  overlay_text += "\nSolar time: " + std::to_string(static_cast<int>(solar_system_time_)) + "s";
+
+  // ── Atmosphere HUD info ─────────────────────────────────────────────
+  overlay_text += "\nAtmosphere: ";
+  overlay_text += atmosphere_enabled_ ? "ON" : "OFF";
+  overlay_text += "\nSky color: (" +
+      std::to_string(atmosphere_state_.sky_color.r).substr(0, 5) + ", " +
+      std::to_string(atmosphere_state_.sky_color.g).substr(0, 5) + ", " +
+      std::to_string(atmosphere_state_.sky_color.b).substr(0, 5) + ")";
+  overlay_text += "\nSun cos(angle): " + std::to_string(atmosphere_state_.sun_angle_cos).substr(0, 5);
 
   // Camera debug info for visual debugging.
   const glm::vec3 local_up = glm::normalize(local_player.transform.position);

@@ -17,6 +17,8 @@
 #include "engine_world/planet.hpp"
 #include "engine_world/planet_blocks.hpp"
 #include "engine_world/planet_lod.hpp"
+#include "engine_world/atmosphere.hpp"
+#include "engine_world/solar_system.hpp"
 #include "platform/platform_services.hpp"
 
 #include <string>
@@ -136,7 +138,21 @@ private:
   double last_frame_dt = 0.0;
   std::string last_hud_message_;
 
-  // ── Block interaction (first-person pick/break/place) ─────────────────
+    // ── Solar system ──────────────────────────────────────────────────
+    // Manages Sun, Planet, Moon with Keplerian orbital mechanics.
+    // Updated each frame with elapsed simulation time.
+    SolarSystem solar_system_;
+    double solar_system_time_ = 0.0;  // accumulated simulation time (seconds)
+    size_t last_celestial_mesh_count_ = 0; // meshes appended to opaque_meshes
+
+    // ── Atmosphere rendering (Rayleigh + Mie scattering) ───────────────
+    // Computes sky color on CPU each frame; fragment shader applies
+    // aerial perspective (transmittance) for terrain fragments.
+    AtmosphereRenderer atmosphere_;
+    AtmosphereState atmosphere_state_{};
+    bool atmosphere_enabled_ = true;
+
+    // ── Block interaction (first-person pick/break/place) ─────────────────
   // Targeted block from camera center raycast.
   glm::dvec3 targeted_hit_pos_ = glm::dvec3(0.0);
   glm::vec3 targeted_face_normal_ = glm::vec3(0.0f);

@@ -240,7 +240,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
         static_cast<double>(surf_voxels) * block_world_.config().block_size;
     local_player.transform.position = glm::vec3(equator_dir * (surface_r + 2.0));
   }
-  local_player.camera_rig.pitch = -10.0f;   // slight downward look toward surface
+  local_player.camera_rig.pitch = -45.0f;   // steeper angle to see terrain height variation
   local_player.camera_rig.distance = 0.0f;   // first-person: no orbit distance
   local_player.camera_rig.maxDistance = 0.0f;
   local_player.camera_rig.minDistance = 0.0f;

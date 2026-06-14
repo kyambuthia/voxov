@@ -132,21 +132,37 @@ void voxov_frame() {
         }
     };
 
-    // Frame 60 (~1s): initial view after spawn
+    // Frame 30 (~0.5s): just after chunks load
+    if (frame_counter == 30) {
+        take_screenshot("screenshots/ts_00_early.png");
+    }
+    // Frame 60 (~1s): initial view settled
     if (frame_counter == 60) {
-        take_screenshot("screenshots/ss_initial.png");
+        take_screenshot("screenshots/ts_01_initial.png");
     }
-    // Frame 180 (~3s): after walking a bit
+    // Frame 120 (~2s): after walking starts
+    if (frame_counter == 120) {
+        take_screenshot("screenshots/ts_02_walk.png");
+    }
+    // Frame 180 (~3s): mid-walk
     if (frame_counter == 180) {
-        take_screenshot("screenshots/ss_gameplay.png");
+        take_screenshot("screenshots/ts_03_midwalk.png");
     }
-    // Frame 360 (~6s): further exploration
-    if (frame_counter == 360) {
-        take_screenshot("screenshots/ss_exploration.png");
+    // Frame 300 (~5s): further exploration
+    if (frame_counter == 300) {
+        take_screenshot("screenshots/ts_04_explore.png");
     }
-    // Frame 600 (~10s): extended play
-    if (frame_counter == 600) {
-        take_screenshot("screenshots/ss_extended.png");
+    // Frame 480 (~8s): extended play
+    if (frame_counter == 480) {
+        take_screenshot("screenshots/ts_05_extended.png");
+    }
+    // Frame 720 (~12s): long play
+    if (frame_counter == 720) {
+        take_screenshot("screenshots/ts_06_long.png");
+    }
+    // Frame 1080 (~18s): very long play
+    if (frame_counter == 1080) {
+        take_screenshot("screenshots/ts_07_final.png");
     }
 
     // F5: quick debug screenshot (overwrites same file for easy Mimo analysis).

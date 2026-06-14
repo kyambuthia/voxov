@@ -474,7 +474,7 @@ uint64_t BlockWorld::chunk_mesh_id(const BlockAddress &addr) {
 RenderMesh BlockWorld::build_chunk_mesh(
     const BlockAddress &addr,
     const VoxelChunk &chunk,
-    const std::function<bool(const BlockAddress&)> &solid_at,
+    [[maybe_unused]] const std::function<bool(const BlockAddress&)> &solid_at,
     const glm::dvec3 &camera_relative_origin) const {
 
     RenderMesh mesh{};
@@ -483,172 +483,199 @@ RenderMesh BlockWorld::build_chunk_mesh(
     const ShellConfig &sh = shell_config(addr.shell);
     const double bw = config_.block_size;
 
-    // Pre-compute tangent basis for the chunk center (approximate —
-    // each block will re-compute for accuracy, but this avoids
-    // redundant normalize calls for blocks at the same height).
-    const glm::dvec3 chunk_center_dir = glm::normalize(
-        block_world_center(addr.sector, addr.shell,
-            addr.chunk.x * config_.chunk_size + config_.chunk_size / 2,
-            addr.chunk.z * config_.chunk_size + config_.chunk_size / 2,
-            addr.chunk.y * config_.chunk_size + config_.chunk_size / 2) -
-        config_.planet.center);
+    // NOTE: Greedy meshing computes per-quad tangent bases, so the
+    // chunk-center precomputation is no longer needed.
 
-    for (int32_t bz = 0; bz < config_.chunk_size; ++bz) {
-        for (int32_t by = 0; by < config_.chunk_size; ++by) {
-            for (int32_t bx = 0; bx < config_.chunk_size; ++bx) {
-                if (!chunk.solid(bx, by, bz)) continue;
-                const VoxelMaterial mat = chunk.material(bx, by, bz);
-                if (mat == VoxelMaterial::Air) continue;
+    const int32_t cs = config_.chunk_size;
+    const double hs = bw * 0.5;
 
-                const int32_t gx = addr.chunk.x * config_.chunk_size + bx;
-                const int32_t gy = addr.chunk.y * config_.chunk_size + by;
-                const int32_t gz = addr.chunk.z * config_.chunk_size + bz;
+    // WHY: greedy meshing merges adjacent same-material faces into larger
+    // quads, reducing vertex count 5-10x. Algorithm from 0fps.net:
+    // for each face direction, build a 2D material mask per slice,
+    // then scan rows/columns to find maximal rectangular runs.
+    // Tangent-basis face normals are preserved for sphere-appropriate
+    // lighting. Camera-relative vertex submission unchanged.
 
-                const glm::dvec3 center = block_world_center(
-                    addr.sector, addr.shell, gx, gz, gy);
-                const glm::dvec3 radial = glm::normalize(
-                    center - config_.planet.center);
-                const PlanetTangentBasis tb = tangent_basis(radial);
+    // Intra-chunk occlusion: only cull faces whose neighbor is solid
+    // AND in the same chunk. Cross-chunk faces always emitted to avoid
+    // visible seams when streaming loads chunks asymmetrically.
+    auto intra_occluded = [&](int bx, int by, int bz, BlockDir fd) -> bool {
+        const glm::ivec3 dv = block_dir_vector(fd);
+        const int nx = bx + dv.x, ny = by + dv.y, nz = bz + dv.z;
+        if (nx >= 0 && nx < cs && ny >= 0 && ny < cs && nz >= 0 && nz < cs) {
+            return chunk.solid(nx, ny, nz);
+        }
+        return false;
+    };
 
-                const double hs = bw * 0.5;
-                const glm::dvec3 offsets[4] = {
-                    -tb.east * hs - tb.north * hs,
-                     tb.east * hs - tb.north * hs,
-                     tb.east * hs + tb.north * hs,
-                    -tb.east * hs + tb.north * hs,
-                };
+    // Compute world position at arbitrary (col_x, col_z, layer_y) doubles.
+    // WHY: merged quad centers are at fractional block coordinates (e.g.,
+    // center of a 5-wide run is at +2.5), so we need double-precision
+    // interpolation of the sphere face UV and radial layer.
+    auto world_at = [&](double col_x, double col_z, double layer_y) -> glm::dvec3 {
+        const double u = -1.0 + (col_x + 0.5) / static_cast<double>(sh.horizontal_res) * 2.0;
+        const double v = -1.0 + (col_z + 0.5) / static_cast<double>(sh.horizontal_res) * 2.0;
+        const double lt = std::clamp((layer_y + 0.5) / static_cast<double>(std::max(1, sh.vertical_layers)), 0.0, 1.0);
+        const double r = sh.inner_radius + (sh.outer_radius - sh.inner_radius) * lt;
+        return config_.planet.center + face_uv_to_direction(addr.sector, u, v) * r;
+    };
 
-                // Height fraction for color tinting: 0 = shell base, 1 = shell top.
-                // BUG FIX: was dividing by horizontal_res (~1024) making all
-                // grass nearly black. Must divide by vertical_layers (30) to get
-                // proper [0,1] range for height-based color variation.
-                const float height_t = std::clamp(
-                    static_cast<float>(gy) /
-                        static_cast<float>(std::max(1, sh.vertical_layers)),
-                    0.0f, 1.0f);
+    // Per-direction: compute the tangent-basis quadrant geometry.
+    // dir_info encodes which block axes map to the 2D grid and tangent vectors.
+    struct DirInfo {
+        BlockDir fd;
+        int slice_axis;  // 0=bx, 1=by, 2=bz
+        int col_axis;    // 0=bx, 1=by, 2=bz
+        int row_axis;    // 0=bx, 1=by, 2=bz
+        int fn_tb;       // 0=east, 1=north, 2=up  (which tangent basis vector is the face normal)
+        int fn_sign;     // +1 or -1
+        int col_tb;      // 0=east, 1=north, 2=up  (tangent vector for +column)
+        int col_sign;    // +1 or -1
+        int row_tb;      // 0=east, 1=north, 2=up  (tangent vector for +row)
+        int row_sign;    // +1 or -1
+    };
+    static const DirInfo dir_infos[6] = {
+        // fd=Left:  slice=X, col=Z, row=Y, fn=-east, col=+north, row=+up
+        {BlockDir::Left,  0, 2, 1, 0,-1, 1, 1, 2, 1},
+        // fd=Right: slice=X, col=Z, row=Y, fn=+east, col=+north, row=+up
+        {BlockDir::Right, 0, 2, 1, 0, 1, 1, 1, 2, 1},
+        // fd=Down:  slice=Y, col=X, row=Z, fn=-up,   col=+east, row=+north
+        {BlockDir::Down,  1, 0, 2, 2,-1, 0, 1, 1, 1},
+        // fd=Up:    slice=Y, col=X, row=Z, fn=+up,   col=+east, row=+north
+        {BlockDir::Up,    1, 0, 2, 2, 1, 0, 1, 1, 1},
+        // fd=Back:  slice=Z, col=X, row=Y, fn=-north, col=+east, row=+up
+        {BlockDir::Back,  2, 0, 1, 1,-1, 0, 1, 2, 1},
+        // fd=Front: slice=Z, col=X, row=Y, fn=+north, col=+east, row=+up
+        {BlockDir::Front, 2, 0, 1, 1, 1, 0, 1, 2, 1},
+    };
 
-                // Check each of 6 block faces.
-                for (int f = 0; f < 6; ++f) {
-                    const BlockDir fd = static_cast<BlockDir>(f);
-                    // Inline neighbor check to avoid vector allocation.
-                    const glm::ivec3 dv = block_dir_vector(fd);
-                    const glm::ivec3 nb_block = glm::ivec3(bx, by, bz) + dv;
-                    
-                    bool occluded = false;
-                    // Check if neighbor is within the same chunk.
-                    if (nb_block.x >= 0 && nb_block.x < config_.chunk_size &&
-                        nb_block.y >= 0 && nb_block.y < config_.chunk_size &&
-                        nb_block.z >= 0 && nb_block.z < config_.chunk_size) {
-                        // Same chunk - check directly.
-                        occluded = chunk.solid(nb_block.x, nb_block.y, nb_block.z);
-                    } else {
-                        // Different chunk - use solid_at callback.
-                        BlockAddress nb_addr = addr;
-                        nb_addr.block = nb_block;
-                        // Normalize block coordinates for cross-chunk lookup.
-                        if (nb_block.x < 0) { nb_addr.chunk.x -= 1; nb_addr.block.x += config_.chunk_size; }
-                        else if (nb_block.x >= config_.chunk_size) { nb_addr.chunk.x += 1; nb_addr.block.x -= config_.chunk_size; }
-                        if (nb_block.y < 0) { nb_addr.chunk.y -= 1; nb_addr.block.y += config_.chunk_size; }
-                        else if (nb_block.y >= config_.chunk_size) { nb_addr.chunk.y += 1; nb_addr.block.y -= config_.chunk_size; }
-                        if (nb_block.z < 0) { nb_addr.chunk.z -= 1; nb_addr.block.z += config_.chunk_size; }
-                        else if (nb_block.z >= config_.chunk_size) { nb_addr.chunk.z += 1; nb_addr.block.z -= config_.chunk_size; }
+    int total_blocks_covered = 0;
 
-                        // Cross-sector CubeNet remapping (using the 12 edge pairings).
-                        // WHY: without this, when a neighbor chunk coord goes outside the current face's chunk bounds,
-                        // find_chunk fails (wrong sector), solid_at returns false (air), so boundary faces are never culled.
-                        // This causes visible seams at the 6 cube-face edges, as noted in the TODO in neighbors().
-                        // The k_edge_pairings and edge_pairing() provide the mappings (from Bowerbyte quadsphere,
-                        // Jacco shell approach, and Dimitrijević 2016 cube map paper for low-distortion adjacency).
-                        // For surface play (small radius from face center), this is rarely hit, but required for
-                        // full seamless planetary voxel world when walking near edges or larger load areas.
-                        const ShellConfig &sh2 = shell_config(addr.shell);
-                        const int32_t face_hc = std::max(1, sh2.horizontal_res / config_.chunk_size);
-                        bool crossed = false;
-                        if (nb_addr.chunk.x < 0 || nb_addr.chunk.x >= face_hc ||
-                            nb_addr.chunk.z < 0 || nb_addr.chunk.z >= face_hc) {
-                          CubeEdge crossed_edge;
-                          if (nb_block.x < 0) crossed_edge = CubeEdge::Left;
-                          else if (nb_block.x >= config_.chunk_size) crossed_edge = CubeEdge::Right;
-                          else if (nb_block.z < 0) crossed_edge = CubeEdge::Bottom;
-                          else crossed_edge = CubeEdge::Top;
-                          const auto& p = edge_pairing(addr.sector, crossed_edge);
-                          nb_addr.sector = p.to_face;
-                          int tcx = nb_addr.chunk.x;
-                          int tcz = nb_addr.chunk.z;
-                          if (p.swap_uv) std::swap(tcx, tcz);
-                          if (p.flip_u) tcx = face_hc - 1 - tcx;
-                          if (p.flip_v) tcz = face_hc - 1 - tcz;
-                          if (tcx < 0) tcx = 0;
-                          if (tcx >= face_hc) tcx = face_hc-1;
-                          if (tcz < 0) tcz = 0;
-                          if (tcz >= face_hc) tcz = face_hc-1;
-                          nb_addr.chunk.x = tcx;
-                          nb_addr.chunk.z = tcz;
-                          // remap block too for consistency
-                          int tbx = nb_addr.block.x;
-                          int tbz = nb_addr.block.z;
-                          if (p.swap_uv) std::swap(tbx, tbz);
-                          if (p.flip_u) tbx = config_.chunk_size - 1 - tbx;
-                          if (p.flip_v) tbz = config_.chunk_size - 1 - tbz;
-                          nb_addr.block.x = tbx;
-                          nb_addr.block.z = tbz;
-                          crossed = true;
+    for (const DirInfo &di : dir_infos) {
+        const BlockDir fd = di.fd;
+        // Lambda: convert 2D (col, row, slice) to block coords (bx, by, bz)
+        auto to_block = [&](int col, int row, int slice, int (&b)[3]) {
+            b[di.col_axis] = col;
+            b[di.row_axis] = row;
+            b[di.slice_axis] = slice;
+        };
+
+        for (int slice = 0; slice < cs; ++slice) {
+            // Build 2D material mask for visible faces in this slice.
+            // mask[row][col] = material ID (1-3) if face visible, else 0.
+            uint8_t mask[16][16] = {};
+            bool has_any = false;
+
+            for (int row = 0; row < cs; ++row) {
+                for (int col = 0; col < cs; ++col) {
+                    int b[3];
+                    to_block(col, row, slice, b);
+                    const int bx = b[0], by = b[1], bz = b[2];
+                    if (!chunk.solid(bx, by, bz)) continue;
+                    const VoxelMaterial mat = chunk.material(bx, by, bz);
+                    if (mat == VoxelMaterial::Air) continue;
+                    if (intra_occluded(bx, by, bz, fd)) continue;
+                    mask[row][col] = static_cast<uint8_t>(mat);
+                    has_any = true;
+                }
+            }
+            if (!has_any) continue;
+
+            // Greedy scan: find maximal rectangles of same material.
+            bool visited[16][16] = {};
+            for (int row = 0; row < cs; ++row) {
+                for (int col = 0; col < cs; ++col) {
+                    if (visited[row][col] || mask[row][col] == 0) continue;
+                    const uint8_t mat_id = mask[row][col];
+
+                    // Extend horizontally (along columns).
+                    int w = 1;
+                    while (col + w < cs && !visited[row][col + w] &&
+                           mask[row][col + w] == mat_id) ++w;
+
+                    // Try to extend vertically (along rows) — same run must
+                    // exist contiguously in every subsequent row.
+                    int h = 1;
+                    bool can_extend = true;
+                    while (row + h < cs && can_extend) {
+                        for (int dc = 0; dc < w; ++dc) {
+                            if (visited[row + h][col + dc] ||
+                                mask[row + h][col + dc] != mat_id) {
+                                can_extend = false;
+                                break;
+                            }
                         }
-                        // Cross-chunk face culling: only trust solid_at if the
-                        // neighbor chunk has definitively been meshed.  Otherwise
-                        // emit the face to avoid visible seams when streaming
-                        // loads chunks asymmetrically (e.g. +x/+z before −x/−z).
-                        // TODO: track which chunks have built meshes so we can
-                        //       safely cull interior faces between loaded chunks.
-                        occluded = false;
+                        if (can_extend) ++h;
                     }
-                    // Debug: count culled faces per direction for first chunk.
-                    static int culled_count[6] = {0};
-                    static int total_count[6] = {0};
-                    static int total_faces = 0;
-                    static bool logged_culling = false;
-                    total_count[static_cast<int>(fd)]++;
-                    total_faces++;
-                    if (occluded) {
-                        culled_count[static_cast<int>(fd)]++;
-                    }
-                    if (!logged_culling && total_faces >= 4096) {
-                        logged_culling = true;
-                        std::fprintf(stderr, "Face culling (4096 faces checked):\n");
-                        std::fprintf(stderr, "  Left:   %d/%d culled (%.0f%%)\n", culled_count[0], total_count[0], 100.0f * culled_count[0] / std::max(1, total_count[0]));
-                        std::fprintf(stderr, "  Right:  %d/%d culled (%.0f%%)\n", culled_count[1], total_count[1], 100.0f * culled_count[1] / std::max(1, total_count[1]));
-                        std::fprintf(stderr, "  Down:   %d/%d culled (%.0f%%)\n", culled_count[2], total_count[2], 100.0f * culled_count[2] / std::max(1, total_count[2]));
-                        std::fprintf(stderr, "  Up:     %d/%d culled (%.0f%%)\n", culled_count[3], total_count[3], 100.0f * culled_count[3] / std::max(1, total_count[3]));
-                        std::fprintf(stderr, "  Back:   %d/%d culled (%.0f%%)\n", culled_count[4], total_count[4], 100.0f * culled_count[4] / std::max(1, total_count[4]));
-                        std::fprintf(stderr, "  Front:  %d/%d culled (%.0f%%)\n", culled_count[5], total_count[5], 100.0f * culled_count[5] / std::max(1, total_count[5]));
-                    }
-                    if (occluded) continue;
 
+                    // Mark entire rectangle as visited.
+                    for (int dr = 0; dr < h; ++dr)
+                        for (int dc = 0; dc < w; ++dc)
+                            visited[row + dr][col + dc] = true;
+
+                    total_blocks_covered += w * h;
+
+                    // --- Build merged quad geometry ---
+                    // Compute world-space center of the merged block region
+                    // (at the block center layer, not the face surface).
+                    const double gx_c = static_cast<double>(addr.chunk.x) * cs +
+                        (di.col_axis == 0 ? col + w * 0.5 :
+                         di.row_axis == 0 ? row + h * 0.5 :
+                         static_cast<double>(slice));
+                    const double gz_c = static_cast<double>(addr.chunk.z) * cs +
+                        (di.col_axis == 2 ? col + w * 0.5 :
+                         di.row_axis == 2 ? row + h * 0.5 :
+                         static_cast<double>(slice));
+                    const double gy_c = static_cast<double>(addr.chunk.y) * cs +
+                        (di.col_axis == 1 ? col + w * 0.5 :
+                         di.row_axis == 1 ? row + h * 0.5 :
+                         static_cast<double>(slice));
+
+                    const glm::dvec3 ref_center = world_at(gx_c, gz_c, gy_c);
+                    const glm::dvec3 radial = glm::normalize(
+                        ref_center - config_.planet.center);
+                    const PlanetTangentBasis tb = tangent_basis(radial);
+
+                    // Tangent basis vectors array for fn_tb/col_tb/row_tb lookup.
+                    const glm::dvec3 tb_vecs[3] = {tb.east, tb.north, radial};
+
+                    // Face normal.
+                    const glm::dvec3 fn = tb_vecs[di.fn_tb] * static_cast<double>(di.fn_sign);
+
+                    // Column and row extent vectors in world space.
+                    const glm::dvec3 col_ext = tb_vecs[di.col_tb] *
+                        (static_cast<double>(di.col_sign) * static_cast<double>(w) * hs);
+                    const glm::dvec3 row_ext = tb_vecs[di.row_tb] *
+                        (static_cast<double>(di.row_sign) * static_cast<double>(h) * hs);
+
+                    // Four quad corners in world space, centered on ref_center,
+                    // then shifted to the face surface by fn * hs.
+                    // Order: BL, BR, TR, TL (matches current single-block winding).
+                    const glm::dvec3 corners[4] = {
+                        ref_center - col_ext - row_ext + fn * hs,  // BL
+                        ref_center + col_ext - row_ext + fn * hs,  // BR
+                        ref_center + col_ext + row_ext + fn * hs,  // TR
+                        ref_center - col_ext + row_ext + fn * hs,  // TL
+                    };
+
+                    // Height fraction for color tinting at quad center.
+                    const float height_t = std::clamp(
+                        static_cast<float>(gy_c) /
+                            static_cast<float>(std::max(1, sh.vertical_layers)),
+                        0.0f, 1.0f);
                     const bool top_face = (fd == BlockDir::Up);
                     const glm::vec3 color = VoxelChunk::material_color(
-                        mat, top_face, height_t);
-
-                    glm::dvec3 fn;
-                    if (fd == BlockDir::Up)         fn =  radial;
-                    else if (fd == BlockDir::Down)  fn = -radial;
-                    else if (fd == BlockDir::Left)  fn = -tb.east;
-                    else if (fd == BlockDir::Right) fn =  tb.east;
-                    else if (fd == BlockDir::Back)  fn = -tb.north;
-                    else                             fn =  tb.north;
+                        static_cast<VoxelMaterial>(mat_id), top_face, height_t);
 
                     const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
                     for (int ci = 0; ci < 4; ++ci) {
-                        const glm::dvec3 corner = center + offsets[ci] + fn * hs;
-                        // Camera-relative vertex: offset from snap origin preserves
-                        // float32 sub-mm precision at 2000 km planet scale.
                         mesh.vertices.push_back(RenderVertex{
-                            glm::vec3(corner - camera_relative_origin),
-                            color, glm::vec3(fn)});
+                            glm::vec3(corners[ci] - camera_relative_origin),
+                            color,
+                            glm::vec3(fn)});
                     }
                     // Winding order: CCW when viewed from outside the block
-                    // (along the face normal). Offsets[0-3] are BL, BR, TR, TL
-                    // in the tangent plane. Reversed from original to fix
-                    // back-face culling on spherical geometry.
+                    // (along the face normal). Corners[0-3] are BL, BR, TR, TL.
                     mesh.indices.insert(mesh.indices.end(), {
                         base, base + 2, base + 1,
                         base, base + 3, base + 2});
@@ -664,8 +691,9 @@ RenderMesh BlockWorld::build_chunk_mesh(
     static bool logged_mesh = false;
     if (!logged_mesh) {
         logged_mesh = true;
-        std::fprintf(stderr, "Mesh build: verts=%zu idxs=%zu tris=%zu camera_origin=(%.1f,%.1f,%.1f)\n",
+        std::fprintf(stderr, "Mesh build: verts=%zu idxs=%zu tris=%zu greedy_quads=%zu blocks_covered=%d camera_origin=(%.1f,%.1f,%.1f)\n",
                      mesh.vertices.size(), mesh.indices.size(), mesh.indices.size() / 3,
+                     mesh.indices.size() / 6, total_blocks_covered,
                      camera_relative_origin.x, camera_relative_origin.y, camera_relative_origin.z);
         if (!mesh.vertices.empty()) {
             const auto &v0 = mesh.vertices[0];

@@ -134,35 +134,35 @@ void voxov_frame() {
 
     // Frame 30 (~0.5s): just after chunks load
     if (frame_counter == 30) {
-        take_screenshot("screenshots/ts_00_early.png");
+        take_screenshot("screenshots/ts_00_early.png"); std::system("./auto_analyze.sh screenshots/ts_00_early.png &");
     }
     // Frame 60 (~1s): initial view settled
     if (frame_counter == 60) {
-        take_screenshot("screenshots/ts_01_initial.png");
+        take_screenshot("screenshots/ts_01_initial.png"); std::system("./auto_analyze.sh screenshots/ts_01_initial.png &");
     }
     // Frame 120 (~2s): after walking starts
     if (frame_counter == 120) {
-        take_screenshot("screenshots/ts_02_walk.png");
+        take_screenshot("screenshots/ts_02_walk.png"); std::system("./auto_analyze.sh screenshots/ts_02_walk.png &");
     }
     // Frame 180 (~3s): mid-walk
     if (frame_counter == 180) {
-        take_screenshot("screenshots/ts_03_midwalk.png");
+        take_screenshot("screenshots/ts_03_midwalk.png"); std::system("./auto_analyze.sh screenshots/ts_03_midwalk.png &");
     }
     // Frame 300 (~5s): further exploration
     if (frame_counter == 300) {
-        take_screenshot("screenshots/ts_04_explore.png");
+        take_screenshot("screenshots/ts_04_explore.png"); std::system("./auto_analyze.sh screenshots/ts_04_explore.png &");
     }
     // Frame 480 (~8s): extended play
     if (frame_counter == 480) {
-        take_screenshot("screenshots/ts_05_extended.png");
+        take_screenshot("screenshots/ts_05_extended.png"); std::system("./auto_analyze.sh screenshots/ts_05_extended.png &");
     }
     // Frame 720 (~12s): long play
     if (frame_counter == 720) {
-        take_screenshot("screenshots/ts_06_long.png");
+        take_screenshot("screenshots/ts_06_long.png"); std::system("./auto_analyze.sh screenshots/ts_06_long.png &");
     }
     // Frame 1080 (~18s): very long play
     if (frame_counter == 1080) {
-        take_screenshot("screenshots/ts_07_final.png");
+        take_screenshot("screenshots/ts_07_final.png"); std::system("./auto_analyze.sh screenshots/ts_07_final.png &");
     }
 
     // F5: quick debug screenshot (overwrites same file for easy Mimo analysis).

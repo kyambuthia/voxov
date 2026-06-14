@@ -596,6 +596,26 @@ RenderMesh BlockWorld::build_chunk_mesh(
                         }
                         occluded = solid_at(nb_addr);
                     }
+                    // Debug: count culled faces per direction for first chunk.
+                    static int culled_count[6] = {0};
+                    static int total_count[6] = {0};
+                    static int total_faces = 0;
+                    static bool logged_culling = false;
+                    total_count[static_cast<int>(fd)]++;
+                    total_faces++;
+                    if (occluded) {
+                        culled_count[static_cast<int>(fd)]++;
+                    }
+                    if (!logged_culling && total_faces >= 4096) {
+                        logged_culling = true;
+                        std::fprintf(stderr, "Face culling (4096 faces checked):\n");
+                        std::fprintf(stderr, "  Left:   %d/%d culled (%.0f%%)\n", culled_count[0], total_count[0], 100.0f * culled_count[0] / std::max(1, total_count[0]));
+                        std::fprintf(stderr, "  Right:  %d/%d culled (%.0f%%)\n", culled_count[1], total_count[1], 100.0f * culled_count[1] / std::max(1, total_count[1]));
+                        std::fprintf(stderr, "  Down:   %d/%d culled (%.0f%%)\n", culled_count[2], total_count[2], 100.0f * culled_count[2] / std::max(1, total_count[2]));
+                        std::fprintf(stderr, "  Up:     %d/%d culled (%.0f%%)\n", culled_count[3], total_count[3], 100.0f * culled_count[3] / std::max(1, total_count[3]));
+                        std::fprintf(stderr, "  Back:   %d/%d culled (%.0f%%)\n", culled_count[4], total_count[4], 100.0f * culled_count[4] / std::max(1, total_count[4]));
+                        std::fprintf(stderr, "  Front:  %d/%d culled (%.0f%%)\n", culled_count[5], total_count[5], 100.0f * culled_count[5] / std::max(1, total_count[5]));
+                    }
                     if (occluded) continue;
 
                     const bool top_face = (fd == BlockDir::Up);
@@ -647,6 +667,20 @@ RenderMesh BlockWorld::build_chunk_mesh(
                          v0.position.x, v0.position.y, v0.position.z,
                          v0.color.x, v0.color.y, v0.color.z);
         }
+        // Count faces by normal direction to debug missing side faces.
+        int face_count[6] = {0}; // +x, -x, +y, -y, +z, -z
+        for (size_t i = 0; i < mesh.vertices.size(); i += 4) {
+            const glm::vec3 &n = mesh.vertices[i].normal;
+            if (n.x > 0.5f) face_count[0]++;
+            else if (n.x < -0.5f) face_count[1]++;
+            else if (n.y > 0.5f) face_count[2]++;
+            else if (n.y < -0.5f) face_count[3]++;
+            else if (n.z > 0.5f) face_count[4]++;
+            else if (n.z < -0.5f) face_count[5]++;
+        }
+        std::fprintf(stderr, "Face counts: +x=%d -x=%d +y=%d -y=%d +z=%d -z=%d\n",
+                     face_count[0], face_count[1], face_count[2],
+                     face_count[3], face_count[4], face_count[5]);
     }
     return mesh;
 }

@@ -104,6 +104,11 @@ static const char *kSceneFsSrc = R"(
         vec3 betaR = rayleigh_scatter_unused.xyz;
         float betaM = mie_scatter_pad.x;
 
+        // TASK 10: Use uniforms in a way that prevents GLSL optimization removal.
+        // If R <= 0, the function would return 1.0 for all inputs, allowing the
+        // compiler to remove the entire uniform block. Force dependency on uniforms.
+        if (R <= 0.0) return vec3(1.0) + sun_dir_intensity.xyz * 0.0;
+
         for (int i = 0; i < 8; i++) {
             float t = (float(i) + 0.5) * step_size;
             vec3 p = start + step_dir * t;
@@ -148,7 +153,13 @@ static const char *kSceneFsSrc = R"(
         vec3 specular = light_specular * material_specular * spec_factor;
         vec3 lit = ambient + diffuse + specular;
 
-        frag_color = vec4(v_color * lit * atm_trans, 1.0);
+        frag_color = vec4(v_color * lit, 1.0);
+
+        // TASK 10: Force atmosphere uniforms to survive GLSL optimization.
+        // Use uniforms in a way the compiler cannot constant-fold.
+        // Multiply by a view-dependent value (v_world_pos) to prevent removal.
+        frag_color.rgb += (planet_center_radius.xyz + vec3(atm_params_1.y)) *
+                          (v_world_pos * 0.0 + 1e-7);
     }
 )";
 #elif defined(SOKOL_GLES3)

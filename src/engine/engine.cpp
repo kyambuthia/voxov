@@ -234,11 +234,17 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   {
     const glm::dvec3 equator_dir = glm::normalize(glm::dvec3(1.0, 0.0, 0.0));
     const int32_t surf_voxels = block_world_.terrain_height_at(equator_dir);
-    // Surface is at planet_radius + terrain_height_in_blocks * block_size.
-    // Player spawns a few blocks above that.
-    const double surface_r = block_world_.planet().radius +
-        static_cast<double>(surf_voxels) * block_world_.config().block_size;
-    local_player.transform.position = glm::vec3(equator_dir * (surface_r + 2.0));
+    // Map terrain layer to radial distance in the outer shell (not flat meters).
+    const ShellConfig &surf_sh =
+        block_world_.shell_config(block_world_.shell_count() - 1);
+    const double layer_t =
+        (static_cast<double>(surf_voxels) + 0.5) /
+        static_cast<double>(std::max(1, surf_sh.vertical_layers));
+    const double surface_r =
+        surf_sh.inner_radius +
+        (surf_sh.outer_radius - surf_sh.inner_radius) * layer_t;
+    local_player.transform.position =
+        glm::vec3(equator_dir * (surface_r + 2.0));
   }
   local_player.camera_rig.pitch = -45.0f;   // steeper angle to see terrain height variation
   local_player.camera_rig.distance = 0.0f;   // first-person: no orbit distance
@@ -437,7 +443,8 @@ void Engine::tick(double frame_dt,
             // Update vehicle state each fixed step with aerodynamic forces.
             // WHY in simulate_step: physics should run at fixed rate for
             // deterministic integration, independent of render framerate.
-            if (flight_vehicle_spawned_) {
+            if (flight_vehicle_spawned_ &&
+                flight_vehicle_.state().engine_active) {
               // Toggle engine with T key (consumed once per press).
               if (gameplay_input.engine_toggle_pressed) {
                 flight_vehicle_.state().engine_active =
@@ -491,6 +498,12 @@ void Engine::tick(double frame_dt,
                   : k_sea_level_density;
 
               flight_vehicle_.update(step.dt, air_density, gravity);
+            } else if (flight_vehicle_spawned_ &&
+                       gameplay_input.engine_toggle_pressed) {
+              flight_vehicle_.state().engine_active =
+                  !flight_vehicle_.state().engine_active;
+              last_hud_message_ = flight_vehicle_.state().engine_active
+                  ? "Vehicle engine ON" : "Vehicle engine OFF";
             }
             {
               ScopedCPUTimer timer(profiling_sample.animation_cpu_ms);
@@ -764,27 +777,17 @@ void Engine::tick(double frame_dt,
         (static_cast<uint64_t>(static_cast<uint8_t>(player_addr.sector)) << 48);
     const bool player_moved = (center_hash != last_chunk_center_hash_);
 
-    // Collect desired chunk addresses for the surface shell.
-    // Only load the player's current y-layer for performance.
+    // Collect desired chunks for the surface shell, including adjacent
+    // cube-face sectors when near a sector edge (fixes black seam gaps).
     std::vector<BlockAddress> desired;
-    const int32_t player_cy = player_addr.chunk.y;
-    for (int32_t cz = -chunk_radius; cz <= chunk_radius; ++cz) {
-      for (int32_t cx = -chunk_radius; cx <= chunk_radius; ++cx) {
-        BlockAddress addr{};
-        addr.sector = player_addr.sector;
-        addr.shell  = surface_shell;
-        addr.chunk  = glm::ivec3(
-            player_addr.chunk.x + cx,
-            player_cy,
-            player_addr.chunk.z + cz);
-        desired.push_back(addr);
-      }
-    }
+    block_world_.collect_stream_chunks(player_addr, surface_shell,
+                                       chunk_radius, desired);
 
     // Generate new chunks (budget-limited). Use modest budget to avoid frame spikes.
     // ── Frame profiler: time chunk generation (noise sampling + voxel data) ──
     const PerfClock::time_point chunk_gen_start = PerfClock::now();
-    const uint32_t gen_budget = 8;
+    // Slightly higher budget: near sector edges we stream adjacent-face chunks too.
+    const uint32_t gen_budget = 12;
     std::vector<BlockAddress> new_chunks;
     for (const BlockAddress &addr : desired) {
       if (new_chunks.size() >= gen_budget) break;
@@ -938,7 +941,9 @@ void Engine::tick(double frame_dt,
     const double planet_radius = block_world_.planet().radius;
     double altitude = 0.0;
     glm::dvec3 entity_pos = glm::dvec3(0.0);
-    if (flight_vehicle_spawned_) {
+    const bool vehicle_active = flight_vehicle_spawned_ &&
+        flight_vehicle_.state().engine_active;
+    if (vehicle_active) {
       const auto& vs = flight_vehicle_.state();
       entity_pos = vs.position;
       altitude = glm::length(vs.position) - planet_radius;
@@ -1452,7 +1457,8 @@ void Engine::refresh_overlay_text() {
     // Show altitude above current body surface.
     const double planet_radius = block_world_.planet().radius;
     double altitude = 0.0;
-    if (flight_vehicle_spawned_) {
+    if (flight_vehicle_spawned_ &&
+        flight_vehicle_.state().engine_active) {
       altitude = glm::length(flight_vehicle_.state().position) - planet_radius;
     } else {
       altitude = glm::length(glm::dvec3(local_player.transform.position))

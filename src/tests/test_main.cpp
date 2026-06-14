@@ -7,6 +7,7 @@
 #include "engine_net_proto/net_types.hpp"
 #include "engine_world/net_chunk_state.hpp"
 #include "engine_world/planet.hpp"
+#include "engine_world/planet_blocks.hpp"
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_physics/vehicle/aircraft_controller.hpp"
 #include "engine_physics/vehicle/ground_vehicle_controller.hpp"
@@ -289,6 +290,70 @@ void test_planet_neighbor_within_face_bounds() {
   const PlanetChunkId clamped = neighbor_chunk_id(id, -20, 30, 16);
   assert(clamped.x == 0);
   assert(clamped.y == 15);
+}
+
+void test_block_world_terrain_height_is_smooth_across_columns() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.planet.center = glm::dvec3(0.0);
+  cfg.surface_shells = 4;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  cfg.seed = 42;
+  BlockWorld world{};
+  world.init(cfg);
+
+  const int32_t shell = world.shell_count() - 1;
+  const int32_t res = world.shell_config(shell).horizontal_res;
+  int32_t max_step = 0;
+  for (int32_t z = 1; z < res - 1; ++z) {
+    for (int32_t x = 1; x < res - 1; ++x) {
+      const int32_t h = world.terrain_height_at_face_uv(
+          PlanetFace::PosX, x, z);
+      const int32_t hx = world.terrain_height_at_face_uv(
+          PlanetFace::PosX, x + 1, z);
+      const int32_t hz = world.terrain_height_at_face_uv(
+          PlanetFace::PosX, x, z + 1);
+      max_step = std::max(max_step, std::abs(hx - h));
+      max_step = std::max(max_step, std::abs(hz - h));
+    }
+  }
+  // HF direction noise produced single-block spikes; smooth UV FBM stays gradual.
+  assert(max_step <= 3);
+}
+
+void test_block_world_cross_sector_chunk_offset() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.planet.center = glm::dvec3(0.0);
+  cfg.surface_shells = 4;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  BlockWorld world{};
+  world.init(cfg);
+
+  BlockAddress origin{};
+  origin.sector = PlanetFace::PosX;
+  origin.shell = world.shell_count() - 1;
+  const int32_t hc =
+      world.shell_config(origin.shell).horizontal_res / cfg.chunk_size;
+  origin.chunk = glm::ivec3(hc - 1, 1, 2);
+
+  BlockAddress crossed{};
+  assert(world.offset_chunk_address(origin, 1, 0, 0, crossed));
+  assert(crossed.sector != origin.sector);
+  assert(crossed.chunk.y == origin.chunk.y);
+
+  std::vector<BlockAddress> stream{};
+  world.collect_stream_chunks(origin, origin.shell, 1, stream);
+  bool has_other_sector = false;
+  for (const BlockAddress &addr : stream) {
+    if (addr.sector != origin.sector) {
+      has_other_sector = true;
+      break;
+    }
+  }
+  assert(has_other_sector);
 }
 
 void test_planet_quadtree_roots_are_stable() {
@@ -1796,6 +1861,8 @@ int main() {
   test_planet_local_face_world_roundtrip_and_distortion();
   test_planet_tangent_basis_orthonormal();
   test_planet_neighbor_within_face_bounds();
+  test_block_world_terrain_height_is_smooth_across_columns();
+  test_block_world_cross_sector_chunk_offset();
   test_planet_quadtree_roots_are_stable();
   test_planet_quadtree_subdivision_child_ids();
   test_planet_terrain_root_chunk_covers_face();

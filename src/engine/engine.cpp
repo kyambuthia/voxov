@@ -188,7 +188,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   // 3D noise on sphere surface for seamless terrain.
   PlanetDefinition planet_def{};
   planet_def.center = glm::dvec3(0.0);
-  planet_def.radius = 500.0;  // 500 m — small planet for debugging visibility
+  planet_def.radius = 50.0;  // 50m — blocks at 2% of radius, visible terrain — small planet for debugging visibility
   planet_def.voxel_size = 1.0;
   planet_def.chunks_per_face = 64;
   planet_def.seed = k_voxov_flat_world_seed;
@@ -247,7 +247,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   local_player.camera_rig.pivotHeight = 0.0f;
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
-  camera.z_far = 2000.0f;   // Scale z_far to planet size (500m radius → 2000m far)
+  camera.z_far = 200.0f;   // Scale z_far to 50m planet
   camera.z_near = 0.5f;     // z_far/z_near ratio = 4000:1, good float32 depth precision
   update_first_person_camera(local_player, camera);
 
@@ -474,7 +474,7 @@ void Engine::tick(double frame_dt,
                   ? -glm::normalize(vpos) : glm::dvec3(0.0, -1.0, 0.0);
               // Gravity scales with inverse square of distance from planet centre.
               // Planet radius = 500m, surface gravity = 9.81 m/s².
-              constexpr double k_planet_radius = 500.0;
+              constexpr double k_planet_radius = 50.0;
               constexpr double k_surface_gravity = 9.81;
               const double grav_mag = k_surface_gravity *
                   (k_planet_radius / dist_from_center) *
@@ -674,7 +674,7 @@ void Engine::tick(double frame_dt,
   if (active_frame_ == CoordinateFrame::Planet) {
     const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
     const double drift = glm::distance(cam_pos, camera_snap_origin_);
-    if (drift > 500.0) {
+    if (drift > 100.0) {
       camera_snap_origin_ = cam_pos;
       snap_origin_dirty_ = true;
     }

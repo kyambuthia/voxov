@@ -671,7 +671,7 @@ void Engine::tick(double frame_dt,
   // Snap origin drifts when the camera moves >500 m from the current
   // origin.  When updated, all chunk meshes must be rebuilt so vertices
   // stay within float32 precision range (±500 m → sub-mm precision).
-  {
+  if (active_frame_ == CoordinateFrame::Planet) {
     const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
     const double drift = glm::distance(cam_pos, camera_snap_origin_);
     if (drift > 500.0) {
@@ -1009,29 +1009,7 @@ void Engine::tick(double frame_dt,
       }
     }
 
-    // ── Camera-relative origin update for frame transitions ───────────
-    // When in Orbital frame, the camera-relative origin should include
-    // the planet's orbital position so that the voxel terrain (which is
-    // at planet centre 0,0,0 in Planet frame) appears at the correct
-    // location relative to the sun and other celestial bodies.
-    // In Planet frame, the origin stays at the player's world position
-    // as before (planet centre is at 0,0,0).
-    if (active_frame_ == CoordinateFrame::Orbital ||
-        active_frame_ == CoordinateFrame::Solar) {
-      // Transform the player/vehicle world position to Solar frame.
-      // The snap origin becomes the difference needed to bring
-      // planet-frame coordinates into solar-frame coordinates.
-      // Planet centre at (0,0,0) in Planet frame → planet orbital pos
-      // in Solar frame.
-      const glm::dvec3 planet_orbit = solar_system_.body_position(1);
-      // Adjust so planet surface coords are centered on the planet body.
-      const glm::dvec3 new_origin = planet_orbit;
-      const double drift = glm::distance(new_origin, camera_snap_origin_);
-      if (drift > 100.0) {
-        camera_snap_origin_ = new_origin;
-        snap_origin_dirty_ = true;
-      }
-    }
+
   }
 
   // Update sun direction from solar system into atmosphere.

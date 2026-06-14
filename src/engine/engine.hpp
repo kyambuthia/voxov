@@ -7,6 +7,7 @@
 #include "engine_input/input_state.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net/lan_discovery.hpp"
+#include "engine_physics/flight_vehicle.hpp"
 #include "engine_physics/physics_solver.hpp"
 #include "engine_physics/physics_world.hpp"
 #include "engine_render/renderer.hpp"
@@ -85,6 +86,8 @@ private:
   RuntimeGameSession game_session;
   EventBus event_bus_;
   PhysicsWorld physics;
+  FlightVehicle flight_vehicle_;
+  bool flight_vehicle_spawned_ = false;
   uint64_t collision_count_ = 0;
   uint32_t net_events_seen_ = 0;
   std::string last_net_status_;

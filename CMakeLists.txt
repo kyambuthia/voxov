@@ -212,6 +212,7 @@ target_link_libraries(engine_render_core PRIVATE engine_render_sokol)
 # ── Remaining subsystems ───────────────────────────────────────────────
 add_library(engine_physics STATIC
     src/engine_physics/avbd_solver.cpp
+    src/engine_physics/flight_vehicle.cpp
     src/engine_physics/vehicle/aircraft_controller.cpp
     src/engine_physics/vehicle/vehicle_damage_model.cpp
     src/engine_physics/vehicle/vehicle_sandbox_scene.cpp

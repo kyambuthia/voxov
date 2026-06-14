@@ -32,7 +32,7 @@ enum class PlatformKey : uint16_t {
     // Movement
     W, A, S, D,
     I, J, K, L,
-    Q, R, E, F,
+    Q, R, E, F, T,
     C,
     Space,
     LeftShift,  RightShift,

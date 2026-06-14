@@ -293,7 +293,47 @@ bool Engine::init(const EngineRuntimeOptions &options) {
     spdlog::info("Engine init: block planet r={:.0f}m, shells={}, fly=OFF",
                planet_def.radius,
                block_world_.shell_count());
-  spdlog::info("Player spawn: ({:.1f}, {:.1f}, {:.1f}), terrain_h={}, z_far={:.0f}",
+    // ── Flight vehicle spawn ──────────────────────────────────────────────
+    // Spawn the vehicle on the planet surface near the player, with
+    // initial forward direction pointing east (tangent to sphere).
+    {
+        VehicleConfig vcfg{};
+        vcfg.mass = 1500.0;
+        vcfg.wing_area = 25.0;
+        vcfg.drag_coefficient = 0.025;
+        vcfg.lift_coefficient = 0.7;
+        vcfg.max_thrust = 60000.0;
+        vcfg.fuel_capacity = 200.0;
+        vcfg.fuel_consumption = 0.08;
+        flight_vehicle_.init(vcfg);
+
+        // Position: on the surface at the player's location offset by +3m radial.
+        const glm::dvec3 surface_normal = glm::normalize(
+            glm::dvec3(local_player.transform.position));
+        const int32_t terrain_h = block_world_.terrain_height_at(surface_normal);
+        const double surface_r = planet_def.radius +
+            static_cast<double>(terrain_h) * bw_cfg.block_size;
+        const glm::dvec3 vehicle_pos = surface_normal * (surface_r + 3.0);
+
+        // Compute tangent directions for orientation at spawn.
+        glm::dvec3 world_ref(0.0, 1.0, 0.0);
+        if (std::abs(glm::dot(surface_normal, world_ref)) > 0.99)
+            world_ref = glm::dvec3(0.0, 0.0, 1.0);
+        const glm::dvec3 east = glm::normalize(glm::cross(world_ref, surface_normal));
+        const glm::dvec3 north = glm::normalize(glm::cross(surface_normal, east));
+
+        // Build quaternion from local tangent frame:
+        // right = east, up = surface_normal, forward = north
+        const glm::dmat3 rot(east, surface_normal, north);
+        flight_vehicle_.state().position = vehicle_pos;
+        flight_vehicle_.state().orientation = glm::quat_cast(rot);
+        flight_vehicle_.state().forward = north;
+        flight_vehicle_.state().up = surface_normal;
+        flight_vehicle_.state().right = east;
+        flight_vehicle_spawned_ = true;
+    }
+
+    spdlog::info("Player spawn: ({:.1f}, {:.1f}, {:.1f}), terrain_h={}, z_far={:.0f}",
                local_player.transform.position.x,
                local_player.transform.position.y,
                local_player.transform.position.z,
@@ -382,6 +422,66 @@ void Engine::tick(double frame_dt,
               collision_debug = PlayerControllerSystem::simulate_fixed(
                   local_player, step_input, collision_world, step.dt,
                   debug_fly_mode_);
+            }
+
+            // ── Flight vehicle physics ──────────────────────────────────
+            // Update vehicle state each fixed step with aerodynamic forces.
+            // WHY in simulate_step: physics should run at fixed rate for
+            // deterministic integration, independent of render framerate.
+            if (flight_vehicle_spawned_) {
+              // Toggle engine with T key (consumed once per press).
+              if (gameplay_input.engine_toggle_pressed) {
+                flight_vehicle_.state().engine_active =
+                    !flight_vehicle_.state().engine_active;
+                last_hud_message_ = flight_vehicle_.state().engine_active
+                    ? "Vehicle engine ON" : "Vehicle engine OFF";
+              }
+
+              // Throttle: Shift increases, Ctrl decreases.
+              double throttle = flight_vehicle_.state().throttle;
+              if (gameplay_input.sprint_held) {
+                throttle = std::min(1.0, throttle + step.dt * 0.5);  // ramp up
+              }
+              if (gameplay_input.crouch_held) {
+                throttle = std::max(0.0, throttle - step.dt * 0.5);  // ramp down
+              }
+              flight_vehicle_.set_throttle(throttle);
+
+              // Flight controls: WASD for pitch/yaw, Q/E for roll.
+              // W/S → pitch, A/D → yaw, Q/E → roll.
+              constexpr double k_angular_rate = 2.0;  // rad/s at full input
+              flight_vehicle_.apply_pitch(gameplay_input.move.y * k_angular_rate);
+              flight_vehicle_.apply_yaw(gameplay_input.move.x * k_angular_rate);
+              // Roll: Q (zoom_in) and E (interact key) for roll left/right.
+              double roll_input = 0.0;
+              if (gameplay_input.key_a) roll_input -= 0.5;  // A also rolls left
+              if (gameplay_input.key_d) roll_input += 0.5;  // D also rolls right
+              flight_vehicle_.apply_roll(roll_input * k_angular_rate);
+
+              // Compute gravity toward planet centre.
+              const glm::dvec3 vpos = flight_vehicle_.state().position;
+              const double dist_from_center = glm::length(vpos);
+              const glm::dvec3 grav_dir = (dist_from_center > 1e-6)
+                  ? -glm::normalize(vpos) : glm::dvec3(0.0, -1.0, 0.0);
+              // Gravity scales with inverse square of distance from planet centre.
+              // Planet radius = 500m, surface gravity = 9.81 m/s².
+              constexpr double k_planet_radius = 500.0;
+              constexpr double k_surface_gravity = 9.81;
+              const double grav_mag = k_surface_gravity *
+                  (k_planet_radius / dist_from_center) *
+                  (k_planet_radius / dist_from_center);
+              const glm::dvec3 gravity = grav_dir * grav_mag;
+
+              // Air density: exponential decay with altitude.
+              // Scale height H ≈ 20m for our small 500m planet.
+              const double altitude = dist_from_center - k_planet_radius;
+              constexpr double k_sea_level_density = 1.225;  // kg/m³ at surface
+              constexpr double k_scale_height = 20.0;         // m
+              const double air_density = (altitude > 0.0)
+                  ? k_sea_level_density * std::exp(-altitude / k_scale_height)
+                  : k_sea_level_density;
+
+              flight_vehicle_.update(step.dt, air_density, gravity);
             }
             {
               ScopedCPUTimer timer(profiling_sample.animation_cpu_ms);
@@ -1245,6 +1345,25 @@ void Engine::refresh_overlay_text() {
       glm::length(local_player.controller.velocity)));
   overlay_text += "\nLocomotion: " + std::string(
       player_locomotion_state_name(local_player.locomotion.state));
+
+  // ── Flight vehicle HUD ──────────────────────────────────────────────
+  if (flight_vehicle_spawned_) {
+    const auto& vs = flight_vehicle_.state();
+    const auto& vf = flight_vehicle_.forces();
+    overlay_text += "\n--- Vehicle ---";
+    overlay_text += "\nEngine: " + std::string(vs.engine_active ? "ON (T)" : "OFF (T)");
+    overlay_text += "\nThrottle: " + std::to_string(static_cast<int>(vs.throttle * 100)) + "%";
+    overlay_text += "\nFuel: " + std::to_string(static_cast<int>(vs.fuel_remaining)) + "kg";
+    overlay_text += "\nSpeed: " + std::to_string(static_cast<int>(glm::length(vs.velocity))) + "m/s";
+    overlay_text += "\nAltitude: " + std::to_string(static_cast<int>(
+        glm::length(vs.position) - 500.0)) + "m";
+    overlay_text += "\nAtmo: " + std::string(flight_vehicle_.in_atmosphere() ? "YES" : "SPACE");
+    // Force magnitudes in kN for readability.
+    const auto kn = [](double n) -> int { return static_cast<int>(n / 1000.0); };
+    overlay_text += "\nThrust: " + std::to_string(kn(glm::length(vf.thrust))) + "kN";
+    overlay_text += "\nLift: " + std::to_string(kn(glm::length(vf.lift))) + "kN";
+    overlay_text += "\nDrag: " + std::to_string(kn(glm::length(vf.drag))) + "kN";
+  }
 
   // Block targeting debug info.
   if (targeted_addr_.has_value()) {

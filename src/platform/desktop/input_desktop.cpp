@@ -21,9 +21,12 @@ InputState DesktopInputBackend::poll() {
     InputState out{};
 
     const bool rmb_down = snap.mouse_down.test(1); // SAPP_MOUSEBUTTON_RIGHT
+    const bool lmb_down = snap.mouse_down.test(0); // SAPP_MOUSEBUTTON_LEFT
     const bool any_mouse_down = snap.mouse_down.any();
     const bool rmb_pressed = rmb_down && !prev_rmb_down;
+    const bool lmb_pressed = lmb_down && !prev_lmb_down;
     prev_rmb_down = rmb_down;
+    prev_lmb_down = lmb_down;
 
     if (rmb_pressed || any_mouse_down) {
         look_capture_enabled = true;
@@ -33,6 +36,8 @@ InputState DesktopInputBackend::poll() {
     set_pointer_lock(active_look_mode);
     out.look_mode = active_look_mode;
     out.rmb_down = rmb_down;
+    out.left_click_pressed = lmb_pressed;
+    out.right_click_pressed = rmb_pressed;
     out.pointer_locked = pointer_locked;
     out.look_enabled = active_look_mode;
 

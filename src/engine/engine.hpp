@@ -19,6 +19,7 @@
 #include "platform/platform_services.hpp"
 
 #include <string>
+#include <optional>
 
 struct EngineRuntimeOptions {
   PhysicsSolverBackend physics_backend = PhysicsSolverBackend::AvbdExperimental;
@@ -70,8 +71,8 @@ public:
   bool capture_screenshot(const char *filepath, int width, int height);
 
 private:
-  void update_third_person_camera(PlayerEntity &player, Camera &out_camera);
-  void update_third_person_camera(PlayerEntity &player,
+  void update_first_person_camera(PlayerEntity &player, Camera &out_camera);
+  void update_first_person_camera(PlayerEntity &player,
                                   const glm::vec3 &render_position,
                                   Camera &out_camera);
   void refresh_overlay_text();
@@ -106,7 +107,7 @@ private:
   uint32_t chunk_generation_budget_ = 8;
   uint64_t last_chunk_center_hash_ = 0;        // detect player movement
 
-  bool debug_fly_mode_ = true; // start in fly mode (collision WIP)
+  bool debug_fly_mode_ = false; // false = surface walking (gravity toward planet center, capsule collision with voxel terrain)
   bool touch_controls_visible_ = false;
   RenderStats render_stats;
   EngineSessionState session_state_{};
@@ -132,4 +133,10 @@ private:
   uint64_t presentation_frame_events_seen_ = 0;
   double last_frame_dt = 0.0;
   std::string last_hud_message_;
+
+  // ── Block interaction (first-person pick/break/place) ─────────────────
+  // Targeted block from camera center raycast.
+  glm::dvec3 targeted_hit_pos_ = glm::dvec3(0.0);
+  glm::vec3 targeted_face_normal_ = glm::vec3(0.0f);
+  std::optional<BlockAddress> targeted_addr_;
 };

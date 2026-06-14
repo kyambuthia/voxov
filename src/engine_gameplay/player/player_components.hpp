@@ -109,14 +109,14 @@ struct PlayerProceduralStateData {
 struct CameraRig {
     float yaw = 180.0f;
     float pitch = -12.0f;
-    float distance = 5.0f;
-    float minDistance = 1.5f;
-    float maxDistance = 8.0f;
-    float pivotHeight = 1.5f;
+    float distance = 0.0f;
+    float minDistance = 0.0f;
+    float maxDistance = 0.0f;
+    float pivotHeight = 0.0f;
     float sensitivityMouse = 0.11f;
     float sensitivityTouch = 120.0f;
-    float pitchMinDeg = -75.0f;
-    float pitchMaxDeg = 25.0f;
+    float pitchMinDeg = -89.0f;
+    float pitchMaxDeg = 89.0f;
     float follow_lag = 0.0f;
     float jump_distance_bias = 0.3f;
 };

@@ -227,22 +227,27 @@ bool Engine::init(const EngineRuntimeOptions &options) {
     // Player spawns a few blocks above that.
     const double surface_r = block_world_.planet().radius +
         static_cast<double>(surf_voxels) * block_world_.config().block_size;
-    local_player.transform.position = glm::vec3(equator_dir * (surface_r + 5.0));
+    local_player.transform.position = glm::vec3(equator_dir * (surface_r + 2.0));
   }
-  local_player.camera_rig.pitch = -75.0f;  // look DOWN at surface (negative = above tangent, looking in)
-  local_player.camera_rig.distance = 15.0f;
-  local_player.camera_rig.maxDistance = 48.0f;
+  local_player.camera_rig.pitch = -10.0f;   // slight downward look toward surface
+  local_player.camera_rig.distance = 0.0f;   // first-person: no orbit distance
+  local_player.camera_rig.maxDistance = 0.0f;
+  local_player.camera_rig.minDistance = 0.0f;
+  local_player.camera_rig.pivotHeight = 0.0f;
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
   camera.z_far = 2000.0f;   // Scale z_far to planet size (500m radius → 2000m far)
   camera.z_near = 0.5f;     // z_far/z_near ratio = 4000:1, good float32 depth precision
-  update_third_person_camera(local_player, camera);
+  update_first_person_camera(local_player, camera);
 
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled);
   refresh_overlay_text();
 
-  spdlog::info("Engine init: block planet r={:.0f}m, shells={}, fly=ON",
+  // Start with fly mode OFF — gravity walks on the sphere surface.
+  debug_fly_mode_ = false;
+
+  spdlog::info("Engine init: block planet r={:.0f}m, shells={}, fly=OFF",
                planet_def.radius,
                block_world_.shell_count());
   spdlog::info("Player spawn: ({:.1f}, {:.1f}, {:.1f}), terrain_h={}, z_far={:.0f}",
@@ -399,8 +404,117 @@ void Engine::tick(double frame_dt,
         .alpha = alpha,
     });
   }
-  update_third_person_camera(local_player, local_player.transform.position,
-                             camera);
+  // First-person camera from player eye position.
+  update_first_person_camera(local_player, local_player.transform.position,
+                              camera);
+
+  // ── Block interaction (raycast pick, break/place) ─────────────────────
+  // Raycast from camera center forward to find targeted block.
+  // Left click: break block (set to Air). Right click: place block.
+  {
+    constexpr float k_pick_range = 10.0f;
+    const glm::vec3 ray_origin = camera.transform.position;
+    const glm::vec3 ray_dir = camera.forward();
+
+    // Step along ray in 0.5m increments (half block size), check block occupancy.
+    // Convert each test point to BlockAddress and test if solid.
+    glm::dvec3 hit_block_world = glm::dvec3(0.0);
+    bool hit_found = false;
+    float hit_dist = 0.0f;
+    constexpr float k_step = 0.3f;  // sub-block step for reliable thin-wall detection
+    for (float d = k_step; d <= k_pick_range; d += k_step) {
+      const glm::vec3 test_pos = ray_origin + ray_dir * d;
+      // Clamp to valid range: must be within ~planet radius + some buffer.
+      const float r = glm::length(test_pos);
+      if (r < 1.0f || r > 2000.0f) continue;
+      const BlockAddress addr = block_world_.address_from_world(glm::dvec3(test_pos));
+      const VoxelChunk *chunk = block_world_.find_chunk(addr);
+      if (chunk == nullptr) continue;
+      if (chunk->solid(addr.block.x, addr.block.y, addr.block.z) &&
+          chunk->material(addr.block.x, addr.block.y, addr.block.z) != VoxelMaterial::Air) {
+        hit_block_world = block_world_.world_from_address(addr);
+        hit_dist = d;
+        hit_found = true;
+        break;
+      }
+    }
+
+    // Store targeted block info for highlight and interaction.
+    targeted_hit_pos_ = hit_block_world;
+    targeted_addr_ = hit_found ? std::optional<BlockAddress>(block_world_.address_from_world(hit_block_world)) : std::nullopt;
+    targeted_face_normal_ = glm::vec3(0.0f);
+
+    if (hit_found && targeted_addr_.has_value()) {
+      // Compute face normal by stepping back along the ray to find which
+      // axis the ray crossed to enter the solid block. This is simpler and
+      // more reliable than computing from the hit position relative to block center.
+      const BlockAddress &addr = *targeted_addr_;
+      glm::vec3 face_normal(0.0f);
+      if (hit_dist > k_step) {
+        const glm::vec3 prev_pos = ray_origin + ray_dir * (hit_dist - k_step);
+        const BlockAddress prev_addr = block_world_.address_from_world(glm::dvec3(prev_pos));
+        const glm::ivec3 diff = addr.block - prev_addr.block;
+        // The axis with the largest absolute component is the face we entered through.
+        // Use the sign to get the outward normal.
+        if (addr.sector == prev_addr.sector && addr.shell == prev_addr.shell &&
+            addr.chunk == prev_addr.chunk) {
+          // Same chunk: diff directly tells us which block axis changed.
+          const float ax = std::abs(static_cast<float>(diff.x));
+          const float ay = std::abs(static_cast<float>(diff.y));
+          const float az = std::abs(static_cast<float>(diff.z));
+          if (ax >= ay && ax >= az && ax > 0.5f)
+            face_normal = glm::vec3(static_cast<float>(diff.x), 0.0f, 0.0f);
+          else if (ay >= ax && ay >= az && ay > 0.5f)
+            face_normal = glm::vec3(0.0f, static_cast<float>(diff.y), 0.0f);
+          else if (az > 0.5f)
+            face_normal = glm::vec3(0.0f, 0.0f, static_cast<float>(diff.z));
+        }
+      }
+      // Fallback: if step-back didn't produce a normal, use the radial up
+      // direction (place block above the hit block on the sphere surface).
+      if (glm::length(face_normal) < 0.1f) {
+        face_normal = glm::normalize(local_player.transform.position);
+      }
+      targeted_face_normal_ = face_normal;
+
+      // Handle left-click (break)
+      if (input_frame.primary.left_click_pressed) {
+        VoxelChunk &chunk = block_world_.get_or_generate_chunk(addr);
+        chunk.set_material(addr.block.x, addr.block.y, addr.block.z, VoxelMaterial::Air);
+        chunk.set_solid(addr.block.x, addr.block.y, addr.block.z, false);
+        // Remove stale mesh from scene so it will be rebuilt next frame.
+        const uint64_t mid = BlockWorld::chunk_mesh_id(addr);
+        scene.opaque_meshes.erase(
+            std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+                           [mid](const RenderMesh &m) { return m.mesh_id == mid; }),
+            scene.opaque_meshes.end());
+      }
+
+      // Handle right-click (place)
+      if (input_frame.primary.right_click_pressed) {
+        // Place block at the neighbor position in the face normal direction.
+        // Compute the world-space position adjacent to the hit face.
+        const glm::dvec3 place_world = glm::dvec3(hit_block_world) +
+            glm::dvec3(targeted_face_normal_) * block_world_.config().block_size;
+        BlockAddress place_addr = block_world_.address_from_world(place_world);
+        // Don't place inside the hit block itself.
+        if (place_addr != addr) {
+          VoxelChunk *place_chunk = &block_world_.get_or_generate_chunk(place_addr);
+          if (place_chunk != nullptr &&
+              place_chunk->material(place_addr.block.x, place_addr.block.y, place_addr.block.z) == VoxelMaterial::Air) {
+            place_chunk->set_material(place_addr.block.x, place_addr.block.y, place_addr.block.z, VoxelMaterial::Stone);
+            place_chunk->set_solid(place_addr.block.x, place_addr.block.y, place_addr.block.z, true);
+            // Remove stale mesh for the affected chunk.
+            const uint64_t mid = BlockWorld::chunk_mesh_id(place_addr);
+            scene.opaque_meshes.erase(
+                std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+                               [mid](const RenderMesh &m) { return m.mesh_id == mid; }),
+                scene.opaque_meshes.end());
+          }
+        }
+      }
+    }
+  }
   // ── Camera-relative rendering origin ─────────────────────────────────
   // Snap origin drifts when the camera moves >500 m from the current
   // origin.  When updated, all chunk meshes must be rebuilt so vertices
@@ -672,47 +786,35 @@ void Engine::leave_session() {}
 
 void Engine::reset_camera() {
   local_player.camera_rig.yaw = 180.0f;
-  local_player.camera_rig.pitch = -75.0f;  // look DOWN at surface from above-and-behind
-  local_player.camera_rig.distance = 10.0f;
+  local_player.camera_rig.pitch = -10.0f;
+  local_player.camera_rig.distance = 0.0f;
 }
 
 GuiMenu::Character Engine::preferred_character() const {
   return GuiMenu::Character::Capsule;
 }
 
-void Engine::update_third_person_camera(PlayerEntity &player,
+void Engine::update_first_person_camera(PlayerEntity &player,
                                         Camera &out_camera) {
-  update_third_person_camera(player, player.transform.position, out_camera);
+  update_first_person_camera(player, player.transform.position, out_camera);
 }
 
-void Engine::update_third_person_camera(PlayerEntity &player,
-                                        const glm::vec3 &render_position,
-                                        Camera &out_camera) {
-  out_camera.clear_view_override();
-  // Use local radial "up" for the spherical voxel planet (center at origin).
-  // WHY: the previous implementation used orbit_forward_from_angles() which
-  // computes the orbit direction in world-Y-up space, then tried to rebase
-  // onto local_up by decomposing/recomposing. This rebase was mathematically
-  // incorrect — when local_up=(1,0,0), pitch=-30°, yaw=180°, the camera ended
-  // up at the same radial height as the player, looking at the horizon rather
-  // than down at the surface.
-  //
-  // Fix: compute orbit direction directly in the local tangent frame.
-  //   - yaw rotates within the tangent plane (north-east)
-  //   - pitch elevates the camera above/below the tangent plane
-  //   - negative pitch = camera looks DOWN at the surface
-  // This produces correct behavior for any point on the sphere:
-  //   at equator +X: local_up=(1,0,0), yaw=180→behind, pitch=-75→above+behind
-  //   at north pole +Y: falls back naturally since local_up=(0,1,0)
+void Engine::update_first_person_camera(PlayerEntity &player,
+                                         const glm::vec3 &render_position,
+                                         Camera &out_camera) {
+  // WHY use view override: The Camera class computes view from
+  // yawPitchRoll which assumes world-Y-up. On a sphere planet the local "up"
+  // varies by position. We compute the view matrix directly with glm::lookAt
+  // in the local tangent frame, then set it as an override so the renderer
+  // uses the correct orientation regardless of planet curvature.
+
+  // Radial "up" from planet center.
   glm::vec3 local_up = glm::normalize(render_position);
   if (glm::length(local_up) < 0.1f) local_up = glm::vec3(0.0f, 1.0f, 0.0f);
 
   // Build a local tangent basis at the player position.
-  // Use world +Y as an arbitrary reference for north, then Gram-Schmidt
-  // to get perpendicular east and north in the tangent plane.
+  // Use world +Y as reference for "north", with pole fallback to +Z.
   glm::vec3 world_ref = glm::vec3(0.0f, 1.0f, 0.0f);
-  // If local_up is nearly parallel to world_ref, switch to +Z to avoid
-  // degenerate tangent basis near the poles.
   if (std::abs(glm::dot(local_up, world_ref)) > 0.99f) {
     world_ref = glm::vec3(0.0f, 0.0f, 1.0f);
   }
@@ -722,28 +824,31 @@ void Engine::update_third_person_camera(PlayerEntity &player,
   const float yaw_rad = glm::radians(player.camera_rig.yaw);
   const float pitch_rad = glm::radians(player.camera_rig.pitch);
 
-  // Orbit forward: yaw turns in the tangent plane (north-east),
-  // pitch elevates the camera above (+) or below (-) the tangent plane.
-  // Negative pitch = look down at the surface (camera is above player).
-  const glm::vec3 orbit_forward =
-      std::cos(pitch_rad) * (std::sin(yaw_rad) * east + std::cos(yaw_rad) * north)
-      + std::sin(pitch_rad) * local_up;
+  // Camera at player eye position: 1.6m above feet along radial up.
+  constexpr float k_eye_height = 1.6f;
+  const glm::vec3 eye_pos = render_position + local_up * k_eye_height;
 
-  const glm::vec3 pivot =
-      render_position + local_up * player.camera_rig.pivotHeight;
-  float camera_distance = player.camera_rig.distance;
-  float hit_distance = 0.0f;
-  if (collision_world.raycast(pivot, -orbit_forward, player.camera_rig.distance,
-                              hit_distance)) {
-    camera_distance =
-        std::max(player.camera_rig.minDistance, hit_distance - 0.15f);
-  }
-  const glm::vec3 camera_pos = pivot - orbit_forward * camera_distance;
-  const glm::vec3 view_dir = glm::normalize(pivot - camera_pos);
-  out_camera.transform.position = camera_pos;
-  out_camera.transform.euler_radians.y = std::atan2(-view_dir.x, -view_dir.z);
+  // View direction: yaw rotates in tangent plane, pitch tilts up/down.
+  // Positive pitch = look up (away from surface), negative = look down.
+  const glm::vec3 view_dir = glm::normalize(
+      std::cos(pitch_rad) * (std::sin(yaw_rad) * east + std::cos(yaw_rad) * north)
+      + std::sin(pitch_rad) * local_up);
+
+  // Build view matrix from local tangent frame using glm::lookAt.
+  // This correctly handles any position on the sphere — camera up is
+  // always the local radial direction.
+  const glm::mat4 view_matrix = glm::lookAt(
+      glm::vec3(eye_pos),
+      glm::vec3(eye_pos + view_dir),
+      glm::vec3(local_up));
+
+  out_camera.set_view_override(view_matrix);
+  out_camera.transform.position = eye_pos;
+  // euler_radians unused when view override is active, but keep in sync
+  // for any debug display that reads them.
+  out_camera.transform.euler_radians.y = std::atan2(view_dir.x, -view_dir.z);
   out_camera.transform.euler_radians.x =
-      std::asin(std::clamp(view_dir.y, -1.0f, 1.0f));
+      -std::asin(std::clamp(view_dir.y, -1.0f, 1.0f));
   out_camera.transform.euler_radians.z = 0.0f;
 }
 
@@ -808,6 +913,17 @@ void Engine::refresh_overlay_text() {
   }
 
   if (!session_state_.devhud_enabled) {
+    // ── Crosshair ────────────────────────────────────────────────────
+    // Draw a small white cross at screen center for first-person aiming.
+    const glm::vec3 crosshair_color(0.95f, 0.95f, 0.95f);
+    constexpr float ch_size = 0.018f;   // arm length in NDC
+    constexpr float ch_thick = 0.003f;  // arm thickness in NDC
+    // Horizontal bar
+    append_screen_rect(scene.debug_screen,
+        -ch_size, ch_thick, ch_size, -ch_thick, crosshair_color);
+    // Vertical bar
+    append_screen_rect(scene.debug_screen,
+        -ch_thick, ch_size, ch_thick, -ch_size, crosshair_color);
     return;
   }
 

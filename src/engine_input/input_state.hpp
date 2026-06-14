@@ -29,6 +29,9 @@ struct InputState {
     bool debug_reconcile_toggle_pressed = false;
     bool screenshot_requested = false;
     float zoom_delta = 0.0f;
+    // Block interaction: mouse button states (0=left, 1=right)
+    bool left_click_pressed = false;   // break block
+    bool right_click_pressed = false;  // place block
 };
 
 class IInputBackend {

@@ -2,6 +2,9 @@
 #include "platform/platform.hpp"
 #include "platform/platform_input_state.hpp"
 
+#include <cmath>
+#include <cstdlib>
+
 #include <glm/glm.hpp>
 
 DesktopInputBackend::DesktopInputBackend(DesktopPlatform &platform)
@@ -58,6 +61,23 @@ InputState DesktopInputBackend::poll() {
 
     if (out.move.x != 0.0f || out.move.y != 0.0f) {
         out.move = glm::normalize(out.move);
+    }
+
+    // Headless capture sessions: orbit walk + look so screenshot tooling can
+    // inspect terrain without a human at the keyboard.
+    if (std::getenv("VOXOV_CAPTURE_DEMO") != nullptr) {
+        static uint32_t demo_frame = 0;
+        ++demo_frame;
+        const float t = static_cast<float>(demo_frame) * 0.016f;
+        out.move = glm::normalize(glm::vec2(
+            std::sin(t * 0.55f) * 0.45f,
+            0.75f));
+        out.look_delta.x = std::cos(t * 0.35f) * 2.0f;
+        // Keep pitch aimed at the surface while orbiting yaw.
+        out.look_delta.y = std::sin(t * 0.18f) * 0.35f - 0.15f;
+        out.look_mode = true;
+        out.look_enabled = true;
+        out.pointer_locked = true;
     }
 
     const bool space_down = k(PlatformKey::Space);

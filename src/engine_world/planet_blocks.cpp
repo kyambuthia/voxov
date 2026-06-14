@@ -959,10 +959,12 @@ RenderMesh BlockWorld::build_chunk_mesh(
                             const glm::ivec3 dv = block_dir_vector(face.fd);
                             BlockAddress nb_addr = addr;
                             bool neighbor_exists = false;
-                            (void)get_neighbor_height(
+                            const uint8_t nbh = get_neighbor_height(
                                 bx + dv.x * stride, by + dv.y * stride, bz + dv.z * stride,
                                 nb_addr, neighbor_exists);
-                            if (neighbor_exists) continue;
+                            // Cull only when a solid block sits above; loaded air
+                            // chunks still set neighbor_exists=true and hid every top face.
+                            if (neighbor_exists && nbh > 0) continue;
                         }
 
                         const glm::dvec3 v0 = p_actual[face.corners[0]];

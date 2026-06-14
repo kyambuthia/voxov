@@ -94,6 +94,18 @@ private:
     SokolDirectionalLight light_{};
     SokolMaterial material_{};
 
+    // ── Atmosphere per-frame uniforms ──────────────────────────────────
+    // Packed std140 uniform block uploaded at binding 2 each frame.
+    // Set from RenderFrameContext::atmosphere in render_frame().
+    struct atm_params_t {
+        glm::vec4 planet_center_radius{0,0,0,500};
+        glm::vec4 atm_params_1{50,8000,1200,0.76};
+        glm::vec4 rayleigh_scatter{5.8e-6,13.5e-6,33.1e-6,0};
+        glm::vec4 mie_scatter{21e-5,0,0,0};
+        glm::vec4 sun_dir_intensity{0,1,0,20};
+    };
+    atm_params_t atm_uniforms_{};
+
     // Hash tokens for O(1) change detection on dynamic meshes.
     uint64_t last_debug_world_hash_ = 0;
     uint64_t last_debug_screen_hash_ = 0;

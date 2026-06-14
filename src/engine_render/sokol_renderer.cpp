@@ -63,14 +63,73 @@ static const char *kSceneFsSrc = R"(
     uniform vec3 material_specular;
     uniform float material_shininess;
     uniform vec3 camera_pos;
+
+    // ── Atmosphere parameters (binding 2, std140 layout) ────────────────
+    // Rayleigh + Mie scattering uniforms for aerial perspective.
+    // The CPU pre-computes sky color for the view center and sets it as
+    // the clear color.  The fragment shader attenuates terrain fragments
+    // by atmosphere transmittance for aerial perspective (distant terrain
+    // appears bluer / hazier).
+    layout(std140) uniform atm_params {
+        vec4 planet_center_radius;      // xyz=planet center, w=radius
+        vec4 atm_params_1;              // x=atm_height, y=H_R, z=H_M, w=g
+        vec4 rayleigh_scatter_unused;   // xyz=beta_R
+        vec4 mie_scatter_pad;           // x=beta_M
+        vec4 sun_dir_intensity;         // xyz=sun_dir, w=intensity
+    };
+
     in vec3 v_color;
     in vec3 v_normal;
     in vec3 v_world_pos;
     out vec4 frag_color;
+
+    // ── Atmospheric transmittance along a ray segment ──────────────────
+    // Numerically integrates the optical depth from 'start' to 'end'
+    // within the atmosphere shell, returning transmittance (1=clear, 0=opaque).
+    // Uses exponential density falloff: ρ(h) = exp(-h / H).
+    vec3 atmosphere_transmittance(vec3 start, vec3 end) {
+        vec3 dir = end - start;
+        float dist = length(dir);
+        if (dist < 0.001) return vec3(1.0);
+
+        vec3 step_dir = dir / dist;
+        float step_size = dist / 8.0;   // 8 samples for performance
+        vec3 opt_depth = vec3(0.0);
+        float opt_depth_mie = 0.0;
+
+        float R = planet_center_radius.w;
+        vec3 center = planet_center_radius.xyz;
+        float Hr = atm_params_1.y;
+        float Hm = atm_params_1.z;
+        vec3 betaR = rayleigh_scatter_unused.xyz;
+        float betaM = mie_scatter_pad.x;
+
+        for (int i = 0; i < 8; i++) {
+            float t = (float(i) + 0.5) * step_size;
+            vec3 p = start + step_dir * t;
+            float h = length(p - center) - R;
+            if (h < 0.0) break;  // inside planet
+
+            float dr = exp(-h / Hr) * step_size;
+            float dm = exp(-h / Hm) * step_size;
+            opt_depth += betaR * dr;
+            opt_depth_mie += betaM * dm;
+        }
+        // Mie extinction ≈ 1.1 × scattering
+        opt_depth_mie *= 1.1;
+        return exp(-(opt_depth + vec3(opt_depth_mie)));
+    }
+
     void main() {
+        // ── Atmospheric aerial perspective ─────────────────────────────
+        // Terrain color is attenuated by atmosphere between camera and
+        // fragment.  Distant fragments get bluer (Rayleigh) and hazier (Mie).
+        // Sky color is set as the clear color via CPU-side computation.
+        vec3 atm_trans = atmosphere_transmittance(camera_pos, v_world_pos);
+
         float normal_len2 = dot(v_normal, v_normal);
         if (normal_len2 < 0.001) {
-            frag_color = vec4(v_color, 1.0);
+            frag_color = vec4(v_color * atm_trans, 1.0);
             return;
         }
 
@@ -89,7 +148,7 @@ static const char *kSceneFsSrc = R"(
         vec3 specular = light_specular * material_specular * spec_factor;
         vec3 lit = ambient + diffuse + specular;
 
-        frag_color = vec4(v_color * lit, 1.0);
+        frag_color = vec4(v_color * lit * atm_trans, 1.0);
     }
 )";
 #elif defined(SOKOL_GLES3)
@@ -124,14 +183,59 @@ static const char *kSceneFsSrc = R"(#version 300 es
     uniform vec3 material_specular;
     uniform float material_shininess;
     uniform vec3 camera_pos;
+
+    // ── Atmosphere parameters ──────────────────────────────────────────
+    layout(std140) uniform atm_params {
+        vec4 planet_center_radius;
+        vec4 atm_params_1;
+        vec4 rayleigh_scatter_unused;
+        vec4 mie_scatter_pad;
+        vec4 sun_dir_intensity;
+    };
+
     in vec3 v_color;
     in vec3 v_normal;
     in vec3 v_world_pos;
     out vec4 frag_color;
+
+    vec3 atmosphere_transmittance(vec3 start, vec3 end) {
+        vec3 dir = end - start;
+        float dist = length(dir);
+        if (dist < 0.001) return vec3(1.0);
+
+        vec3 step_dir = dir / dist;
+        float step_size = dist / 8.0;
+        vec3 opt_depth = vec3(0.0);
+        float opt_depth_mie = 0.0;
+
+        float R = planet_center_radius.w;
+        vec3 center = planet_center_radius.xyz;
+        float Hr = atm_params_1.y;
+        float Hm = atm_params_1.z;
+        vec3 betaR = rayleigh_scatter_unused.xyz;
+        float betaM = mie_scatter_pad.x;
+
+        for (int i = 0; i < 8; i++) {
+            float t = (float(i) + 0.5) * step_size;
+            vec3 p = start + step_dir * t;
+            float h = length(p - center) - R;
+            if (h < 0.0) break;
+
+            float dr = exp(-h / Hr) * step_size;
+            float dm = exp(-h / Hm) * step_size;
+            opt_depth += betaR * dr;
+            opt_depth_mie += betaM * dm;
+        }
+        opt_depth_mie *= 1.1;
+        return exp(-(opt_depth + vec3(opt_depth_mie)));
+    }
+
     void main() {
+        vec3 atm_trans = atmosphere_transmittance(camera_pos, v_world_pos);
+
         float normal_len2 = dot(v_normal, v_normal);
         if (normal_len2 < 0.001) {
-            frag_color = vec4(v_color, 1.0);
+            frag_color = vec4(v_color * atm_trans, 1.0);
             return;
         }
 
@@ -150,7 +254,7 @@ static const char *kSceneFsSrc = R"(#version 300 es
         vec3 specular = light_specular * material_specular * spec_factor;
         vec3 lit = ambient + diffuse + specular;
 
-        frag_color = vec4(v_color * lit, 1.0);
+        frag_color = vec4(v_color * lit * atm_trans, 1.0);
     }
 )";
 #else
@@ -217,8 +321,19 @@ struct fs_params_t {
     glm::vec4 camera_pos;
 };
 
+// Atmosphere uniform block (binding 2, std140).
+// Mirrors the AtmosphereUniforms struct from atmosphere.hpp.
+struct atm_params_t {
+    glm::vec4 planet_center_radius;      // xyz=center, w=radius
+    glm::vec4 atm_params_1;              // x=atm_h, y=H_R, z=H_M, w=g
+    glm::vec4 rayleigh_scatter_unused;   // xyz=β_R
+    glm::vec4 mie_scatter_pad;           // x=β_M
+    glm::vec4 sun_dir_intensity;         // xyz=sun_dir, w=intensity
+};
+
 static_assert(sizeof(vs_params_t) == 128);
 static_assert(sizeof(fs_params_t) == 128);
+static_assert(sizeof(atm_params_t) == 80);
 
 } // namespace
 
@@ -282,6 +397,26 @@ bool SokolRenderer::setup_pipelines() {
     shd_desc.uniform_blocks[1].glsl_uniforms[8].glsl_name = "camera_pos";
     shd_desc.uniform_blocks[1].glsl_uniforms[8].type = SG_UNIFORMTYPE_FLOAT3;
     shd_desc.uniform_blocks[1].glsl_uniforms[8].array_count = 1;
+
+    // Uniform block 2: atmosphere parameters (fragment stage).
+    shd_desc.uniform_blocks[2].stage = SG_SHADERSTAGE_FRAGMENT;
+    shd_desc.uniform_blocks[2].size = sizeof(atm_params_t);
+    shd_desc.uniform_blocks[2].layout = SG_UNIFORMLAYOUT_STD140;
+    shd_desc.uniform_blocks[2].glsl_uniforms[0].glsl_name = "planet_center_radius";
+    shd_desc.uniform_blocks[2].glsl_uniforms[0].type = SG_UNIFORMTYPE_FLOAT4;
+    shd_desc.uniform_blocks[2].glsl_uniforms[0].array_count = 1;
+    shd_desc.uniform_blocks[2].glsl_uniforms[1].glsl_name = "atm_params_1";
+    shd_desc.uniform_blocks[2].glsl_uniforms[1].type = SG_UNIFORMTYPE_FLOAT4;
+    shd_desc.uniform_blocks[2].glsl_uniforms[1].array_count = 1;
+    shd_desc.uniform_blocks[2].glsl_uniforms[2].glsl_name = "rayleigh_scatter_unused";
+    shd_desc.uniform_blocks[2].glsl_uniforms[2].type = SG_UNIFORMTYPE_FLOAT4;
+    shd_desc.uniform_blocks[2].glsl_uniforms[2].array_count = 1;
+    shd_desc.uniform_blocks[2].glsl_uniforms[3].glsl_name = "mie_scatter_pad";
+    shd_desc.uniform_blocks[2].glsl_uniforms[3].type = SG_UNIFORMTYPE_FLOAT4;
+    shd_desc.uniform_blocks[2].glsl_uniforms[3].array_count = 1;
+    shd_desc.uniform_blocks[2].glsl_uniforms[4].glsl_name = "sun_dir_intensity";
+    shd_desc.uniform_blocks[2].glsl_uniforms[4].type = SG_UNIFORMTYPE_FLOAT4;
+    shd_desc.uniform_blocks[2].glsl_uniforms[4].array_count = 1;
 
     // Vertex attributes: position(0) float3, color0(1) float3, normal(2) float3.
     shd_desc.attrs[0].glsl_name = "position";
@@ -604,8 +739,10 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
     };
     const sg_range vs_range = SG_RANGE(vs_params);
     const sg_range fs_range = SG_RANGE(fs_params);
+    const sg_range atm_range = SG_RANGE(atm_uniforms_);
     sg_apply_uniforms(0, &vs_range);
     sg_apply_uniforms(1, &fs_range);
+    sg_apply_uniforms(2, &atm_range);
     sg_bindings bind = {};
     bind.vertex_buffers[0] = mesh.vertex_buffer;
     bind.index_buffer = mesh.index_buffer;
@@ -638,8 +775,10 @@ void SokolRenderer::draw_wireframe(const SokolGpuMesh &mesh,
     };
     const sg_range vs_range = SG_RANGE(vs_params);
     const sg_range fs_range = SG_RANGE(fs_params);
+    const sg_range atm_range = SG_RANGE(atm_uniforms_);
     sg_apply_uniforms(0, &vs_range);
     sg_apply_uniforms(1, &fs_range);
+    sg_apply_uniforms(2, &atm_range);
     sg_bindings bind = {};
     bind.vertex_buffers[0] = mesh.vertex_buffer;
     bind.index_buffer = mesh.index_buffer;
@@ -756,6 +895,21 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                                   const RenderSurface &surface) {
     // Reset per-frame GPU counters.
     uint32_t draw_calls = 0;
+
+    // ── Copy atmosphere uniforms from frame context ───────────────────
+    atm_uniforms_.planet_center_radius = ctx.atmosphere.planet_center_radius;
+    atm_uniforms_.atm_params_1 = ctx.atmosphere.atm_params_1;
+    atm_uniforms_.rayleigh_scatter = ctx.atmosphere.rayleigh_scatter;
+    atm_uniforms_.mie_scatter = ctx.atmosphere.mie_scatter;
+    atm_uniforms_.sun_dir_intensity = ctx.atmosphere.sun_dir_intensity;
+
+    // ── Set sky color as clear color (tone mapped from HDR) ──────────
+    pass_action_.colors[0].clear_value = {
+        ctx.atmosphere.sky_color.r,
+        ctx.atmosphere.sky_color.g,
+        ctx.atmosphere.sky_color.b,
+        1.0f
+    };
 
     sg_pass pass = {};
     pass.action = pass_action_;

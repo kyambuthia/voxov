@@ -16,6 +16,7 @@
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/planet.hpp"
 #include "engine_world/planet_blocks.hpp"
+#include "engine_world/planet_lod.hpp"
 #include "platform/platform_services.hpp"
 
 #include <string>
@@ -102,6 +103,7 @@ private:
   // 3D noise on sphere for seamless terrain, gravity-aligned block
   // meshing with cross-face neighbor culling via cube net.
   BlockWorld block_world_;
+  PlanetLODSystem lod_system_;
   std::vector<BlockAddress> loaded_chunks_;    // currently resident chunks
   uint64_t block_mesh_revision_ = 0;
   uint32_t chunk_generation_budget_ = 8;

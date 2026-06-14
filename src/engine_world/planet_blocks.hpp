@@ -129,7 +129,8 @@ public:
     RenderMesh build_chunk_mesh(const BlockAddress &addr,
                                  const VoxelChunk &chunk,
                                  const std::function<bool(const BlockAddress&)> &solid_at,
-                                 const glm::dvec3 &camera_relative_origin = glm::dvec3(0.0)) const;
+                                 const glm::dvec3 &camera_relative_origin = glm::dvec3(0.0),
+                                 int32_t lod_level = 0) const;
 
     // ── Streaming ──────────────────────────────────────────────────────
     VoxelChunk &get_or_generate_chunk(const BlockAddress &addr);

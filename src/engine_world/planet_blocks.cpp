@@ -475,7 +475,8 @@ RenderMesh BlockWorld::build_chunk_mesh(
     const BlockAddress &addr,
     const VoxelChunk &chunk,
     [[maybe_unused]] const std::function<bool(const BlockAddress&)> &solid_at,
-    const glm::dvec3 &camera_relative_origin) const {
+    const glm::dvec3 &camera_relative_origin,
+    int32_t lod_level) const {
 
     RenderMesh mesh{};
     mesh.mesh_id = block_chunk_mesh_id(addr);
@@ -489,6 +490,11 @@ RenderMesh BlockWorld::build_chunk_mesh(
     const int32_t cs = config_.chunk_size;
     const double hs = bw * 0.5;
 
+    // ── LOD stride ─────────────────────────────────────────────────────────
+    // At LOD N, only every (2^N)th block is meshed.  stride = 1 << lod_level.
+    // LOD 0: stride=1 (every block), LOD 1: stride=2, LOD 2: stride=4, LOD 3: stride=8.
+    const int32_t stride = 1 << std::clamp(lod_level, 0, 3);
+
     // WHY: greedy meshing merges adjacent same-material faces into larger
     // quads, reducing vertex count 5-10x. Algorithm from 0fps.net:
     // for each face direction, build a 2D material mask per slice,
@@ -499,9 +505,10 @@ RenderMesh BlockWorld::build_chunk_mesh(
     // Intra-chunk occlusion: only cull faces whose neighbor is solid
     // AND in the same chunk. Cross-chunk faces always emitted to avoid
     // visible seams when streaming loads chunks asymmetrically.
+    // At LOD > 0, check the LOD-stride neighbor (coarser granularity).
     auto intra_occluded = [&](int bx, int by, int bz, BlockDir fd) -> bool {
         const glm::ivec3 dv = block_dir_vector(fd);
-        const int nx = bx + dv.x, ny = by + dv.y, nz = bz + dv.z;
+        const int nx = bx + dv.x * stride, ny = by + dv.y * stride, nz = bz + dv.z * stride;
         if (nx >= 0 && nx < cs && ny >= 0 && ny < cs && nz >= 0 && nz < cs) {
             return chunk.solid(nx, ny, nz);
         }
@@ -560,14 +567,19 @@ RenderMesh BlockWorld::build_chunk_mesh(
             b[di.slice_axis] = slice;
         };
 
-        for (int slice = 0; slice < cs; ++slice) {
+        // Only iterate slices at LOD stride: blocks at non-stride-aligned
+        // coordinates have no representation in the LOD model.
+        for (int slice = 0; slice < cs; slice += stride) {
             // Build 2D material mask for visible faces in this slice.
             // mask[row][col] = material ID (1-3) if face visible, else 0.
             uint8_t mask[16][16] = {};
             bool has_any = false;
 
-            for (int row = 0; row < cs; ++row) {
-                for (int col = 0; col < cs; ++col) {
+            // Build 2D material mask at LOD stride.
+            // WHY: at LOD > 0, only sample every Nth block (stride),
+            // reducing the mask size and thus the number of quads emitted.
+            for (int row = 0; row < cs; row += stride) {
+                for (int col = 0; col < cs; col += stride) {
                     int b[3];
                     to_block(col, row, slice, b);
                     const int bx = b[0], by = b[1], bz = b[2];
@@ -582,25 +594,28 @@ RenderMesh BlockWorld::build_chunk_mesh(
             if (!has_any) continue;
 
             // Greedy scan: find maximal rectangles of same material.
+            // Scans at LOD stride: only positions where mask is non-zero
+            // (row, col are multiples of stride) participate.
             bool visited[16][16] = {};
-            for (int row = 0; row < cs; ++row) {
-                for (int col = 0; col < cs; ++col) {
+            for (int row = 0; row < cs; row += stride) {
+                for (int col = 0; col < cs; col += stride) {
                     if (visited[row][col] || mask[row][col] == 0) continue;
                     const uint8_t mat_id = mask[row][col];
 
-                    // Extend horizontally (along columns).
+                    // Extend horizontally (along columns) at stride granularity.
                     int w = 1;
-                    while (col + w < cs && !visited[row][col + w] &&
-                           mask[row][col + w] == mat_id) ++w;
+                    while (col + w * stride < cs &&
+                           !visited[row][col + w * stride] &&
+                           mask[row][col + w * stride] == mat_id) ++w;
 
                     // Try to extend vertically (along rows) — same run must
-                    // exist contiguously in every subsequent row.
+                    // exist contiguously in every subsequent row at stride.
                     int h = 1;
                     bool can_extend = true;
-                    while (row + h < cs && can_extend) {
+                    while (row + h * stride < cs && can_extend) {
                         for (int dc = 0; dc < w; ++dc) {
-                            if (visited[row + h][col + dc] ||
-                                mask[row + h][col + dc] != mat_id) {
+                            if (visited[row + h * stride][col + dc * stride] ||
+                                mask[row + h * stride][col + dc * stride] != mat_id) {
                                 can_extend = false;
                                 break;
                             }
@@ -608,27 +623,33 @@ RenderMesh BlockWorld::build_chunk_mesh(
                         if (can_extend) ++h;
                     }
 
-                    // Mark entire rectangle as visited.
+                    // Mark entire rectangle (at stride positions) as visited.
                     for (int dr = 0; dr < h; ++dr)
                         for (int dc = 0; dc < w; ++dc)
-                            visited[row + dr][col + dc] = true;
+                            visited[row + dr * stride][col + dc * stride] = true;
 
                     total_blocks_covered += w * h;
 
                     // --- Build merged quad geometry ---
+                    // Scale w and h by LOD stride so that each merged
+                    // quad covers the full region represented by the
+                    // coarser LOD sampling.
+                    const double quad_w = static_cast<double>(w) * static_cast<double>(stride);
+                    const double quad_h = static_cast<double>(h) * static_cast<double>(stride);
+
                     // Compute world-space center of the merged block region
                     // (at the block center layer, not the face surface).
                     const double gx_c = static_cast<double>(addr.chunk.x) * cs +
-                        (di.col_axis == 0 ? col + w * 0.5 :
-                         di.row_axis == 0 ? row + h * 0.5 :
+                        (di.col_axis == 0 ? col + quad_w * 0.5 :
+                         di.row_axis == 0 ? row + quad_h * 0.5 :
                          static_cast<double>(slice));
                     const double gz_c = static_cast<double>(addr.chunk.z) * cs +
-                        (di.col_axis == 2 ? col + w * 0.5 :
-                         di.row_axis == 2 ? row + h * 0.5 :
+                        (di.col_axis == 2 ? col + quad_w * 0.5 :
+                         di.row_axis == 2 ? row + quad_h * 0.5 :
                          static_cast<double>(slice));
                     const double gy_c = static_cast<double>(addr.chunk.y) * cs +
-                        (di.col_axis == 1 ? col + w * 0.5 :
-                         di.row_axis == 1 ? row + h * 0.5 :
+                        (di.col_axis == 1 ? col + quad_w * 0.5 :
+                         di.row_axis == 1 ? row + quad_h * 0.5 :
                          static_cast<double>(slice));
 
                     const glm::dvec3 ref_center = world_at(gx_c, gz_c, gy_c);
@@ -642,11 +663,12 @@ RenderMesh BlockWorld::build_chunk_mesh(
                     // Face normal.
                     const glm::dvec3 fn = tb_vecs[di.fn_tb] * static_cast<double>(di.fn_sign);
 
-                    // Column and row extent vectors in world space.
+                    // Column and row extent vectors in world space,
+                    // scaled by LOD stride so each quad covers stride×stride blocks.
                     const glm::dvec3 col_ext = tb_vecs[di.col_tb] *
-                        (static_cast<double>(di.col_sign) * static_cast<double>(w) * hs);
+                        (static_cast<double>(di.col_sign) * quad_w * hs);
                     const glm::dvec3 row_ext = tb_vecs[di.row_tb] *
-                        (static_cast<double>(di.row_sign) * static_cast<double>(h) * hs);
+                        (static_cast<double>(di.row_sign) * quad_h * hs);
 
                     // Four quad corners in world space, centered on ref_center,
                     // then shifted to the face surface by fn * hs.

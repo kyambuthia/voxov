@@ -202,6 +202,17 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   bw_cfg.seed = k_voxov_flat_world_seed;
   block_world_.init(bw_cfg);
 
+  // ── LOD system ──────────────────────────────────────────────────────────
+  // WHY: distance-based chunk resolution reduces GPU vertex count for distant
+  // chunks. screen-space error metric with hysteresis prevents popping.
+  {
+    LODConfig lod_cfg{};
+    lod_cfg.error_threshold = 4.0f;      // pixels
+    lod_cfg.hysteresis_factor = 1.5f;    // dead zone to prevent oscillation
+    lod_cfg.max_lod_level = 3;           // LOD 3 = 2³ effective (coarsest)
+    lod_system_.init(lod_cfg);
+  }
+
   // Wireframe debug overlay.
   wireframe_planet_ = planet_def;
   wireframe_planet_.chunks_per_face = 64;
@@ -640,12 +651,31 @@ void Engine::tick(double frame_dt,
 
       // Build set of desired mesh_ids for this frame.
       std::unordered_set<uint64_t> desired_ids;
+      // Track LOD distribution for debug HUD.
+      uint32_t lod_distribution[4] = {0, 0, 0, 0};
       for (const BlockAddress &addr : desired) {
         // Compute stable mesh_id from address (sector+shell+chunk only).
         BlockAddress ck = addr;
         ck.block = glm::ivec3(0);
         const VoxelChunk *chunk = block_world_.find_chunk(ck);
         if (chunk == nullptr) continue;
+
+        // ── LOD computation ─────────────────────────────────────────────
+        // Compute chunk center in world space for screen-error metric.
+        const glm::dvec3 chunk_center = block_world_.world_from_address(ck);
+        const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
+        const float screen_h = std::max(1.0f, static_cast<float>(
+            surface.height));
+        // Chunk world size = chunk_size * block_size (16 * 1.0 = 16m).
+        const double chunk_ws = static_cast<double>(block_world_.config().chunk_size) *
+                                block_world_.config().block_size;
+        const ChunkLOD clod = lod_system_.compute_lod(
+            chunk_center, cam_pos, screen_h, chunk_ws);
+
+        // Track LOD distribution.
+        if (clod.level >= 0 && clod.level <= 3) {
+          lod_distribution[clod.level]++;
+        }
 
         uint64_t mid = BlockWorld::chunk_mesh_id(ck);
         desired_ids.insert(mid);
@@ -668,16 +698,32 @@ void Engine::tick(double frame_dt,
         };
 
         RenderMesh mesh = block_world_.build_chunk_mesh(ck, *chunk, solid_at,
-                                                        camera_snap_origin_);
+                                                         camera_snap_origin_,
+                                                         clod.level);
         if (!mesh.vertices.empty()) {
           scene.opaque_meshes.push_back(std::move(mesh));
           // Debug: confirm mesh reaches the scene upload path.
-          spdlog::debug("Mesh uploaded: mid={} verts={} idxs={}",
-                        mid, mesh.vertices.size(), mesh.indices.size());
+          spdlog::debug("Mesh uploaded: mid={} verts={} idxs={} lod={}",
+                        mid, mesh.vertices.size(), mesh.indices.size(), clod.level);
         } else {
           // Debug: mesh was built but has no geometry — all faces culled?
-          spdlog::debug("Mesh EMPTY: mid={}", mid);
+          spdlog::debug("Mesh EMPTY: mid={} lod={}", mid, clod.level);
         }
+      }
+
+      // Save LOD distribution to render stats for HUD display.
+      for (int i = 0; i < 4; ++i) {
+        render_stats.lod_chunk_count[i] = lod_distribution[i];
+      }
+      // Debug: log LOD distribution once to verify LOD system is working.
+      // WHY: confirm LOD levels are computed and populated for 49 chunks.
+      // TODO: remove once LOD system is confirmed working.
+      static bool logged_lod = false;
+      if (!logged_lod) {
+        logged_lod = true;
+        std::fprintf(stderr, "LOD distribution: L0=%u L1=%u L2=%u L3=%u\n",
+                     lod_distribution[0], lod_distribution[1],
+                     lod_distribution[2], lod_distribution[3]);
       }
 
       // Evict meshes no longer in the desired set (player moved away).
@@ -1013,6 +1059,11 @@ void Engine::refresh_overlay_text() {
   overlay_text += debug_fly_mode_ ? "ON (F4)" : "OFF (F4)";
   overlay_text += "\nWorld chunks: ";
   overlay_text += std::to_string(render_stats.streamed_chunk_count);
+  // LOD distribution: how many chunks at each level.
+  overlay_text += "\nLOD: L0=" + std::to_string(render_stats.lod_chunk_count[0]) +
+      " L1=" + std::to_string(render_stats.lod_chunk_count[1]) +
+      " L2=" + std::to_string(render_stats.lod_chunk_count[2]) +
+      " L3=" + std::to_string(render_stats.lod_chunk_count[3]);
 
   // Player position and block address debug info.
   overlay_text += "\nPos: (" +

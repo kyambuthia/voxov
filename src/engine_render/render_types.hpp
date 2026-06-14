@@ -90,6 +90,8 @@ struct RenderStats {
     uint32_t chunk_packets = 0;
     uint32_t chunk_changes = 0;
     uint32_t streamed_chunk_count = 0;
+    // LOD distribution: how many chunks at each level (0..3).
+    uint32_t lod_chunk_count[4] = {0, 0, 0, 0};
     bool menu_open = false;
     int menu_selected = 0;
     std::string menu_title;

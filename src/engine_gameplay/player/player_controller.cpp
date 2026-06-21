@@ -2,6 +2,7 @@
 
 #include "engine_gameplay/animation/player_animation_graph.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
+#include "engine_world/planet_blocks.hpp"
 #include "engine_world/voxel_chunk.hpp"
 
 #include <glm/gtx/quaternion.hpp>
@@ -190,13 +191,46 @@ CapsuleResolveResult simulate_capsule(
     glm::vec3 up,
     float dt) {
     const LocomotionTuningData &tuning = player.locomotion_tuning;
-    glm::vec3 next_pos = player.transform.position + desired_flat_velocity * dt;
-    next_pos += up * (player.locomotion.vertical_velocity * dt);
+    const float capsule_radius = player.controller.capsuleRadius;
+    const float capsule_height = player.controller.capsuleHeight;
+
+    glm::vec3 next_pos = player.transform.position;
+    if (collision_world.has_planet_surface_collider()) {
+        // Tangential step first without feet planet collision — standing on the
+        // surface won't block WASD when feet are slightly embedded.
+        const glm::vec3 tangential_delta = desired_flat_velocity * dt;
+        if (glm::dot(tangential_delta, tangential_delta) > 1e-8f) {
+            CapsuleResolveResult tangential_resolve = collision_world.resolve_capsule(
+                next_pos + tangential_delta,
+                capsule_radius,
+                capsule_height,
+                0.02f,
+                8,
+                1.2f,
+                CapsulePlanetCollisionMode::BodyOnly);
+            next_pos = tangential_resolve.position;
+        }
+        const glm::vec3 radial_delta = up * (player.locomotion.vertical_velocity * dt);
+        if (glm::dot(radial_delta, radial_delta) > 1e-8f) {
+            CapsuleResolveResult radial_resolve = collision_world.resolve_capsule(
+                next_pos + radial_delta,
+                capsule_radius,
+                capsule_height,
+                0.02f,
+                8,
+                1.2f,
+                CapsulePlanetCollisionMode::Full);
+            next_pos = radial_resolve.position;
+        }
+    } else {
+        next_pos += desired_flat_velocity * dt;
+        next_pos += up * (player.locomotion.vertical_velocity * dt);
+    }
 
     CapsuleResolveResult resolve = collision_world.resolve_capsule(
         next_pos,
-        player.controller.capsuleRadius,
-        player.controller.capsuleHeight,
+        capsule_radius,
+        capsule_height,
         0.02f,
         8,
         1.2f);
@@ -339,6 +373,26 @@ float player_anim_blend_target(PlayerAnimState state) {
 
 float player_anim_crossfade_seconds(PlayerAnimState state) {
     return player_animation_definition(state).crossfade_seconds;
+}
+
+PlayerEntity PlayerControllerSystem::spawn_on_planet_surface(
+    const BlockWorld &world,
+    const VoxelCollisionWorld &collision_world,
+    PlanetFace face,
+    int32_t col_x,
+    int32_t col_z,
+    double radial_clearance) {
+    PlayerEntity player{};
+    player.network_id = 1;
+    player.transform.position = glm::vec3(
+        world.spawn_position_at_face_uv(face, col_x, col_z, radial_clearance));
+    player.locomotion.facing_yaw_deg = player.camera_rig.yaw;
+    player.locomotion.desired_yaw_deg = player.camera_rig.yaw;
+    player.transform.rotation = glm::angleAxis(
+        to_radians(player.locomotion.facing_yaw_deg), glm::vec3(0.0f, 1.0f, 0.0f));
+    player.animation.state = player.anim_state;
+    (void)collision_world;
+    return player;
 }
 
 PlayerEntity PlayerControllerSystem::spawn_player(const VoxelCollisionWorld &collision_world) {

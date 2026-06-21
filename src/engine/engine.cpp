@@ -257,33 +257,25 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   wireframe_planet_.chunks_per_face = 64;
   wireframe_planet_dirty_ = true;
 
-  // Planet-surface collision from block-world terrain.
+  // Planet-surface collision from block-world terrain (shell-mapped meters).
   collision_world.set_planet_surface_collider(
       glm::vec3(planet_def.center),
       static_cast<float>(planet_def.radius),
-      static_cast<float>(planet_terrain_max_height_above_base(planet_def)),
+      static_cast<float>(block_world_.max_surface_height_above_base()),
       [&bw = block_world_](glm::vec3 direction) -> float {
         return static_cast<float>(
-            bw.terrain_height_at(glm::dvec3(direction)));
+            bw.surface_height_above_base(glm::dvec3(direction)));
       });
 
-  // Player spawn on planet surface using outer shell terrain height.
-  local_player = PlayerControllerSystem::spawn_player(collision_world);
-  local_player.controller.capsuleRadius = 0.7f;
+  // Player spawn on +X equator column of the outer shell.
   {
-    const glm::dvec3 equator_dir = glm::normalize(glm::dvec3(1.0, 0.0, 0.0));
-    const int32_t surf_voxels = block_world_.terrain_height_at(equator_dir);
-    // Map terrain layer to radial distance in the outer shell (not flat meters).
-    const ShellConfig &surf_sh =
-        block_world_.shell_config(block_world_.shell_count() - 1);
-    const double layer_t =
-        (static_cast<double>(surf_voxels) + 0.5) /
-        static_cast<double>(std::max(1, surf_sh.vertical_layers));
-    const double surface_r =
-        surf_sh.inner_radius +
-        (surf_sh.outer_radius - surf_sh.inner_radius) * layer_t;
-    local_player.transform.position =
-        glm::vec3(equator_dir * (surface_r + 2.0));
+    const int32_t shell = block_world_.shell_count() - 1;
+    const int32_t equator_col =
+        block_world_.shell_config(shell).horizontal_res / 2;
+    local_player = PlayerControllerSystem::spawn_on_planet_surface(
+        block_world_, collision_world, PlanetFace::PosX, equator_col,
+        equator_col, 2.0);
+    local_player.controller.capsuleRadius = 0.7f;
   }
   local_player.camera_rig.pitch = -45.0f;   // steeper angle to see terrain height variation
   local_player.camera_rig.distance = 0.0f;   // first-person: no orbit distance
@@ -364,9 +356,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
         // Position: on the surface at the player's location offset by +3m radial.
         const glm::dvec3 surface_normal = glm::normalize(
             glm::dvec3(local_player.transform.position));
-        const int32_t terrain_h = block_world_.terrain_height_at(surface_normal);
-        const double surface_r = planet_def.radius +
-            static_cast<double>(terrain_h) * bw_cfg.block_size;
+        const double surface_r =
+            block_world_.surface_radial_distance(surface_normal);
         const glm::dvec3 vehicle_pos = surface_normal * (surface_r + 3.0);
 
         // Compute tangent directions for orientation at spawn.

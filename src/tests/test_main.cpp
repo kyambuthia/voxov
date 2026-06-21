@@ -423,6 +423,88 @@ void test_block_world_streamed_surface_meshes_are_non_empty() {
   assert(surface_row_empty == 0);
 }
 
+void test_player_spawn_on_planet_surface() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.planet.center = glm::dvec3(0.0);
+  cfg.surface_shells = 8;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  cfg.seed = 42;
+  BlockWorld world{};
+  world.init(cfg);
+
+  VoxelCollisionWorld collision{};
+  collision.set_planet_surface_collider(
+      glm::vec3(0.0f),
+      static_cast<float>(cfg.planet.radius),
+      static_cast<float>(world.max_surface_height_above_base()),
+      [&world](glm::vec3 direction) -> float {
+        return static_cast<float>(
+            world.surface_height_above_base(glm::dvec3(direction)));
+      });
+
+  const int32_t shell = world.shell_count() - 1;
+  const int32_t col = world.shell_config(shell).horizontal_res / 2;
+  PlayerEntity player = PlayerControllerSystem::spawn_on_planet_surface(
+      world, collision, PlanetFace::PosX, col, col, 2.0);
+  player.controller.capsuleRadius = 0.7f;
+
+  glm::vec3 surface_point(0.0f);
+  glm::vec3 up(0.0f, 1.0f, 0.0f);
+  assert(collision.planet_surface_point(
+      player.transform.position, surface_point, up));
+  const float height_above =
+      glm::dot(player.transform.position - surface_point, up);
+  assert(height_above > 0.5f);
+  assert(height_above < 4.0f);
+}
+
+void test_player_moves_on_planet_surface() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.planet.center = glm::dvec3(0.0);
+  cfg.surface_shells = 8;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  cfg.seed = 42;
+  BlockWorld world{};
+  world.init(cfg);
+
+  VoxelCollisionWorld collision{};
+  collision.set_planet_surface_collider(
+      glm::vec3(0.0f),
+      static_cast<float>(cfg.planet.radius),
+      static_cast<float>(world.max_surface_height_above_base()),
+      [&world](glm::vec3 direction) -> float {
+        return static_cast<float>(
+            world.surface_height_above_base(glm::dvec3(direction)));
+      });
+
+  const int32_t shell = world.shell_count() - 1;
+  const int32_t col = world.shell_config(shell).horizontal_res / 2;
+  PlayerEntity player = PlayerControllerSystem::spawn_on_planet_surface(
+      world, collision, PlanetFace::PosX, col, col, 2.0);
+  player.controller.capsuleRadius = 0.7f;
+  player.controller.capsuleHeight = 1.8f;
+  player.controller.grounded = true;
+
+  InputState input{};
+  input.move = glm::vec2(0.0f, 1.0f);
+
+  const glm::vec3 start = player.transform.position;
+  const glm::vec3 up = collision.planet_up_at(start);
+  for (int i = 0; i < 90; ++i) {
+    PlayerControllerSystem::simulate_fixed(
+        player, input, collision, 1.0f / 60.0f, false);
+  }
+
+  const glm::vec3 delta = player.transform.position - start;
+  const float tangential =
+      glm::length(delta - up * glm::dot(delta, up));
+  assert(tangential > 0.5f);
+}
+
 void test_block_world_cross_sector_chunk_offset() {
   BlockWorldConfig cfg{};
   cfg.planet.radius = 50.0;
@@ -1965,6 +2047,8 @@ int main() {
   test_block_world_terrain_height_is_smooth_across_columns();
   test_block_world_stream_includes_all_vertical_rows();
   test_block_world_streamed_surface_meshes_are_non_empty();
+  test_player_spawn_on_planet_surface();
+  test_player_moves_on_planet_surface();
   test_block_world_cross_sector_chunk_offset();
   test_planet_quadtree_roots_are_stable();
   test_planet_quadtree_subdivision_child_ids();

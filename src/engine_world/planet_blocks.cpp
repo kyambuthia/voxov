@@ -288,6 +288,38 @@ int32_t BlockWorld::terrain_height_at_face_uv(PlanetFace face, int32_t col_x,
     return terrain_height_at(face_uv_to_direction(face, u, v));
 }
 
+double BlockWorld::surface_radial_distance(const glm::dvec3 &direction) const {
+    const glm::dvec3 dir = glm::normalize(direction);
+    const int32_t layer = terrain_height_at(dir);
+    const ShellConfig &sh = shell_config(shell_count() - 1);
+    const double layer_t =
+        (static_cast<double>(layer) + 0.5) /
+        static_cast<double>(std::max(1, sh.vertical_layers));
+    return sh.inner_radius +
+           (sh.outer_radius - sh.inner_radius) * layer_t;
+}
+
+double BlockWorld::surface_height_above_base(const glm::dvec3 &direction) const {
+    return surface_radial_distance(direction) - config_.planet.radius;
+}
+
+double BlockWorld::max_surface_height_above_base() const {
+    const ShellConfig &sh = shell_config(shell_count() - 1);
+    return sh.outer_radius - sh.inner_radius;
+}
+
+glm::dvec3 BlockWorld::spawn_position_at_face_uv(PlanetFace face, int32_t col_x,
+                                                int32_t col_z,
+                                                double radial_clearance) const {
+    const int32_t res = shell_config(shell_count() - 1).horizontal_res;
+    const double u = -1.0 + (static_cast<double>(col_x) + 0.5) /
+                              static_cast<double>(res) * 2.0;
+    const double v = -1.0 + (static_cast<double>(col_z) + 0.5) /
+                              static_cast<double>(res) * 2.0;
+    const glm::dvec3 dir = face_uv_to_direction(face, u, v);
+    return dir * (surface_radial_distance(dir) + radial_clearance);
+}
+
 // ============================================================================
 // Chunk generation
 // ============================================================================
@@ -373,17 +405,41 @@ void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const
         }
     }
 
+    SphereNoise3D surface_noise(config_.seed);
+    const int32_t outer_shell = shell_count() - 1;
     int32_t solid_count = 0;
     for (int32_t z = 0; z < cs; ++z) {
         for (int32_t x = 0; x < cs; ++x) {
             const int32_t surf_h = col_height(x, z);
+            const int32_t col_x = base_col_x + x;
+            const int32_t col_z = base_col_z + z;
+            double col_u = 0.0;
+            double col_v = 0.0;
+            block_face_uv(addr.sector, outer_shell, col_x, col_z, col_u, col_v);
+            const glm::dvec3 col_dir =
+                face_uv_to_direction(addr.sector, col_u, col_v);
             for (int32_t y = 0; y < cs; ++y) {
                 BlockAddress ba = addr;
                 ba.block = glm::ivec3(x, y, z);
                 const VoxelMaterial mat = block_material_at(ba, surf_h);
-                const uint8_t block_h = (mat != VoxelMaterial::Air)
-                    ? VoxelChunk::kMaxBlockHeight
-                    : 0;
+                uint8_t block_h = 0;
+                if (mat != VoxelMaterial::Air) {
+                    const int32_t layer =
+                        ba.chunk.y * config_.chunk_size + ba.block.y;
+                    const bool is_surface_block =
+                        addr.shell == outer_shell && layer == surf_h;
+                    if (is_surface_block) {
+                        const float frac = surface_noise.terrain_surface_fraction(
+                            col_dir, 18.0f, 5.0f);
+                        block_h = static_cast<uint8_t>(std::clamp(
+                            static_cast<int>(std::lround(
+                                frac * static_cast<float>(VoxelChunk::kMaxBlockHeight))),
+                            1,
+                            static_cast<int>(VoxelChunk::kMaxBlockHeight)));
+                    } else {
+                        block_h = VoxelChunk::kMaxBlockHeight;
+                    }
+                }
                 out.set_material(x, y, z, mat, block_h);
                 if (mat != VoxelMaterial::Air) {
                     ++solid_count;

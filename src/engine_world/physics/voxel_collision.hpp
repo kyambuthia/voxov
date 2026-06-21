@@ -14,6 +14,11 @@ struct VoxelCollisionChunk {
     int32_t origin_z = 0;
 };
 
+enum class CapsulePlanetCollisionMode {
+    Full,      // Feet-based planet push (default).
+    BodyOnly,  // Body-center sample — feet penetration won't block tangential slides.
+};
+
 struct CapsuleResolveResult {
     glm::vec3 position = glm::vec3(0.0f);
     bool had_collision = false;
@@ -55,7 +60,9 @@ public:
         float capsule_height,
         float skin_width,
         int max_iterations,
-        float max_correction_per_frame) const;
+        float max_correction_per_frame,
+        CapsulePlanetCollisionMode planet_collision_mode =
+            CapsulePlanetCollisionMode::Full) const;
 
     float find_spawn_height(glm::vec2 xz, float capsule_radius, float capsule_height) const;
 

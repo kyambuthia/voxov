@@ -297,7 +297,8 @@ CapsuleResolveResult VoxelCollisionWorld::resolve_capsule(
     float capsule_height,
     float skin_width,
     int max_iterations,
-    float max_correction_per_frame) const {
+    float max_correction_per_frame,
+    CapsulePlanetCollisionMode planet_collision_mode) const {
     CapsuleResolveResult result{};
     result.position = feet_position;
 
@@ -412,11 +413,15 @@ CapsuleResolveResult VoxelCollisionWorld::resolve_capsule(
 
     glm::vec3 planet_surface_point_value(0.0f);
     glm::vec3 planet_up(0.0f, 1.0f, 0.0f);
-    if (planet_surface_point(result.position,
+    const glm::vec3 planet_sample_position =
+        planet_collision_mode == CapsulePlanetCollisionMode::BodyOnly
+            ? result.position + planet_up_at(result.position) * lower_center_offset
+            : result.position;
+    if (planet_surface_point(planet_sample_position,
                              planet_surface_point_value,
                              planet_up)) {
         const float signed_distance =
-            glm::dot(result.position - planet_surface_point_value, planet_up);
+            glm::dot(planet_sample_position - planet_surface_point_value, planet_up);
         const float min_distance = skin_width;
         if (signed_distance < min_distance) {
             const float correction = min_distance - signed_distance;

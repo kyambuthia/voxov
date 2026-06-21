@@ -121,6 +121,18 @@ public:
     int32_t terrain_height_at(const glm::dvec3 &world_dir) const;
     int32_t terrain_height_at_face_uv(PlanetFace face, int32_t col_x,
                                       int32_t col_z) const;
+
+    // Radial distance from planet center to the solid surface at a direction.
+    double surface_radial_distance(const glm::dvec3 &direction) const;
+    // Meters above the base sphere radius at a direction.
+    double surface_height_above_base(const glm::dvec3 &direction) const;
+    // Maximum terrain height above base sphere (shell outer - inner).
+    double max_surface_height_above_base() const;
+    // World position for spawning above a face column (radial clearance in meters).
+    glm::dvec3 spawn_position_at_face_uv(PlanetFace face, int32_t col_x,
+                                         int32_t col_z,
+                                         double radial_clearance) const;
+
     VoxelMaterial block_material_at(const BlockAddress &addr,
                                     int32_t surface_height) const;
 

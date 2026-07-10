@@ -41,20 +41,20 @@ size_t BlockAddressHash::operator()(const BlockAddress &a) const noexcept {
 // ============================================================================
 
 static const CubeEdgePairing k_edge_pairings[12] = {
-    {PlanetFace::PosX, CubeEdge::Left,   PlanetFace::NegZ, CubeEdge::Right, false, false, false},
-    {PlanetFace::PosX, CubeEdge::Right,  PlanetFace::PosZ, CubeEdge::Left,  false, false, false},
+    {PlanetFace::PosX, CubeEdge::Left,   PlanetFace::NegZ, CubeEdge::Left,  false, false, false},
+    {PlanetFace::PosX, CubeEdge::Right,  PlanetFace::PosZ, CubeEdge::Right, false, false, false},
     {PlanetFace::PosX, CubeEdge::Top,    PlanetFace::PosY, CubeEdge::Right, true,  false, false},
-    {PlanetFace::PosX, CubeEdge::Bottom, PlanetFace::NegY, CubeEdge::Right, true,  false, true },
+    {PlanetFace::PosX, CubeEdge::Bottom, PlanetFace::NegY, CubeEdge::Right, true,  true,  true },
 
-    {PlanetFace::NegX, CubeEdge::Left,   PlanetFace::PosZ, CubeEdge::Right, false, false, false},
-    {PlanetFace::NegX, CubeEdge::Right,  PlanetFace::NegZ, CubeEdge::Left,  false, false, false},
-    {PlanetFace::NegX, CubeEdge::Top,    PlanetFace::PosY, CubeEdge::Left,  true,  false, true },
+    {PlanetFace::NegX, CubeEdge::Left,   PlanetFace::PosZ, CubeEdge::Left,  false, false, false},
+    {PlanetFace::NegX, CubeEdge::Right,  PlanetFace::NegZ, CubeEdge::Right, false, false, false},
+    {PlanetFace::NegX, CubeEdge::Top,    PlanetFace::PosY, CubeEdge::Left,  true,  true,  true },
     {PlanetFace::NegX, CubeEdge::Bottom, PlanetFace::NegY, CubeEdge::Left,  true,  false, false},
 
-    {PlanetFace::PosY, CubeEdge::Top,    PlanetFace::NegZ, CubeEdge::Top,   false, false, true },
-    {PlanetFace::PosY, CubeEdge::Bottom, PlanetFace::PosZ, CubeEdge::Top,   false, false, false},
-    {PlanetFace::PosY, CubeEdge::Left,   PlanetFace::NegX, CubeEdge::Top,   false, true,  false},
-    {PlanetFace::PosY, CubeEdge::Right,  PlanetFace::PosX, CubeEdge::Top,   false, false, false},
+    {PlanetFace::PosY, CubeEdge::Top,    PlanetFace::PosZ, CubeEdge::Top,   false, false, false},
+    {PlanetFace::PosY, CubeEdge::Bottom, PlanetFace::NegZ, CubeEdge::Top,   false, true,  true },
+    {PlanetFace::PosY, CubeEdge::Left,   PlanetFace::NegX, CubeEdge::Top,   true,  true,  true },
+    {PlanetFace::PosY, CubeEdge::Right,  PlanetFace::PosX, CubeEdge::Top,   true,  false, false},
 };
 
 const CubeEdgePairing &BlockWorld::edge_pairing(PlanetFace from, CubeEdge edge) {
@@ -276,7 +276,8 @@ void BlockWorld::block_face_uv(PlanetFace face, int32_t shell_idx,
 
 int32_t BlockWorld::terrain_height_at(const glm::dvec3 &world_dir) const {
     SphereNoise3D noise(config_.seed);
-    // Gentle rolling hills: direction×200 noise made 1-block-wide pillar spikes.
+    // The integer layer is the floor of the continuous height. The fractional
+    // remainder is encoded on the surface block and reused by collision.
     return noise.terrain_height(world_dir, 18.0f, 5.0f);
 }
 
@@ -290,11 +291,19 @@ int32_t BlockWorld::terrain_height_at_face_uv(PlanetFace face, int32_t col_x,
 
 double BlockWorld::surface_radial_distance(const glm::dvec3 &direction) const {
     const glm::dvec3 dir = glm::normalize(direction);
-    const int32_t layer = terrain_height_at(dir);
+    const SphereNoise3D noise(config_.seed);
+    const int32_t layer = noise.terrain_height(dir, 18.0f, 5.0f);
+    const int encoded_fraction = std::clamp(static_cast<int>(std::lround(
+        noise.terrain_surface_fraction(dir, 18.0f, 5.0f) *
+        static_cast<float>(VoxelChunk::kMaxBlockHeight))), 1,
+        static_cast<int>(VoxelChunk::kMaxBlockHeight));
+    const double height = static_cast<double>(layer) +
+                          static_cast<double>(encoded_fraction) /
+                              static_cast<double>(VoxelChunk::kMaxBlockHeight);
     const ShellConfig &sh = shell_config(shell_count() - 1);
-    const double layer_t =
-        (static_cast<double>(layer) + 0.5) /
-        static_cast<double>(std::max(1, sh.vertical_layers));
+    const double layer_t = std::clamp(
+        height / static_cast<double>(std::max(1, sh.vertical_layers)),
+        0.0, 1.0);
     return sh.inner_radius +
            (sh.outer_radius - sh.inner_radius) * layer_t;
 }
@@ -362,46 +371,6 @@ void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const
         for (int32_t x = 0; x < cs; ++x) {
             col_height(x, z) = terrain_height_at_face_uv(
                 addr.sector, base_col_x + x, base_col_z + z);
-        }
-    }
-
-    // Raise isolated pits so no column sits >1 layer below a neighbor.
-    // Deep depressions read as rectangular black holes when viewed from the
-    // surface because the cavity opens to the sky.
-    for (int32_t z = 0; z < cs; ++z) {
-        for (int32_t x = 0; x < cs; ++x) {
-            int32_t min_neighbor = col_height(x, z);
-            const int32_t col_x = base_col_x + x;
-            const int32_t col_z = base_col_z + z;
-            if (x > 0) {
-                min_neighbor = std::min(min_neighbor, col_height(x - 1, z));
-            } else {
-                min_neighbor = std::min(
-                    min_neighbor,
-                    terrain_height_at_face_uv(addr.sector, col_x - 1, col_z));
-            }
-            if (x + 1 < cs) {
-                min_neighbor = std::min(min_neighbor, col_height(x + 1, z));
-            } else {
-                min_neighbor = std::min(
-                    min_neighbor,
-                    terrain_height_at_face_uv(addr.sector, col_x + 1, col_z));
-            }
-            if (z > 0) {
-                min_neighbor = std::min(min_neighbor, col_height(x, z - 1));
-            } else {
-                min_neighbor = std::min(
-                    min_neighbor,
-                    terrain_height_at_face_uv(addr.sector, col_x, col_z - 1));
-            }
-            if (z + 1 < cs) {
-                min_neighbor = std::min(min_neighbor, col_height(x, z + 1));
-            } else {
-                min_neighbor = std::min(
-                    min_neighbor,
-                    terrain_height_at_face_uv(addr.sector, col_x, col_z + 1));
-            }
-            col_height(x, z) = std::max(col_height(x, z), min_neighbor - 1);
         }
     }
 
@@ -711,15 +680,45 @@ BlockDir BlockWorld::world_dir_to_block_dir(const glm::dvec3 &world_pos,
 
 static uint64_t block_chunk_mesh_id(const BlockAddress &addr) {
     uint64_t h = 0x424c4f434b504c54ull;
-    h ^= static_cast<uint64_t>(static_cast<uint8_t>(addr.sector));
-    h ^= static_cast<uint64_t>(static_cast<uint32_t>(addr.shell)) << 8;
-    h ^= static_cast<uint64_t>(static_cast<uint32_t>(addr.chunk.x)) << 16;
-    h ^= static_cast<uint64_t>(static_cast<uint32_t>(addr.chunk.y)) << 24;
-    h ^= static_cast<uint64_t>(static_cast<uint32_t>(addr.chunk.z)) << 32;
+    auto combine = [&h](uint64_t value) {
+        h ^= value + 0x9e3779b97f4a7c15ull + (h << 6u) + (h >> 2u);
+    };
+    // Do not pack fields into overlapping bit ranges: at target planet scale
+    // chunk x/z exceed 16 bits and the old layout produced real ID collisions.
+    combine(static_cast<uint64_t>(static_cast<uint8_t>(addr.sector)));
+    combine(static_cast<uint64_t>(static_cast<uint32_t>(addr.shell)));
+    combine(static_cast<uint64_t>(static_cast<uint32_t>(addr.chunk.x)));
+    combine(static_cast<uint64_t>(static_cast<uint32_t>(addr.chunk.y)));
+    combine(static_cast<uint64_t>(static_cast<uint32_t>(addr.chunk.z)));
     h ^= h >> 30u; h *= 0xbf58476d1ce4e5b9ull;
     h ^= h >> 27u; h *= 0x94d049bb133111ebull;
     h ^= h >> 31u;
     return h == 0 ? 0x424c4f434b504c54ull : h;
+}
+
+static uint64_t block_mesh_content_hash(const RenderMesh &mesh) {
+    // FNV-1a is sufficient here: this is a cache identity, not a security
+    // primitive. Include all geometry attributes so equal-sized remeshes and
+    // camera-relative origin shifts cannot reuse stale GPU buffers.
+    uint64_t hash = 1469598103934665603ull;
+    auto mix = [&hash](const void *data, size_t size) {
+        const auto *bytes = static_cast<const uint8_t *>(data);
+        for (size_t i = 0; i < size; ++i) {
+            hash ^= bytes[i];
+            hash *= 1099511628211ull;
+        }
+    };
+    if (!mesh.vertices.empty()) {
+        mix(mesh.vertices.data(), mesh.vertices.size() * sizeof(RenderVertex));
+    }
+    if (!mesh.indices.empty()) {
+        mix(mesh.indices.data(), mesh.indices.size() * sizeof(uint32_t));
+    }
+    if (!mesh.indices16.empty()) {
+        mix(mesh.indices16.data(), mesh.indices16.size() * sizeof(uint16_t));
+    }
+    hash ^= static_cast<uint64_t>(mesh.use_16_bit_indices);
+    return hash == 0 ? 1 : hash;
 }
 
 uint64_t BlockWorld::chunk_mesh_id(const BlockAddress &addr) {
@@ -928,16 +927,21 @@ RenderMesh BlockWorld::build_chunk_mesh(
                 if (mat == VoxelMaterial::Air) {
                     continue;
                 }
+                // Top faces may only merge when their encoded heights match.
+                // Merging by material alone reuses the first cell's top radius
+                // and turns fractional terrain into large flat plates.
                 up_mask[static_cast<size_t>(iz * grid_w + ix)] =
-                    static_cast<int16_t>(mat);
+                    static_cast<int16_t>(static_cast<uint8_t>(mat) *
+                                         (kMaxH + 1) +
+                                         chunk.block_height(bx, by, bz));
             }
         }
 
         for (int32_t iz = 0; iz < grid_w; ++iz) {
             for (int32_t ix = 0; ix < grid_w;) {
-                const int16_t face_mat =
+                const int16_t face_key =
                     up_mask[static_cast<size_t>(iz * grid_w + ix)];
-                if (face_mat == 0) {
+                if (face_key == 0) {
                     ++ix;
                     continue;
                 }
@@ -945,7 +949,7 @@ RenderMesh BlockWorld::build_chunk_mesh(
                 int32_t width = 1;
                 while (ix + width < grid_w &&
                        up_mask[static_cast<size_t>(iz * grid_w + ix + width)] ==
-                           face_mat) {
+                           face_key) {
                     ++width;
                 }
 
@@ -954,7 +958,7 @@ RenderMesh BlockWorld::build_chunk_mesh(
                 while (iz + height < grid_w && !done) {
                     for (int32_t k = 0; k < width; ++k) {
                         if (up_mask[static_cast<size_t>((iz + height) * grid_w +
-                                                        ix + k)] != face_mat) {
+                                                        ix + k)] != face_key) {
                             done = true;
                             break;
                         }
@@ -966,6 +970,8 @@ RenderMesh BlockWorld::build_chunk_mesh(
 
                 const int32_t bx = ix * stride;
                 const int32_t bz = iz * stride;
+                const VoxelMaterial face_mat = static_cast<VoxelMaterial>(
+                    face_key / (kMaxH + 1));
                 const uint8_t bh = chunk.block_height(bx, by, bz);
 
                 const double gx0 = static_cast<double>(addr.chunk.x * cs + bx);
@@ -1007,7 +1013,7 @@ RenderMesh BlockWorld::build_chunk_mesh(
                         static_cast<float>(std::max(1, sh.vertical_layers)),
                     0.0f, 1.0f);
                 const glm::vec3 color = VoxelChunk::material_color(
-                    static_cast<VoxelMaterial>(face_mat), true, height_t);
+                    face_mat, true, height_t);
                 const glm::dvec3 face_center = (v0w + v1w + v2w + v3w) * 0.25;
                 emit_quad(v0w, v1w, v2w, v3w, color,
                           face_center - config_.planet.center);
@@ -1138,13 +1144,9 @@ RenderMesh BlockWorld::build_chunk_mesh(
 
                         if (bh == 0) continue;
 
-                        // Side walls always span the full cell (r_cell0..r_cell1).
-                        // Sub-voxel height applies only to the Up face; shrinking
-                        // side quads to r_block_top left an air gap in the top
-                        // cell that read as black holes at shallow view angles.
-                        // Unified height-aware culling still uses neighbor tops to
-                        // clip walls when a shorter column sits beside a taller one.
-                        const double r_my_top = r_cell1;
+                        // Side walls terminate at the same fractional top as the
+                        // Up face so geometry and the collision heightfield agree.
+                        const double r_my_top = r_block_top;
                         double r_emit_bottom = r_cell0;
                         if (neighbor_solid) {
                             const double r_nb_top =
@@ -1268,6 +1270,7 @@ RenderMesh BlockWorld::build_chunk_mesh(
                      face_count[0], face_count[1], face_count[2],
                      face_count[3], face_count[4], face_count[5]);
     }
+    mesh.content_hash = block_mesh_content_hash(mesh);
     return mesh;
 }
 
@@ -1345,14 +1348,11 @@ float SphereNoise3D::fbm(const glm::dvec3 &direction, int octaves,
 float SphereNoise3D::terrain_height_raw(const glm::dvec3 &direction,
                                         float base_height,
                                         float amplitude) const {
-    // Face-UV noise keeps adjacent columns correlated; direction×200 was ~1-column spikes.
-    const PlanetFaceUV uv = direction_to_face_uv(direction);
-    const double seed_z =
-        static_cast<double>((seed_ >> 16u) & 0xFFFFu) * 0.001;
-    const glm::dvec3 macro_p(uv.u * 4.0, uv.v * 4.0, seed_z);
-    const glm::dvec3 detail_p(uv.u * 14.0, uv.v * 14.0, seed_z + 31.0);
-    const float macro = fbm(macro_p, 4, 2.0f, 0.5f);
-    const float detail = fbm(detail_p, 2, 2.0f, 0.5f);
+    // Sample the unit direction directly. Face-local UV noise changes basis at
+    // cube seams; 3D noise on the sphere remains continuous across all faces.
+    const glm::dvec3 dir = glm::normalize(direction);
+    const float macro = fbm(dir, 4, 2.0f, 0.5f);
+    const float detail = fbm(dir, 2, 2.0f, 0.5f);
     return base_height + macro * amplitude + detail * amplitude * 0.2f;
 }
 
@@ -1360,12 +1360,12 @@ int32_t SphereNoise3D::terrain_height(const glm::dvec3 &direction,
                                        float base_height,
                                        float amplitude) const {
     const float h = terrain_height_raw(direction, base_height, amplitude);
-    return std::clamp(static_cast<int32_t>(std::round(h)), 10, 26);
+    return std::clamp(static_cast<int32_t>(std::floor(h)), 10, 26);
 }
 
 float SphereNoise3D::terrain_surface_fraction(const glm::dvec3 &direction,
-                                               float base_height,
-                                               float amplitude) const {
+    float base_height,
+    float amplitude) const {
     const float h = terrain_height_raw(direction, base_height, amplitude);
-    return h - std::floor(h);
+    return std::clamp(h - std::floor(h), 0.0f, 0.999999f);
 }

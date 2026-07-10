@@ -28,6 +28,10 @@ struct RenderMesh {
     bool use_16_bit_indices = false;
     // Non-zero = stable GPU cache key; zero = transient (always re-uploaded).
     uint64_t mesh_id = 0;
+    // Geometry/content identity for stable GPU-cache invalidation. A mesh can
+    // change positions while keeping identical vertex and index counts (for
+    // example after a camera-relative origin shift), so size alone is unsafe.
+    uint64_t content_hash = 0;
     // Primary material (most-frequent) for draw-call batching.
     // 0 = unset/unknown; otherwise matches VoxelMaterial enum values.
     uint8_t material = 0;

@@ -27,7 +27,9 @@ void RuntimeGameSession::advance(
     last_fixed_steps = 0;
     const PerfClock::time_point fixed_cpu_start = PerfClock::now();
 
-    fixed.accumulator += std::max(frame_dt, 0.0);
+    // Clamp frame_dt to 250 ms to prevent unbounded catch-up work after
+    // a giant frame spike. Matches FixedStepCounter::consume() clamp pattern.
+    fixed.accumulator += std::clamp(frame_dt, 0.0, 0.25);
     while (fixed.accumulator >= fixed.fixed_dt) {
         if (callbacks.pump_server) {
             callbacks.pump_server();

@@ -4,6 +4,7 @@
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net_proto/net_protocol_helpers.hpp"
+#include "engine_runtime/runtime_game_session.hpp"
 #include "engine_net_proto/net_types.hpp"
 #include "engine_world/net_chunk_state.hpp"
 #include "engine_world/planet.hpp"
@@ -537,6 +538,58 @@ void test_block_world_cross_sector_chunk_offset() {
     }
   }
   assert(has_other_sector);
+}
+
+void test_cube_edge_pairings_preserve_direction() {
+  const auto edge_uv = [](CubeEdge edge, double along) {
+    switch (edge) {
+    case CubeEdge::Left:   return glm::dvec2(-1.0, along);
+    case CubeEdge::Right:  return glm::dvec2(1.0, along);
+    case CubeEdge::Top:    return glm::dvec2(along, 1.0);
+    case CubeEdge::Bottom: return glm::dvec2(along, -1.0);
+    }
+    return glm::dvec2(0.0);
+  };
+
+  for (const CubeEdgePairing &pairing : BlockWorld::all_edge_pairings()) {
+    for (const double along : {-0.63, 0.27}) {
+      const glm::dvec2 source_uv = edge_uv(pairing.from_edge, along);
+      double dest_u = pairing.swap_uv ? source_uv.y : source_uv.x;
+      double dest_v = pairing.swap_uv ? source_uv.x : source_uv.y;
+      if (pairing.flip_u) dest_u = -dest_u;
+      if (pairing.flip_v) dest_v = -dest_v;
+
+      const glm::dvec3 source = face_uv_to_direction(
+          pairing.from_face, source_uv.x, source_uv.y);
+      const glm::dvec3 dest = face_uv_to_direction(
+          pairing.to_face, dest_u, dest_v);
+      assert(glm::length(source - dest) < 1.0e-9);
+    }
+  }
+}
+
+void test_surface_height_matches_quantized_surface_block() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.surface_shells = 8;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  cfg.seed = 42;
+  BlockWorld world{};
+  world.init(cfg);
+
+  const glm::dvec3 direction = glm::normalize(glm::dvec3(1.0, 0.31, -0.22));
+  const int32_t layer = world.terrain_height_at(direction);
+  const ShellConfig &surface = world.shell_config(world.shell_count() - 1);
+  const double shell_layer_size =
+      (surface.outer_radius - surface.inner_radius) /
+      static_cast<double>(surface.vertical_layers);
+  const double height = world.surface_height_above_base(direction);
+  const double lower = static_cast<double>(layer) * shell_layer_size;
+  const double upper = static_cast<double>(layer + 1) * shell_layer_size;
+  assert(height >= lower);
+  assert(height <= upper);
+  assert(height <= world.max_surface_height_above_base());
 }
 
 void test_planet_quadtree_roots_are_stable() {
@@ -1701,6 +1754,21 @@ void test_android_platform_state() {
   assert(!platform.active());
 }
 
+void test_runtime_session_clamps_large_frame_spike() {
+  // After a 10-second frame spike, the 250ms clamp should produce
+  // at most ceil(0.25 / (1/60)) == 15 fixed steps (was 600 before clamp).
+  RuntimeGameSession session;
+  session.reset(1.0 / 60.0);
+  uint32_t steps = 0;
+  RuntimeGameSessionCallbacks cb;
+  cb.simulate_step = [&](const RuntimeGameSessionStepContext &) { ++steps; };
+  session.advance(10.0, cb);
+  assert(steps <= 15);
+  assert(steps > 0);
+  // Accumulator should be drained below one fixed_dt
+  assert(session.fixed_step().accumulator < session.fixed_step().fixed_dt);
+}
+
 void test_vehicle_foundation_fixed_step_counter() {
   FixedStepCounter counter(1.0 / 60.0);
   const uint32_t s0 = counter.consume(1.0 / 30.0);
@@ -2050,6 +2118,8 @@ int main() {
   test_player_spawn_on_planet_surface();
   test_player_moves_on_planet_surface();
   test_block_world_cross_sector_chunk_offset();
+  test_cube_edge_pairings_preserve_direction();
+  test_surface_height_matches_quantized_surface_block();
   test_planet_quadtree_roots_are_stable();
   test_planet_quadtree_subdivision_child_ids();
   test_planet_terrain_root_chunk_covers_face();
@@ -2088,6 +2158,7 @@ int main() {
   test_minigame_tictactoe_places_marks();
   test_web_platform_state();
   test_android_platform_state();
+  test_runtime_session_clamps_large_frame_spike();
   test_vehicle_foundation_fixed_step_counter();
   test_vehicle_kinematic_determinism();
   test_aircraft_kinematic_determinism();

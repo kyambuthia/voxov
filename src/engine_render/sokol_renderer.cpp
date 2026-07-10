@@ -623,6 +623,7 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
     dst.bounds_min = bmin;
     dst.bounds_max = bmax;
     dst.material = src.material;
+    dst.content_hash = src.content_hash;
     dst.index_type =
         use_16_bit_indices ? SG_INDEXTYPE_UINT16 : SG_INDEXTYPE_UINT32;
 
@@ -828,10 +829,14 @@ void SokolRenderer::upload_scene(const RenderScene &new_scene) {
             ? static_cast<uint32_t>(mesh.indices16.size())
             : static_cast<uint32_t>(mesh.indices.size());
         if (it != cached_meshes_.end()) {
-            // Remesh after neighbor chunks load: vertex/index counts change.
+            // Remesh when content changes, even if topology counts are stable.
+            // Camera-relative origin shifts and equal-sized voxel edits are
+            // otherwise left pointing at stale GPU positions.
             if (it->second.index_count == mesh_index_count &&
                 it->second.vertex_buffer_size ==
-                    mesh.vertices.size() * sizeof(SokolRenderVertex)) {
+                    mesh.vertices.size() * sizeof(SokolRenderVertex) &&
+                mesh.content_hash != 0 &&
+                it->second.content_hash == mesh.content_hash) {
                 continue;
             }
             destroy_mesh(it->second);

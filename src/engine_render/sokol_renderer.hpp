@@ -22,6 +22,7 @@ struct SokolGpuMesh {
     size_t index_buffer_size = 0;
     uint32_t index_count = 0;
     sg_index_type index_type = SG_INDEXTYPE_UINT32;
+    uint64_t content_hash = 0;
     glm::vec3 bounds_min{};
     glm::vec3 bounds_max{};
     uint8_t material = 0;

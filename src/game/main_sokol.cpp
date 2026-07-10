@@ -117,11 +117,9 @@ void voxov_frame() {
 
     g_runtime->tick(g_pacer->frame_dt());
 
-    // ── Debug screenshot system ──────────────────────────────────────
-    // Auto-screenshot at key moments for visual debugging with Mimo Omni.
-    // Also supports F5 for quick debug screenshot and F12 for timestamped.
-    static int frame_counter = 0;
-    frame_counter++;
+    // ── Manual screenshot system ─────────────────────────────────────
+    // Screenshots are user-triggered so normal game runs do not recreate
+    // stale visual-debug artifacts in the working tree.
 
     auto take_screenshot = [](const char *path) {
         std::system("mkdir -p screenshots 2>/dev/null");
@@ -131,55 +129,6 @@ void voxov_frame() {
             spdlog::info("Screenshot saved: {}", path);
         }
     };
-
-    // Frame 30 (~0.5s): just after chunks load
-    auto maybe_analyze = [](const char *path) {
-        if (std::getenv("VOXOV_SKIP_ANALYZE") != nullptr) {
-            return;
-        }
-        std::string cmd = std::string("./auto_analyze.sh ") + path + " &";
-        std::system(cmd.c_str());
-    };
-
-    if (frame_counter == 30) {
-        take_screenshot("screenshots/ts_00_early.png");
-        maybe_analyze("screenshots/ts_00_early.png");
-    }
-    // Frame 60 (~1s): initial view settled
-    if (frame_counter == 60) {
-        take_screenshot("screenshots/ts_01_initial.png");
-        maybe_analyze("screenshots/ts_01_initial.png");
-    }
-    // Frame 120 (~2s): after walking starts
-    if (frame_counter == 120) {
-        take_screenshot("screenshots/ts_02_walk.png");
-        maybe_analyze("screenshots/ts_02_walk.png");
-    }
-    // Frame 180 (~3s): mid-walk
-    if (frame_counter == 180) {
-        take_screenshot("screenshots/ts_03_midwalk.png");
-        maybe_analyze("screenshots/ts_03_midwalk.png");
-    }
-    // Frame 300 (~5s): further exploration
-    if (frame_counter == 300) {
-        take_screenshot("screenshots/ts_04_explore.png");
-        maybe_analyze("screenshots/ts_04_explore.png");
-    }
-    // Frame 480 (~8s): extended play
-    if (frame_counter == 480) {
-        take_screenshot("screenshots/ts_05_extended.png");
-        maybe_analyze("screenshots/ts_05_extended.png");
-    }
-    // Frame 720 (~12s): long play
-    if (frame_counter == 720) {
-        take_screenshot("screenshots/ts_06_long.png");
-        maybe_analyze("screenshots/ts_06_long.png");
-    }
-    // Frame 1080 (~18s): very long play
-    if (frame_counter == 1080) {
-        take_screenshot("screenshots/ts_07_final.png");
-        maybe_analyze("screenshots/ts_07_final.png");
-    }
 
     // F5: quick debug screenshot (overwrites same file for easy Mimo analysis).
     static bool f5_was_down = false;

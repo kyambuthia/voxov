@@ -1,4 +1,5 @@
 #include "engine_render/sokol_renderer.hpp"
+#include "engine_render/voxel_texture_data.hpp"
 
 #include "sokol_gfx.h"
 #if !defined(VOXOV_PLATFORM_ANDROID)
@@ -38,9 +39,11 @@ static const char *kSceneVsSrc = R"(
     layout(location=0) in vec3 position;
     layout(location=1) in vec3 color0;
     layout(location=2) in vec3 normal;
+    layout(location=3) in vec3 texcoord0;
     out vec3 v_color;
     out vec3 v_normal;
     out vec3 v_world_pos;
+    out vec3 v_texcoord;
     void main() {
         vec4 world_pos = model * vec4(position, 1.0);
         mat4 normal_model = model;
@@ -49,6 +52,7 @@ static const char *kSceneVsSrc = R"(
         v_color = color0;
         v_normal = mat3(normal_model) * normal;
         v_world_pos = world_pos.xyz;
+        v_texcoord = texcoord0;
         gl_Position = mvp * vec4(position, 1.0);
     }
 )";
@@ -63,6 +67,7 @@ static const char *kSceneFsSrc = R"(
     uniform vec3 material_specular;
     uniform float material_shininess;
     uniform vec3 camera_pos;
+    uniform sampler2DArray voxel_tex;
 
     // Loose uniforms (not a UBO block): sokol GL uploads via glGetUniformLocation
     // on member names; std140 blocks leave gl_loc=-1 and transmittance never runs.
@@ -75,6 +80,7 @@ static const char *kSceneFsSrc = R"(
     in vec3 v_color;
     in vec3 v_normal;
     in vec3 v_world_pos;
+    in vec3 v_texcoord;
     out vec4 frag_color;
 
     // ── Atmospheric transmittance along a ray segment ──────────────────
@@ -130,8 +136,16 @@ static const char *kSceneFsSrc = R"(
             return;
         }
 
+        vec3 base_color = v_color;
+        if (v_texcoord.z >= 0.0) {
+            vec3 texel = texture(voxel_tex,
+                                 vec3(fract(v_texcoord.xy), v_texcoord.z)).rgb;
+            base_color = texel * mix(vec3(1.0), v_color, 0.25);
+        }
+
         vec3 n = normalize(v_normal);
-        vec3 l = normalize(light_direction);
+        vec3 sun_dir = normalize(sun_dir_intensity.xyz);
+        vec3 l = normalize(light_direction + sun_dir);
         vec3 v = normalize(camera_pos - v_world_pos);
         vec3 h = normalize(l + v);
 
@@ -143,9 +157,10 @@ static const char *kSceneFsSrc = R"(
         vec3 ambient = light_ambient * material_ambient;
         vec3 diffuse = light_diffuse * material_diffuse * ndl;
         vec3 specular = light_specular * material_specular * spec_factor;
-        vec3 lit = ambient + diffuse + specular;
+        float sun_boost = max(sun_dir_intensity.w / 20.0, 0.0);
+        vec3 lit = (ambient + diffuse + specular) * sun_boost;
 
-        frag_color = vec4(v_color * lit * atm_trans, 1.0);
+        frag_color = vec4(base_color * lit * atm_trans, 1.0);
     }
 )";
 #elif defined(SOKOL_GLES3)
@@ -155,9 +170,11 @@ static const char *kSceneVsSrc = R"(#version 300 es
     layout(location=0) in vec3 position;
     layout(location=1) in vec3 color0;
     layout(location=2) in vec3 normal;
+    layout(location=3) in vec3 texcoord0;
     out vec3 v_color;
     out vec3 v_normal;
     out vec3 v_world_pos;
+    out vec3 v_texcoord;
     void main() {
         vec4 world_pos = model * vec4(position, 1.0);
         mat4 normal_model = model;
@@ -166,6 +183,7 @@ static const char *kSceneVsSrc = R"(#version 300 es
         v_color = color0;
         v_normal = mat3(normal_model) * normal;
         v_world_pos = world_pos.xyz;
+        v_texcoord = texcoord0;
         gl_Position = mvp * vec4(position, 1.0);
     }
 )";
@@ -180,6 +198,7 @@ static const char *kSceneFsSrc = R"(#version 300 es
     uniform vec3 material_specular;
     uniform float material_shininess;
     uniform vec3 camera_pos;
+    uniform highp sampler2DArray voxel_tex;
 
     uniform vec4 planet_center_radius;
     uniform vec4 atm_params_1;
@@ -190,6 +209,7 @@ static const char *kSceneFsSrc = R"(#version 300 es
     in vec3 v_color;
     in vec3 v_normal;
     in vec3 v_world_pos;
+    in vec3 v_texcoord;
     out vec4 frag_color;
 
     vec3 atmosphere_transmittance(vec3 start, vec3 end) {
@@ -236,8 +256,16 @@ static const char *kSceneFsSrc = R"(#version 300 es
             return;
         }
 
+        vec3 base_color = v_color;
+        if (v_texcoord.z >= 0.0) {
+            vec3 texel = texture(voxel_tex,
+                                 vec3(fract(v_texcoord.xy), v_texcoord.z)).rgb;
+            base_color = texel * mix(vec3(1.0), v_color, 0.25);
+        }
+
         vec3 n = normalize(v_normal);
-        vec3 l = normalize(light_direction);
+        vec3 sun_dir = normalize(sun_dir_intensity.xyz);
+        vec3 l = normalize(light_direction + sun_dir);
         vec3 v = normalize(camera_pos - v_world_pos);
         vec3 h = normalize(l + v);
 
@@ -249,9 +277,10 @@ static const char *kSceneFsSrc = R"(#version 300 es
         vec3 ambient = light_ambient * material_ambient;
         vec3 diffuse = light_diffuse * material_diffuse * ndl;
         vec3 specular = light_specular * material_specular * spec_factor;
-        vec3 lit = ambient + diffuse + specular;
+        float sun_boost = max(sun_dir_intensity.w / 20.0, 0.0);
+        vec3 lit = (ambient + diffuse + specular) * sun_boost;
 
-        frag_color = vec4(v_color * lit * atm_trans, 1.0);
+        frag_color = vec4(base_color * lit * atm_trans, 1.0);
     }
 )";
 #else
@@ -415,10 +444,21 @@ bool SokolRenderer::setup_pipelines() {
     shd_desc.uniform_blocks[2].glsl_uniforms[4].type = SG_UNIFORMTYPE_FLOAT4;
     shd_desc.uniform_blocks[2].glsl_uniforms[4].array_count = 1;
 
-    // Vertex attributes: position(0) float3, color0(1) float3, normal(2) float3.
+    // Vertex attributes: position, colour, normal, and repeating voxel UV/layer.
     shd_desc.attrs[0].glsl_name = "position";
     shd_desc.attrs[1].glsl_name = "color0";
     shd_desc.attrs[2].glsl_name = "normal";
+    shd_desc.attrs[3].glsl_name = "texcoord0";
+
+    shd_desc.views[0].texture.stage = SG_SHADERSTAGE_FRAGMENT;
+    shd_desc.views[0].texture.image_type = SG_IMAGETYPE_ARRAY;
+    shd_desc.views[0].texture.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
+    shd_desc.samplers[0].stage = SG_SHADERSTAGE_FRAGMENT;
+    shd_desc.samplers[0].sampler_type = SG_SAMPLERTYPE_FILTERING;
+    shd_desc.texture_sampler_pairs[0].stage = SG_SHADERSTAGE_FRAGMENT;
+    shd_desc.texture_sampler_pairs[0].view_slot = 0;
+    shd_desc.texture_sampler_pairs[0].sampler_slot = 0;
+    shd_desc.texture_sampler_pairs[0].glsl_name = "voxel_tex";
 
     pipelines_.scene_shader = sg_make_shader(&shd_desc);
     if (pipelines_.scene_shader.id == SG_INVALID_ID) {
@@ -433,6 +473,7 @@ bool SokolRenderer::setup_pipelines() {
     opq_desc.layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT3;
     opq_desc.layout.attrs[1].format = SG_VERTEXFORMAT_FLOAT3;
     opq_desc.layout.attrs[2].format = SG_VERTEXFORMAT_FLOAT3;
+    opq_desc.layout.attrs[3].format = SG_VERTEXFORMAT_FLOAT3;
     opq_desc.index_type = SG_INDEXTYPE_UINT32;
     opq_desc.cull_mode = SG_CULLMODE_BACK;
     opq_desc.face_winding = SG_FACEWINDING_CCW;
@@ -450,6 +491,7 @@ bool SokolRenderer::setup_pipelines() {
     wire_desc.layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT3;
     wire_desc.layout.attrs[1].format = SG_VERTEXFORMAT_FLOAT3;
     wire_desc.layout.attrs[2].format = SG_VERTEXFORMAT_FLOAT3;
+    wire_desc.layout.attrs[3].format = SG_VERTEXFORMAT_FLOAT3;
     wire_desc.index_type = SG_INDEXTYPE_UINT32;
     wire_desc.primitive_type = SG_PRIMITIVETYPE_LINES;
     wire_desc.cull_mode = SG_CULLMODE_NONE;
@@ -467,6 +509,7 @@ bool SokolRenderer::setup_pipelines() {
     dnc_desc.layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT3;
     dnc_desc.layout.attrs[1].format = SG_VERTEXFORMAT_FLOAT3;
     dnc_desc.layout.attrs[2].format = SG_VERTEXFORMAT_FLOAT3;
+    dnc_desc.layout.attrs[3].format = SG_VERTEXFORMAT_FLOAT3;
     dnc_desc.index_type = SG_INDEXTYPE_UINT32;
     dnc_desc.cull_mode = SG_CULLMODE_NONE;
     dnc_desc.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;
@@ -483,6 +526,7 @@ bool SokolRenderer::setup_pipelines() {
     xray_desc.layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT3;
     xray_desc.layout.attrs[1].format = SG_VERTEXFORMAT_FLOAT3;
     xray_desc.layout.attrs[2].format = SG_VERTEXFORMAT_FLOAT3;
+    xray_desc.layout.attrs[3].format = SG_VERTEXFORMAT_FLOAT3;
     xray_desc.index_type = SG_INDEXTYPE_UINT32;
     xray_desc.cull_mode = SG_CULLMODE_NONE;
     xray_desc.depth.compare = SG_COMPAREFUNC_ALWAYS;
@@ -499,6 +543,7 @@ bool SokolRenderer::setup_pipelines() {
     scr_desc.layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT3;
     scr_desc.layout.attrs[1].format = SG_VERTEXFORMAT_FLOAT3;
     scr_desc.layout.attrs[2].format = SG_VERTEXFORMAT_FLOAT3;
+    scr_desc.layout.attrs[3].format = SG_VERTEXFORMAT_FLOAT3;
     scr_desc.index_type = SG_INDEXTYPE_UINT32;
     scr_desc.cull_mode = SG_CULLMODE_NONE;
     scr_desc.depth.compare = SG_COMPAREFUNC_ALWAYS;
@@ -542,6 +587,30 @@ bool SokolRenderer::init(const RenderDeviceDesc &desc) {
         return false;
     }
 
+    sg_image_desc voxel_image_desc{};
+    voxel_image_desc.type = SG_IMAGETYPE_ARRAY;
+    voxel_image_desc.width = voxov::voxel_textures::kWidth;
+    voxel_image_desc.height = voxov::voxel_textures::kHeight;
+    voxel_image_desc.num_slices = voxov::voxel_textures::kLayerCount;
+    voxel_image_desc.pixel_format = SG_PIXELFORMAT_RGBA8;
+    voxel_image_desc.data.mip_levels[0] =
+        SG_RANGE(voxov::voxel_textures::kRgba);
+    voxel_image_desc.label = "voxov-voxel-materials";
+    voxel_texture_ = sg_make_image(&voxel_image_desc);
+
+    sg_view_desc voxel_view_desc{};
+    voxel_view_desc.texture.image = voxel_texture_;
+    voxel_view_desc.label = "voxov-voxel-materials-view";
+    voxel_texture_view_ = sg_make_view(&voxel_view_desc);
+
+    sg_sampler_desc voxel_sampler_desc{};
+    voxel_sampler_desc.min_filter = SG_FILTER_NEAREST;
+    voxel_sampler_desc.mag_filter = SG_FILTER_NEAREST;
+    voxel_sampler_desc.wrap_u = SG_WRAP_REPEAT;
+    voxel_sampler_desc.wrap_v = SG_WRAP_REPEAT;
+    voxel_sampler_desc.label = "voxov-voxel-materials-sampler";
+    voxel_sampler_ = sg_make_sampler(&voxel_sampler_desc);
+
     if (!setup_pipelines()) {
         sg_shutdown();
         return false;
@@ -568,6 +637,13 @@ void SokolRenderer::shutdown() {
         destroy_mesh(mesh);
     }
     cached_meshes_.clear();
+
+    if (voxel_sampler_.id) sg_destroy_sampler(voxel_sampler_);
+    if (voxel_texture_view_.id) sg_destroy_view(voxel_texture_view_);
+    if (voxel_texture_.id) sg_destroy_image(voxel_texture_);
+    voxel_sampler_ = {};
+    voxel_texture_view_ = {};
+    voxel_texture_ = {};
 
     if (pipelines_.scene_shader.id) sg_destroy_shader(pipelines_.scene_shader);
     if (pipelines_.opaque.id) sg_destroy_pipeline(pipelines_.opaque);
@@ -616,6 +692,7 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
             v.position.x, v.position.y, v.position.z,
             v.color.r, v.color.g, v.color.b,
             v.normal.x, v.normal.y, v.normal.z,
+            v.texcoord.x, v.texcoord.y, v.texcoord.z,
         });
         bmin = glm::min(bmin, v.position);
         bmax = glm::max(bmax, v.position);
@@ -680,11 +757,13 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
         svb_desc.data = vbuf_range;
         svb_desc.label = "voxov-static-vbuf";
         dst.vertex_buffer = sg_make_buffer(&svb_desc);
+        dst.vertex_buffer_size = vbuf_range.size;
         sg_buffer_desc sib_desc = {};
         sib_desc.usage.index_buffer = true;
         sib_desc.data = ibuf_range;
         sib_desc.label = "voxov-static-ibuf";
         dst.index_buffer = sg_make_buffer(&sib_desc);
+        dst.index_buffer_size = ibuf_range.size;
     }
 
     dst.index_count = static_cast<uint32_t>(index_count);
@@ -744,6 +823,8 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
     sg_bindings bind = {};
     bind.vertex_buffers[0] = mesh.vertex_buffer;
     bind.index_buffer = mesh.index_buffer;
+    bind.views[0] = voxel_texture_view_;
+    bind.samplers[0] = voxel_sampler_;
     sg_apply_bindings(&bind);
     sg_draw(0, static_cast<int>(mesh.index_count), 1);
 }
@@ -780,6 +861,8 @@ void SokolRenderer::draw_wireframe(const SokolGpuMesh &mesh,
     sg_bindings bind = {};
     bind.vertex_buffers[0] = mesh.vertex_buffer;
     bind.index_buffer = mesh.index_buffer;
+    bind.views[0] = voxel_texture_view_;
+    bind.samplers[0] = voxel_sampler_;
     sg_apply_bindings(&bind);
     sg_draw(0, static_cast<int>(mesh.index_count), 1);
 }
@@ -980,23 +1063,15 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                   camera_origin,
                   pipelines_.opaque, pipelines_.opaque_u16);
 
-        const Frustum frustum = extract_frustum(vp);
-        // WHY no frustum test on cached here: our streaming already restricts
-        // scene.opaque_meshes (and thus live cached_meshes_ after upload
-        // live_ids + eviction) to a small player-centric patch (the only
-        // chunks we *want* for the local voxel surface). At planetary scale
-        // even "local" world_b = (small_bounds + snap) + float vp/frustum
-        // planes (extracted from camera at ~1 M m) suffer rounding that can
-        // falsely cull near chunks (the classic large-world float problem
-        // confirmed in voxel dev prior art). Unconditionally drawing the
-        // (already tiny local) resident set guarantees the 1 m noise terrain
-        // surface is visible while wireframe remains the debug overlay.
-        // (Proper relative-space frustum can be a later perf commit.)
-        const glm::vec3 origin_offset = glm::vec3(camera_origin);
+        // Mesh bounds and rel_vp share the same camera-relative frame. Testing
+        // in that frame avoids million-meter float cancellation and prevents
+        // off-screen resident chunks from consuming mobile draw bandwidth.
+        const Frustum relative_frustum = extract_frustum(rel_vp);
         for (const auto &[id, mesh] : cached_meshes_) {
-            const glm::vec3 world_bmin = mesh.bounds_min + origin_offset;
-            const glm::vec3 world_bmax = mesh.bounds_max + origin_offset;
-            // (aabb test intentionally bypassed for local planet voxels)
+            if (!aabb_in_frustum(relative_frustum, mesh.bounds_min,
+                                 mesh.bounds_max)) {
+                continue;
+            }
             record_draw(mesh);
             draw_mesh(mesh, rel_vp, model, camera_pos,
                       camera_origin,

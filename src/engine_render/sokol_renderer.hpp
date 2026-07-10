@@ -13,6 +13,7 @@ struct SokolRenderVertex {
     float px, py, pz;
     float cr, cg, cb;
     float nx, ny, nz;
+    float tu, tv, texture_layer;
 };
 
 struct SokolGpuMesh {
@@ -91,6 +92,9 @@ private:
     bool setup_pipelines();
 
     SokolPipelines pipelines_{};
+    sg_image voxel_texture_{};
+    sg_view voxel_texture_view_{};
+    sg_sampler voxel_sampler_{};
     SokolGpuMesh transient_mesh_{};
     SokolGpuMesh wireframe_mesh_{};
     SokolGpuMesh debug_world_mesh_{};

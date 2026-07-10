@@ -11,10 +11,12 @@ layout(binding=0) uniform vs_params {
 in vec3 position;
 in vec3 color0;
 in vec3 normal;
+in vec3 texcoord0;
 
 out vec3 v_color;
 out vec3 v_normal;
 out vec3 v_world_pos;
+out vec3 v_texcoord;
 
 void main() {
     vec4 world_pos = model * vec4(position, 1.0);
@@ -24,6 +26,7 @@ void main() {
     v_color = color0;
     v_normal = mat3(normal_model) * normal;
     v_world_pos = world_pos.xyz;
+    v_texcoord = texcoord0;
     gl_Position = mvp * vec4(position, 1.0);
 }
 @end
@@ -52,9 +55,13 @@ layout(binding=2) uniform atm_params {
     vec4 sun_dir_intensity;         // xyz=sun_dir, w=intensity
 };
 
+layout(binding=0) uniform texture2DArray voxel_texture;
+layout(binding=0) uniform sampler voxel_sampler;
+
 in vec3 v_color;
 in vec3 v_normal;
 in vec3 v_world_pos;
+in vec3 v_texcoord;
 out vec4 frag_color;
 
 // ── Atmospheric transmittance ────────────────────────────────────────
@@ -102,8 +109,17 @@ void main() {
         return;
     }
 
+    vec3 base_color = v_color;
+    if (v_texcoord.z >= 0.0) {
+        vec3 texel = texture(
+            sampler2DArray(voxel_texture, voxel_sampler),
+            vec3(fract(v_texcoord.xy), v_texcoord.z)).rgb;
+        base_color = texel * mix(vec3(1.0), v_color, 0.25);
+    }
+
     vec3 n = normalize(v_normal);
-    vec3 l = normalize(light_direction);
+    vec3 sun_dir = normalize(sun_dir_intensity.xyz);
+    vec3 l = normalize(light_direction + sun_dir);
     vec3 v = normalize(camera_pos - v_world_pos);
     vec3 h = normalize(l + v);
 
@@ -115,9 +131,10 @@ void main() {
     vec3 ambient = light_ambient * material_ambient;
     vec3 diffuse = light_diffuse * material_diffuse * ndl;
     vec3 specular = light_specular * material_specular * spec_factor;
-    vec3 lit = ambient + diffuse + specular;
+    float sun_boost = max(sun_dir_intensity.w / 20.0, 0.0);
+    vec3 lit = (ambient + diffuse + specular) * sun_boost;
 
-    frag_color = vec4(v_color * lit * atm_trans, 1.0);
+    frag_color = vec4(base_color * lit * atm_trans, 1.0);
 }
 @end
 

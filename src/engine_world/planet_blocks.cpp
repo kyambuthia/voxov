@@ -6,12 +6,41 @@
 #include <cstdint>
 #include <cstdio>    // std::fprintf for debug diagnostics (TODO: remove)
 #include <cstring>
+#include <limits>
+#include <unordered_set>
 #include <vector>
 
 namespace {
+constexpr int32_t kSurfaceHeightSteps = 8;
+
+uint8_t encode_surface_fraction(float fraction) {
+    const int32_t step = std::clamp(
+        static_cast<int32_t>(std::lround(fraction * kSurfaceHeightSteps)),
+        1, kSurfaceHeightSteps);
+    return static_cast<uint8_t>(std::clamp(
+        static_cast<int32_t>(std::lround(
+            static_cast<double>(step) /
+            static_cast<double>(kSurfaceHeightSteps) *
+            VoxelChunk::kMaxBlockHeight)),
+        1, static_cast<int32_t>(VoxelChunk::kMaxBlockHeight)));
+}
+
 // vertical_layers / chunk_size truncates; surface layers 16+ need a second chunk row.
 int32_t chunk_axis_count(int32_t axis_res, int32_t chunk_size) {
     return std::max(1, (axis_res + chunk_size - 1) / chunk_size);
+}
+
+int32_t surface_resolution(double radius, double block_size) {
+    const double requested = std::ceil(
+        (2.0 * std::max(radius, 1.0)) / std::max(block_size, 0.01));
+    uint64_t resolution = 1;
+    const uint64_t target = static_cast<uint64_t>(std::min(
+        requested, static_cast<double>(std::numeric_limits<int32_t>::max())));
+    while (resolution < target && resolution <= (1ull << 30u)) {
+        resolution <<= 1u;
+    }
+    return static_cast<int32_t>(std::min<uint64_t>(
+        resolution, static_cast<uint64_t>(std::numeric_limits<int32_t>::max())));
 }
 }  // namespace
 
@@ -175,8 +204,8 @@ void BlockWorld::build_shells() {
     // Face edge = 4× radius ≈ 8,000,000 m.  We want ~block_size spacing.
     // res = 2×radius / block_size ≈ 4,000,000 / 1.0 = 4,000,000.
     // Use power-of-two: 2^22 = 4,194,304.
-    surface_sh.horizontal_res = static_cast<int32_t>(std::pow(2.0,
-        std::ceil(std::log2(2.0 * config_.planet.radius / config_.block_size))));
+    surface_sh.horizontal_res =
+        surface_resolution(config_.planet.radius, config_.block_size);
     surface_sh.vertical_layers = std::max(4,
         static_cast<int32_t>(std::ceil(max_terrain / config_.block_size)));
     shells_.push_back(surface_sh);
@@ -194,6 +223,11 @@ const ShellConfig &BlockWorld::shell_config(int32_t shell) const {
 
 void BlockWorld::init(const BlockWorldConfig &cfg) {
     config_ = cfg;
+    config_.surface_shells = std::max(1, config_.surface_shells);
+    config_.base_resolution = std::max(1, config_.base_resolution);
+    config_.block_size = std::max(0.01, config_.block_size);
+    config_.terrain_feature_size = std::max(8.0, config_.terrain_feature_size);
+    config_.chunk_size = std::clamp(config_.chunk_size, 1, VoxelChunk::CHUNK_X);
     build_shells();
     chunks_.clear();
     initialized_ = true;
@@ -276,9 +310,11 @@ void BlockWorld::block_face_uv(PlanetFace face, int32_t shell_idx,
 
 int32_t BlockWorld::terrain_height_at(const glm::dvec3 &world_dir) const {
     SphereNoise3D noise(config_.seed);
+    const float frequency = static_cast<float>(std::max(
+        1.0, config_.planet.radius / config_.terrain_feature_size));
     // The integer layer is the floor of the continuous height. The fractional
     // remainder is encoded on the surface block and reused by collision.
-    return noise.terrain_height(world_dir, 18.0f, 5.0f);
+    return noise.terrain_height(world_dir, 18.0f, 5.0f, frequency);
 }
 
 int32_t BlockWorld::terrain_height_at_face_uv(PlanetFace face, int32_t col_x,
@@ -292,11 +328,11 @@ int32_t BlockWorld::terrain_height_at_face_uv(PlanetFace face, int32_t col_x,
 double BlockWorld::surface_radial_distance(const glm::dvec3 &direction) const {
     const glm::dvec3 dir = glm::normalize(direction);
     const SphereNoise3D noise(config_.seed);
-    const int32_t layer = noise.terrain_height(dir, 18.0f, 5.0f);
-    const int encoded_fraction = std::clamp(static_cast<int>(std::lround(
-        noise.terrain_surface_fraction(dir, 18.0f, 5.0f) *
-        static_cast<float>(VoxelChunk::kMaxBlockHeight))), 1,
-        static_cast<int>(VoxelChunk::kMaxBlockHeight));
+    const float frequency = static_cast<float>(std::max(
+        1.0, config_.planet.radius / config_.terrain_feature_size));
+    const int32_t layer = noise.terrain_height(dir, 18.0f, 5.0f, frequency);
+    const int encoded_fraction = encode_surface_fraction(
+        noise.terrain_surface_fraction(dir, 18.0f, 5.0f, frequency));
     const double height = static_cast<double>(layer) +
                           static_cast<double>(encoded_fraction) /
                               static_cast<double>(VoxelChunk::kMaxBlockHeight);
@@ -326,7 +362,8 @@ glm::dvec3 BlockWorld::spawn_position_at_face_uv(PlanetFace face, int32_t col_x,
     const double v = -1.0 + (static_cast<double>(col_z) + 0.5) /
                               static_cast<double>(res) * 2.0;
     const glm::dvec3 dir = face_uv_to_direction(face, u, v);
-    return dir * (surface_radial_distance(dir) + radial_clearance);
+    return config_.planet.center +
+           dir * (surface_radial_distance(dir) + radial_clearance);
 }
 
 // ============================================================================
@@ -375,6 +412,8 @@ void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const
     }
 
     SphereNoise3D surface_noise(config_.seed);
+    const float terrain_frequency = static_cast<float>(std::max(
+        1.0, config_.planet.radius / config_.terrain_feature_size));
     const int32_t outer_shell = shell_count() - 1;
     int32_t solid_count = 0;
     for (int32_t z = 0; z < cs; ++z) {
@@ -399,12 +438,8 @@ void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const
                         addr.shell == outer_shell && layer == surf_h;
                     if (is_surface_block) {
                         const float frac = surface_noise.terrain_surface_fraction(
-                            col_dir, 18.0f, 5.0f);
-                        block_h = static_cast<uint8_t>(std::clamp(
-                            static_cast<int>(std::lround(
-                                frac * static_cast<float>(VoxelChunk::kMaxBlockHeight))),
-                            1,
-                            static_cast<int>(VoxelChunk::kMaxBlockHeight)));
+                            col_dir, 18.0f, 5.0f, terrain_frequency);
+                        block_h = encode_surface_fraction(frac);
                     } else {
                         block_h = VoxelChunk::kMaxBlockHeight;
                     }
@@ -463,6 +498,22 @@ const VoxelChunk *BlockWorld::find_chunk(const BlockAddress &addr) const {
     key.block = glm::ivec3(0);
     auto it = chunks_.find(key);
     return (it != chunks_.end()) ? &it->second : nullptr;
+}
+
+size_t BlockWorld::evict_chunks_except(
+    const std::vector<BlockAddress> &resident) {
+    std::unordered_set<BlockAddress, BlockAddressHash> keep;
+    keep.reserve(resident.size());
+    for (BlockAddress addr : resident) {
+        addr.block = glm::ivec3(0);
+        keep.insert(addr);
+    }
+
+    const size_t before = chunks_.size();
+    std::erase_if(chunks_, [&keep](const auto &entry) {
+        return !keep.contains(entry.first);
+    });
+    return before - chunks_.size();
 }
 
 // ============================================================================
@@ -860,8 +911,15 @@ RenderMesh BlockWorld::build_chunk_mesh(
         {BlockDir::Front, {2, 3, 7, 6}}
     };
 
+    auto texture_layer = [](VoxelMaterial material, bool top_face) -> float {
+        if (material == VoxelMaterial::Grass && top_face) return 0.0f;
+        if (material == VoxelMaterial::Stone) return 2.0f;
+        return 1.0f; // dirt, and the soil side of a grass block
+    };
+
     auto emit_quad = [&](glm::dvec3 v0, glm::dvec3 v1, glm::dvec3 v2, glm::dvec3 v3,
-                         const glm::vec3 &color, const glm::dvec3 &outward_hint) {
+                         const glm::vec3 &color, const glm::dvec3 &outward_hint,
+                         float material_layer) {
         glm::dvec3 fn = glm::cross(v1 - v0, v2 - v0);
         if (glm::dot(fn, fn) < 1e-18) {
             return;
@@ -877,14 +935,22 @@ RenderMesh BlockWorld::build_chunk_mesh(
 
         const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
         const glm::dvec3 rel = camera_relative_origin;
+        const float repeat_u = static_cast<float>(
+            std::max(glm::length(v1 - v0) / std::max(bw, 0.01), 0.001));
+        const float repeat_v = static_cast<float>(
+            std::max(glm::length(v3 - v0) / std::max(bw, 0.01), 0.001));
         mesh.vertices.push_back(RenderVertex{
-            glm::vec3(v0 - rel), color, glm::vec3(fn)});
+            glm::vec3(v0 - rel), color, glm::vec3(fn),
+            glm::vec3(0.0f, 0.0f, material_layer)});
         mesh.vertices.push_back(RenderVertex{
-            glm::vec3(v1 - rel), color, glm::vec3(fn)});
+            glm::vec3(v1 - rel), color, glm::vec3(fn),
+            glm::vec3(repeat_u, 0.0f, material_layer)});
         mesh.vertices.push_back(RenderVertex{
-            glm::vec3(v2 - rel), color, glm::vec3(fn)});
+            glm::vec3(v2 - rel), color, glm::vec3(fn),
+            glm::vec3(repeat_u, repeat_v, material_layer)});
         mesh.vertices.push_back(RenderVertex{
-            glm::vec3(v3 - rel), color, glm::vec3(fn)});
+            glm::vec3(v3 - rel), color, glm::vec3(fn),
+            glm::vec3(0.0f, repeat_v, material_layer)});
         mesh.indices.insert(mesh.indices.end(), {
             base, base + 1, base + 2,
             base, base + 2, base + 3});
@@ -1016,7 +1082,8 @@ RenderMesh BlockWorld::build_chunk_mesh(
                     face_mat, true, height_t);
                 const glm::dvec3 face_center = (v0w + v1w + v2w + v3w) * 0.25;
                 emit_quad(v0w, v1w, v2w, v3w, color,
-                          face_center - config_.planet.center);
+                          face_center - config_.planet.center,
+                          texture_layer(face_mat, true));
 
                 for (int32_t row = 0; row < height; ++row) {
                     for (int32_t col = 0; col < width; ++col) {
@@ -1203,7 +1270,8 @@ RenderMesh BlockWorld::build_chunk_mesh(
                         const glm::vec3 color =
                             VoxelChunk::material_color(mat, top_face, height_t);
                         const glm::dvec3 face_center = (v0 + v1 + v2 + v3) * 0.25;
-                        emit_quad(v0, v1, v2, v3, color, face_center - cell_mid);
+                        emit_quad(v0, v1, v2, v3, color, face_center - cell_mid,
+                                  texture_layer(mat, false));
                     } else if (face.fd != BlockDir::Up) {
                         // ── Down face (bottom): original logic ──
                         // Bottom face of the block: emitted when neighbor below is
@@ -1231,7 +1299,8 @@ RenderMesh BlockWorld::build_chunk_mesh(
                             VoxelChunk::material_color(mat, top_face, height_t);
                         const glm::dvec3 face_center = (v0 + v1 + v2 + v3) * 0.25;
                         emit_quad(v0, v1, v2, v3, color,
-                                  config_.planet.center - face_center);
+                                  config_.planet.center - face_center,
+                                  texture_layer(mat, false));
                     }
                 }
 
@@ -1334,8 +1403,11 @@ float SphereNoise3D::sample(const glm::dvec3 &direction, float frequency) const 
 }
 
 float SphereNoise3D::fbm(const glm::dvec3 &direction, int octaves,
-                         float lacunarity, float gain) const {
-    float value = 0.0f, amplitude = 1.0f, freq = 1.0f, maxv = 0.0f;
+                         float lacunarity, float gain,
+                         float base_frequency) const {
+    float value = 0.0f, amplitude = 1.0f;
+    float freq = std::max(base_frequency, 0.001f);
+    float maxv = 0.0f;
     for (int i = 0; i < octaves; ++i) {
         value += sample(direction, freq) * amplitude;
         maxv += amplitude;
@@ -1347,25 +1419,30 @@ float SphereNoise3D::fbm(const glm::dvec3 &direction, int octaves,
 
 float SphereNoise3D::terrain_height_raw(const glm::dvec3 &direction,
                                         float base_height,
-                                        float amplitude) const {
+                                        float amplitude,
+                                        float base_frequency) const {
     // Sample the unit direction directly. Face-local UV noise changes basis at
     // cube seams; 3D noise on the sphere remains continuous across all faces.
     const glm::dvec3 dir = glm::normalize(direction);
-    const float macro = fbm(dir, 4, 2.0f, 0.5f);
-    const float detail = fbm(dir, 2, 2.0f, 0.5f);
+    const float macro = fbm(dir, 5, 2.0f, 0.5f, base_frequency);
+    const float detail = fbm(dir, 3, 2.1f, 0.5f, base_frequency * 8.0f);
     return base_height + macro * amplitude + detail * amplitude * 0.2f;
 }
 
 int32_t SphereNoise3D::terrain_height(const glm::dvec3 &direction,
                                        float base_height,
-                                       float amplitude) const {
-    const float h = terrain_height_raw(direction, base_height, amplitude);
+                                       float amplitude,
+                                       float base_frequency) const {
+    const float h = terrain_height_raw(direction, base_height, amplitude,
+                                       base_frequency);
     return std::clamp(static_cast<int32_t>(std::floor(h)), 10, 26);
 }
 
 float SphereNoise3D::terrain_surface_fraction(const glm::dvec3 &direction,
     float base_height,
-    float amplitude) const {
-    const float h = terrain_height_raw(direction, base_height, amplitude);
+    float amplitude,
+    float base_frequency) const {
+    const float h = terrain_height_raw(direction, base_height, amplitude,
+                                       base_frequency);
     return std::clamp(h - std::floor(h), 0.0f, 0.999999f);
 }

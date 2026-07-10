@@ -21,6 +21,18 @@
 namespace {
 using PerfClock = std::chrono::steady_clock;
 
+constexpr double kPlayablePlanetRadiusMeters = 2'000'000.0;
+constexpr double kTerrainFeatureSizeMeters = 512.0;
+#if defined(VOXOV_PLATFORM_ANDROID) || defined(VOXOV_PLATFORM_WEB)
+constexpr int32_t kSurfaceStreamRadiusChunks = 2;
+constexpr uint32_t kChunkGenerationBudget = 1;
+constexpr uint32_t kChunkMeshBudget = 1;
+#else
+constexpr int32_t kSurfaceStreamRadiusChunks = 3;
+constexpr uint32_t kChunkGenerationBudget = 1;
+constexpr uint32_t kChunkMeshBudget = 1;
+#endif
+
 double elapsed_ms(const PerfClock::time_point &start,
                   const PerfClock::time_point &end) {
   return std::chrono::duration<double, std::milli>(end - start).count();
@@ -227,19 +239,22 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   // 3D noise on sphere surface for seamless terrain.
   PlanetDefinition planet_def{};
   planet_def.center = glm::dvec3(0.0);
-  planet_def.radius = 50.0;  // 50m — blocks at 2% of radius, visible terrain — small planet for debugging visibility
+  planet_def.radius = kPlayablePlanetRadiusMeters;
   planet_def.voxel_size = 1.0;
   planet_def.chunks_per_face = 64;
   planet_def.seed = k_voxov_flat_world_seed;
 
   BlockWorldConfig bw_cfg{};
   bw_cfg.planet = planet_def;
-  bw_cfg.surface_shells = 8;
+  bw_cfg.surface_shells = 4;
   bw_cfg.base_resolution = 64;
   bw_cfg.block_size = 1.0;
+  bw_cfg.terrain_feature_size = kTerrainFeatureSizeMeters;
   bw_cfg.chunk_size = 16;
   bw_cfg.seed = k_voxov_flat_world_seed;
   block_world_.init(bw_cfg);
+  chunk_generation_budget_ = kChunkGenerationBudget;
+  mesh_build_budget_ = kChunkMeshBudget;
 
   // ── LOD system ──────────────────────────────────────────────────────────
   // WHY: distance-based chunk resolution reduces GPU vertex count for distant
@@ -284,8 +299,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   local_player.camera_rig.pivotHeight = 0.0f;
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
-  camera.z_far = 200.0f;   // Scale z_far to 50m planet
-  camera.z_near = 0.5f;     // z_far/z_near ratio = 4000:1, good float32 depth precision
+  camera.z_far = 512.0f;
+  camera.z_near = 0.25f;
   update_first_person_camera(local_player, camera);
 
   scene.debug_world = build_local_player_debug_mesh(
@@ -313,19 +328,16 @@ bool Engine::init(const EngineRuntimeOptions &options) {
 
     // ── Atmosphere initialization ────────────────────────────────────────
     // Rayleigh + Mie scattering for sky color and aerial perspective.
-    // Scale heights are reduced proportionally to our 500m planet radius
-    // (Earth scale heights: H_R=8000m, H_M=1200m for 6360km radius).
-    // We use H_R=500m*8000/6360000=0.63m ≈ 1.0m, H_M=0.1m for visible effect.
+    // Keep the atmosphere in physical meters. This remains stable when the
+    // local terrain streamer later becomes one body in a multi-body universe.
     {
         AtmosphereParams atm_params{};
-        atm_params.planet_radius = planet_def.radius;  // 500m
-        atm_params.atmosphere_height = 40.0;            // 40m above surface
-        // Scale Rayleigh scattering for small planet — boost coefficients
-        // so the thin atmosphere has visible optical depth.
-        atm_params.rayleigh_scattering = glm::dvec3(5.8e-4, 13.5e-4, 33.1e-4); // 100× Earth
-        atm_params.mie_scattering = 21.0e-3;            // 100× Earth
-        atm_params.rayleigh_scale_height = 5.0;          // H_R scaled to 500m planet
-        atm_params.mie_scale_height = 2.0;               // H_M scaled
+        atm_params.planet_radius = planet_def.radius;
+        atm_params.atmosphere_height = 80'000.0;
+        atm_params.rayleigh_scattering = glm::dvec3(5.8e-6, 13.5e-6, 33.1e-6);
+        atm_params.mie_scattering = 21.0e-5;
+        atm_params.rayleigh_scale_height = 8'000.0;
+        atm_params.mie_scale_height = 1'200.0;
         atm_params.mie_asymmetry = 0.76;
         // Sun direction: initialise from solar system (planet at orbital pos at t=0).
         atm_params.sun_direction = solar_system_.sun_direction_from(glm::dvec3(0.0));
@@ -510,19 +522,18 @@ void Engine::tick(double frame_dt,
               const glm::dvec3 grav_dir = (dist_from_center > 1e-6)
                   ? -glm::normalize(vpos) : glm::dvec3(0.0, -1.0, 0.0);
               // Gravity scales with inverse square of distance from planet centre.
-              // Planet radius = 500m, surface gravity = 9.81 m/s².
-              constexpr double k_planet_radius = 50.0;
+              const double planet_radius = block_world_.planet().radius;
               constexpr double k_surface_gravity = 9.81;
               const double grav_mag = k_surface_gravity *
-                  (k_planet_radius / dist_from_center) *
-                  (k_planet_radius / dist_from_center);
+                  (planet_radius / dist_from_center) *
+                  (planet_radius / dist_from_center);
               const glm::dvec3 gravity = grav_dir * grav_mag;
 
               // Air density: exponential decay with altitude.
               // Scale height H ≈ 20m for our small 500m planet.
-              const double altitude = dist_from_center - k_planet_radius;
+              const double altitude = dist_from_center - planet_radius;
               constexpr double k_sea_level_density = 1.225;  // kg/m³ at surface
-              constexpr double k_scale_height = 20.0;         // m
+              constexpr double k_scale_height = 8'000.0;      // m
               const double air_density = (altitude > 0.0)
                   ? k_sea_level_density * std::exp(-altitude / k_scale_height)
                   : k_sea_level_density;
@@ -742,21 +753,23 @@ void Engine::tick(double frame_dt,
         "Grounded=%s vel=%.0fm/s | "
         "FPS=%.0f dt=%.1fms | "
         "draw=%d verts=%d tris=%d | "
-        "LOD: %d/%d/%d/%d chunks=%zu opaques=%zu\n",
+        "LOD: %d/%d/%d/%d chunks=%zu opaques=%zu | gen=%.1f mesh=%.1f upload=%.1fms\n",
         frame_index,
         camera.transform.position.x, camera.transform.position.y, camera.transform.position.z,
         static_cast<int>(local_player.camera_rig.pitch),
         static_cast<int>(local_player.camera_rig.yaw),
         glm::length(local_player.transform.position) - block_world_.planet().radius,
         local_player.controller.grounded ? "yes" : "no",
-        static_cast<int>(glm::length(local_player.controller.velocity)),
+        static_cast<double>(glm::length(local_player.controller.velocity)),
         render_stats.fps, render_stats.frame_ms,
         static_cast<int>(render_stats.draw_call_count),
         static_cast<int>(render_stats.total_vertices),
         static_cast<int>(render_stats.total_indices) / 3,
         render_stats.lod_chunk_count[0], render_stats.lod_chunk_count[1],
         render_stats.lod_chunk_count[2], render_stats.lod_chunk_count[3],
-        block_world_.chunk_count(), scene.opaque_meshes.size());
+        block_world_.chunk_count(), scene.opaque_meshes.size(),
+        render_stats.chunk_gen_ms, render_stats.mesh_build_ms,
+        render_stats.gpu_upload_ms);
 
     // Project first vertex to NDC to verify it lands on screen.
     // WHY: confirms the camera-relative vertex offset + VP matrix produce
@@ -796,7 +809,7 @@ void Engine::tick(double frame_dt,
         block_world_.address_from_world(
             glm::dvec3(local_player.transform.position));
     const int32_t surface_shell = block_world_.shell_count() - 1;
-    const int32_t chunk_radius = 5;  // 11x11 xz per radial row; +1 halo in collect_stream_chunks.
+    const int32_t chunk_radius = kSurfaceStreamRadiusChunks;
 
     // Hash the chunk center (incl. radial y) to detect player movement to a
     // new (x,z) column or crossing into a different radial chunk layer.
@@ -812,6 +825,9 @@ void Engine::tick(double frame_dt,
     std::vector<BlockAddress> desired;
     block_world_.collect_stream_chunks(player_addr, surface_shell,
                                        chunk_radius, desired);
+    if (player_moved) {
+      block_world_.evict_chunks_except(desired);
+    }
 
     // Generate missing chunks nearest-first with a per-frame budget (Craft-style
     // streaming: show something quickly, fill the halo over subsequent frames).
@@ -895,9 +911,8 @@ void Engine::tick(double frame_dt,
       }
 
       auto upsert_opaque_mesh = [&](RenderMesh &&mesh) {
-        if (mesh.vertices.empty()) {
-          return;
-        }
+        // Keep an empty mesh as a residency marker. Otherwise air-only radial
+        // chunks look perpetually unmeshed and consume the mesh budget forever.
         for (RenderMesh &existing : scene.opaque_meshes) {
           if (existing.mesh_id == mesh.mesh_id) {
             existing = std::move(mesh);
@@ -991,17 +1006,13 @@ void Engine::tick(double frame_dt,
 
       // Spread first-load mesh work across frames — meshing 90+ chunks on frame 0
       // blocked the main loop for 10+ seconds and stalled screenshot capture.
-      uint32_t active_mesh_budget = mesh_build_budget_;
-      if (has_pending_meshes) {
-        const uint32_t pending_cap =
-            (frame_index < 5u) ? 32u : ((frame_index < 60u) ? 64u : 96u);
-        active_mesh_budget = std::max(mesh_build_budget_, pending_cap);
-      } else if (frame_index < 180u) {
-        active_mesh_budget = std::max(mesh_build_budget_, 48u);
-      }
+      // A hard per-frame budget is more important than filling the horizon in
+      // one frame: startup spikes above 16.6 ms make a nominal 60 FPS game
+      // feel broken, especially on tile-based mobile GPUs.
+      const uint32_t active_mesh_budget = mesh_build_budget_;
       uint32_t mesh_count = 0;
       for (const MeshWorkItem &item : mesh_work) {
-        if (!need_full_rebuild && mesh_count >= active_mesh_budget) {
+        if (mesh_count >= active_mesh_budget) {
           break;
         }
 
@@ -1024,9 +1035,7 @@ void Engine::tick(double frame_dt,
 
         RenderMesh mesh = block_world_.build_chunk_mesh(
             ck, *chunk, solid_at, camera_snap_origin_, item.lod.level);
-        if (!mesh.vertices.empty()) {
-          upsert_opaque_mesh(std::move(mesh));
-        }
+        upsert_opaque_mesh(std::move(mesh));
         ++mesh_count;
       }
 
@@ -1191,12 +1200,13 @@ void Engine::tick(double frame_dt,
   // Strip previous frame's celestial meshes from the end of opaque_meshes,
   // then append new camera-relative sphere meshes for the current frame.
   {
-    if (last_celestial_mesh_count_ > 0 &&
-        last_celestial_mesh_count_ <= scene.opaque_meshes.size()) {
-      scene.opaque_meshes.erase(
-          scene.opaque_meshes.end() - static_cast<long>(last_celestial_mesh_count_),
-          scene.opaque_meshes.end());
-    }
+    // Celestial meshes are transient (mesh_id == 0). Remove by ownership,
+    // not vector position: streamed chunks may have been appended after them.
+    // Positional removal deleted fresh terrain and leaked old spheres.
+    scene.opaque_meshes.erase(
+        std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+                       [](const RenderMesh &mesh) { return mesh.mesh_id == 0; }),
+        scene.opaque_meshes.end());
     last_celestial_mesh_count_ = 0;
 
     const glm::dvec3 planet_orbit_pos = solar_system_.body_position(1);
@@ -1667,7 +1677,7 @@ void Engine::refresh_overlay_text() {
     overlay_text += "\nFuel: " + std::to_string(static_cast<int>(vs.fuel_remaining)) + "kg";
     overlay_text += "\nSpeed: " + std::to_string(static_cast<int>(glm::length(vs.velocity))) + "m/s";
     overlay_text += "\nAltitude: " + std::to_string(static_cast<int>(
-        glm::length(vs.position) - 500.0)) + "m";
+        glm::length(vs.position) - block_world_.planet().radius)) + "m";
     overlay_text += "\nAtmo: " + std::string(flight_vehicle_.in_atmosphere() ? "YES" : "SPACE");
     // Force magnitudes in kN for readability.
     const auto kn = [](double n) -> int { return static_cast<int>(n / 1000.0); };

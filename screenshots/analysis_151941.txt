@@ -1,2 +1,0 @@
-=== Analysis Sun Jun 14 03:19:41 PM EAT 2026 ===
-Screenshot: screenshots/ts_01_initial.png

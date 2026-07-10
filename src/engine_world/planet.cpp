@@ -210,10 +210,9 @@ glm::dvec3 local_face_voxel_to_cube_point(
 
 glm::dvec3 local_face_voxel_to_world_sphere(
     const PlanetDefinition &planet, const LocalFaceVoxelCoords &coords) {
-  const glm::dvec3 cube_point =
-      local_face_voxel_to_cube_point(planet, coords);
-  const glm::dvec3 direction =
-      math_normalized_or(cube_point, glm::dvec3(0.0, 1.0, 0.0));
+  const double radius = std::max(planet.radius, k_math_epsilon);
+  const glm::dvec3 direction = face_uv_to_direction(
+      coords.face, coords.xyz.x / radius, coords.xyz.z / radius);
   return planet.center + direction * (planet.radius + coords.xyz.y);
 }
 

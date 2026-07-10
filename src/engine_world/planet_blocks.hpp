@@ -97,6 +97,7 @@ struct BlockWorldConfig {
     int32_t surface_shells   = 4;     // number of shells from core to surface
     int32_t base_resolution  = 8;     // blocks per axis on innermost shell
     double  block_size       = 1.0;   // meters, target block width at surface
+    double  terrain_feature_size = 512.0; // meters per lowest-frequency noise cell
     int32_t chunk_size       = 16;    // blocks per chunk edge
     uint64_t seed            = 0;
 };
@@ -148,6 +149,7 @@ public:
     VoxelChunk &get_or_generate_chunk(const BlockAddress &addr);
     const VoxelChunk *find_chunk(const BlockAddress &addr) const;
     size_t chunk_count() const { return chunks_.size(); }
+    size_t evict_chunks_except(const std::vector<BlockAddress> &resident);
 
     // Offset a chunk address by (dcx, dcy, dcz) chunk steps, crossing cube-face
     // sector boundaries via edge pairings. Returns false for radial shell bounds.
@@ -210,24 +212,28 @@ public:
     float fbm(const glm::dvec3 &direction,
               int octaves = 4,
               float lacunarity = 2.0f,
-              float gain = 0.5f) const;
+              float gain = 0.5f,
+              float base_frequency = 1.0f) const;
 
     // Terrain height in voxels at a sphere direction.
     int32_t terrain_height(const glm::dvec3 &direction,
                            float base_height = 12.0f,
-                           float amplitude = 10.0f) const;
+                           float amplitude = 10.0f,
+                           float base_frequency = 1.0f) const;
 
     // Fractional part of terrain height within the top layer [0, 1).
     // Used only on the surface block for sub-voxel vertical variation.
     float terrain_surface_fraction(const glm::dvec3 &direction,
                                    float base_height = 12.0f,
-                                   float amplitude = 10.0f) const;
+                                   float amplitude = 10.0f,
+                                   float base_frequency = 1.0f) const;
 
 private:
     float value_noise(const glm::dvec3 &p) const;
     float terrain_height_raw(const glm::dvec3 &direction,
                              float base_height,
-                             float amplitude) const;
+                             float amplitude,
+                             float base_frequency) const;
     uint64_t seed_ = 0;
 };
 

@@ -29,8 +29,4 @@ private:
   uint64_t seed = 0;
 };
 
-void sculpt_locomotion_course(VoxelChunk &chunk, int32_t chunk_x = 0,
-                              int32_t chunk_z = 0);
-void generate_flat_world_locomotion_chunk(
-    VoxelChunk &chunk, uint64_t world_seed = k_voxov_flat_world_seed,
-    int32_t chunk_x = 0, int32_t chunk_z = 0);
+

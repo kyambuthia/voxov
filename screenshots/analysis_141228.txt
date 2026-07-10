@@ -1,0 +1,30 @@
+=== Analysis Sun Jun 14 02:12:28 PM EAT 2026 ===
+Screenshot: screenshots/ts_00_early.png
+[0m
+> build · mimo-v2-omni
+[0m
+[0m→ [0mRead .
+[0m
+[0m$ [0mgit log --oneline -10
+6f52ca3 feat(analysis): auto-analyze ALL timed screenshots, not just F5
+fe13fd5 fix(analysis): auto-analyze script with full opencode path and Gemini fallback
+dc1d2a3 feat(screenshot): F5 auto-analyzes screenshot with Mimo Omni
+f287ed7 feat(screenshot): F5 saves to debug_screenshot.png with analysis-ready name
+f787489 fix(camera): snap origin stays fixed on planet in Orbital frame
+1e6286a fix(terrain): Gemini 3.1 Pro — fix voxel face geometry, normals, culling, winding
+c362392 feat(planet): UV pre-distortion to reduce block stretching near sector boundaries
+9b293d2 research: Bowerbyte Blocky Planet article — confirmed architecture, identified improvements
+7df5d33 fix(culling): call solid_at for cross-chunk neighbors instead of always emitting
+1b0eed8 run: post Claude Opus face-geometry fix — 5 min playtest
+[0m
+[0m→ [0mRead src
+[0m✱ [0mGlob "**/*.cpp"[90m in src · 79 matches[0m
+[0m→ [0mRead src/engine_render/sokol_renderer.cpp[90m [limit=200][0m
+[0m→ [0mRead src/engine_world/voxel_chunk.cpp[90m [limit=100][0m
+[0m→ [0mRead src/engine_world/voxel_chunk.cpp[90m [offset=200, limit=150][0m
+[0m→ [0mRead src/engine_render/sokol_renderer.cpp[90m [offset=400, limit=200][0m
+[0m→ [0mRead src/engine_world/world_gen.cpp[90m [limit=100][0m
+[0m→ [0mRead src/engine_world/voxel_chunk.cpp[90m [offset=100, limit=100][0m
+[0m→ [0mRead src/engine_world/voxel_chunk.cpp[90m [offset=350, limit=100][0m
+[0m→ [0mRead src/engine_render/sokol_renderer.cpp[90m [offset=700, limit=200][0m
+[0m→ [0mRead src/engine_render/sokol_renderer.cpp[90m [offset=900, limit=150][0m

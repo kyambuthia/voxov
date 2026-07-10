@@ -151,14 +151,14 @@ class PlanetLODSelector {
 public:
   LODSelectionResult select(PlanetQuadtree &quadtree,
                             const glm::dvec3 &camera_pos,
-                            const glm::mat4 &view_projection,
+                            const glm::dmat4 &view_projection,
                             float screen_height_pixels,
                             float lod_error_threshold_pixels = 2.0f);
 
 private:
   void select_node(PlanetQuadtree &quadtree, int32_t node_index,
                    const glm::dvec3 &camera_pos,
-                   const glm::mat4 &view_projection, float screen_height,
+                   const glm::dmat4 &view_projection, float screen_height,
                    float threshold, LODSelectionResult &result);
 
   float screen_space_error(const PlanetQuadtreeNode &node,
@@ -268,7 +268,7 @@ public:
     config_.generation_budget_per_update = budget;
   }
 
-  void update(const glm::dvec3 &camera_pos, const glm::mat4 &view_projection,
+  void update(const glm::dvec3 &camera_pos, const glm::dmat4 &view_projection,
               float screen_height_pixels);
   const std::vector<RenderMesh> &update(const PlanetRenderRequest &request);
 

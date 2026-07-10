@@ -27,7 +27,12 @@ struct InputState {
     bool debug_collision_only_toggle_pressed = false;
     bool debug_freeze_toggle_pressed = false;
     bool debug_reconcile_toggle_pressed = false;
+    bool engine_toggle_pressed = false;        // T key — flight vehicle engine on/off
+    bool screenshot_requested = false;
     float zoom_delta = 0.0f;
+    // Block interaction: mouse button states (0=left, 1=right)
+    bool left_click_pressed = false;   // break block
+    bool right_click_pressed = false;  // place block
 };
 
 class IInputBackend {

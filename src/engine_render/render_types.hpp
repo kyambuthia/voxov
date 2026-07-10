@@ -28,6 +28,10 @@ struct RenderMesh {
     bool use_16_bit_indices = false;
     // Non-zero = stable GPU cache key; zero = transient (always re-uploaded).
     uint64_t mesh_id = 0;
+    // Geometry/content identity for stable GPU-cache invalidation. A mesh can
+    // change positions while keeping identical vertex and index counts (for
+    // example after a camera-relative origin shift), so size alone is unsafe.
+    uint64_t content_hash = 0;
     // Primary material (most-frequent) for draw-call batching.
     // 0 = unset/unknown; otherwise matches VoxelMaterial enum values.
     uint8_t material = 0;
@@ -46,6 +50,7 @@ inline glm::vec3 camera_relative_position(
 struct RenderScene {
     CameraRelativeOrigin camera_origin{};
     std::vector<RenderMesh> opaque_meshes;
+    std::vector<RenderMesh> wireframe_meshes;
     RenderMesh debug_world;
     RenderMesh debug_screen;
 };
@@ -69,6 +74,15 @@ struct RenderStats {
     double fixed_cpu_ms = 0.0;
     double render_cpu_ms = 0.0;
     ProfilingSnapshot profiling{};
+    // Per-stage timing for frame profiler (smoothed).
+    // WHY: identify bottlenecks — chunk gen hits noise, mesh build hits
+    // face-culling+greedy meshing, GPU upload measures buffer bandwidth.
+    double chunk_gen_ms = 0.0;
+    double mesh_build_ms = 0.0;
+    double gpu_upload_ms = 0.0;
+    uint32_t draw_call_count = 0;
+    uint32_t total_vertices = 0;
+    uint32_t total_indices = 0;
     bool net_connected = false;
     uint32_t net_local_player_id = 0;
     uint32_t net_remote_count = 0;
@@ -80,6 +94,8 @@ struct RenderStats {
     uint32_t chunk_packets = 0;
     uint32_t chunk_changes = 0;
     uint32_t streamed_chunk_count = 0;
+    // LOD distribution: how many chunks at each level (0..3).
+    uint32_t lod_chunk_count[4] = {0, 0, 0, 0};
     bool menu_open = false;
     int menu_selected = 0;
     std::string menu_title;

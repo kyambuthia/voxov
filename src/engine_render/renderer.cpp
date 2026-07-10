@@ -45,8 +45,8 @@ void Renderer::update_dynamic_meshes(const RenderMesh &debug_world,
 }
 
 void Renderer::render_frame(const RenderFrameContext &ctx,
-                             const RenderStats &stats,
-                             const RenderSurface &surface) {
+                              RenderStats &stats,
+                              const RenderSurface &surface) {
     cached_surface_ = surface;
     if (!backend) {
         return;
@@ -55,7 +55,7 @@ void Renderer::render_frame(const RenderFrameContext &ctx,
 }
 
 void Renderer::begin_frame(const RenderFrameContext &ctx,
-                           const RenderStats &stats) {
+                           RenderStats &stats) {
     // Legacy path: delegates to the backend's begin_frame if available.
     // For sokol backends, this is a no-op (render_frame is the primary API).
     if (!backend) {
@@ -66,4 +66,9 @@ void Renderer::begin_frame(const RenderFrameContext &ctx,
 
 void Renderer::end_frame() {
     // Legacy path: no-op. Frame is committed in render_frame().
+}
+
+bool Renderer::capture_screenshot(const char *filepath, int width, int height) {
+    if (!backend) return false;
+    return backend->capture_screenshot(filepath, width, height);
 }

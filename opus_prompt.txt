@@ -1,0 +1,17 @@
+Fix holes and poor face rendering in a spherical voxel planet.
+
+FILE: src/engine_world/planet_blocks.cpp
+
+BUG: Face culling (should_emit_face function near line 495)
+Cross-chunk faces are ALWAYS emitted (returns true). This creates
+floating quads when the neighbor chunk IS loaded and HAS a solid
+block - no face should be drawn between two solid blocks.
+
+FIX: The solid_at callback is passed to build_chunk_mesh but marked
+[[maybe_unused]]. Remove that marker. Call solid_at for cross-chunk
+neighbors to properly cull faces between adjacent chunks.
+
+Read src/engine_world/planet_blocks.cpp (entire build_chunk_mesh),
+src/engine/engine.cpp (solid_at callback around line 655).
+
+Apply fixes, build with cmake --build build/desktop/main --parallel.

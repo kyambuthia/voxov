@@ -2,10 +2,12 @@
 
 #include "engine_gameplay/player/player_components.hpp"
 #include "engine_input/input_state.hpp"
+#include "engine_world/planet.hpp"
 
 #include <glm/glm.hpp>
 #include <vector>
 
+class BlockWorld;
 class VoxelCollisionWorld;
 
 struct PlayerCollisionDebug {
@@ -32,6 +34,13 @@ float player_anim_crossfade_seconds(PlayerAnimState state);
 
 class PlayerControllerSystem {
 public:
+    static PlayerEntity spawn_on_planet_surface(
+        const BlockWorld &world,
+        const VoxelCollisionWorld &collision_world,
+        PlanetFace face,
+        int32_t col_x,
+        int32_t col_z,
+        double radial_clearance = 2.0);
     static PlayerEntity spawn_player(const VoxelCollisionWorld &collision_world);
     static glm::vec3 orbit_forward_from_angles(float yaw_deg, float pitch_deg);
     static MovementDebug compute_movement_vectors(float yaw_deg, glm::vec2 move_axis);

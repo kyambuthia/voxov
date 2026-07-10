@@ -49,7 +49,7 @@ ServerSession::ServerSession() { reset(); }
 void ServerSession::reset() {
     client_states.clear();
     world_chunk = VoxelChunk{};
-    generate_flat_world_locomotion_chunk(world_chunk);
+    world_chunk.generate_spherical_planet_seeded(k_voxov_flat_world_seed);
     collision_world = VoxelCollisionWorld(&world_chunk);
     next_player_id = 1;
     server_sim_tick_value = 0;

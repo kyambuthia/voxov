@@ -35,6 +35,19 @@ struct RenderFrameContext {
     std::array<RenderView, 2> views{};
     uint32_t view_count = 1;
     bool debug_xray = false;
+
+    // ── Atmosphere parameters (packed for GPU std140 uniform block) ────
+    // Set by Engine each frame.  Passed to fragment shader for aerial
+    // perspective (Rayleigh + Mie atmospheric transmittance).
+    struct AtmosphereUniformBlock {
+        glm::vec4 planet_center_radius{0,0,0,500};  // xyz=center, w=radius
+        glm::vec4 atm_params_1{50,8000,1200,0.76}; // x=atm_h, y=H_R, z=H_M, w=g
+        glm::vec4 rayleigh_scatter{5.8e-6, 13.5e-6, 33.1e-6, 0};
+        glm::vec4 mie_scatter{21e-5, 0, 0, 0};      // x=β_M
+        glm::vec4 sun_dir_intensity{0,1,0,20};       // xyz=sun_dir, w=intensity
+        glm::vec4 sky_color{0.08f, 0.10f, 0.14f, 1.0f}; // HDR sky color for clear
+    };
+    AtmosphereUniformBlock atmosphere{};
 };
 
 class IRenderBackend {
@@ -48,6 +61,11 @@ public:
     virtual void update_dynamic_meshes(const RenderMesh &debug_world,
                                        const RenderMesh &debug_screen) = 0;
     virtual void render_frame(const RenderFrameContext &ctx,
-                              const RenderStats &stats,
-                              const RenderSurface &surface) = 0;
+                                RenderStats &stats,
+                                const RenderSurface &surface) = 0;
+
+    // Captures the current framebuffer to a PNG file at the given path.
+    // Returns true on success. Only supported on OpenGL backends (GLES3/GL).
+    virtual bool capture_screenshot(const char *filepath,
+                                    int width, int height) = 0;
 };

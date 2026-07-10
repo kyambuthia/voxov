@@ -7,6 +7,15 @@
 #endif
 #include "sokol_log.h"
 
+#define STB_IMAGE_WRITE_IMPLEMENTATION
+#include "stb_image_write.h"
+
+#if defined(SOKOL_GLCORE)
+#include <GL/gl.h>
+#elif defined(SOKOL_GLES3)
+#include <GLES3/gl3.h>
+#endif
+
 #include <algorithm>
 #include <cstddef>
 #include <cstring>
@@ -54,14 +63,70 @@ static const char *kSceneFsSrc = R"(
     uniform vec3 material_specular;
     uniform float material_shininess;
     uniform vec3 camera_pos;
+
+    // Loose uniforms (not a UBO block): sokol GL uploads via glGetUniformLocation
+    // on member names; std140 blocks leave gl_loc=-1 and transmittance never runs.
+    uniform vec4 planet_center_radius;      // xyz=planet center, w=radius
+    uniform vec4 atm_params_1;              // x=atm_height, y=H_R, z=H_M, w=g
+    uniform vec4 rayleigh_scatter_unused;   // xyz=beta_R
+    uniform vec4 mie_scatter_pad;           // x=beta_M
+    uniform vec4 sun_dir_intensity;         // xyz=sun_dir, w=intensity
+
     in vec3 v_color;
     in vec3 v_normal;
     in vec3 v_world_pos;
     out vec4 frag_color;
+
+    // ── Atmospheric transmittance along a ray segment ──────────────────
+    // Numerically integrates the optical depth from 'start' to 'end'
+    // within the atmosphere shell, returning transmittance (1=clear, 0=opaque).
+    // Uses exponential density falloff: ρ(h) = exp(-h / H).
+    vec3 atmosphere_transmittance(vec3 start, vec3 end) {
+        vec3 dir = end - start;
+        float dist = length(dir);
+        if (dist < 0.001) return vec3(1.0);
+
+        vec3 step_dir = dir / dist;
+        float step_size = dist / 8.0;   // 8 samples for performance
+        vec3 opt_depth = vec3(0.0);
+        float opt_depth_mie = 0.0;
+
+        float R = planet_center_radius.w;
+        vec3 center = planet_center_radius.xyz;
+        float Hr = atm_params_1.y;
+        float Hm = atm_params_1.z;
+        vec3 betaR = rayleigh_scatter_unused.xyz;
+        float betaM = mie_scatter_pad.x;
+
+        for (int i = 0; i < 8; i++) {
+            float t = (float(i) + 0.5) * step_size;
+            vec3 p = start + step_dir * t;
+            float h = length(p - center) - R;
+            if (h < 0.0) break;  // inside planet
+
+            float dr = exp(-h / Hr) * step_size;
+            float dm = exp(-h / Hm) * step_size;
+            opt_depth += betaR * dr;
+            opt_depth_mie += betaM * dm;
+        }
+        // Mie extinction ≈ 1.1 × scattering
+        opt_depth_mie *= 1.1;
+        return exp(-(opt_depth + vec3(opt_depth_mie)));
+    }
+
     void main() {
+        // ── Atmospheric aerial perspective ─────────────────────────────
+        // Terrain color is attenuated by atmosphere between camera and
+        // fragment.  Distant fragments get bluer (Rayleigh) and hazier (Mie).
+        // Sky color is set as the clear color via CPU-side computation.
+        vec3 atm_trans = atmosphere_transmittance(camera_pos, v_world_pos);
+        // Near-surface fragments were fully extinguished (black pits against
+        // black sky). Keep a floor so voxel faces stay visible at close range.
+        atm_trans = max(atm_trans, vec3(0.35));
+
         float normal_len2 = dot(v_normal, v_normal);
         if (normal_len2 < 0.001) {
-            frag_color = vec4(v_color, 1.0);
+            frag_color = vec4(v_color * atm_trans, 1.0);
             return;
         }
 
@@ -80,7 +145,7 @@ static const char *kSceneFsSrc = R"(
         vec3 specular = light_specular * material_specular * spec_factor;
         vec3 lit = ambient + diffuse + specular;
 
-        frag_color = vec4(v_color * lit, 1.0);
+        frag_color = vec4(v_color * lit * atm_trans, 1.0);
     }
 )";
 #elif defined(SOKOL_GLES3)
@@ -115,14 +180,59 @@ static const char *kSceneFsSrc = R"(#version 300 es
     uniform vec3 material_specular;
     uniform float material_shininess;
     uniform vec3 camera_pos;
+
+    uniform vec4 planet_center_radius;
+    uniform vec4 atm_params_1;
+    uniform vec4 rayleigh_scatter_unused;
+    uniform vec4 mie_scatter_pad;
+    uniform vec4 sun_dir_intensity;
+
     in vec3 v_color;
     in vec3 v_normal;
     in vec3 v_world_pos;
     out vec4 frag_color;
+
+    vec3 atmosphere_transmittance(vec3 start, vec3 end) {
+        vec3 dir = end - start;
+        float dist = length(dir);
+        if (dist < 0.001) return vec3(1.0);
+
+        vec3 step_dir = dir / dist;
+        float step_size = dist / 8.0;
+        vec3 opt_depth = vec3(0.0);
+        float opt_depth_mie = 0.0;
+
+        float R = planet_center_radius.w;
+        vec3 center = planet_center_radius.xyz;
+        float Hr = atm_params_1.y;
+        float Hm = atm_params_1.z;
+        vec3 betaR = rayleigh_scatter_unused.xyz;
+        float betaM = mie_scatter_pad.x;
+
+        for (int i = 0; i < 8; i++) {
+            float t = (float(i) + 0.5) * step_size;
+            vec3 p = start + step_dir * t;
+            float h = length(p - center) - R;
+            if (h < 0.0) break;
+
+            float dr = exp(-h / Hr) * step_size;
+            float dm = exp(-h / Hm) * step_size;
+            opt_depth += betaR * dr;
+            opt_depth_mie += betaM * dm;
+        }
+        opt_depth_mie *= 1.1;
+        return exp(-(opt_depth + vec3(opt_depth_mie)));
+    }
+
     void main() {
+        vec3 atm_trans = atmosphere_transmittance(camera_pos, v_world_pos);
+        // Near-surface fragments were fully extinguished (black pits against
+        // black sky). Keep a floor so voxel faces stay visible at close range.
+        atm_trans = max(atm_trans, vec3(0.35));
+
         float normal_len2 = dot(v_normal, v_normal);
         if (normal_len2 < 0.001) {
-            frag_color = vec4(v_color, 1.0);
+            frag_color = vec4(v_color * atm_trans, 1.0);
             return;
         }
 
@@ -141,7 +251,7 @@ static const char *kSceneFsSrc = R"(#version 300 es
         vec3 specular = light_specular * material_specular * spec_factor;
         vec3 lit = ambient + diffuse + specular;
 
-        frag_color = vec4(v_color * lit, 1.0);
+        frag_color = vec4(v_color * lit * atm_trans, 1.0);
     }
 )";
 #else
@@ -208,8 +318,19 @@ struct fs_params_t {
     glm::vec4 camera_pos;
 };
 
+// Atmosphere uniform block (binding 2, std140).
+// Mirrors the AtmosphereUniforms struct from atmosphere.hpp.
+struct atm_params_t {
+    glm::vec4 planet_center_radius;      // xyz=center, w=radius
+    glm::vec4 atm_params_1;              // x=atm_h, y=H_R, z=H_M, w=g
+    glm::vec4 rayleigh_scatter_unused;   // xyz=β_R
+    glm::vec4 mie_scatter_pad;           // x=β_M
+    glm::vec4 sun_dir_intensity;         // xyz=sun_dir, w=intensity
+};
+
 static_assert(sizeof(vs_params_t) == 128);
 static_assert(sizeof(fs_params_t) == 128);
+static_assert(sizeof(atm_params_t) == 80);
 
 } // namespace
 
@@ -274,6 +395,26 @@ bool SokolRenderer::setup_pipelines() {
     shd_desc.uniform_blocks[1].glsl_uniforms[8].type = SG_UNIFORMTYPE_FLOAT3;
     shd_desc.uniform_blocks[1].glsl_uniforms[8].array_count = 1;
 
+    // Uniform block 2: atmosphere parameters (fragment stage).
+    shd_desc.uniform_blocks[2].stage = SG_SHADERSTAGE_FRAGMENT;
+    shd_desc.uniform_blocks[2].size = sizeof(atm_params_t);
+    shd_desc.uniform_blocks[2].layout = SG_UNIFORMLAYOUT_STD140;
+    shd_desc.uniform_blocks[2].glsl_uniforms[0].glsl_name = "planet_center_radius";
+    shd_desc.uniform_blocks[2].glsl_uniforms[0].type = SG_UNIFORMTYPE_FLOAT4;
+    shd_desc.uniform_blocks[2].glsl_uniforms[0].array_count = 1;
+    shd_desc.uniform_blocks[2].glsl_uniforms[1].glsl_name = "atm_params_1";
+    shd_desc.uniform_blocks[2].glsl_uniforms[1].type = SG_UNIFORMTYPE_FLOAT4;
+    shd_desc.uniform_blocks[2].glsl_uniforms[1].array_count = 1;
+    shd_desc.uniform_blocks[2].glsl_uniforms[2].glsl_name = "rayleigh_scatter_unused";
+    shd_desc.uniform_blocks[2].glsl_uniforms[2].type = SG_UNIFORMTYPE_FLOAT4;
+    shd_desc.uniform_blocks[2].glsl_uniforms[2].array_count = 1;
+    shd_desc.uniform_blocks[2].glsl_uniforms[3].glsl_name = "mie_scatter_pad";
+    shd_desc.uniform_blocks[2].glsl_uniforms[3].type = SG_UNIFORMTYPE_FLOAT4;
+    shd_desc.uniform_blocks[2].glsl_uniforms[3].array_count = 1;
+    shd_desc.uniform_blocks[2].glsl_uniforms[4].glsl_name = "sun_dir_intensity";
+    shd_desc.uniform_blocks[2].glsl_uniforms[4].type = SG_UNIFORMTYPE_FLOAT4;
+    shd_desc.uniform_blocks[2].glsl_uniforms[4].array_count = 1;
+
     // Vertex attributes: position(0) float3, color0(1) float3, normal(2) float3.
     shd_desc.attrs[0].glsl_name = "position";
     shd_desc.attrs[1].glsl_name = "color0";
@@ -302,6 +443,23 @@ bool SokolRenderer::setup_pipelines() {
     opq_desc.index_type = SG_INDEXTYPE_UINT16;
     opq_desc.label = "voxov-opaque-u16";
     pipelines_.opaque_u16 = sg_make_pipeline(&opq_desc);
+
+    // Wireframe pipeline (line list, no cull, depth-less-equal)
+    sg_pipeline_desc wire_desc = {};
+    wire_desc.shader = pipelines_.scene_shader;
+    wire_desc.layout.attrs[0].format = SG_VERTEXFORMAT_FLOAT3;
+    wire_desc.layout.attrs[1].format = SG_VERTEXFORMAT_FLOAT3;
+    wire_desc.layout.attrs[2].format = SG_VERTEXFORMAT_FLOAT3;
+    wire_desc.index_type = SG_INDEXTYPE_UINT32;
+    wire_desc.primitive_type = SG_PRIMITIVETYPE_LINES;
+    wire_desc.cull_mode = SG_CULLMODE_NONE;
+    wire_desc.depth.compare = SG_COMPAREFUNC_LESS_EQUAL;
+    wire_desc.depth.write_enabled = true;
+    wire_desc.label = "voxov-wireframe";
+    pipelines_.wireframe = sg_make_pipeline(&wire_desc);
+    wire_desc.index_type = SG_INDEXTYPE_UINT16;
+    wire_desc.label = "voxov-wireframe-u16";
+    pipelines_.wireframe_u16 = sg_make_pipeline(&wire_desc);
 
     // Debug no-cull pipeline
     sg_pipeline_desc dnc_desc = {};
@@ -403,6 +561,7 @@ bool SokolRenderer::init(const RenderDeviceDesc &desc) {
 
 void SokolRenderer::shutdown() {
     destroy_mesh(transient_mesh_);
+    destroy_mesh(wireframe_mesh_);
     destroy_mesh(debug_world_mesh_);
     destroy_mesh(debug_screen_mesh_);
     for (auto &[id, mesh] : cached_meshes_) {
@@ -413,6 +572,8 @@ void SokolRenderer::shutdown() {
     if (pipelines_.scene_shader.id) sg_destroy_shader(pipelines_.scene_shader);
     if (pipelines_.opaque.id) sg_destroy_pipeline(pipelines_.opaque);
     if (pipelines_.opaque_u16.id) sg_destroy_pipeline(pipelines_.opaque_u16);
+    if (pipelines_.wireframe.id) sg_destroy_pipeline(pipelines_.wireframe);
+    if (pipelines_.wireframe_u16.id) sg_destroy_pipeline(pipelines_.wireframe_u16);
     if (pipelines_.debug_no_cull.id) sg_destroy_pipeline(pipelines_.debug_no_cull);
     if (pipelines_.debug_no_cull_u16.id) sg_destroy_pipeline(pipelines_.debug_no_cull_u16);
     if (pipelines_.debug_xray.id) sg_destroy_pipeline(pipelines_.debug_xray);
@@ -462,6 +623,7 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
     dst.bounds_min = bmin;
     dst.bounds_max = bmax;
     dst.material = src.material;
+    dst.content_hash = src.content_hash;
     dst.index_type =
         use_16_bit_indices ? SG_INDEXTYPE_UINT16 : SG_INDEXTYPE_UINT32;
 
@@ -544,6 +706,17 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
         return;
     }
 
+    // Debug: log first 5 draw calls to confirm GPU draw path executes.
+    // WHY: blocks invisible despite valid meshes in scene — need to verify
+    // sg_draw() is actually called with valid buffer handles and pipeline.
+    // TODO: remove once voxel rendering is confirmed working.
+    static int draw_count = 0;
+    if (draw_count < 5) {
+        std::fprintf(stderr, "draw_mesh[%d]: idx_count=%d vb.id=%d ib.id=%d pipeline_u32.id=%d\n",
+                     draw_count, mesh.index_count, mesh.vertex_buffer.id, mesh.index_buffer.id, pipeline_u32.id);
+        draw_count++;
+    }
+
     const sg_pipeline pipeline =
         mesh.index_type == SG_INDEXTYPE_UINT16 ? pipeline_u16 : pipeline_u32;
     if (pipeline.id != 0) {
@@ -564,8 +737,46 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
     };
     const sg_range vs_range = SG_RANGE(vs_params);
     const sg_range fs_range = SG_RANGE(fs_params);
+    const sg_range atm_range = SG_RANGE(atm_uniforms_);
     sg_apply_uniforms(0, &vs_range);
     sg_apply_uniforms(1, &fs_range);
+    sg_apply_uniforms(2, &atm_range);
+    sg_bindings bind = {};
+    bind.vertex_buffers[0] = mesh.vertex_buffer;
+    bind.index_buffer = mesh.index_buffer;
+    sg_apply_bindings(&bind);
+    sg_draw(0, static_cast<int>(mesh.index_count), 1);
+}
+
+void SokolRenderer::draw_wireframe(const SokolGpuMesh &mesh,
+                                     const glm::mat4 &mvp) {
+    if (!mesh.vertex_buffer.id || !mesh.index_buffer.id ||
+        mesh.index_count == 0) {
+        return;
+    }
+    sg_pipeline pipeline = (mesh.index_type == SG_INDEXTYPE_UINT16)
+                               ? pipelines_.wireframe_u16
+                               : pipelines_.wireframe;
+    if (pipeline.id != 0) {
+        sg_apply_pipeline(pipeline);
+    }
+    const vs_params_t vs_params{ mvp, glm::mat4(1.0f) };
+    const fs_params_t fs_params{
+        glm::vec4(light_.direction, 0.0f),
+        glm::vec4(light_.ambient, 0.0f),
+        glm::vec4(light_.diffuse, 0.0f),
+        glm::vec4(light_.specular, 0.0f),
+        glm::vec4(1.0f, 1.0f, 1.0f, 0.0f), // material_ambient (white → vertex color)
+        glm::vec4(1.0f, 1.0f, 1.0f, 0.0f), // material_diffuse (white → vertex color)
+        glm::vec4(0.0f, 0.0f, 0.0f, 0.0f), // material_specular (no specular)
+        glm::vec4(0.0f, 0.0f, 0.0f, 0.0f), // camera_pos (not used for wireframe)
+    };
+    const sg_range vs_range = SG_RANGE(vs_params);
+    const sg_range fs_range = SG_RANGE(fs_params);
+    const sg_range atm_range = SG_RANGE(atm_uniforms_);
+    sg_apply_uniforms(0, &vs_range);
+    sg_apply_uniforms(1, &fs_range);
+    sg_apply_uniforms(2, &atm_range);
     sg_bindings bind = {};
     bind.vertex_buffers[0] = mesh.vertex_buffer;
     bind.index_buffer = mesh.index_buffer;
@@ -611,11 +822,59 @@ void SokolRenderer::upload_scene(const RenderScene &new_scene) {
     for (const RenderMesh &mesh : new_scene.opaque_meshes) {
         if (mesh.mesh_id == 0) {
             append_mesh(mesh);
-        } else if (cached_meshes_.find(mesh.mesh_id) == cached_meshes_.end()) {
-            SokolGpuMesh uploaded{};
-            upload_mesh(uploaded, mesh, false);
-            cached_meshes_[mesh.mesh_id] = uploaded;
+            continue;
         }
+        const auto it = cached_meshes_.find(mesh.mesh_id);
+        const uint32_t mesh_index_count = mesh.use_16_bit_indices
+            ? static_cast<uint32_t>(mesh.indices16.size())
+            : static_cast<uint32_t>(mesh.indices.size());
+        if (it != cached_meshes_.end()) {
+            // Remesh when content changes, even if topology counts are stable.
+            // Camera-relative origin shifts and equal-sized voxel edits are
+            // otherwise left pointing at stale GPU positions.
+            if (it->second.index_count == mesh_index_count &&
+                it->second.vertex_buffer_size ==
+                    mesh.vertices.size() * sizeof(SokolRenderVertex) &&
+                mesh.content_hash != 0 &&
+                it->second.content_hash == mesh.content_hash) {
+                continue;
+            }
+            destroy_mesh(it->second);
+            cached_meshes_.erase(it);
+        }
+        SokolGpuMesh uploaded{};
+        upload_mesh(uploaded, mesh, false);
+        cached_meshes_[mesh.mesh_id] = uploaded;
+    }
+
+    // ── Wireframe mesh upload ─────────────────────────────────────────
+    // Hash the set of mesh_ids to detect changes. Wireframe planet uses
+    // a stable mesh_id (0x574952454652414d) and never changes after init.
+    // Skipping the re-upload avoids stalling the GPU command stream with
+    // 2.8 MB of vertex data every frame (was the cause of 1 FPS at planet scale).
+    uint64_t wireframe_hash = 0;
+    for (const RenderMesh &mesh : new_scene.wireframe_meshes) {
+        wireframe_hash ^= mesh.mesh_id + 0x9e3779b97f4a7c15ull +
+                          (wireframe_hash << 6) + (wireframe_hash >> 2);
+    }
+    if (wireframe_hash != last_wireframe_hash_ || wireframe_hash == 0) {
+        RenderMesh wireframe_scene{};
+        for (const RenderMesh &mesh : new_scene.wireframe_meshes) {
+            const uint32_t base = static_cast<uint32_t>(wireframe_scene.vertices.size());
+            wireframe_scene.vertices.insert(wireframe_scene.vertices.end(),
+                                             mesh.vertices.begin(), mesh.vertices.end());
+            if (mesh.use_16_bit_indices) {
+                for (uint16_t idx : mesh.indices16) {
+                    wireframe_scene.indices.push_back(base + idx);
+                }
+            } else {
+                for (uint32_t idx : mesh.indices) {
+                    wireframe_scene.indices.push_back(base + idx);
+                }
+            }
+        }
+        upload_mesh(wireframe_mesh_, wireframe_scene, false);
+        last_wireframe_hash_ = wireframe_hash;
     }
 
     upload_mesh(transient_mesh_, transient_scene, true);
@@ -648,9 +907,26 @@ void SokolRenderer::update_dynamic_meshes(const RenderMesh &debug_world,
 // ---------------------------------------------------------------------------
 
 void SokolRenderer::render_frame(const RenderFrameContext &ctx,
-                                  const RenderStats &stats,
+                                  RenderStats &stats,
                                   const RenderSurface &surface) {
-    (void)stats;
+    // Reset per-frame GPU counters.
+    uint32_t draw_calls = 0;
+
+    // ── Copy atmosphere uniforms from frame context ───────────────────
+    atm_uniforms_.planet_center_radius = ctx.atmosphere.planet_center_radius;
+    atm_uniforms_.atm_params_1 = ctx.atmosphere.atm_params_1;
+    atm_uniforms_.rayleigh_scatter = ctx.atmosphere.rayleigh_scatter;
+    atm_uniforms_.mie_scatter = ctx.atmosphere.mie_scatter;
+    atm_uniforms_.sun_dir_intensity = ctx.atmosphere.sun_dir_intensity;
+
+    // ── Set sky color as clear color (tone mapped from HDR) ──────────
+    pass_action_.colors[0].clear_value = {
+        ctx.atmosphere.sky_color.r,
+        ctx.atmosphere.sky_color.g,
+        ctx.atmosphere.sky_color.b,
+        1.0f
+    };
+
     sg_pass pass = {};
     pass.action = pass_action_;
 #if defined(VOXOV_PLATFORM_ANDROID)
@@ -678,33 +954,113 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         const glm::mat4 vp = p * view.camera.view();
         const glm::mat4 model = glm::mat4(1.0f);
         const glm::vec3 camera_pos = view.camera.transform.position;
+        const glm::dvec3 camera_origin = ctx.camera_origin.world_origin;
 
-        // Opaque geometry
-        draw_mesh(transient_mesh_, vp, model, camera_pos,
-                  glm::dvec3(0.0),
+        // Camera-relative adjustment for planet voxel meshes.
+        // WHY: build_chunk_mesh emits verts as (world - snap_origin) for
+        // float32 sub-mm precision at 1000 km planetary scale. The incoming
+        // vp + frustum come from the world-space camera. We use rel_vp =
+        // vp * translate(+origin) so the shader's mvp * v_rel lands at the
+        // correct surface location. Wireframe/debug stay on raw vp (absolute).
+        const glm::mat4 origin_t = glm::translate(glm::mat4(1.0f), glm::vec3(camera_origin));
+        const glm::mat4 rel_vp = vp * origin_t;
+
+        // ── Draw call counting ──────────────────────────────────────────
+        // WHY: count every sg_draw issued per frame for the dev HUD
+        // (F2). Helps identify whether GPU is draw-call bound.
+        auto record_draw = [&](const SokolGpuMesh &mesh) {
+            if (mesh.index_count > 0) {
+                draw_calls++;
+            }
+        };
+
+        // Opaque geometry (planet block meshes are relative to camera_origin)
+        record_draw(transient_mesh_);
+        draw_mesh(transient_mesh_, rel_vp, model, camera_pos,
+                  camera_origin,
                   pipelines_.opaque, pipelines_.opaque_u16);
 
         const Frustum frustum = extract_frustum(vp);
+        // WHY no frustum test on cached here: our streaming already restricts
+        // scene.opaque_meshes (and thus live cached_meshes_ after upload
+        // live_ids + eviction) to a small player-centric patch (the only
+        // chunks we *want* for the local voxel surface). At planetary scale
+        // even "local" world_b = (small_bounds + snap) + float vp/frustum
+        // planes (extracted from camera at ~1 M m) suffer rounding that can
+        // falsely cull near chunks (the classic large-world float problem
+        // confirmed in voxel dev prior art). Unconditionally drawing the
+        // (already tiny local) resident set guarantees the 1 m noise terrain
+        // surface is visible while wireframe remains the debug overlay.
+        // (Proper relative-space frustum can be a later perf commit.)
+        const glm::vec3 origin_offset = glm::vec3(camera_origin);
         for (const auto &[id, mesh] : cached_meshes_) {
-            if (aabb_in_frustum(frustum, mesh.bounds_min, mesh.bounds_max)) {
-                draw_mesh(mesh, vp, model, camera_pos,
-                          glm::dvec3(0.0),
-                          pipelines_.opaque, pipelines_.opaque_u16);
-            }
+            const glm::vec3 world_bmin = mesh.bounds_min + origin_offset;
+            const glm::vec3 world_bmax = mesh.bounds_max + origin_offset;
+            // (aabb test intentionally bypassed for local planet voxels)
+            record_draw(mesh);
+            draw_mesh(mesh, rel_vp, model, camera_pos,
+                      camera_origin,
+                      pipelines_.opaque, pipelines_.opaque_u16);
         }
 
+        // Wireframe geometry (drawn over opaque, with depth).
+        // Wireframe verts are absolute world (see build_wireframe_... and
+        // its mesh_id caching); must use raw vp.
+        record_draw(wireframe_mesh_);
+        draw_wireframe(wireframe_mesh_, vp);
+
         // Debug world (x-ray or normal)
+        record_draw(debug_world_mesh_);
         draw_mesh(debug_world_mesh_, vp, model, camera_pos,
-                  glm::dvec3(0.0),
+                  camera_origin,
                   ctx.debug_xray ? pipelines_.debug_xray : pipelines_.opaque,
                   ctx.debug_xray ? pipelines_.debug_xray_u16
                                  : pipelines_.opaque_u16);
 
         // Screen-space overlay
+        record_draw(debug_screen_mesh_);
         draw_mesh(debug_screen_mesh_, glm::mat4(1.0f), model, camera_pos,
                   glm::dvec3(0.0), pipelines_.screen, pipelines_.screen_u16);
     }
 
+    // Write GPU draw call count back so the dev HUD can display it.
+    stats.draw_call_count = draw_calls;
+
     sg_end_pass();
     sg_commit();
+}
+
+// ---------------------------------------------------------------------------
+// Screenshot capture — reads framebuffer via glReadPixels, flips vertically,
+// and writes PNG via stb_image_write.
+// ---------------------------------------------------------------------------
+
+bool SokolRenderer::capture_screenshot(const char *filepath,
+                                       int width, int height) {
+    if (width <= 0 || height <= 0) return false;
+
+    // Allocate buffer for RGBA pixels
+    const size_t row_bytes = static_cast<size_t>(width) * 4;
+    std::vector<uint8_t> pixels(row_bytes * static_cast<size_t>(height));
+
+    // Read from the default framebuffer (sokol renders to FBO 0)
+    sg_commit(); // flush GPU commands
+    glPixelStorei(GL_PACK_ALIGNMENT, 1);
+    glReadPixels(0, 0, width, height, GL_RGBA, GL_UNSIGNED_BYTE, pixels.data());
+
+    // OpenGL has origin at bottom-left; PNG expects top-left.
+    // Flip the rows in-place.
+    std::vector<uint8_t> flipped(row_bytes * static_cast<size_t>(height));
+    for (int y = 0; y < height; ++y) {
+        const size_t src_row = static_cast<size_t>(height - 1 - y) * row_bytes;
+        const size_t dst_row = static_cast<size_t>(y) * row_bytes;
+        std::memcpy(flipped.data() + dst_row,
+                    pixels.data() + src_row,
+                    row_bytes);
+    }
+
+    const int result = stbi_write_png(filepath, width, height, 4,
+                                      flipped.data(),
+                                      static_cast<int>(row_bytes));
+    return result != 0;
 }

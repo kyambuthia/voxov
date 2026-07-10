@@ -45,15 +45,40 @@ glm::vec3 VoxelChunk::material_color(VoxelMaterial material, bool top_face,
   switch (material) {
   case VoxelMaterial::Grass:
     if (top_face) {
-      return glm::vec3(0.22f + height_t * 0.2f, 0.45f + height_t * 0.35f,
-                       0.16f);
+      // Height-based color contrast for visible terrain variation:
+      // - Low areas (height_t ~0): brownish-yellow-green (dry/low grass)
+      // - High areas (height_t ~1): rich vibrant green (high grass/vegetation)
+      // WHY: previous tint was 0.22..0.42 red, 0.45..0.80 green — only ~2x contrast.
+      // Even with height_t in [0,1], all grass looked the same shade. Fixed by making
+      // low areas visibly browner (more red, less green) and high areas vivid green.
+      const float low_green = 0.25f;   // brown-green at low elevation
+      const float high_green = 0.85f;  // vibrant green at high elevation
+      const float low_red = 0.35f;     // brownish at low elevation
+      const float high_red = 0.15f;    // less red at high elevation (purer green)
+
+      // Use height_t plus a slight non-linear boost to emphasize mid-range contrast.
+      const float t = height_t * height_t;  // quadratic emphasizes higher areas
+      return glm::vec3(
+          low_red + (high_red - low_red) * t,        // red: 0.35 → 0.15 (less red higher up)
+          low_green + (high_green - low_green) * t,  // green: 0.25 → 0.85 (more green higher up)
+          0.08f + height_t * 0.20f);                 // blue: slight increase with height
     }
-    return glm::vec3(0.33f, 0.42f, 0.18f);
+    // Side faces of grass blocks: slightly darker than top, with subtle height tint.
+    return glm::vec3(0.28f + height_t * 0.10f, 0.35f + height_t * 0.25f,
+                     0.12f + height_t * 0.08f);
   case VoxelMaterial::Stone:
-    return glm::vec3(0.46f, 0.48f, 0.5f);
+    // Stone with subtle height variation for visual interest.
+    return glm::vec3(
+        0.44f + height_t * 0.08f,
+        0.46f + height_t * 0.08f,
+        0.48f + height_t * 0.08f);
   case VoxelMaterial::Dirt:
   default:
-    return glm::vec3(0.38f, 0.27f, 0.18f);
+    // Dirt with height variation: lighter at higher elevations.
+    return glm::vec3(
+        0.35f + height_t * 0.15f,
+        0.25f + height_t * 0.12f,
+        0.15f + height_t * 0.10f);
   }
 }
 
@@ -87,7 +112,8 @@ void VoxelChunk::generate_heightmap_terrain_seeded(uint64_t world_seed,
         max_y = CHUNK_Y - 1;
       }
       for (int y = 0; y <= max_y; ++y) {
-        voxels[index(x, y, z)] = static_cast<uint8_t>(VoxelMaterial::Dirt);
+        // Full-height blocks for flat terrain generation.
+        set_material(x, y, z, VoxelMaterial::Dirt, 15);
       }
     }
   }
@@ -114,7 +140,7 @@ void VoxelChunk::generate_spherical_planet_seeded(uint64_t world_seed) {
         const float dz = static_cast<float>(z) - cz;
         const float dist = std::sqrt(dx * dx + dy * dy + dz * dz);
         if (dist <= 0.001f) {
-          voxels[index(x, y, z)] = static_cast<uint8_t>(VoxelMaterial::Stone);
+          set_material(x, y, z, VoxelMaterial::Stone, 15);
           continue;
         }
 
@@ -128,7 +154,7 @@ void VoxelChunk::generate_spherical_planet_seeded(uint64_t world_seed) {
         const float shell_radius = base_radius + radial_noise;
 
         if (dist <= shell_radius && dist >= shell_min) {
-          voxels[index(x, y, z)] = static_cast<uint8_t>(VoxelMaterial::Stone);
+          set_material(x, y, z, VoxelMaterial::Stone, 15);
         }
       }
     }
@@ -142,9 +168,9 @@ void VoxelChunk::generate_spherical_planet_seeded(uint64_t world_seed) {
       if (x < 1 || z < 1 || x >= CHUNK_X - 1 || z >= CHUNK_Z - 1) {
         continue;
       }
-      voxels[index(x, spawn_cap_y, z)] = static_cast<uint8_t>(VoxelMaterial::Dirt);
+      set_material(x, spawn_cap_y, z, VoxelMaterial::Dirt, 15);
       for (int y = spawn_cap_y + 1; y < CHUNK_Y; ++y) {
-        voxels[index(x, y, z)] = static_cast<uint8_t>(VoxelMaterial::Air);
+        set_material(x, y, z, VoxelMaterial::Air, 0);
       }
     }
   }
@@ -158,7 +184,7 @@ void VoxelChunk::generate_flat_ground(int ground_y) {
   for (int z = 0; z < CHUNK_Z; ++z) {
     for (int x = 0; x < CHUNK_X; ++x) {
       for (int y = 0; y <= max_y; ++y) {
-        voxels[index(x, y, z)] = static_cast<uint8_t>(VoxelMaterial::Dirt);
+        set_material(x, y, z, VoxelMaterial::Dirt, 15);
       }
     }
   }
@@ -170,22 +196,43 @@ VoxelMaterial VoxelChunk::material(int x, int y, int z) const {
   if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
     return VoxelMaterial::Air;
   }
-  return static_cast<VoxelMaterial>(voxels[index(x, y, z)]);
+  // Bits [1:0] encode the material; upper bits encode sub-voxel height.
+  return static_cast<VoxelMaterial>(voxels[index(x, y, z)] & 0x03u);
 }
 
 bool VoxelChunk::solid(int x, int y, int z) const {
-  return material(x, y, z) != VoxelMaterial::Air;
+  // Block is solid if material (lower 2 bits) is not Air.
+  return (voxels[index(x, y, z)] & 0x03u) != 0u;
+}
+
+uint8_t VoxelChunk::block_height(int x, int y, int z) const {
+  if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
+    return 0;
+  }
+  // Bits [6:2] encode sub-voxel height (0-63, shifted by 2).
+  return voxels[index(x, y, z)] >> 2u;
 }
 
 void VoxelChunk::set_material(int x, int y, int z, VoxelMaterial material_value) {
   if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
     return;
   }
-  voxels[index(x, y, z)] = static_cast<uint8_t>(material_value);
+  // Preserve height bits, clear material bits, then set new material.
+  const uint8_t height_bits = voxels[index(x, y, z)] & 0xFCu;
+  voxels[index(x, y, z)] = height_bits | (static_cast<uint8_t>(material_value) & 0x03u);
+}
+
+void VoxelChunk::set_material(int x, int y, int z, VoxelMaterial material_value, uint8_t height) {
+  if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
+    return;
+  }
+  // Encode: lower 2 bits = material, bits [6:2] = height clamped to [0, 63].
+  const uint8_t clamped_h = std::min(height, VoxelChunk::kMaxBlockHeight);
+  voxels[index(x, y, z)] = (static_cast<uint8_t>(material_value) & 0x03u) | (clamped_h << 2u);
 }
 
 void VoxelChunk::set_solid(int x, int y, int z, bool value) {
-  set_material(x, y, z, value ? VoxelMaterial::Dirt : VoxelMaterial::Air);
+  set_material(x, y, z, value ? VoxelMaterial::Dirt : VoxelMaterial::Air, 15);
 }
 
 void VoxelChunk::refresh_surface_materials() {

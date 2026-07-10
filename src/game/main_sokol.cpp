@@ -21,6 +21,7 @@
 #include <cstdlib>
 #include <cstdio>
 #include <cstring>
+#include <ctime>
 #include <thread>
 
 // ---------------------------------------------------------------------------
@@ -115,6 +116,109 @@ void voxov_frame() {
     }
 
     g_runtime->tick(g_pacer->frame_dt());
+
+    // ── Debug screenshot system ──────────────────────────────────────
+    // Auto-screenshot at key moments for visual debugging with Mimo Omni.
+    // Also supports F5 for quick debug screenshot and F12 for timestamped.
+    static int frame_counter = 0;
+    frame_counter++;
+
+    auto take_screenshot = [](const char *path) {
+        std::system("mkdir -p screenshots 2>/dev/null");
+        const int w = sapp_width();
+        const int h = sapp_height();
+        if (g_runtime->capture_screenshot(path, w, h)) {
+            spdlog::info("Screenshot saved: {}", path);
+        }
+    };
+
+    // Frame 30 (~0.5s): just after chunks load
+    auto maybe_analyze = [](const char *path) {
+        if (std::getenv("VOXOV_SKIP_ANALYZE") != nullptr) {
+            return;
+        }
+        std::string cmd = std::string("./auto_analyze.sh ") + path + " &";
+        std::system(cmd.c_str());
+    };
+
+    if (frame_counter == 30) {
+        take_screenshot("screenshots/ts_00_early.png");
+        maybe_analyze("screenshots/ts_00_early.png");
+    }
+    // Frame 60 (~1s): initial view settled
+    if (frame_counter == 60) {
+        take_screenshot("screenshots/ts_01_initial.png");
+        maybe_analyze("screenshots/ts_01_initial.png");
+    }
+    // Frame 120 (~2s): after walking starts
+    if (frame_counter == 120) {
+        take_screenshot("screenshots/ts_02_walk.png");
+        maybe_analyze("screenshots/ts_02_walk.png");
+    }
+    // Frame 180 (~3s): mid-walk
+    if (frame_counter == 180) {
+        take_screenshot("screenshots/ts_03_midwalk.png");
+        maybe_analyze("screenshots/ts_03_midwalk.png");
+    }
+    // Frame 300 (~5s): further exploration
+    if (frame_counter == 300) {
+        take_screenshot("screenshots/ts_04_explore.png");
+        maybe_analyze("screenshots/ts_04_explore.png");
+    }
+    // Frame 480 (~8s): extended play
+    if (frame_counter == 480) {
+        take_screenshot("screenshots/ts_05_extended.png");
+        maybe_analyze("screenshots/ts_05_extended.png");
+    }
+    // Frame 720 (~12s): long play
+    if (frame_counter == 720) {
+        take_screenshot("screenshots/ts_06_long.png");
+        maybe_analyze("screenshots/ts_06_long.png");
+    }
+    // Frame 1080 (~18s): very long play
+    if (frame_counter == 1080) {
+        take_screenshot("screenshots/ts_07_final.png");
+        maybe_analyze("screenshots/ts_07_final.png");
+    }
+
+    // F5: quick debug screenshot (overwrites same file for easy Mimo analysis).
+    static bool f5_was_down = false;
+    if (g_platform) {
+        const bool f5_down = g_platform->input().keys_down.test(
+            static_cast<size_t>(PlatformKey::F5));
+        if (f5_down && !f5_was_down) {
+            take_screenshot("screenshots/debug_screenshot.png"); std::system("./auto_analyze.sh screenshots/debug_screenshot.png &"); spdlog::info("Auto-analysis started");
+        }
+        f5_was_down = f5_down;
+    }
+
+    // F12 screenshot capture (timestamped, keeps history).
+    static bool f12_was_down = false;
+    if (g_platform) {
+        const bool f12_down = g_platform->input().keys_down.test(
+            static_cast<size_t>(PlatformKey::F12));
+        if (f12_down && !f12_was_down) {
+            // Ensure screenshots directory exists.
+            std::system("mkdir -p screenshots 2>/dev/null");
+            char filepath[256]{};
+            const auto now = std::chrono::system_clock::now();
+            const auto t = std::chrono::system_clock::to_time_t(now);
+            std::tm tm{};
+            localtime_r(&t, &tm);
+            std::snprintf(filepath, sizeof(filepath),
+                          "screenshots/voxov_%04d%02d%02d_%02d%02d%02d.png",
+                          tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,
+                          tm.tm_hour, tm.tm_min, tm.tm_sec);
+            const int w = sapp_width();
+            const int h = sapp_height();
+            if (g_runtime->capture_screenshot(filepath, w, h)) {
+                spdlog::info("Screenshot saved: {}", filepath);
+            } else {
+                spdlog::warn("Screenshot failed: {}", filepath);
+            }
+        }
+        f12_was_down = f12_down;
+    }
 
     // F11 fullscreen toggle
     static bool f11_was_down = false;

@@ -13,6 +13,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <limits>
+#include <numbers>
 #include <utility>
 
 #include <glm/common.hpp>
@@ -33,9 +34,34 @@ glm::dvec3 math_normalized_or(const glm::dvec3 &value,
   }
   return value / std::sqrt(len2);
 }
+
+// Pre-distort UV coordinates using equi-angular mapping to reduce block
+// stretching near cube-sphere sector boundaries.
+// Maps u,v in [-1,1] to a pre-distorted position on the cube face.
+// Without this, normalizing cube-face vertices onto the sphere compresses
+// blocks near edges/corners.  The tan() warps the uniform grid so that
+// after normalization, blocks have more uniform size across the face.
+// Reference: Bowerbyte "Blocky Planet" equiangular cube-sphere projection.
+void pre_distort_uv(double &u, double &v) {
+  u = std::tan(u * (std::numbers::pi / 4.0));
+  v = std::tan(v * (std::numbers::pi / 4.0));
+}
+
+// Inverse of pre_distort_uv: converts pre-distorted cube-face coordinates
+// back to the original uniform UV grid.  Required in direction_to_face_uv()
+// so that the forward/inverse round-trip is consistent.
+void inverse_pre_distort_uv(double &u, double &v) {
+  u = (4.0 / std::numbers::pi) * std::atan(u);
+  v = (4.0 / std::numbers::pi) * std::atan(v);
+}
 } // namespace
 
 glm::dvec3 face_uv_to_direction(PlanetFace face, double u, double v) {
+  // Pre-distort UV to counteract block stretching near sector boundaries.
+  // The equi-angular mapping redistributes the uniform grid so that after
+  // sphere normalization, blocks are more uniformly sized across the face.
+  pre_distort_uv(u, v);
+
   glm::dvec3 direction(0.0);
   switch (face) {
   case PlanetFace::PosX:
@@ -110,6 +136,12 @@ PlanetFaceUV direction_to_face_uv(const glm::dvec3 &direction) {
 
   uv.u = std::clamp(uv.u, -1.0, 1.0);
   uv.v = std::clamp(uv.v, -1.0, 1.0);
+
+  // Apply inverse pre-distortion so that direction→UV→direction round-trips
+  // correctly.  face_uv_to_direction() applies pre_distort_uv(), so we must
+  // undo it here to return UV on the original uniform grid.
+  inverse_pre_distort_uv(uv.u, uv.v);
+
   return uv;
 }
 
@@ -383,6 +415,57 @@ struct Frustum {
   std::array<glm::vec4, 6> planes{};
 };
 
+// ── Frustum extraction (double-precision for planet scale) ──────────
+// float lookAt/perspective matrices at 2M range lose ~0.25 units of
+// precision per component. Extracted frustum planes become garbage,
+// rejecting every quadtree node → no terrain visible.
+// Double-precision preserves plane accuracy.
+struct DoubleFrustum {
+  glm::dvec4 planes[6];
+};
+
+DoubleFrustum lod_extract_frustum_double(const glm::dmat4 &vp) {
+  auto row = [&](int i) {
+    return glm::dvec4(vp[0][i], vp[1][i], vp[2][i], vp[3][i]);
+  };
+
+  const glm::dvec4 r0 = row(0);
+  const glm::dvec4 r1 = row(1);
+  const glm::dvec4 r2 = row(2);
+  const glm::dvec4 r3 = row(3);
+
+  DoubleFrustum frustum{};
+  frustum.planes[0] = r3 + r0;
+  frustum.planes[1] = r3 - r0;
+  frustum.planes[2] = r3 + r1;
+  frustum.planes[3] = r3 - r1;
+  frustum.planes[4] = r3 + r2;
+  frustum.planes[5] = r3 - r2;
+
+  for (glm::dvec4 &plane : frustum.planes) {
+    const double len = glm::length(glm::dvec3(plane));
+    if (len > 1.0e-12) {
+      plane /= len;
+    }
+  }
+  return frustum;
+}
+
+bool lod_aabb_in_frustum_double(const DoubleFrustum &frustum,
+                                const glm::dvec3 &bmin,
+                                const glm::dvec3 &bmax) {
+  for (const glm::dvec4 &plane : frustum.planes) {
+    const glm::dvec3 positive_vertex(plane.x >= 0.0 ? bmax.x : bmin.x,
+                                     plane.y >= 0.0 ? bmax.y : bmin.y,
+                                     plane.z >= 0.0 ? bmax.z : bmin.z);
+    if (glm::dot(glm::dvec3(plane), positive_vertex) + plane.w < 0.0) {
+      return false;
+    }
+  }
+  return true;
+}
+
+// Keep original float versions for backward compat (unused at planet scale).
 Frustum lod_extract_frustum(const glm::mat4 &vp) {
   auto row = [&](int i) {
     return glm::vec4(vp[0][i], vp[1][i], vp[2][i], vp[3][i]);
@@ -518,7 +601,7 @@ void lod_mark_boundary_skirts(PlanetQuadtree &quadtree,
 
 LODSelectionResult PlanetLODSelector::select(
     PlanetQuadtree &quadtree, const glm::dvec3 &camera_pos,
-    const glm::mat4 &view_projection, float screen_height_pixels,
+    const glm::dmat4 &view_projection, float screen_height_pixels,
     float lod_error_threshold_pixels) {
   ++frame_index_;
 
@@ -546,7 +629,7 @@ LODSelectionResult PlanetLODSelector::select(
 void PlanetLODSelector::select_node(PlanetQuadtree &quadtree,
                                     int32_t node_index,
                                     const glm::dvec3 &camera_pos,
-                                    const glm::mat4 &view_projection,
+                                    const glm::dmat4 &view_projection,
                                     float screen_height, float threshold,
                                     LODSelectionResult &result) {
   PlanetQuadtreeNode *node = quadtree.node(node_index);
@@ -559,9 +642,10 @@ void PlanetLODSelector::select_node(PlanetQuadtree &quadtree,
   node->render_bounds_min = glm::vec3(world_min);
   node->render_bounds_max = glm::vec3(world_max);
 
-  const Frustum frustum = lod_extract_frustum(view_projection);
-  if (!lod_aabb_in_frustum(frustum, glm::vec3(world_min),
-                           glm::vec3(world_max))) {
+  // Double-precision frustum culling — required at planet scale.
+  // float VP matrix loses ~0.25 units per component at 2M range.
+  const DoubleFrustum frustum = lod_extract_frustum_double(view_projection);
+  if (!lod_aabb_in_frustum_double(frustum, world_min, world_max)) {
     return;
   }
 
@@ -569,7 +653,7 @@ void PlanetLODSelector::select_node(PlanetQuadtree &quadtree,
 
   const float error_px =
       screen_space_error(*node, camera_pos - quadtree.planet().center,
-                         screen_height, view_projection);
+                         screen_height, glm::mat4(view_projection));
   const bool can_subdivide =
       static_cast<uint32_t>(node->id.lod) < quadtree.max_lod();
   const bool wants_finer = can_subdivide && error_px > threshold;
@@ -793,7 +877,7 @@ VoxelMaterial terrain_column_material(int32_t world_x, int32_t world_z,
 
 glm::vec3 terrain_color_fn(VoxelMaterial material, int32_t world_x,
                            int32_t world_z, int voxel_y, int max_y_in_column,
-                           const glm::ivec3 &face_normal) {
+                           const glm::ivec3 &face_normal, uint64_t seed) {
   const float height_t =
       std::clamp(static_cast<float>(voxel_y) /
                      static_cast<float>(k_planet_chunk_height),
@@ -808,7 +892,7 @@ glm::vec3 terrain_color_fn(VoxelMaterial material, int32_t world_x,
   }
 
   const uint32_t hash =
-      terrain_hash_columns(world_x, world_z, 0x56584f56u, 0xb5297a4du);
+      terrain_hash_columns(world_x, world_z, seed, 0xb5297a4du);
   const float column_variation =
       0.82f + static_cast<float>(hash & 0xffu) * (0.28f / 255.0f);
   const float face_light = face_normal.y > 0    ? 1.10f
@@ -949,11 +1033,6 @@ void terrain_append_planet_voxel_face(
   }
   local_center *= 0.25f;
 
-  glm::vec3 normal =
-      terrain_sphere_normal_for_local(chunk_id, range, local_center);
-  if (mode == PlanetTerrainRenderMode::SurfaceFlatFace) {
-    normal = glm::vec3(face.neighbor);
-  }
   const glm::vec3 expected =
       terrain_remap_local_vertex(
           planet, chunk_id, range,
@@ -965,7 +1044,21 @@ void terrain_append_planet_voxel_face(
           surface_frame);
   const glm::vec3 geometric =
       glm::cross(positions[1] - positions[0], positions[2] - positions[0]);
-  const bool flip = glm::dot(geometric, expected) < 0.0f;
+  const float geometric_len2 = glm::dot(geometric, geometric);
+  const bool flip = geometric_len2 > 1.0e-10f &&
+                    glm::dot(geometric, expected) < 0.0f;
+
+  // Use the actual geometric face normal for correct per-face lighting.
+  // The sphere radial normal was wrong: it gave ALL faces the same outward
+  // direction, so side faces lit like top faces and bottom faces lit backwards.
+  glm::vec3 normal;
+  if (mode == PlanetTerrainRenderMode::SurfaceFlatFace) {
+    normal = glm::vec3(face.neighbor);
+  } else if (geometric_len2 > 1.0e-10f) {
+    normal = glm::normalize(flip ? -geometric : geometric);
+  } else {
+    normal = terrain_sphere_normal_for_local(chunk_id, range, local_center);
+  }
 
   const uint32_t start = static_cast<uint32_t>(mesh.vertices.size());
   for (const glm::vec3 &position : positions) {
@@ -1075,7 +1168,7 @@ RenderMesh build_planet_terrain_mesh(
           }
           const glm::vec3 color =
               terrain_color_fn(chunk.material(x, y, z), world_x, world_z, y,
-                               max_y, face.neighbor);
+                               max_y, face.neighbor, planet.seed);
           terrain_append_planet_voxel_face(mesh, planet, chunk_id, uv_range,
                                            voxel, face, color, mode,
                                            surface_frame);
@@ -1176,7 +1269,7 @@ void PlanetStreamer::init(const PlanetDefinition &planet, uint32_t max_lod) {
 }
 
 void PlanetStreamer::update(const glm::dvec3 &camera_pos,
-                            const glm::mat4 &view_projection,
+                            const glm::dmat4 &view_projection,
                             float screen_height_pixels) {
   if (!initialized_) {
     stats_ = PlanetStreamerStats{};

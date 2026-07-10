@@ -7,17 +7,24 @@
 #include "engine_input/input_state.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net/lan_discovery.hpp"
+#include "engine_physics/flight_vehicle.hpp"
 #include "engine_physics/physics_solver.hpp"
 #include "engine_physics/physics_world.hpp"
 #include "engine_render/renderer.hpp"
 #include "engine_runtime/runtime_game_session.hpp"
 #include "engine_runtime/runtime_session_controller.hpp"
 #include "engine_ui/gui_menu.hpp"
-#include "engine_world/flat_world_streamer.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
+#include "engine_world/planet.hpp"
+#include "engine_world/planet_blocks.hpp"
+#include "engine_world/planet_lod.hpp"
+#include "engine_world/atmosphere.hpp"
+#include "engine_world/coordinate_frames.hpp"
+#include "engine_world/solar_system.hpp"
 #include "platform/platform_services.hpp"
 
 #include <string>
+#include <optional>
 
 struct EngineRuntimeOptions {
   PhysicsSolverBackend physics_backend = PhysicsSolverBackend::AvbdExperimental;
@@ -66,10 +73,11 @@ public:
   void reset_camera();
   GuiMenu::Character preferred_character() const;
   EventBus &events() { return event_bus_; }
+  bool capture_screenshot(const char *filepath, int width, int height);
 
 private:
-  void update_third_person_camera(PlayerEntity &player, Camera &out_camera);
-  void update_third_person_camera(PlayerEntity &player,
+  void update_first_person_camera(PlayerEntity &player, Camera &out_camera);
+  void update_first_person_camera(PlayerEntity &player,
                                   const glm::vec3 &render_position,
                                   Camera &out_camera);
   void refresh_overlay_text();
@@ -79,6 +87,8 @@ private:
   RuntimeGameSession game_session;
   EventBus event_bus_;
   PhysicsWorld physics;
+  FlightVehicle flight_vehicle_;
+  bool flight_vehicle_spawned_ = false;
   uint64_t collision_count_ = 0;
   uint32_t net_events_seen_ = 0;
   std::string last_net_status_;
@@ -93,16 +103,75 @@ private:
   PlayerAnimationRuntime local_player_animation;
 
   RenderScene scene;
-  FlatWorldStreamer flat_world_;
-  uint64_t flat_world_mesh_set_revision_ = 0;
-  bool debug_fly_mode_ = false;
+
+  // ── Block-based voxel planet (Bowerbyte architecture) ───────────────
+  // 6 sectors → shells (doubling resolution) → 16³ chunks → blocks.
+  // 3D noise on sphere for seamless terrain, gravity-aligned block
+  // meshing with cross-face neighbor culling via cube net.
+  BlockWorld block_world_;
+  PlanetLODSystem lod_system_;
+  std::vector<BlockAddress> loaded_chunks_;    // currently resident chunks
+  uint64_t block_mesh_revision_ = 0;
+  uint32_t chunk_generation_budget_ = 32;
+  uint32_t mesh_build_budget_ = 24;
+  uint64_t last_chunk_center_hash_ = 0;        // detect player movement
+
+  bool debug_fly_mode_ = false; // false = surface walking (gravity toward planet center, capsule collision with voxel terrain)
   bool touch_controls_visible_ = false;
   RenderStats render_stats;
   EngineSessionState session_state_{};
   EngineRuntimeOptions runtime_options{};
 
+  // ── Camera-relative rendering ────────────────────────────────────────
+  // Snap origin tracks the camera-relative float32 reference point.
+  // Mesh vertices are stored as offsets from this origin to preserve
+  // float32 sub-mm precision at 2000 km planet scale.  Updated when the
+  // camera moves >500 m from the current origin (forces mesh rebuild).
+  glm::dvec3 camera_snap_origin_{0.0};
+  bool snap_origin_dirty_ = true;       // force initial mesh build
+
+  // ── Wireframe debug overlay ─────────────────────────────────────────
+  // Same PlanetDefinition as terrain, coarser grid (64 cells/face = ~62 km/cell).
+  // Rendered as colored lines per face (red=+X, blue=-X, green=+Y, etc.).
+  // Generated once at init; GPU buffer cached by mesh_id in sokol renderer.
+  PlanetDefinition wireframe_planet_{};
+  RenderMesh wireframe_planet_mesh_{};
+  bool wireframe_planet_dirty_ = true;
+
   uint64_t frame_index = 0;
   uint64_t presentation_frame_events_seen_ = 0;
   double last_frame_dt = 0.0;
   std::string last_hud_message_;
+
+    // ── Solar system ──────────────────────────────────────────────────
+    // Manages Sun, Planet, Moon with Keplerian orbital mechanics.
+    // Updated each frame with elapsed simulation time.
+    SolarSystem solar_system_;
+    double solar_system_time_ = 0.0;  // accumulated simulation time (seconds)
+    size_t last_celestial_mesh_count_ = 0; // meshes appended to opaque_meshes
+
+    // ── Coordinate frame manager ──────────────────────────────────────
+    // Handles frame transitions: Planet ↔ Orbital ↔ Solar.
+    // WHY: maintains float64 precision at solar scales by using
+    // hierarchical coordinate frames with relative positions.
+    CoordinateFrameManager frame_manager_;
+    CoordinateFrame active_frame_ = CoordinateFrame::Planet;
+    int32_t active_body_index_ = 1;  // 0=sun, 1=planet, 2=moon
+    const char* active_frame_label_ = "Planet";
+    // Hysteresis for frame transitions: prevent rapid toggling.
+    double frame_transition_cooldown_ = 0.0;
+    static constexpr double k_frame_transition_hysteresis = 2.0; // seconds
+
+    // ── Atmosphere rendering (Rayleigh + Mie scattering) ───────────────
+    // Computes sky color on CPU each frame; fragment shader applies
+    // aerial perspective (transmittance) for terrain fragments.
+    AtmosphereRenderer atmosphere_;
+    AtmosphereState atmosphere_state_{};
+    bool atmosphere_enabled_ = true;
+
+    // ── Block interaction (first-person pick/break/place) ─────────────────
+  // Targeted block from camera center raycast.
+  glm::dvec3 targeted_hit_pos_ = glm::dvec3(0.0);
+  glm::vec3 targeted_face_normal_ = glm::vec3(0.0f);
+  std::optional<BlockAddress> targeted_addr_;
 };

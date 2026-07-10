@@ -2,6 +2,9 @@
 #include "platform/platform.hpp"
 #include "platform/platform_input_state.hpp"
 
+#include <cmath>
+#include <cstdlib>
+
 #include <glm/glm.hpp>
 
 DesktopInputBackend::DesktopInputBackend(DesktopPlatform &platform)
@@ -21,9 +24,12 @@ InputState DesktopInputBackend::poll() {
     InputState out{};
 
     const bool rmb_down = snap.mouse_down.test(1); // SAPP_MOUSEBUTTON_RIGHT
+    const bool lmb_down = snap.mouse_down.test(0); // SAPP_MOUSEBUTTON_LEFT
     const bool any_mouse_down = snap.mouse_down.any();
     const bool rmb_pressed = rmb_down && !prev_rmb_down;
+    const bool lmb_pressed = lmb_down && !prev_lmb_down;
     prev_rmb_down = rmb_down;
+    prev_lmb_down = lmb_down;
 
     if (rmb_pressed || any_mouse_down) {
         look_capture_enabled = true;
@@ -33,6 +39,8 @@ InputState DesktopInputBackend::poll() {
     set_pointer_lock(active_look_mode);
     out.look_mode = active_look_mode;
     out.rmb_down = rmb_down;
+    out.left_click_pressed = lmb_pressed;
+    out.right_click_pressed = rmb_pressed;
     out.pointer_locked = pointer_locked;
     out.look_enabled = active_look_mode;
 
@@ -53,6 +61,24 @@ InputState DesktopInputBackend::poll() {
 
     if (out.move.x != 0.0f || out.move.y != 0.0f) {
         out.move = glm::normalize(out.move);
+    }
+
+    // Headless capture sessions: orbit walk + look so screenshot tooling can
+    // inspect terrain without a human at the keyboard.
+    if (std::getenv("VOXOV_CAPTURE_DEMO") != nullptr) {
+        static uint32_t demo_frame = 0;
+        ++demo_frame;
+        const float t = static_cast<float>(demo_frame) * 0.016f;
+        // Gentle forward walk with slow yaw so screenshots catch loaded terrain.
+        out.move = glm::normalize(glm::vec2(
+            std::sin(t * 0.25f) * 0.2f + 0.55f,
+            0.35f));
+        out.look_delta.x = std::sin(t * 0.12f) * 1.5f;
+        // Small downward bias (positive look_delta.y lowers pitch).
+        out.look_delta.y = 0.6f;
+        out.look_mode = true;
+        out.look_enabled = true;
+        out.pointer_locked = true;
     }
 
     const bool space_down = k(PlatformKey::Space);
@@ -106,6 +132,14 @@ InputState DesktopInputBackend::poll() {
     const bool f5_down = k(PlatformKey::F5);
     out.debug_reconcile_toggle_pressed = f5_down && !prev_f5_down;
     prev_f5_down = f5_down;
+
+    const bool t_down = k(PlatformKey::T);
+    out.engine_toggle_pressed = t_down && !prev_t_down;
+    prev_t_down = t_down;
+
+    const bool f12_down = k(PlatformKey::F12);
+    out.screenshot_requested = f12_down && !prev_f12_down;
+    prev_f12_down = f12_down;
 
     out.sprint_held = k(PlatformKey::LeftShift);
     out.crouch_held = k(PlatformKey::C) || k(PlatformKey::LeftControl);

@@ -161,10 +161,15 @@ if(VOXOV_ENABLE_XR)
 endif()
 
 add_library(engine_world STATIC
+    src/engine_world/atmosphere.cpp
+    src/engine_world/coordinate_frames.cpp
     src/engine_world/planet.cpp
+    src/engine_world/planet_blocks.cpp
+    src/engine_world/planet_lod.cpp
+    src/engine_world/solar_system.cpp
     src/engine_world/voxel_chunk.cpp
     src/engine_world/world_gen.cpp
-    src/engine_world/flat_world_streamer.cpp
+    src/engine_world/wireframe_planet.cpp
     src/engine_world/physics/voxel_collision.cpp
 )
 target_include_directories(engine_world PUBLIC src)
@@ -190,6 +195,7 @@ target_include_directories(engine_render_sokol PUBLIC
     src
     ${VOXOV_SOKOL_DIR}
     ${VOXOV_SOKOL_UTIL_DIR}
+    ${CMAKE_SOURCE_DIR}/dependencies/stb
 )
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_compile_options(engine_render_sokol PRIVATE -fpermissive)
@@ -207,6 +213,7 @@ target_link_libraries(engine_render_core PRIVATE engine_render_sokol)
 # ── Remaining subsystems ───────────────────────────────────────────────
 add_library(engine_physics STATIC
     src/engine_physics/avbd_solver.cpp
+    src/engine_physics/flight_vehicle.cpp
     src/engine_physics/vehicle/aircraft_controller.cpp
     src/engine_physics/vehicle/vehicle_damage_model.cpp
     src/engine_physics/vehicle/vehicle_sandbox_scene.cpp

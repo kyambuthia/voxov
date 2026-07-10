@@ -4,9 +4,11 @@
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net_proto/net_protocol_helpers.hpp"
+#include "engine_runtime/runtime_game_session.hpp"
 #include "engine_net_proto/net_types.hpp"
 #include "engine_world/net_chunk_state.hpp"
 #include "engine_world/planet.hpp"
+#include "engine_world/planet_blocks.hpp"
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_physics/vehicle/aircraft_controller.hpp"
 #include "engine_physics/vehicle/ground_vehicle_controller.hpp"
@@ -16,7 +18,6 @@
 #include "engine_physics/vehicle/vehicle_sandbox_scene.hpp"
 #include "engine_physics/vehicle/voxel_vehicle_builder.hpp"
 #include "engine_physics/voxel/voxel_physics_bridge.hpp"
-#include "engine_world/flat_world_streamer.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
 #include "engine_world/world_gen.hpp"
@@ -290,6 +291,305 @@ void test_planet_neighbor_within_face_bounds() {
   const PlanetChunkId clamped = neighbor_chunk_id(id, -20, 30, 16);
   assert(clamped.x == 0);
   assert(clamped.y == 15);
+}
+
+void test_block_world_terrain_height_is_smooth_across_columns() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.planet.center = glm::dvec3(0.0);
+  cfg.surface_shells = 4;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  cfg.seed = 42;
+  BlockWorld world{};
+  world.init(cfg);
+
+  const int32_t shell = world.shell_count() - 1;
+  const int32_t res = world.shell_config(shell).horizontal_res;
+  int32_t max_step = 0;
+  for (int32_t z = 1; z < res - 1; ++z) {
+    for (int32_t x = 1; x < res - 1; ++x) {
+      const int32_t h = world.terrain_height_at_face_uv(
+          PlanetFace::PosX, x, z);
+      const int32_t hx = world.terrain_height_at_face_uv(
+          PlanetFace::PosX, x + 1, z);
+      const int32_t hz = world.terrain_height_at_face_uv(
+          PlanetFace::PosX, x, z + 1);
+      max_step = std::max(max_step, std::abs(hx - h));
+      max_step = std::max(max_step, std::abs(hz - h));
+    }
+  }
+  // HF direction noise produced single-block spikes; smooth UV FBM stays gradual.
+  // Pit fill allows one layer below neighbors, so steps can be 2 across a pit edge.
+  assert(max_step <= 4);
+}
+
+void test_block_world_stream_includes_all_vertical_rows() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.planet.center = glm::dvec3(0.0);
+  cfg.surface_shells = 4;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  BlockWorld world{};
+  world.init(cfg);
+
+  BlockAddress origin{};
+  origin.sector = PlanetFace::PosX;
+  origin.shell = world.shell_count() - 1;
+  origin.chunk = glm::ivec3(2, 1, 2);
+
+  std::vector<BlockAddress> stream{};
+  world.collect_stream_chunks(origin, origin.shell, 1, stream);
+
+  const int32_t vc =
+      (world.shell_config(origin.shell).vertical_layers + cfg.chunk_size - 1) /
+      cfg.chunk_size;
+  int32_t rows_seen = 0;
+  for (int32_t cy = 0; cy < vc; ++cy) {
+    bool has_row = false;
+    for (const BlockAddress &addr : stream) {
+      if (addr.sector == origin.sector && addr.chunk.y == cy) {
+        has_row = true;
+        break;
+      }
+    }
+    if (has_row) {
+      ++rows_seen;
+    }
+  }
+  assert(rows_seen == vc);
+}
+
+void test_block_world_streamed_surface_meshes_are_non_empty() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.planet.center = glm::dvec3(0.0);
+  cfg.surface_shells = 8;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  cfg.seed = k_voxov_flat_world_seed;
+  BlockWorld world{};
+  world.init(cfg);
+
+  const glm::dvec3 spawn_dir = glm::normalize(glm::dvec3(1.0, 0.0, 0.0));
+  const BlockAddress player = world.address_from_world(
+      glm::dvec3(spawn_dir * (cfg.planet.radius + 20.0)));
+  const int32_t shell = world.shell_count() - 1;
+
+  std::vector<BlockAddress> stream{};
+  world.collect_stream_chunks(player, shell, 3, stream);
+
+  for (const BlockAddress &addr : stream) {
+    world.get_or_generate_chunk(addr);
+  }
+
+  size_t empty_meshes = 0;
+  size_t surface_row_empty = 0;
+  const int32_t vc =
+      (world.shell_config(shell).vertical_layers + cfg.chunk_size - 1) /
+      cfg.chunk_size;
+  const int32_t top_row = vc - 1;
+
+  for (const BlockAddress &addr : stream) {
+    BlockAddress ck = addr;
+    ck.block = glm::ivec3(0);
+    const VoxelChunk *chunk = world.find_chunk(ck);
+    assert(chunk != nullptr);
+
+    auto solid_at = [&world, &ck, chunk](const BlockAddress &na) -> bool {
+      BlockAddress nk = na;
+      nk.block = glm::ivec3(0);
+      const VoxelChunk *nc =
+          (nk.sector == ck.sector && nk.shell == ck.shell && nk.chunk == ck.chunk)
+              ? chunk
+              : world.find_chunk(nk);
+      if (nc == nullptr) {
+        return false;
+      }
+      return nc->solid(na.block.x, na.block.y, na.block.z);
+    };
+
+    const RenderMesh mesh =
+        world.build_chunk_mesh(ck, *chunk, solid_at, glm::dvec3(0.0), 0);
+    if (mesh.vertices.empty()) {
+      ++empty_meshes;
+      if (ck.chunk.y == top_row) {
+        ++surface_row_empty;
+      }
+    }
+  }
+
+  assert(empty_meshes == 0);
+  assert(surface_row_empty == 0);
+}
+
+void test_player_spawn_on_planet_surface() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.planet.center = glm::dvec3(0.0);
+  cfg.surface_shells = 8;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  cfg.seed = 42;
+  BlockWorld world{};
+  world.init(cfg);
+
+  VoxelCollisionWorld collision{};
+  collision.set_planet_surface_collider(
+      glm::vec3(0.0f),
+      static_cast<float>(cfg.planet.radius),
+      static_cast<float>(world.max_surface_height_above_base()),
+      [&world](glm::vec3 direction) -> float {
+        return static_cast<float>(
+            world.surface_height_above_base(glm::dvec3(direction)));
+      });
+
+  const int32_t shell = world.shell_count() - 1;
+  const int32_t col = world.shell_config(shell).horizontal_res / 2;
+  PlayerEntity player = PlayerControllerSystem::spawn_on_planet_surface(
+      world, collision, PlanetFace::PosX, col, col, 2.0);
+  player.controller.capsuleRadius = 0.7f;
+
+  glm::vec3 surface_point(0.0f);
+  glm::vec3 up(0.0f, 1.0f, 0.0f);
+  assert(collision.planet_surface_point(
+      player.transform.position, surface_point, up));
+  const float height_above =
+      glm::dot(player.transform.position - surface_point, up);
+  assert(height_above > 0.5f);
+  assert(height_above < 4.0f);
+}
+
+void test_player_moves_on_planet_surface() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.planet.center = glm::dvec3(0.0);
+  cfg.surface_shells = 8;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  cfg.seed = 42;
+  BlockWorld world{};
+  world.init(cfg);
+
+  VoxelCollisionWorld collision{};
+  collision.set_planet_surface_collider(
+      glm::vec3(0.0f),
+      static_cast<float>(cfg.planet.radius),
+      static_cast<float>(world.max_surface_height_above_base()),
+      [&world](glm::vec3 direction) -> float {
+        return static_cast<float>(
+            world.surface_height_above_base(glm::dvec3(direction)));
+      });
+
+  const int32_t shell = world.shell_count() - 1;
+  const int32_t col = world.shell_config(shell).horizontal_res / 2;
+  PlayerEntity player = PlayerControllerSystem::spawn_on_planet_surface(
+      world, collision, PlanetFace::PosX, col, col, 2.0);
+  player.controller.capsuleRadius = 0.7f;
+  player.controller.capsuleHeight = 1.8f;
+  player.controller.grounded = true;
+
+  InputState input{};
+  input.move = glm::vec2(0.0f, 1.0f);
+
+  const glm::vec3 start = player.transform.position;
+  const glm::vec3 up = collision.planet_up_at(start);
+  for (int i = 0; i < 90; ++i) {
+    PlayerControllerSystem::simulate_fixed(
+        player, input, collision, 1.0f / 60.0f, false);
+  }
+
+  const glm::vec3 delta = player.transform.position - start;
+  const float tangential =
+      glm::length(delta - up * glm::dot(delta, up));
+  assert(tangential > 0.5f);
+}
+
+void test_block_world_cross_sector_chunk_offset() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.planet.center = glm::dvec3(0.0);
+  cfg.surface_shells = 4;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  BlockWorld world{};
+  world.init(cfg);
+
+  BlockAddress origin{};
+  origin.sector = PlanetFace::PosX;
+  origin.shell = world.shell_count() - 1;
+  const int32_t hc =
+      world.shell_config(origin.shell).horizontal_res / cfg.chunk_size;
+  origin.chunk = glm::ivec3(hc - 1, 1, 2);
+
+  BlockAddress crossed{};
+  assert(world.offset_chunk_address(origin, 1, 0, 0, crossed));
+  assert(crossed.sector != origin.sector);
+  assert(crossed.chunk.y == origin.chunk.y);
+
+  std::vector<BlockAddress> stream{};
+  world.collect_stream_chunks(origin, origin.shell, 1, stream);
+  bool has_other_sector = false;
+  for (const BlockAddress &addr : stream) {
+    if (addr.sector != origin.sector) {
+      has_other_sector = true;
+      break;
+    }
+  }
+  assert(has_other_sector);
+}
+
+void test_cube_edge_pairings_preserve_direction() {
+  const auto edge_uv = [](CubeEdge edge, double along) {
+    switch (edge) {
+    case CubeEdge::Left:   return glm::dvec2(-1.0, along);
+    case CubeEdge::Right:  return glm::dvec2(1.0, along);
+    case CubeEdge::Top:    return glm::dvec2(along, 1.0);
+    case CubeEdge::Bottom: return glm::dvec2(along, -1.0);
+    }
+    return glm::dvec2(0.0);
+  };
+
+  for (const CubeEdgePairing &pairing : BlockWorld::all_edge_pairings()) {
+    for (const double along : {-0.63, 0.27}) {
+      const glm::dvec2 source_uv = edge_uv(pairing.from_edge, along);
+      double dest_u = pairing.swap_uv ? source_uv.y : source_uv.x;
+      double dest_v = pairing.swap_uv ? source_uv.x : source_uv.y;
+      if (pairing.flip_u) dest_u = -dest_u;
+      if (pairing.flip_v) dest_v = -dest_v;
+
+      const glm::dvec3 source = face_uv_to_direction(
+          pairing.from_face, source_uv.x, source_uv.y);
+      const glm::dvec3 dest = face_uv_to_direction(
+          pairing.to_face, dest_u, dest_v);
+      assert(glm::length(source - dest) < 1.0e-9);
+    }
+  }
+}
+
+void test_surface_height_matches_quantized_surface_block() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.surface_shells = 8;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  cfg.seed = 42;
+  BlockWorld world{};
+  world.init(cfg);
+
+  const glm::dvec3 direction = glm::normalize(glm::dvec3(1.0, 0.31, -0.22));
+  const int32_t layer = world.terrain_height_at(direction);
+  const ShellConfig &surface = world.shell_config(world.shell_count() - 1);
+  const double shell_layer_size =
+      (surface.outer_radius - surface.inner_radius) /
+      static_cast<double>(surface.vertical_layers);
+  const double height = world.surface_height_above_base(direction);
+  const double lower = static_cast<double>(layer) * shell_layer_size;
+  const double upper = static_cast<double>(layer + 1) * shell_layer_size;
+  assert(height >= lower);
+  assert(height <= upper);
+  assert(height <= world.max_surface_height_above_base());
 }
 
 void test_planet_quadtree_roots_are_stable() {
@@ -981,44 +1281,6 @@ void test_heightmap_generation_samples_continuously_across_chunk_edges() {
   }
 }
 
-void test_flat_world_streamer_populates_radius_once() {
-  FlatWorldStreamer streamer;
-  streamer.init(k_voxov_flat_world_seed,
-                FlatStreamerConfig{
-                    .generation_budget_per_update = 9,
-                    .view_radius_chunks = 1,
-                });
-
-  const glm::vec3 player_position(32.0f, 12.0f, 32.0f);
-  streamer.update(player_position);
-  assert(streamer.streamed_chunk_count() == 9);
-  assert(streamer.render_meshes().size() == 9);
-
-  const uint64_t loaded_revision = streamer.mesh_set_revision();
-  assert(loaded_revision > 0);
-  streamer.update(player_position);
-  assert(streamer.streamed_chunk_count() == 9);
-  assert(streamer.mesh_set_revision() == loaded_revision);
-}
-
-void test_flat_world_streamer_keeps_overlap_when_budget_is_spent() {
-  FlatWorldStreamer streamer;
-  streamer.init(k_voxov_flat_world_seed,
-                FlatStreamerConfig{
-                    .generation_budget_per_update = 1,
-                    .view_radius_chunks = 1,
-                });
-
-  const glm::vec3 starting_position(32.0f, 12.0f, 32.0f);
-  for (int i = 0; i < 9; ++i) {
-    streamer.update(starting_position);
-  }
-  assert(streamer.streamed_chunk_count() == 9);
-
-  streamer.update(glm::vec3(96.0f, 12.0f, 32.0f));
-  assert(streamer.streamed_chunk_count() == 7);
-}
-
 void test_chunk_spherical_planet_generation() {
   VoxelChunk chunk;
   chunk.generate_spherical_planet_seeded(0xBEEF1234u);
@@ -1055,48 +1317,18 @@ void test_voxel_material_custom_values_affect_mesh_colors() {
   const RenderMesh mesh = chunk.build_greedy_mesh();
 
   assert(!mesh.vertices.empty());
+  // Stone at y=0 (height_t=0): (0.44, 0.46, 0.48) after terrain color contrast fix.
+  // The block sits at the bottom of the chunk (y=0) so height_t ≈ 0.
   bool found_stone_tint = false;
   for (const RenderVertex &vertex : mesh.vertices) {
-    if (std::fabs(vertex.color.r - 0.46f) < 0.001f &&
-        std::fabs(vertex.color.g - 0.48f) < 0.001f &&
-        std::fabs(vertex.color.b - 0.5f) < 0.001f) {
+    if (std::fabs(vertex.color.r - 0.44f) < 0.001f &&
+        std::fabs(vertex.color.g - 0.46f) < 0.001f &&
+        std::fabs(vertex.color.b - 0.48f) < 0.001f) {
       found_stone_tint = true;
       break;
     }
   }
   assert(found_stone_tint);
-}
-
-void test_locomotion_course_only_affects_origin_chunk() {
-  VoxelChunk origin_base;
-  VoxelChunk origin_course;
-  VoxelChunk adjacent_base;
-  VoxelChunk adjacent_course;
-
-  origin_base.generate_heightmap_terrain_seeded(k_voxov_flat_world_seed, 0, 0);
-  generate_flat_world_locomotion_chunk(origin_course, k_voxov_flat_world_seed,
-                                       0, 0);
-  adjacent_base.generate_heightmap_terrain_seeded(k_voxov_flat_world_seed, 1,
-                                                  0);
-  generate_flat_world_locomotion_chunk(adjacent_course, k_voxov_flat_world_seed,
-                                       1, 0);
-
-  int origin_diff = 0;
-  int adjacent_diff = 0;
-  for (int z = 0; z < VoxelChunk::CHUNK_Z; ++z) {
-    for (int y = 0; y < VoxelChunk::CHUNK_Y; ++y) {
-      for (int x = 0; x < VoxelChunk::CHUNK_X; ++x) {
-        origin_diff +=
-            origin_base.solid(x, y, z) != origin_course.solid(x, y, z) ? 1 : 0;
-        adjacent_diff +=
-            adjacent_base.solid(x, y, z) != adjacent_course.solid(x, y, z) ? 1
-                                                                           : 0;
-      }
-    }
-  }
-
-  assert(origin_diff > 0);
-  assert(adjacent_diff == 0);
 }
 
 void test_camera_yaw_response() {
@@ -1522,6 +1754,21 @@ void test_android_platform_state() {
   assert(!platform.active());
 }
 
+void test_runtime_session_clamps_large_frame_spike() {
+  // After a 10-second frame spike, the 250ms clamp should produce
+  // at most ceil(0.25 / (1/60)) == 15 fixed steps (was 600 before clamp).
+  RuntimeGameSession session;
+  session.reset(1.0 / 60.0);
+  uint32_t steps = 0;
+  RuntimeGameSessionCallbacks cb;
+  cb.simulate_step = [&](const RuntimeGameSessionStepContext &) { ++steps; };
+  session.advance(10.0, cb);
+  assert(steps <= 15);
+  assert(steps > 0);
+  // Accumulator should be drained below one fixed_dt
+  assert(session.fixed_step().accumulator < session.fixed_step().fixed_dt);
+}
+
 void test_vehicle_foundation_fixed_step_counter() {
   FixedStepCounter counter(1.0 / 60.0);
   const uint32_t s0 = counter.consume(1.0 / 30.0);
@@ -1865,6 +2112,14 @@ int main() {
   test_planet_local_face_world_roundtrip_and_distortion();
   test_planet_tangent_basis_orthonormal();
   test_planet_neighbor_within_face_bounds();
+  test_block_world_terrain_height_is_smooth_across_columns();
+  test_block_world_stream_includes_all_vertical_rows();
+  test_block_world_streamed_surface_meshes_are_non_empty();
+  test_player_spawn_on_planet_surface();
+  test_player_moves_on_planet_surface();
+  test_block_world_cross_sector_chunk_offset();
+  test_cube_edge_pairings_preserve_direction();
+  test_surface_height_matches_quantized_surface_block();
   test_planet_quadtree_roots_are_stable();
   test_planet_quadtree_subdivision_child_ids();
   test_planet_terrain_root_chunk_covers_face();
@@ -1883,12 +2138,9 @@ int main() {
   test_chunk_seed_determinism();
   test_world_generator_hills_and_valleys_are_deterministic_and_bounded();
   test_heightmap_generation_samples_continuously_across_chunk_edges();
-  test_flat_world_streamer_populates_radius_once();
-  test_flat_world_streamer_keeps_overlap_when_budget_is_spent();
   test_chunk_spherical_planet_generation();
   test_voxel_material_surface_assignment();
   test_voxel_material_custom_values_affect_mesh_colors();
-  test_locomotion_course_only_affects_origin_chunk();
   test_camera_yaw_response();
   test_strafe_axis_sign();
   test_player_settles_on_ground();
@@ -1906,6 +2158,7 @@ int main() {
   test_minigame_tictactoe_places_marks();
   test_web_platform_state();
   test_android_platform_state();
+  test_runtime_session_clamps_large_frame_spike();
   test_vehicle_foundation_fixed_step_counter();
   test_vehicle_kinematic_determinism();
   test_aircraft_kinematic_determinism();

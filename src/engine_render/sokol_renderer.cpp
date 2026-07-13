@@ -9,7 +9,14 @@
 #include "sokol_log.h"
 
 #define STB_IMAGE_WRITE_IMPLEMENTATION
+#if defined(__GNUC__)
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wmissing-field-initializers"
+#endif
 #include "stb_image_write.h"
+#if defined(__GNUC__)
+#pragma GCC diagnostic pop
+#endif
 
 #if defined(SOKOL_GLCORE)
 #include <GL/gl.h>
@@ -1145,6 +1152,12 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
 
 bool SokolRenderer::capture_screenshot(const char *filepath,
                                        int width, int height) {
+#if !defined(SOKOL_GLCORE) && !defined(SOKOL_GLES3)
+    (void)filepath;
+    (void)width;
+    (void)height;
+    return false;
+#else
     if (width <= 0 || height <= 0) return false;
 
     // Allocate buffer for RGBA pixels
@@ -1171,4 +1184,5 @@ bool SokolRenderer::capture_screenshot(const char *filepath,
                                       flipped.data(),
                                       static_cast<int>(row_bytes));
     return result != 0;
+#endif
 }

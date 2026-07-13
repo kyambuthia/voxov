@@ -465,7 +465,7 @@ bool lod_aabb_in_frustum_double(const DoubleFrustum &frustum,
 }
 
 // Keep original float versions for backward compat (unused at planet scale).
-Frustum lod_extract_frustum(const glm::mat4 &vp) {
+[[maybe_unused]] Frustum lod_extract_frustum(const glm::mat4 &vp) {
   auto row = [&](int i) {
     return glm::vec4(vp[0][i], vp[1][i], vp[2][i], vp[3][i]);
   };
@@ -492,8 +492,9 @@ Frustum lod_extract_frustum(const glm::mat4 &vp) {
   return frustum;
 }
 
-bool lod_aabb_in_frustum(const Frustum &frustum, const glm::vec3 &bmin,
-                         const glm::vec3 &bmax) {
+[[maybe_unused]] bool lod_aabb_in_frustum(const Frustum &frustum,
+                                          const glm::vec3 &bmin,
+                                          const glm::vec3 &bmax) {
   for (const glm::vec4 &plane : frustum.planes) {
     const glm::vec3 positive_vertex(plane.x >= 0.0f ? bmax.x : bmin.x,
                                     plane.y >= 0.0f ? bmax.y : bmin.y,

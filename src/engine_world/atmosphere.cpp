@@ -145,7 +145,6 @@ AtmosphereState AtmosphereRenderer::compute_sky_color(
     const int light_samples = params_.light_ray_samples;
     const double segment_length = (t_max - t_min) / static_cast<double>(view_samples);
     const double R_planet = params_.planet_radius;
-    const double R_atm = params_.planet_radius + params_.atmosphere_height;
 
     // Accumulated optical depth along the view ray (from origin to current sample).
     glm::dvec3 optical_depth_r(0.0);

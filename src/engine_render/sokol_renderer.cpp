@@ -704,6 +704,7 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
     }
     dst.bounds_min = bmin;
     dst.bounds_max = bmax;
+    dst.world_origin = src.world_origin;
     dst.material = src.material;
     dst.content_hash = src.content_hash;
     dst.index_type =
@@ -821,7 +822,16 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
     };
     const sg_range vs_range = SG_RANGE(vs_params);
     const sg_range fs_range = SG_RANGE(fs_params);
-    const sg_range atm_range = SG_RANGE(atm_uniforms_);
+    atm_params_t mesh_atmosphere = atm_uniforms_;
+    // Atmosphere positions live in the same local frame as this retained
+    // mesh. planet_center_radius arrives relative to the current camera
+    // origin, so translate it into the mesh's independently retained origin.
+    const glm::dvec3 planet_center_world =
+        glm::dvec3(atm_uniforms_.planet_center_radius);
+    mesh_atmosphere.planet_center_radius = glm::vec4(
+        glm::vec3(planet_center_world - mesh.world_origin),
+        atm_uniforms_.planet_center_radius.w);
+    const sg_range atm_range = SG_RANGE(mesh_atmosphere);
     sg_apply_uniforms(0, &vs_range);
     sg_apply_uniforms(1, &fs_range);
     sg_apply_uniforms(2, &atm_range);
@@ -893,10 +903,21 @@ void SokolRenderer::upload_scene(const RenderScene &new_scene) {
 
     // Build transient mesh from meshes with mesh_id == 0.
     RenderMesh transient_scene{};
+    bool transient_origin_set = false;
     auto append_mesh = [&](const RenderMesh &mesh) {
+        if (!transient_origin_set) {
+            transient_scene.world_origin = mesh.world_origin;
+            transient_origin_set = true;
+        }
         const uint32_t base = static_cast<uint32_t>(transient_scene.vertices.size());
-        transient_scene.vertices.insert(transient_scene.vertices.end(),
-                                        mesh.vertices.begin(), mesh.vertices.end());
+        const glm::dvec3 origin_delta =
+            mesh.world_origin - transient_scene.world_origin;
+        for (const RenderVertex &vertex : mesh.vertices) {
+            RenderVertex converted = vertex;
+            converted.position = glm::vec3(
+                glm::dvec3(vertex.position) + origin_delta);
+            transient_scene.vertices.push_back(converted);
+        }
         if (mesh.use_16_bit_indices) {
             for (uint16_t idx : mesh.indices16) {
                 transient_scene.indices.push_back(base + idx);
@@ -925,6 +946,7 @@ void SokolRenderer::upload_scene(const RenderScene &new_scene) {
                     mesh.vertices.size() * sizeof(SokolRenderVertex) &&
                 mesh.content_hash != 0 &&
                 it->second.content_hash == mesh.content_hash) {
+                it->second.world_origin = mesh.world_origin;
                 continue;
             }
             destroy_mesh(it->second);
@@ -1001,7 +1023,12 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
     uint32_t draw_calls = 0;
 
     // ── Copy atmosphere uniforms from frame context ───────────────────
-    atm_uniforms_.planet_center_radius = ctx.atmosphere.planet_center_radius;
+    // Retained meshes can have different local origins. Keep the atmosphere
+    // centre absolute here and translate it into each mesh frame at draw time.
+    atm_uniforms_.planet_center_radius = glm::vec4(
+        glm::vec3(ctx.camera_origin.world_origin) +
+            glm::vec3(ctx.atmosphere.planet_center_radius),
+        ctx.atmosphere.planet_center_radius.w);
     atm_uniforms_.atm_params_1 = ctx.atmosphere.atm_params_1;
     atm_uniforms_.rayleigh_scatter = ctx.atmosphere.rayleigh_scatter;
     atm_uniforms_.mie_scatter = ctx.atmosphere.mie_scatter;
@@ -1042,16 +1069,16 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         const glm::mat4 vp = p * view.camera.view();
         const glm::mat4 model = glm::mat4(1.0f);
         const glm::vec3 camera_pos = view.camera.transform.position;
-        const glm::dvec3 camera_origin = ctx.camera_origin.world_origin;
-
-        // Camera-relative adjustment for planet voxel meshes.
-        // WHY: build_chunk_mesh emits verts as (world - snap_origin) for
-        // float32 sub-mm precision at 1000 km planetary scale. The incoming
-        // vp + frustum come from the world-space camera. We use rel_vp =
-        // vp * translate(+origin) so the shader's mvp * v_rel lands at the
-        // correct surface location. Wireframe/debug stay on raw vp (absolute).
-        const glm::mat4 origin_t = glm::translate(glm::mat4(1.0f), glm::vec3(camera_origin));
-        const glm::mat4 rel_vp = vp * origin_t;
+        auto mesh_vp = [&](const SokolGpuMesh &mesh) {
+            if (view.camera.has_view_override()) {
+                return vp * glm::translate(
+                    glm::mat4(1.0f), glm::vec3(mesh.world_origin));
+            }
+            Camera relative_camera = view.camera;
+            relative_camera.transform.position = glm::vec3(
+                glm::dvec3(camera_pos) - mesh.world_origin);
+            return p * relative_camera.view();
+        };
 
         // ── Draw call counting ──────────────────────────────────────────
         // WHY: count every sg_draw issued per frame for the dev HUD
@@ -1064,22 +1091,23 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
 
         // Opaque geometry (planet block meshes are relative to camera_origin)
         record_draw(transient_mesh_);
-        draw_mesh(transient_mesh_, rel_vp, model, camera_pos,
-                  camera_origin,
+        const glm::mat4 transient_vp = mesh_vp(transient_mesh_);
+        draw_mesh(transient_mesh_, transient_vp, model, camera_pos,
+                  transient_mesh_.world_origin,
                   pipelines_.opaque, pipelines_.opaque_u16);
 
-        // Mesh bounds and rel_vp share the same camera-relative frame. Testing
-        // in that frame avoids million-meter float cancellation and prevents
-        // off-screen resident chunks from consuming mobile draw bandwidth.
-        const Frustum relative_frustum = extract_frustum(rel_vp);
+        // Each retained mesh carries its own double-precision origin, so a
+        // camera rebase changes only the draw transform, never its GPU data.
         for (const auto &[id, mesh] : cached_meshes_) {
-            if (!aabb_in_frustum(relative_frustum, mesh.bounds_min,
+            const glm::mat4 retained_vp = mesh_vp(mesh);
+            const Frustum retained_frustum = extract_frustum(retained_vp);
+            if (!aabb_in_frustum(retained_frustum, mesh.bounds_min,
                                  mesh.bounds_max)) {
                 continue;
             }
             record_draw(mesh);
-            draw_mesh(mesh, rel_vp, model, camera_pos,
-                      camera_origin,
+            draw_mesh(mesh, retained_vp, model, camera_pos,
+                      mesh.world_origin,
                       pipelines_.opaque, pipelines_.opaque_u16);
         }
 
@@ -1092,7 +1120,7 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         // Debug world (x-ray or normal)
         record_draw(debug_world_mesh_);
         draw_mesh(debug_world_mesh_, vp, model, camera_pos,
-                  camera_origin,
+                  debug_world_mesh_.world_origin,
                   ctx.debug_xray ? pipelines_.debug_xray : pipelines_.opaque,
                   ctx.debug_xray ? pipelines_.debug_xray_u16
                                  : pipelines_.opaque_u16);

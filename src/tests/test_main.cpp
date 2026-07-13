@@ -953,6 +953,7 @@ void test_planet_flight_clipmap_is_camera_relative_and_textured() {
   assert(!mesh.vertices.empty());
   assert(!mesh.indices.empty());
   assert(mesh.content_hash != 0);
+  assert(glm::distance(mesh.world_origin, camera_origin) < 0.001);
 
   glm::vec3 bounds_min(std::numeric_limits<float>::max());
   glm::vec3 bounds_max(-std::numeric_limits<float>::max());

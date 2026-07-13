@@ -25,6 +25,7 @@
 
 #include <string>
 #include <optional>
+#include <future>
 
 struct EngineRuntimeOptions {
   PhysicsSolverBackend physics_backend = PhysicsSolverBackend::AvbdExperimental;
@@ -81,6 +82,9 @@ private:
                                   const glm::vec3 &render_position,
                                   Camera &out_camera);
   void rebuild_planet_impostor();
+  void update_flight_clipmap(const glm::dvec3 &camera_position,
+                             const glm::dvec3 &camera_velocity,
+                             double camera_altitude);
   void refresh_overlay_text();
 
   Renderer renderer;
@@ -141,6 +145,12 @@ private:
   // orbital silhouette, this retains block textures and stepped relief while
   // moving quickly above the editable chunk radius.
   RenderMesh flight_clipmap_mesh_{};
+  std::future<RenderMesh> flight_clipmap_future_{};
+  bool flight_clipmap_build_pending_ = false;
+  glm::dvec3 flight_clipmap_anchor_direction_{0.0};
+  glm::dvec3 pending_flight_clipmap_direction_{0.0};
+  double flight_clipmap_anchor_altitude_ = -1.0;
+  double pending_flight_clipmap_altitude_ = -1.0;
 
   // ── Wireframe debug overlay ─────────────────────────────────────────
   // Same PlanetDefinition as terrain, coarser grid (64 cells/face = ~62 km/cell).

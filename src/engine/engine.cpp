@@ -16,6 +16,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <limits>
 #include <string>
 #include <unordered_set>
 
@@ -24,9 +25,9 @@ using PerfClock = std::chrono::steady_clock;
 
 constexpr double kPlayablePlanetRadiusMeters = 2'000'000.0;
 constexpr double kTerrainFeatureSizeMeters = 128.0;
-constexpr double kLocalTerrainMaxAltitudeMeters = 512.0;
-constexpr double kFlightTerrainMinAltitudeMeters = 96.0;
-constexpr double kFlightTerrainMaxAltitudeMeters = 250'000.0;
+constexpr double kLocalTerrainMaxAltitudeMeters = 768.0;
+constexpr double kFlightTerrainMinAltitudeMeters = 64.0;
+constexpr double kFlightTerrainMaxAltitudeMeters = 400'000.0;
 constexpr uint64_t kPlanetImpostorMeshId = 0x504c414e45544c4full; // "PLANETLO"
 constexpr uint64_t kFlightVoxelLodMeshId = 0x464c59434c49504dull; // "FLYCLIPM"
 #if defined(VOXOV_PLATFORM_ANDROID) || defined(VOXOV_PLATFORM_WEB)
@@ -333,7 +334,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
       local_player.transform.position = glm::vec3(
           planet_def.center + observation_direction *
                                   (planet_def.radius + 600.0));
-      local_player.camera_rig.pitch = -22.0f;
+      local_player.camera_rig.pitch = 0.0f;
       local_player_prev_position = local_player.transform.position;
       debug_fly_mode_ = true;
     }
@@ -449,6 +450,11 @@ EngineConnectResult Engine::connect(const char *host, uint16_t port) {
 }
 
 void Engine::shutdown() {
+  if (flight_clipmap_future_.valid()) {
+    flight_clipmap_future_.wait();
+    flight_clipmap_future_.get();
+  }
+  flight_clipmap_build_pending_ = false;
   renderer.shutdown();
   physics.shutdown();
 }
@@ -648,13 +654,27 @@ void Engine::tick(double frame_dt,
       0.0, glm::length(glm::dvec3(camera.transform.position) -
                        block_world_.planet().center) -
                block_world_.planet().radius);
-  camera.z_near = camera_altitude > 10'000.0
-                      ? static_cast<float>(std::clamp(
-                            camera_altitude / 100'000.0, 2.0, 100.0))
-                      : 0.25f;
-  camera.z_far = static_cast<float>(std::max(
+  const float target_near = camera_altitude > 10'000.0
+                                ? static_cast<float>(std::clamp(
+                                      camera_altitude / 100'000.0,
+                                      2.0, 100.0))
+                                : 0.25f;
+  const float target_far = static_cast<float>(std::max(
       512.0, std::min(block_world_.planet().radius * 12.0,
                       (block_world_.planet().radius + camera_altitude) * 4.0)));
+  const float camera_ease = 1.0f - std::exp(
+      -6.0f * static_cast<float>(std::clamp(frame_dt, 0.0, 0.1)));
+  camera.z_near = glm::mix(camera.z_near, target_near, camera_ease);
+  camera.z_far = target_far > camera.z_far
+                     ? target_far
+                     : glm::mix(camera.z_far, target_far, camera_ease);
+  const float flight_speed = glm::length(local_player.controller.velocity);
+  const float speed_fov = debug_fly_mode_
+                              ? std::clamp(flight_speed / 5'000.0f,
+                                           0.0f, 1.0f) * 12.0f
+                              : 0.0f;
+  camera.fov_y_radians = glm::mix(
+      camera.fov_y_radians, glm::radians(70.0f + speed_fov), camera_ease);
 
   // ── Block interaction (raycast pick, break/place) ─────────────────────
   // Raycast from camera center forward to find targeted block.
@@ -768,30 +788,14 @@ void Engine::tick(double frame_dt,
     }
   }
   // ── Camera-relative rendering origin ─────────────────────────────────
-  // Snap origin follows the camera with an altitude-scaled threshold. When it
-  // changes, camera-relative terrain representations are rebuilt.
+  // Every retained mesh owns the double-precision origin used to build its
+  // float vertices. The camera can therefore rebase every frame without
+  // invalidating chunks or causing a visible streaming reset.
   {
     const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
-    const double drift = glm::distance(cam_pos, camera_snap_origin_);
-    const double snap_distance = std::clamp(
-        camera_altitude * 0.20, 100.0, 50'000.0);
-    const bool flight_clipmap_needed =
-        camera_altitude >= kFlightTerrainMinAltitudeMeters &&
-        camera_altitude <= kFlightTerrainMaxAltitudeMeters;
-    if (drift > snap_distance ||
-        (flight_clipmap_needed && flight_clipmap_mesh_.vertices.empty())) {
-      camera_snap_origin_ = cam_pos;
-      snap_origin_dirty_ = true;
-      rebuild_planet_impostor();
-      if (flight_clipmap_needed) {
-        flight_clipmap_mesh_ = build_planet_flight_clipmap(
-            block_world_, cam_pos - block_world_.planet().center,
-            camera_altitude, camera_snap_origin_);
-        flight_clipmap_mesh_.mesh_id = kFlightVoxelLodMeshId;
-      } else {
-        flight_clipmap_mesh_ = RenderMesh{};
-      }
-    }
+    camera_snap_origin_ = cam_pos;
+    update_flight_clipmap(
+        cam_pos, glm::dvec3(local_player.controller.velocity), camera_altitude);
   }
   // Camera origin must be the snap origin so the GPU shader can compute
   // correct camera-relative positions for lighting.
@@ -864,7 +868,14 @@ void Engine::tick(double frame_dt,
   // terrain top (Grass) in the outer thin shell is meshed (not just deep stone).
   double chunk_gen_ms = 0.0;
   double mesh_build_ms = 0.0;
-  if (camera_altitude <= kLocalTerrainMaxAltitudeMeters) {
+  const double player_flight_speed =
+      glm::length(glm::dvec3(local_player.controller.velocity));
+  const bool detailed_terrain_needed =
+      camera_altitude <= kLocalTerrainMaxAltitudeMeters &&
+      (!debug_fly_mode_ || camera_altitude < 128.0 ||
+       player_flight_speed < 240.0 ||
+       flight_clipmap_mesh_.vertices.empty());
+  if (detailed_terrain_needed) {
     const glm::dvec3 player_offset =
         glm::dvec3(local_player.transform.position) - block_world_.planet().center;
     const glm::dvec3 surface_direction = glm::dot(player_offset, player_offset) > 1.0e-9
@@ -887,13 +898,63 @@ void Engine::tick(double frame_dt,
         (static_cast<uint64_t>(static_cast<uint8_t>(player_addr.sector)) << 48);
     const bool player_moved = (center_hash != last_chunk_center_hash_);
 
-    // Collect desired chunks for the surface shell, including adjacent
-    // cube-face sectors when near a sector edge (fixes black seam gaps).
+    // Predict ahead along the actual flight velocity. Detailed chunks are
+    // requested around both the player and the future position, while a wider
+    // guard band retains the old neighborhood until it is safely behind us.
+    const glm::dvec3 player_velocity(local_player.controller.velocity);
+    const double stream_speed = glm::length(player_velocity);
+    const double lookahead_seconds = std::clamp(
+        0.35 + stream_speed / 2'000.0, 0.35, 1.0);
+    glm::dvec3 lookahead = player_velocity * lookahead_seconds;
+    const double max_lookahead = 128.0;
+    const double lookahead_distance = glm::length(lookahead);
+    if (lookahead_distance > max_lookahead) {
+      lookahead *= max_lookahead / lookahead_distance;
+    }
+    const glm::dvec3 predicted_offset = player_offset + lookahead;
+    const glm::dvec3 predicted_direction =
+        glm::dot(predicted_offset, predicted_offset) > 1.0e-9
+            ? glm::normalize(predicted_offset)
+            : surface_direction;
+    const glm::dvec3 predicted_anchor =
+        block_world_.planet().center +
+        predicted_direction *
+            block_world_.surface_radial_distance(predicted_direction);
+    const BlockAddress predicted_addr =
+        block_world_.address_from_world(predicted_anchor);
+
+    auto append_unique_chunks = [](
+        std::vector<BlockAddress> &destination,
+        const std::vector<BlockAddress> &source) {
+      std::unordered_set<BlockAddress, BlockAddressHash> known(
+          destination.begin(), destination.end());
+      for (const BlockAddress &address : source) {
+        if (known.insert(address).second) {
+          destination.push_back(address);
+        }
+      }
+    };
+
+    // Collect desired chunks for the current and predicted surface positions,
+    // including adjacent cube faces near sector edges.
     std::vector<BlockAddress> desired;
     block_world_.collect_stream_chunks(player_addr, surface_shell,
                                        chunk_radius, desired);
+    std::vector<BlockAddress> predicted_desired;
+    block_world_.collect_stream_chunks(predicted_addr, surface_shell,
+                                       chunk_radius, predicted_desired);
+    append_unique_chunks(desired, predicted_desired);
+
+    std::vector<BlockAddress> resident;
+    block_world_.collect_stream_chunks(player_addr, surface_shell,
+                                       chunk_radius + 2, resident);
+    std::vector<BlockAddress> predicted_resident;
+    block_world_.collect_stream_chunks(predicted_addr, surface_shell,
+                                       chunk_radius + 2,
+                                       predicted_resident);
+    append_unique_chunks(resident, predicted_resident);
     if (player_moved) {
-      block_world_.evict_chunks_except(desired);
+      block_world_.evict_chunks_except(resident);
     }
 
     // Generate missing chunks nearest-first with a per-frame budget (Craft-style
@@ -902,8 +963,10 @@ void Engine::tick(double frame_dt,
     auto chunk_dist_sq = [&](const BlockAddress &addr) -> double {
       const glm::dvec3 center =
           block_world_.world_from_address(chunk_address_key(addr));
-      const glm::dvec3 d = center - stream_anchor;
-      return glm::dot(d, d);
+      const glm::dvec3 current_delta = center - stream_anchor;
+      const glm::dvec3 predicted_delta = center - predicted_anchor;
+      return std::min(glm::dot(current_delta, current_delta) * 0.75,
+                      glm::dot(predicted_delta, predicted_delta));
     };
 
     std::vector<BlockAddress> missing_chunks;
@@ -921,9 +984,12 @@ void Engine::tick(double frame_dt,
 
     std::vector<BlockAddress> new_chunks;
     new_chunks.reserve(missing_chunks.size());
+    const uint32_t active_generation_budget = std::min<uint32_t>(
+        12u, chunk_generation_budget_ +
+                 static_cast<uint32_t>(stream_speed / 160.0));
     uint32_t gen_count = 0;
     for (const BlockAddress &addr : missing_chunks) {
-      if (gen_count >= chunk_generation_budget_) {
+      if (gen_count >= active_generation_budget) {
         break;
       }
       block_world_.get_or_generate_chunk(addr);
@@ -1047,14 +1113,19 @@ void Engine::tick(double frame_dt,
                   return a.dist_sq < b.dist_sq;
                 });
 
-      std::unordered_set<uint64_t> desired_ids;
+      std::unordered_set<uint64_t> resident_ids;
+      for (const BlockAddress &addr : resident) {
+        const BlockAddress ck = chunk_address_key(addr);
+        if (block_world_.find_chunk(ck) != nullptr) {
+          resident_ids.insert(BlockWorld::chunk_mesh_id(ck));
+        }
+      }
       uint32_t lod_distribution[4] = {0, 0, 0, 0};
       for (const BlockAddress &addr : desired) {
         BlockAddress ck = chunk_address_key(addr);
         if (block_world_.find_chunk(ck) == nullptr) {
           continue;
         }
-        desired_ids.insert(BlockWorld::chunk_mesh_id(ck));
 
         const glm::dvec3 chunk_center = block_world_.world_from_address(ck);
         const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
@@ -1075,7 +1146,9 @@ void Engine::tick(double frame_dt,
       // A hard per-frame budget is more important than filling the horizon in
       // one frame: startup spikes above 16.6 ms make a nominal 60 FPS game
       // feel broken, especially on tile-based mobile GPUs.
-      const uint32_t active_mesh_budget = mesh_build_budget_;
+      const uint32_t active_mesh_budget = std::min<uint32_t>(
+          10u, mesh_build_budget_ +
+                   static_cast<uint32_t>(stream_speed / 240.0));
       uint32_t mesh_count = 0;
       for (const MeshWorkItem &item : mesh_work) {
         if (mesh_count >= active_mesh_budget) {
@@ -1125,8 +1198,14 @@ void Engine::tick(double frame_dt,
         auto &meshes = scene.opaque_meshes;
         meshes.erase(
             std::remove_if(meshes.begin(), meshes.end(),
-                           [&desired_ids](const RenderMesh &m) {
-                             return desired_ids.find(m.mesh_id) == desired_ids.end();
+                           [&resident_ids](const RenderMesh &m) {
+                             if (m.mesh_id == 0 ||
+                                 m.mesh_id == kPlanetImpostorMeshId ||
+                                 m.mesh_id == kFlightVoxelLodMeshId) {
+                               return false;
+                             }
+                             return resident_ids.find(m.mesh_id) ==
+                                    resident_ids.end();
                            }),
             meshes.end());
       }
@@ -1151,7 +1230,8 @@ void Engine::tick(double frame_dt,
                        return mesh.mesh_id == kFlightVoxelLodMeshId;
                      }),
       scene.opaque_meshes.end());
-  if (camera_altitude >= kFlightTerrainMinAltitudeMeters &&
+  if ((debug_fly_mode_ ||
+       camera_altitude >= kFlightTerrainMinAltitudeMeters) &&
       camera_altitude <= kFlightTerrainMaxAltitudeMeters &&
       !flight_clipmap_mesh_.vertices.empty()) {
     scene.opaque_meshes.push_back(flight_clipmap_mesh_);
@@ -1321,6 +1401,7 @@ void Engine::tick(double frame_dt,
       const float radius = static_cast<float>(body.orbital.radius);
       RenderMesh sphere = build_debug_sphere_mesh(rel_pos, radius, body.color);
       sphere.mesh_id = 0; // transient — always re-upload
+      sphere.world_origin = scene.camera_origin.world_origin;
       scene.opaque_meshes.push_back(std::move(sphere));
       ++last_celestial_mesh_count_;
     }
@@ -1512,11 +1593,107 @@ GuiMenu::Character Engine::preferred_character() const {
 
 void Engine::rebuild_planet_impostor() {
   planet_impostor_mesh_ = build_planet_impostor_mesh(block_world_.planet(), 24);
+  const glm::dvec3 mesh_origin = block_world_.planet().center;
   for (RenderVertex &vertex : planet_impostor_mesh_.vertices) {
-    vertex.position -= glm::vec3(camera_snap_origin_);
+    vertex.position -= glm::vec3(mesh_origin);
   }
+  planet_impostor_mesh_.world_origin = mesh_origin;
   planet_impostor_mesh_.mesh_id = kPlanetImpostorMeshId;
   planet_impostor_mesh_.content_hash = ++planet_impostor_revision_;
+}
+
+void Engine::update_flight_clipmap(
+    const glm::dvec3 &camera_position,
+    const glm::dvec3 &camera_velocity,
+    double camera_altitude) {
+  const bool terrain_needed =
+      (debug_fly_mode_ || camera_altitude >= kFlightTerrainMinAltitudeMeters) &&
+      camera_altitude <= kFlightTerrainMaxAltitudeMeters;
+
+  if (flight_clipmap_build_pending_ && flight_clipmap_future_.valid() &&
+      flight_clipmap_future_.wait_for(std::chrono::seconds(0)) ==
+          std::future_status::ready) {
+    RenderMesh completed = flight_clipmap_future_.get();
+    flight_clipmap_build_pending_ = false;
+    if (terrain_needed && !completed.vertices.empty()) {
+      completed.mesh_id = kFlightVoxelLodMeshId;
+      flight_clipmap_mesh_ = std::move(completed);
+      flight_clipmap_anchor_direction_ =
+          pending_flight_clipmap_direction_;
+      flight_clipmap_anchor_altitude_ =
+          pending_flight_clipmap_altitude_;
+    }
+  }
+
+  if (!terrain_needed) {
+    if (!flight_clipmap_build_pending_) {
+      flight_clipmap_mesh_ = RenderMesh{};
+      flight_clipmap_anchor_direction_ = glm::dvec3(0.0);
+      flight_clipmap_anchor_altitude_ = -1.0;
+    }
+    return;
+  }
+
+  const PlanetDefinition &planet = block_world_.planet();
+  const glm::dvec3 camera_offset = camera_position - planet.center;
+  if (glm::dot(camera_offset, camera_offset) < 1.0) {
+    return;
+  }
+
+  // Predict into the velocity vector so high-speed flight fills terrain in
+  // front of the camera. The current clipmap remains active until this build
+  // completes, providing double-buffered, never-empty terrain coverage.
+  const double speed = glm::length(camera_velocity);
+  const double lead_seconds = std::clamp(0.35 + speed / 4'000.0, 0.35, 1.25);
+  const double max_lead_distance = std::max(
+      2'048.0, camera_altitude * 2.0 + 4'096.0);
+  glm::dvec3 lead = camera_velocity * lead_seconds;
+  const double lead_distance = glm::length(lead);
+  if (lead_distance > max_lead_distance) {
+    lead *= max_lead_distance / lead_distance;
+  }
+  const glm::dvec3 predicted_position = camera_position + lead;
+  const glm::dvec3 predicted_offset = predicted_position - planet.center;
+  const glm::dvec3 predicted_direction = glm::normalize(predicted_offset);
+
+  const double base_half_extent = std::max(
+      768.0, std::min(planet.radius * 0.08,
+                      camera_altitude * 1.5 + 512.0));
+  // Refill only after crossing a substantial fraction of the innermost ring.
+  // The predictive centre leaves terrain ahead, so rebuilding every few
+  // hundred metres merely keeps a CPU core and the GPU upload path saturated.
+  const double rebuild_distance = std::max(256.0, base_half_extent * 0.65);
+  double anchor_distance = std::numeric_limits<double>::infinity();
+  if (glm::dot(flight_clipmap_anchor_direction_,
+               flight_clipmap_anchor_direction_) > 0.5) {
+    const double cosine = std::clamp(
+        glm::dot(flight_clipmap_anchor_direction_, predicted_direction),
+        -1.0, 1.0);
+    anchor_distance = std::acos(cosine) * planet.radius;
+  }
+  const bool altitude_lod_changed = flight_clipmap_anchor_altitude_ < 0.0 ||
+      std::abs(std::log2((camera_altitude + 256.0) /
+                         (flight_clipmap_anchor_altitude_ + 256.0))) > 0.35;
+  const bool rebuild_needed = flight_clipmap_mesh_.vertices.empty() ||
+      anchor_distance > rebuild_distance || altitude_lod_changed;
+  if (!rebuild_needed || flight_clipmap_build_pending_) {
+    return;
+  }
+
+  const BlockWorldConfig snapshot_config = block_world_.config();
+  const glm::dvec3 build_origin = predicted_position;
+  pending_flight_clipmap_direction_ = predicted_direction;
+  pending_flight_clipmap_altitude_ = camera_altitude;
+  flight_clipmap_build_pending_ = true;
+  flight_clipmap_future_ = std::async(
+      std::launch::async,
+      [snapshot_config, predicted_direction, camera_altitude, build_origin]() {
+        BlockWorld snapshot;
+        snapshot.init(snapshot_config);
+        return build_planet_flight_clipmap(
+            snapshot, predicted_direction, camera_altitude, build_origin,
+            32, 4);
+      });
 }
 
 void Engine::update_first_person_camera(PlayerEntity &player,

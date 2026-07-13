@@ -35,6 +35,10 @@ struct RenderMesh {
     // change positions while keeping identical vertex and index counts (for
     // example after a camera-relative origin shift), so size alone is unsafe.
     uint64_t content_hash = 0;
+    // Double-precision world-space origin for this mesh's float vertices.
+    // Keeping the origin with the retained GPU mesh lets the camera rebase
+    // without rebuilding every chunk and preserves precision across planets.
+    glm::dvec3 world_origin{0.0};
     // Primary material (most-frequent) for draw-call batching.
     // 0 = unset/unknown; otherwise matches VoxelMaterial enum values.
     uint8_t material = 0;

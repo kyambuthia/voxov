@@ -537,17 +537,21 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
                                        ? std::clamp(600.0f + altitude * 2.0f,
                                                     600.0f, 1'000'000.0f)
                                        : 80.0f;
-        const glm::vec3 start = player.transform.position;
-        player.transform.position += flight_move * noclip_speed * dt;
+        glm::vec3 desired_velocity = flight_move * noclip_speed;
         if (input.jump_held) {
-            player.transform.position += up * (noclip_speed * dt);
+            desired_velocity += up * noclip_speed;
         }
         if (input.crouch_held) {
-            player.transform.position -= up * (noclip_speed * dt);
+            desired_velocity -= up * noclip_speed;
         }
+        // Ease into and out of high-speed flight. Besides making the camera
+        // transition readable, bounded acceleration gives the terrain
+        // predictor time to fill the forward guard band before arrival.
+        const float acceleration = std::max(2'400.0f, noclip_speed * 3.0f);
+        player.controller.velocity = move_towards_vec3(
+            player.controller.velocity, desired_velocity, acceleration * dt);
+        player.transform.position += player.controller.velocity * dt;
         player.controller.grounded = false;
-        player.controller.velocity =
-            (player.transform.position - start) / std::max(dt, 0.0001f);
         motion.planar_velocity = glm::vec3(0.0f);
         motion.move_speed = 0.0f;
         set_locomotion_state(player, PlayerLocomotionState::AirborneFall);

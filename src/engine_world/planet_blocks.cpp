@@ -740,6 +740,7 @@ RenderMesh BlockWorld::build_chunk_mesh(
     int32_t lod_level) const {
 
     RenderMesh mesh{};
+    mesh.world_origin = camera_relative_origin;
     mesh.mesh_id = block_chunk_mesh_id(addr);
     (void)solid_at;  // retained for API compat; neighbor queries use find_chunk.
     mesh.vertices.reserve(8192);
@@ -1394,6 +1395,7 @@ RenderMesh build_planet_flight_clipmap(
     int32_t cells_per_ring,
     int32_t ring_count) {
     RenderMesh mesh{};
+    mesh.world_origin = camera_relative_origin;
     if (!world.initialized()) {
         return mesh;
     }
@@ -1463,6 +1465,11 @@ RenderMesh build_planet_flight_clipmap(
         }
         const double inner_extent = ring == 0 ? 0.0 : previous_half_extent * 0.90;
         const double cell_size = (half_extent * 2.0) / static_cast<double>(cells);
+        // Adjacent clipmap levels overlap by ten percent. Sink each coarser
+        // level slightly so the overlap behaves like a depth-ordered
+        // transition band instead of two coplanar surfaces fighting and
+        // flashing sky-coloured seams during motion.
+        const double ring_depth_bias = static_cast<double>(ring) * 1.5;
         const int32_t sample_dim = cells + 2;
         std::vector<double> sample_heights(
             static_cast<size_t>(sample_dim * sample_dim), 0.0);
@@ -1520,7 +1527,9 @@ RenderMesh build_planet_flight_clipmap(
                 const float top_texture = rocky ? 2.0f : (bare_soil ? 1.0f : 0.0f);
                 // Sink the clipmap slightly beneath editable one-metre blocks,
                 // preventing z-fighting where the two representations overlap.
-                const double top_radius = radius + height - 0.35;
+                const double top_radius = std::max(
+                    radius + 0.5,
+                    radius + height - 0.35 - ring_depth_bias);
                 const glm::dvec3 d00 = direction_at(x0, z0);
                 const glm::dvec3 d10 = direction_at(x1, z0);
                 const glm::dvec3 d11 = direction_at(x1, z1);
@@ -1544,7 +1553,9 @@ RenderMesh build_planet_flight_clipmap(
                     if (height <= lower_height + 0.125) {
                         continue;
                     }
-                    const double bottom_radius = radius + lower_height - 0.35;
+                    const double bottom_radius = std::max(
+                        radius + 0.25,
+                        radius + lower_height - 0.35 - ring_depth_bias);
                     const float side_repeat_v = static_cast<float>(std::clamp(
                         height - lower_height, 1.0, 16.0));
                     const float side_texture = rocky ? 2.0f : 3.0f;

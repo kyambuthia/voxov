@@ -22,6 +22,7 @@
 #include <cstdio>
 #include <cstring>
 #include <ctime>
+#include <filesystem>
 #include <thread>
 
 // ---------------------------------------------------------------------------
@@ -148,7 +149,13 @@ void voxov_frame() {
         const bool f5_down = g_platform->input().keys_down.test(
             static_cast<size_t>(PlatformKey::F5));
         if (f5_down && !f5_was_down) {
-            take_screenshot("screenshots/debug_screenshot.png"); std::system("./auto_analyze.sh screenshots/debug_screenshot.png &"); spdlog::info("Auto-analysis started");
+            std::error_code directory_error;
+            std::filesystem::create_directories("screenshots", directory_error);
+            take_screenshot("screenshots/debug_screenshot.png");
+#if !defined(_WIN32)
+            std::system("./auto_analyze.sh screenshots/debug_screenshot.png &");
+            spdlog::info("Auto-analysis started");
+#endif
         }
         f5_was_down = f5_down;
     }
@@ -159,13 +166,15 @@ void voxov_frame() {
         const bool f12_down = g_platform->input().keys_down.test(
             static_cast<size_t>(PlatformKey::F12));
         if (f12_down && !f12_was_down) {
-            // Ensure screenshots directory exists.
-            std::system("mkdir -p screenshots 2>/dev/null");
+            std::error_code directory_error;
+            std::filesystem::create_directories("screenshots", directory_error);
             char filepath[256]{};
             const auto now = std::chrono::system_clock::now();
             const auto t = std::chrono::system_clock::to_time_t(now);
             std::tm tm{};
-            localtime_r(&t, &tm);
+            if (const std::tm *local_tm = std::localtime(&t)) {
+                tm = *local_tm;
+            }
             std::snprintf(filepath, sizeof(filepath),
                           "screenshots/voxov_%04d%02d%02d_%02d%02d%02d.png",
                           tm.tm_year + 1900, tm.tm_mon + 1, tm.tm_mday,

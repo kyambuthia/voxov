@@ -9,7 +9,9 @@
 #ifdef _WIN32
 #include <winsock2.h>
 #include <ws2tcpip.h>
+#ifdef _MSC_VER
 #pragma comment(lib, "ws2_32.lib")
+#endif
 #else
 #include <arpa/inet.h>
 #include <fcntl.h>
@@ -38,6 +40,22 @@ constexpr std::array<char, 6> kMagic = {'V', 'O', 'X', 'O', 'V', '2'};
 
 #ifdef _WIN32
 bool winsock_started = false;
+
+SOCKET socket_handle(uintptr_t value) {
+    return static_cast<SOCKET>(value);
+}
+
+bool socket_is_valid(uintptr_t value) {
+    return socket_handle(value) != INVALID_SOCKET;
+}
+#else
+int socket_handle(int value) {
+    return value;
+}
+
+bool socket_is_valid(int value) {
+    return value >= 0;
+}
 #endif
 }
 
@@ -136,8 +154,8 @@ bool LanDiscovery::open_socket() {
     }
 
     int yes = 1;
-    setsockopt(static_cast<int>(sock), SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&yes), sizeof(yes));
-    setsockopt(static_cast<int>(sock), SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char *>(&yes), sizeof(yes));
+    setsockopt(socket_handle(sock), SOL_SOCKET, SO_REUSEADDR, reinterpret_cast<const char *>(&yes), sizeof(yes));
+    setsockopt(socket_handle(sock), SOL_SOCKET, SO_BROADCAST, reinterpret_cast<const char *>(&yes), sizeof(yes));
 
 #ifdef _WIN32
     u_long nonblock = 1;
@@ -152,7 +170,7 @@ bool LanDiscovery::open_socket() {
     bind_addr.sin_addr.s_addr = htonl(INADDR_ANY);
     bind_addr.sin_port = htons(kDiscoveryPort);
 
-    if (::bind(static_cast<int>(sock), reinterpret_cast<sockaddr *>(&bind_addr), sizeof(bind_addr)) < 0) {
+    if (::bind(socket_handle(sock), reinterpret_cast<sockaddr *>(&bind_addr), sizeof(bind_addr)) < 0) {
         close_socket();
         return false;
     }
@@ -162,8 +180,8 @@ bool LanDiscovery::open_socket() {
 
 void LanDiscovery::close_socket() {
 #ifdef _WIN32
-    if (sock != static_cast<uintptr_t>(-1) && sock != INVALID_SOCKET) {
-        closesocket(static_cast<SOCKET>(sock));
+    if (socket_is_valid(sock)) {
+        closesocket(socket_handle(sock));
     }
     sock = static_cast<uintptr_t>(-1);
 #else
@@ -175,7 +193,7 @@ void LanDiscovery::close_socket() {
 }
 
 void LanDiscovery::send_query_broadcast() {
-    if (sock < 0) {
+    if (!socket_is_valid(sock)) {
         return;
     }
 
@@ -188,12 +206,12 @@ void LanDiscovery::send_query_broadcast() {
     to.sin_addr.s_addr = htonl(INADDR_BROADCAST);
     to.sin_port = htons(kDiscoveryPort);
 
-    sendto(static_cast<int>(sock), reinterpret_cast<const char *>(&p), sizeof(p), 0, reinterpret_cast<sockaddr *>(&to), sizeof(to));
+    sendto(socket_handle(sock), reinterpret_cast<const char *>(&p), sizeof(p), 0, reinterpret_cast<sockaddr *>(&to), sizeof(to));
     last_query_ms = now_ms();
 }
 
 void LanDiscovery::send_beacon_broadcast() {
-    if (sock < 0 || !mode_host) {
+    if (!socket_is_valid(sock) || !mode_host) {
         return;
     }
 
@@ -209,12 +227,12 @@ void LanDiscovery::send_beacon_broadcast() {
     to.sin_addr.s_addr = htonl(INADDR_BROADCAST);
     to.sin_port = htons(kDiscoveryPort);
 
-    sendto(static_cast<int>(sock), reinterpret_cast<const char *>(&p), sizeof(p), 0, reinterpret_cast<sockaddr *>(&to), sizeof(to));
+    sendto(socket_handle(sock), reinterpret_cast<const char *>(&p), sizeof(p), 0, reinterpret_cast<sockaddr *>(&to), sizeof(to));
     last_broadcast_ms = now_ms();
 }
 
 void LanDiscovery::send_beacon_to(uint32_t host_be, uint16_t port_be) {
-    if (sock < 0 || !mode_host) {
+    if (!socket_is_valid(sock) || !mode_host) {
         return;
     }
 
@@ -230,11 +248,11 @@ void LanDiscovery::send_beacon_to(uint32_t host_be, uint16_t port_be) {
     to.sin_addr.s_addr = host_be;
     to.sin_port = port_be;
 
-    sendto(static_cast<int>(sock), reinterpret_cast<const char *>(&p), sizeof(p), 0, reinterpret_cast<sockaddr *>(&to), sizeof(to));
+    sendto(socket_handle(sock), reinterpret_cast<const char *>(&p), sizeof(p), 0, reinterpret_cast<sockaddr *>(&to), sizeof(to));
 }
 
 void LanDiscovery::handle_receive() {
-    if (sock < 0) {
+    if (!socket_is_valid(sock)) {
         return;
     }
 
@@ -247,7 +265,7 @@ void LanDiscovery::handle_receive() {
         socklen_t from_len = sizeof(from);
 #endif
         const int n = recvfrom(
-            static_cast<int>(sock),
+            socket_handle(sock),
             reinterpret_cast<char *>(&p),
             sizeof(p),
             0,

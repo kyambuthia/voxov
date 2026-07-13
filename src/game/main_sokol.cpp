@@ -130,6 +130,18 @@ void voxov_frame() {
         }
     };
 
+    // Deterministic visual-regression capture for headless/automated runs.
+    // The normal game remains entirely user-driven; setting the environment
+    // variable captures a settled frame and exits without synthetic key tools.
+    static uint32_t automated_capture_frame = 0;
+    if (const char *path = std::getenv("VOXOV_AUTO_SCREENSHOT")) {
+        ++automated_capture_frame;
+        if (automated_capture_frame == 220) {
+            take_screenshot(path);
+            sapp_request_quit();
+        }
+    }
+
     // F5: quick debug screenshot (overwrites same file for easy Mimo analysis).
     static bool f5_was_down = false;
     if (g_platform) {

@@ -14,6 +14,7 @@
 #include <algorithm>
 #include <chrono>
 #include <cstdio>
+#include <cstdlib>
 #include <cmath>
 #include <string>
 #include <unordered_set>
@@ -317,6 +318,25 @@ bool Engine::init(const EngineRuntimeOptions &options) {
 
     // Start with fly mode OFF — gravity walks on the sphere surface.
     debug_fly_mode_ = false;
+    if (std::getenv("VOXOV_CAPTURE_ORBIT") != nullptr) {
+      const glm::dvec3 observation_direction = glm::normalize(
+          glm::dvec3(local_player.transform.position) - planet_def.center);
+      local_player.transform.position = glm::vec3(
+          planet_def.center + observation_direction *
+                                  (planet_def.radius + 1'500'000.0));
+      local_player.camera_rig.pitch = -89.0f;
+      local_player_prev_position = local_player.transform.position;
+      debug_fly_mode_ = true;
+    } else if (std::getenv("VOXOV_CAPTURE_FLIGHT") != nullptr) {
+      const glm::dvec3 observation_direction = glm::normalize(
+          glm::dvec3(local_player.transform.position) - planet_def.center);
+      local_player.transform.position = glm::vec3(
+          planet_def.center + observation_direction *
+                                  (planet_def.radius + 600.0));
+      local_player.camera_rig.pitch = -22.0f;
+      local_player_prev_position = local_player.transform.position;
+      debug_fly_mode_ = true;
+    }
 
     // ── Solar system initialization ───────────────────────────────────
     // Keplerian orbits use planetary distances. The planet's orbital position

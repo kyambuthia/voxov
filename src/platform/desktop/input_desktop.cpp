@@ -163,5 +163,22 @@ InputState DesktopInputBackend::poll() {
         out.zoom_delta -= 0.08f;
     }
 
+    // Automated orbital showcase used by visual regression captures. This is
+    // intentionally separate from VOXOV_CAPTURE_DEMO, which remains a local
+    // surface walk for terrain inspection.
+    if (std::getenv("VOXOV_CAPTURE_ORBIT") != nullptr ||
+        std::getenv("VOXOV_CAPTURE_FLIGHT") != nullptr) {
+        out.debug_freeze_toggle_pressed = false;
+        out.move = glm::vec2(0.0f);
+        out.sprint_held = false;
+        out.jump_held = false;
+        out.jump_pressed = false;
+        out.crouch_held = false;
+        out.look_delta = glm::vec2(0.0f);
+        out.look_mode = true;
+        out.look_enabled = true;
+        out.pointer_locked = true;
+    }
+
     return out;
 }

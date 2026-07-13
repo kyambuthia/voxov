@@ -1,4 +1,7 @@
 #include "engine_net/net_client.hpp"
+#if defined(VOXOV_PLATFORM_WEB)
+#include "engine_net/web_posix_socket_compat.hpp"
+#endif
 
 #include <enet/enet.h>
 #include <spdlog/spdlog.h>
@@ -8,6 +11,8 @@
 #include <chrono>
 
 namespace {
+constexpr int kMaxEventsPerPump = 8;
+
 #pragma pack(push, 1)
 struct InputPacket {
     NetPacketHeader header{};
@@ -209,10 +214,16 @@ void NetClient::pump() {
     if (!client) {
         return;
     }
+#if defined(VOXOV_PLATFORM_WEB)
+    web_posix_socket_begin_pump();
+#endif
     refresh_debug_stats();
 
     ENetEvent event{};
-    while (enet_host_service(client, &event, 0) > 0) {
+    int events_processed = 0;
+    while (events_processed < kMaxEventsPerPump &&
+           enet_host_service(client, &event, 0) > 0) {
+        ++events_processed;
         if (event.type == ENET_EVENT_TYPE_CONNECT) {
             connected = true;
             state = NetClientConnectionState::Connected;
@@ -371,6 +382,23 @@ void NetClient::send_input(const NetTickInput &input) {
         static_cast<uint16_t>(sizeof(packet.input)),
         next_packet_sequence++);
     packet.input = input;
+    ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), 0);
+    enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Unreliable), net_packet);
+    record_tx(sizeof(packet));
+}
+
+void NetClient::send_player_state(const NetPlayerState &state) {
+    if (!client || !peer || !connected) {
+        return;
+    }
+
+    PlayerStatePacket packet{};
+    packet.header = net_make_header(
+        NetMsgType::ClientState,
+        static_cast<uint16_t>(sizeof(packet.state)),
+        next_packet_sequence++);
+    packet.state = state;
+    packet.state.player_id = assigned_player_id;
     ENetPacket *net_packet = enet_packet_create(&packet, sizeof(packet), 0);
     enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Unreliable), net_packet);
     record_tx(sizeof(packet));

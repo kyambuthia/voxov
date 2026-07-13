@@ -12,16 +12,37 @@
 #include "sokol_log.h"
 
 #include <emscripten/emscripten.h>
+#include <emscripten/em_asm.h>
 
 #include <algorithm>
 #include <cstdio>
 #include <string>
 
-EM_JS(int, web_net_available, (), {
+int web_net_available() {
+  return MAIN_THREAD_EM_ASM_INT({
     return Module.__voxovNetApiReady ? 1 : 0;
-});
+  });
+}
 
-EM_JS(void, web_configure_page, (), {
+int web_copy_connect_host(char *out, int capacity) {
+  return MAIN_THREAD_EM_ASM_INT({
+    const value = new URLSearchParams(window.location.search).get('server') || String();
+    if (!value || $1 <= 1) return 0;
+    stringToUTF8(value, $0, $1);
+    return 1;
+  }, out, capacity);
+}
+
+int web_connect_port() {
+  return MAIN_THREAD_EM_ASM_INT({
+    const raw = new URLSearchParams(window.location.search).get('port');
+    const value = raw ? Number.parseInt(raw, 10) : 7777;
+    return Number.isInteger(value) && value > 0 && value <= 65535 ? value : 7777;
+  });
+}
+
+void web_configure_page() {
+  MAIN_THREAD_EM_ASM({
     if (Module.__voxovPageConfigured) {
         return;
     }
@@ -83,14 +104,16 @@ EM_JS(void, web_configure_page, (), {
     panel.style.pointerEvents = "none";
     panel.style.display = "none";
     document.body.appendChild(panel);
-});
+  });
+}
 
-EM_JS(void, web_update_overlay, (const char *text), {
+void web_update_overlay(const char *text) {
+  MAIN_THREAD_EM_ASM({
     const el = document.getElementById("voxov-menu");
     if (!el) {
         return;
     }
-    const value = UTF8ToString(text);
+    const value = UTF8ToString($0);
     if (value && value.length > 0) {
         el.textContent = value;
         el.style.display = "block";
@@ -98,7 +121,8 @@ EM_JS(void, web_update_overlay, (const char *text), {
         el.textContent = "";
         el.style.display = "none";
     }
-});
+  }, text);
+}
 
 namespace {
 
@@ -155,6 +179,13 @@ void voxov_init() {
     if (!g_runtime->init(init_params)) {
         std::fprintf(stderr, "Web runtime init failed\n");
         sapp_request_quit();
+        return;
+    }
+
+    char connect_host[256]{};
+    if (web_copy_connect_host(connect_host, sizeof(connect_host))) {
+        g_runtime->connect(connect_host,
+                           static_cast<uint16_t>(web_connect_port()));
     }
 }
 

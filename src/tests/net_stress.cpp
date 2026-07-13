@@ -18,6 +18,7 @@ struct ClientStats {
     uint32_t chunk_updates = 0;
     uint32_t remote_state_frames = 0;
     uint32_t max_remote_seen = 0;
+    bool spherical_state_seen = false;
     uint32_t forced_disconnects = 0;
     bool reconnect_attempted = false;
     bool assigned_after_reconnect = false;
@@ -174,6 +175,18 @@ bool run_scenario(const StressScenario &scenario) {
                     input.action_flags |= net_flag(NetInputFlags::SprintHeld);
                 }
                 client.send_input(input);
+
+                if ((tick & 1) == 0) {
+                    NetPlayerState player_state{};
+                    player_state.player_id = local_id;
+                    player_state.tick = static_cast<uint32_t>(tick);
+                    player_state.sequence = static_cast<uint32_t>(tick);
+                    player_state.x = 2'000'000.0f + static_cast<float>(i * 3);
+                    player_state.y = static_cast<float>(i);
+                    player_state.z = static_cast<float>(tick % 120) * 0.05f;
+                    player_state.vz = 3.0f;
+                    client.send_player_state(player_state);
+                }
             }
 
             NetSnapshot snapshot{};
@@ -198,9 +211,12 @@ bool run_scenario(const StressScenario &scenario) {
             }
             uint32_t remote_count = 0;
             for (const auto &[pid, state] : players) {
-                (void)state;
                 if (pid != local_id) {
                     remote_count++;
+                    if (std::abs(state.x) > 1'000'000.0f &&
+                        std::isfinite(state.y) && std::isfinite(state.z)) {
+                        s.spherical_state_seen = true;
+                    }
                 }
             }
             if (remote_count > s.max_remote_seen) {
@@ -217,6 +233,7 @@ bool run_scenario(const StressScenario &scenario) {
     int snapshot_clients = 0;
     int chunk_clients = 0;
     int remote_visible_clients = 0;
+    int spherical_state_clients = 0;
     int reconnect_targets = 0;
     int reconnect_assigned = 0;
     int reconnect_snapshot_ok = 0;
@@ -236,6 +253,9 @@ bool run_scenario(const StressScenario &scenario) {
         }
         if (s.max_remote_seen > 0) {
             remote_visible_clients++;
+        }
+        if (s.spherical_state_seen) {
+            spherical_state_clients++;
         }
         if (reconnect_target[static_cast<size_t>(i)]) {
             reconnect_targets++;
@@ -277,6 +297,13 @@ bool run_scenario(const StressScenario &scenario) {
     }
     if (remote_visible_clients < std::max(1, scenario.client_count - 1)) {
         std::fprintf(stderr, "FAIL[%s]: only %d/%d clients observed remote replication\n", scenario.name, remote_visible_clients, scenario.client_count);
+        ok = false;
+    }
+    if (spherical_state_clients < std::max(1, scenario.client_count - 1)) {
+        std::fprintf(stderr,
+                     "FAIL[%s]: only %d/%d clients observed spherical client-state relay\n",
+                     scenario.name, spherical_state_clients,
+                     scenario.client_count);
         ok = false;
     }
     if (scenario.reconnect_cycle) {

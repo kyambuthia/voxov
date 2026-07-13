@@ -33,8 +33,14 @@
 <body>
   <canvas id="canvas" oncontextmenu="event.preventDefault()" tabindex="-1"></canvas>
   <script>
+    const voxovParams = new URLSearchParams(window.location.search);
+    const voxovProxyScheme = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+    const voxovProxyUrl = voxovParams.get('proxy') ||
+      `${voxovProxyScheme}//${window.location.hostname || '127.0.0.1'}:8080`;
     var Module = {
       canvas: (function() { return document.getElementById('canvas'); })(),
+      websocket: { url: voxovProxyUrl, subprotocol: 'binary' },
+      __voxovNetApiReady: true,
       print: function(text) { console.log(text); },
       printErr: function(text) { console.error(text); },
       setStatus: function(text) {

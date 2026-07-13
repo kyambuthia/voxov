@@ -61,7 +61,10 @@ struct PlayerRemovePacket {
 
 constexpr double kServerSimTickMs = 1000.0 / 60.0;
 constexpr uint64_t kSnapshotSendIntervalMs = 33;
-constexpr uint64_t kPlayerBroadcastIntervalMs = 33;
+// Player presence does not need simulation frequency. Twenty updates per
+// second leaves headroom for snapshots and reliable chunk/session traffic at
+// the advertised 32-player cap, including browser gateway overhead.
+constexpr uint64_t kPlayerBroadcastIntervalMs = 50;
 constexpr int kMaxCatchupTicksPerPump = 8;
 
 uint64_t now_ms() {
@@ -142,7 +145,7 @@ void NetServer::send_snapshots() {
                                   static_cast<uint16_t>(sizeof(snap.snapshot)),
                                   next_packet_sequence++);
     snap.snapshot.player_id = state.player_id;
-    snap.snapshot.tick = state.last_input.tick;
+    snap.snapshot.tick = state.state.tick;
     snap.snapshot.sequence = state.next_snapshot_sequence++;
     snap.snapshot.x = state.state.x;
     snap.snapshot.y = state.state.y;
@@ -385,7 +388,8 @@ void NetServer::pump() {
       proto.payload.protocol_version = k_net_protocol_version;
       proto.payload.feature_flags =
           net_feature(NetFeatureFlags::InterestFilteredReplication) |
-          net_feature(NetFeatureFlags::ChunkStreaming);
+          net_feature(NetFeatureFlags::ChunkStreaming) |
+          net_feature(NetFeatureFlags::ClientStateReplication);
       proto.payload.server_tick_hz = 60;
       ENetPacket *proto_packet =
           enet_packet_create(&proto, sizeof(proto), ENET_PACKET_FLAG_RELIABLE);
@@ -460,6 +464,16 @@ void NetServer::pump() {
                   send_chunk_state(event.peer, *state, coord, 1);
                 }
               }
+            }
+            break;
+          case NetMsgType::ClientState:
+            if (header.payload_size == sizeof(NetPlayerState) &&
+                event.packet->dataLength == sizeof(PlayerStatePacket)) {
+              PlayerStatePacket state_packet{};
+              std::memcpy(&state_packet, event.packet->data,
+                          sizeof(state_packet));
+              recognized_message =
+                  session->apply_client_state(*state, state_packet.state);
             }
             break;
           default:

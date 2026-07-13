@@ -12,10 +12,17 @@ import (
 	"time"
 )
 
-const (
-	addr    = ":8088"
-	webRoot = "build/web/main/bin"
+var (
+	addr    = envOrDefault("VOXOV_WEB_ADDR", ":8088")
+	webRoot = envOrDefault("VOXOV_WEB_ROOT", "build/web/main/bin")
 )
+
+func envOrDefault(name, fallback string) string {
+	if value := os.Getenv(name); value != "" {
+		return value
+	}
+	return fallback
+}
 
 type loggingResponseWriter struct {
 	http.ResponseWriter
@@ -142,6 +149,9 @@ func withinRoot(rootAbs, fullAbs string) bool {
 }
 
 func setHeaders(w http.ResponseWriter, ext string) {
+	w.Header().Set("Cross-Origin-Opener-Policy", "same-origin")
+	w.Header().Set("Cross-Origin-Embedder-Policy", "require-corp")
+	w.Header().Set("Cross-Origin-Resource-Policy", "same-origin")
 	if contentType := mime.TypeByExtension(ext); contentType != "" {
 		w.Header().Set("Content-Type", contentType)
 	}

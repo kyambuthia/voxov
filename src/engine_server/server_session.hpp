@@ -17,6 +17,7 @@ struct ServerClientState {
     uint32_t next_snapshot_sequence = 1;
     PlayerEntity player{};
     NetPlayerState state{};
+    bool uses_client_state = false;
     NetTickInput last_input{};
     NetChunkInterest interest{};
     std::unordered_map<int32_t, uint32_t> sent_chunks;
@@ -35,6 +36,8 @@ public:
     std::unordered_map<_ENetPeer *, ServerClientState> &clients();
 
     void simulate_fixed_tick();
+    bool apply_client_state(ServerClientState &client,
+                            const NetPlayerState &state);
     NetSessionInfo make_session_info(bool local_only) const;
     bool should_replicate_player_state(
         const ServerClientState &observer,

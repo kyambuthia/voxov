@@ -37,6 +37,11 @@ else()
     add_compile_options(-Wall -Wextra -Wpedantic)
 endif()
 add_compile_definitions(GLM_ENABLE_EXPERIMENTAL)
+if(EMSCRIPTEN)
+    # Every object linked into shared-memory WebAssembly must be compiled with
+    # atomics/bulk-memory enabled, including third-party static libraries.
+    add_compile_options("-pthread")
+endif()
 
 # ── Core dependency settings ───────────────────────────────────────────
 set(JPH_BUILD_SAMPLES OFF CACHE BOOL "" FORCE)
@@ -78,6 +83,8 @@ elseif(EMSCRIPTEN)
     message(STATUS "Configuring VOXOV for Web (Emscripten)")
     add_compile_definitions(VOXOV_PLATFORM_WEB=1)
     add_compile_definitions(SOKOL_GLES3)
+    # Sokol stays on the browser main thread. A dedicated pthread owns ENet's
+    # blocking POSIX socket bridge to the native WebSocket gateway.
 elseif(NOT EMSCRIPTEN)
     message(STATUS "Platform backend: sokol_app + sokol_gfx")
     if(APPLE)
@@ -285,6 +292,7 @@ target_link_libraries(engine_server PUBLIC engine_gameplay engine_net_proto engi
 add_library(engine_net_transport STATIC
     src/engine_net/net_client.cpp
     src/engine_net/net_server.cpp
+    src/engine_net/web_net_client.cpp
 )
 target_include_directories(engine_net_transport PUBLIC src ${CMAKE_SOURCE_DIR}/dependencies/enet/include)
 target_link_libraries(engine_net_transport PUBLIC enet fmt::fmt spdlog::spdlog engine_net_proto engine_server engine_world engine_math glm::glm)
@@ -398,6 +406,7 @@ endif()
 if(EMSCRIPTEN)
     add_executable(voxov_web
         src/game/web_main.cpp
+        src/engine_net/web_posix_socket_compat.cpp
     )
     target_include_directories(voxov_web PRIVATE
         src
@@ -418,6 +427,9 @@ if(EMSCRIPTEN)
         spdlog::spdlog
     )
     target_link_options(voxov_web PRIVATE
+        "-pthread" "-sPTHREAD_POOL_SIZE=1" "-sPROXY_POSIX_SOCKETS=1"
+        "-lwebsocket.js"
+        "-Wl,--wrap=sendmsg" "-Wl,--wrap=recvmsg"
         "-sUSE_WEBGL2=1" "-sMIN_WEBGL_VERSION=2" "-sMAX_WEBGL_VERSION=2"
         "-sFULL_ES3=1"
         "-sALLOW_MEMORY_GROWTH=1" "-sINITIAL_MEMORY=134217728"

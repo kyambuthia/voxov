@@ -7,6 +7,11 @@
 #include "engine_input/input_state.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net/lan_discovery.hpp"
+#include "engine_net/net_client.hpp"
+#include "engine_net/net_server.hpp"
+#if defined(VOXOV_PLATFORM_WEB)
+#include "engine_net/web_net_client.hpp"
+#endif
 #include "engine_physics/flight_vehicle.hpp"
 #include "engine_physics/physics_solver.hpp"
 #include "engine_physics/physics_world.hpp"
@@ -86,11 +91,23 @@ private:
                              const glm::dvec3 &camera_velocity,
                              double camera_altitude);
   void refresh_overlay_text();
+  void sync_network_state(uint32_t sim_tick, const InputState &input);
+  void start_local_server(uint16_t port, bool loopback_only);
+  void stop_client_session();
 
   Renderer renderer;
   PlatformServices platform_services;
   RuntimeGameSession game_session;
   EventBus event_bus_;
+#if defined(VOXOV_PLATFORM_WEB)
+  WebNetClient net_client_;
+#else
+  NetClient net_client_;
+#endif
+  LanDiscovery lan_discovery_;
+  NetServer local_server_;
+  bool local_server_loopback_ = true;
+  bool local_server_running_ = false;
   PhysicsWorld physics;
   FlightVehicle flight_vehicle_;
   bool flight_vehicle_spawned_ = false;

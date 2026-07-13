@@ -3,6 +3,7 @@
 #include "engine_core/memory.hpp"
 #include "engine_core/timing.hpp"
 #include "engine_presentation/debug_scene_builder.hpp"
+#include "engine_gameplay/player/player_visuals.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
 #include "engine_world/wireframe_planet.hpp"
@@ -444,9 +445,42 @@ bool Engine::init(const EngineRuntimeOptions &options) {
 }
 
 EngineConnectResult Engine::connect(const char *host, uint16_t port) {
-  (void)host;
-  (void)port;
-  return EngineConnectResult::ConnectFailed;
+  if (!net_client_.is_initialized() && !net_client_.init()) {
+    spdlog::error("NetClient init failed; cannot connect to {}:{}",
+                  host ? host : "(null)", port);
+    return EngineConnectResult::NetworkInitFailed;
+  }
+  if (!net_client_.connect(host, port)) {
+    spdlog::error("NetClient connect failed to {}:{}",
+                  host ? host : "(null)", port);
+    return EngineConnectResult::ConnectFailed;
+  }
+  NetChunkInterest interest{};
+  interest.radius = 2;
+  net_client_.set_chunk_interest(interest);
+  return EngineConnectResult::Connected;
+}
+
+void Engine::start_local_server(uint16_t port, bool loopback_only) {
+  if (local_server_running_ && local_server_loopback_ == loopback_only) {
+    return;
+  }
+  if (local_server_running_) {
+    local_server_.shutdown();
+    local_server_running_ = false;
+  }
+  if (!local_server_.init(port, loopback_only)) {
+    spdlog::error("Failed to start {} server on {}",
+                  loopback_only ? "local-only" : "LAN", port);
+    return;
+  }
+  local_server_loopback_ = loopback_only;
+  local_server_running_ = true;
+}
+
+void Engine::stop_client_session() {
+  net_client_.disconnect();
+  local_player.network_id = 1;
 }
 
 void Engine::shutdown() {
@@ -455,6 +489,13 @@ void Engine::shutdown() {
     flight_clipmap_future_.get();
   }
   flight_clipmap_build_pending_ = false;
+  lan_discovery_.stop();
+  if (local_server_running_) {
+    local_server_.shutdown();
+    local_server_running_ = false;
+  }
+  net_client_.disconnect();
+  net_client_.shutdown();
   renderer.shutdown();
   physics.shutdown();
 }
@@ -468,6 +509,13 @@ void Engine::tick(double frame_dt,
                   const RenderSurface &surface) {
   const PerfClock::time_point frame_cpu_start = PerfClock::now();
   const FixedStep &fixed = game_session.fixed_step();
+  if (local_server_running_) {
+    local_server_.pump();
+  }
+  net_client_.pump();
+  if (net_client_.local_player_id() != 0) {
+    local_player.network_id = net_client_.local_player_id();
+  }
   last_frame_dt = frame_dt;
   event_bus_.enqueue_frame(FrameStartedEvent{
       .frame = frame_index,
@@ -496,7 +544,12 @@ void Engine::tick(double frame_dt,
   ProfilingSnapshot profiling_sample{};
   bool jump_consumed = false;
   const RuntimeGameSessionCallbacks callbacks{
-      .pump_server = []() {},
+      .pump_server = [this]() {
+        if (local_server_running_) {
+          local_server_.pump();
+        }
+        net_client_.pump();
+      },
       .simulate_step =
           [this, &gameplay_input, &jump_consumed,
            &input_frame,
@@ -612,6 +665,7 @@ void Engine::tick(double frame_dt,
                   .dt = step.dt,
               });
             }
+            sync_network_state(static_cast<uint32_t>(step.tick), step_input);
           }};
   game_session.advance(frame_dt, callbacks);
 
@@ -813,12 +867,12 @@ void Engine::tick(double frame_dt,
     // GPU workload, and LOD distribution — everything needed to understand
     // what the player sees without a screen.
     std::fprintf(stderr,
-        "Frame %lu | Cam(%.0f,%.0f,%.0f) pitch=%d yaw=%d alt=%.0fm | "
+        "Frame %llu | Cam(%.0f,%.0f,%.0f) pitch=%d yaw=%d alt=%.0fm | "
         "Grounded=%s vel=%.0fm/s | "
         "FPS=%.0f dt=%.1fms | "
         "draw=%d verts=%d tris=%d | "
         "LOD: %d/%d/%d/%d chunks=%zu opaques=%zu | gen=%.1f mesh=%.1f upload=%.1fms\n",
-        frame_index,
+        static_cast<unsigned long long>(frame_index),
         camera.transform.position.x, camera.transform.position.y, camera.transform.position.z,
         static_cast<int>(local_player.camera_rig.pitch),
         static_cast<int>(local_player.camera_rig.yaw),
@@ -1405,6 +1459,22 @@ void Engine::tick(double frame_dt,
       scene.opaque_meshes.push_back(std::move(sphere));
       ++last_celestial_mesh_count_;
     }
+
+    // Replicated clients use the same camera-relative coordinate path as
+    // planetary terrain, preserving precision at two-million-metre radii.
+    for (const auto &[player_id, state] : net_client_.player_states()) {
+      if (player_id == 0 || player_id == net_client_.local_player_id()) {
+        continue;
+      }
+      const glm::dvec3 player_world(state.x, state.y, state.z);
+      const glm::vec3 player_relative =
+          camera_relative_position(player_world, scene.camera_origin);
+      RenderMesh player_mesh = build_debug_sphere_mesh(
+          player_relative, 1.0f, player_color_from_network_id(player_id));
+      player_mesh.mesh_id = 0;
+      player_mesh.world_origin = scene.camera_origin.world_origin;
+      scene.opaque_meshes.push_back(std::move(player_mesh));
+    }
   }
 
   // ── Frame profiler: time GPU upload (buffer creation/update) ──
@@ -1421,6 +1491,15 @@ void Engine::tick(double frame_dt,
   render_stats.fixed_cpu_ms = smooth_metric(
       render_stats.fixed_cpu_ms, game_session.fixed_cpu_ms(), 0.25);
   render_stats.fixed_steps = game_session.fixed_steps_last_frame();
+  const NetDebugStats net_stats = net_client_.debug_stats();
+  render_stats.net_connected = net_client_.is_connected();
+  render_stats.net_local_player_id = net_client_.local_player_id();
+  render_stats.net_remote_count =
+      static_cast<uint32_t>(net_client_.player_states().size());
+  render_stats.net_tx_packets_per_sec = net_stats.tx_packets_per_sec;
+  render_stats.net_rx_packets_per_sec = net_stats.rx_packets_per_sec;
+  render_stats.net_tx_bytes_per_sec = net_stats.tx_bytes_per_sec;
+  render_stats.net_rx_bytes_per_sec = net_stats.rx_bytes_per_sec;
   render_stats.streamed_chunk_count =
       static_cast<uint32_t>(block_world_.chunk_count());
   render_stats.profiling.gameplay_cpu_ms = smooth_metric(
@@ -1565,21 +1644,119 @@ void Engine::set_session_state(const EngineSessionState &state) {
 }
 
 RuntimeSessionSnapshot Engine::session_snapshot() const {
-  return RuntimeSessionSnapshot{};
+  RuntimeSessionSnapshot snapshot{};
+  snapshot.connection_state = net_client_.connection_state();
+  snapshot.hosting_local = local_server_running_ && local_server_loopback_;
+  snapshot.hosting_lan = local_server_running_ && !local_server_loopback_;
+  snapshot.has_session_info = net_client_.has_session_info();
+  if (snapshot.has_session_info) {
+    snapshot.session_info = net_client_.session_info();
+  }
+  snapshot.connect_target_host = net_client_.connect_target_host();
+  snapshot.connect_target_port = net_client_.connect_target_port();
+  return snapshot;
 }
 
-void Engine::pump_lan_discovery() {}
+void Engine::pump_lan_discovery() { lan_discovery_.pump(); }
 
 bool Engine::pop_discovered_host(LanHostEntry &host) {
-  host = LanHostEntry{};
-  return false;
+  return lan_discovery_.pop_host(host);
 }
 
-void Engine::abort_client_session() {}
-void Engine::host_local_session() {}
-void Engine::host_lan_session() {}
-void Engine::join_nearby_session() {}
-void Engine::leave_session() {}
+void Engine::abort_client_session() { stop_client_session(); }
+
+void Engine::host_local_session() {
+#if defined(VOXOV_PLATFORM_WEB)
+  last_net_status_ = "Browser clients join a native or dedicated server";
+#else
+  leave_session();
+  start_local_server(7777, true);
+  (void)connect("127.0.0.1", 7777);
+#endif
+}
+
+void Engine::host_lan_session() {
+#if defined(VOXOV_PLATFORM_WEB)
+  last_net_status_ = "Browser hosting is unavailable; join through a gateway";
+#else
+  leave_session();
+  start_local_server(7777, false);
+  (void)connect("127.0.0.1", 7777);
+  lan_discovery_.start_host(7777, "VOXOV Host");
+#endif
+}
+
+void Engine::join_nearby_session() {
+  stop_client_session();
+  if (local_server_running_) {
+    local_server_.shutdown();
+    local_server_running_ = false;
+    local_server_loopback_ = true;
+  }
+  lan_discovery_.stop();
+#if defined(VOXOV_PLATFORM_WEB)
+  last_net_status_ = "Use ?server=HOST&port=7777&proxy=ws://HOST:8080";
+#else
+  lan_discovery_.start_client();
+#endif
+}
+
+void Engine::leave_session() {
+  stop_client_session();
+  lan_discovery_.stop();
+  if (local_server_running_) {
+    local_server_.shutdown();
+    local_server_running_ = false;
+  }
+  local_server_loopback_ = true;
+}
+
+void Engine::sync_network_state(uint32_t sim_tick,
+                                const InputState &input) {
+  if (!net_client_.is_connected()) {
+    return;
+  }
+
+  NetTickInput tick_input{};
+  tick_input.tick = sim_tick;
+  tick_input.move_x = input.move.x;
+  tick_input.move_y = input.move.y;
+  tick_input.camera_yaw_deg = local_player.camera_rig.yaw;
+  if (input.jump_held) {
+    tick_input.action_flags |= net_flag(NetInputFlags::JumpHeld);
+  }
+  if (input.jump_pressed) {
+    tick_input.action_flags |= net_flag(NetInputFlags::JumpPressed);
+  }
+  if (input.sprint_held) {
+    tick_input.action_flags |= net_flag(NetInputFlags::SprintHeld);
+  }
+  if (input.crouch_held) {
+    tick_input.action_flags |= net_flag(NetInputFlags::CrouchHeld);
+  }
+  net_client_.send_input(tick_input);
+
+  // Local simulation remains 60 Hz; network transforms match the 30 Hz
+  // snapshot cadence to avoid doubling packet pressure at 32 players.
+  if ((sim_tick & 1u) != 0u) {
+    return;
+  }
+
+  NetPlayerState state{};
+  state.player_id = local_player.network_id;
+  state.tick = sim_tick;
+  state.sequence = sim_tick;
+  state.x = local_player.transform.position.x;
+  state.y = local_player.transform.position.y;
+  state.z = local_player.transform.position.z;
+  state.vx = local_player.controller.velocity.x;
+  state.vy = local_player.controller.velocity.y;
+  state.vz = local_player.controller.velocity.z;
+  state.anim_state = static_cast<uint8_t>(local_player.anim_state);
+  state.anim_phase = local_player.anim_phase;
+  state.anim_blend = local_player.anim_blend;
+  net_client_.send_player_state(state);
+}
 
 void Engine::reset_camera() {
   local_player.camera_rig.yaw = 180.0f;

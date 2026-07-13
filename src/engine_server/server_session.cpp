@@ -110,6 +110,9 @@ ServerSession::clients() {
 }
 
 void ServerSession::simulate_client_tick(ServerClientState &state) {
+    if (state.uses_client_state) {
+        return;
+    }
     InputState input{};
     input.move.x = state.last_input.move_x;
     input.move.y = state.last_input.move_y;
@@ -131,6 +134,34 @@ void ServerSession::simulate_client_tick(ServerClientState &state) {
         state.player, input, collision_world, k_server_tick_dt, false);
     sync_net_player_state_from_entity(
         state.player, state.player_id, server_sim_tick_value, state.state);
+}
+
+bool ServerSession::apply_client_state(ServerClientState &client,
+                                       const NetPlayerState &incoming) {
+    constexpr float kMaxCoordinate = 1.0e9f;
+    constexpr float kMaxVelocity = 1.0e7f;
+    const bool finite =
+        std::isfinite(incoming.x) && std::isfinite(incoming.y) &&
+        std::isfinite(incoming.z) && std::isfinite(incoming.vx) &&
+        std::isfinite(incoming.vy) && std::isfinite(incoming.vz) &&
+        std::isfinite(incoming.anim_phase) &&
+        std::isfinite(incoming.anim_blend);
+    const bool bounded =
+        std::abs(incoming.x) <= kMaxCoordinate &&
+        std::abs(incoming.y) <= kMaxCoordinate &&
+        std::abs(incoming.z) <= kMaxCoordinate &&
+        std::abs(incoming.vx) <= kMaxVelocity &&
+        std::abs(incoming.vy) <= kMaxVelocity &&
+        std::abs(incoming.vz) <= kMaxVelocity;
+    if (!finite || !bounded) {
+        return false;
+    }
+
+    client.state = incoming;
+    client.state.player_id = client.player_id;
+    client.state.sequence = 0;
+    client.uses_client_state = true;
+    return true;
 }
 
 void ServerSession::simulate_fixed_tick() {

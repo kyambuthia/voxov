@@ -49,17 +49,19 @@ enum class NetMsgType : uint8_t {
   PlayerState = 6,
   PlayerRemove = 7,
   ProtocolInfo = 8,
-  SessionInfo = 9
+  SessionInfo = 9,
+  ClientState = 10
 };
 
 constexpr uint32_t k_net_packet_magic = 0x564F5832u; // "VOX2"
-constexpr uint16_t k_net_protocol_version = 5u;
+constexpr uint16_t k_net_protocol_version = 6u;
 constexpr uint16_t k_net_max_payload_bytes = 2048u;
 
 enum class NetFeatureFlags : uint16_t {
   None = 0,
   InterestFilteredReplication = 1u << 0u,
-  ChunkStreaming = 1u << 1u
+  ChunkStreaming = 1u << 1u,
+  ClientStateReplication = 1u << 2u
 };
 
 inline uint16_t net_feature(NetFeatureFlags feature) {

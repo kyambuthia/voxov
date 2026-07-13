@@ -22,15 +22,20 @@ namespace {
 using PerfClock = std::chrono::steady_clock;
 
 constexpr double kPlayablePlanetRadiusMeters = 2'000'000.0;
-constexpr double kTerrainFeatureSizeMeters = 512.0;
+constexpr double kTerrainFeatureSizeMeters = 128.0;
+constexpr double kLocalTerrainMaxAltitudeMeters = 512.0;
+constexpr double kFlightTerrainMinAltitudeMeters = 96.0;
+constexpr double kFlightTerrainMaxAltitudeMeters = 250'000.0;
+constexpr uint64_t kPlanetImpostorMeshId = 0x504c414e45544c4full; // "PLANETLO"
+constexpr uint64_t kFlightVoxelLodMeshId = 0x464c59434c49504dull; // "FLYCLIPM"
 #if defined(VOXOV_PLATFORM_ANDROID) || defined(VOXOV_PLATFORM_WEB)
 constexpr int32_t kSurfaceStreamRadiusChunks = 2;
 constexpr uint32_t kChunkGenerationBudget = 1;
 constexpr uint32_t kChunkMeshBudget = 1;
 #else
-constexpr int32_t kSurfaceStreamRadiusChunks = 3;
-constexpr uint32_t kChunkGenerationBudget = 1;
-constexpr uint32_t kChunkMeshBudget = 1;
+constexpr int32_t kSurfaceStreamRadiusChunks = 2;
+constexpr uint32_t kChunkGenerationBudget = 2;
+constexpr uint32_t kChunkMeshBudget = 2;
 #endif
 
 double elapsed_ms(const PerfClock::time_point &start,
@@ -168,6 +173,9 @@ RenderMesh build_local_player_debug_mesh(
     const PlayerEntity &player,
     const PlayerAnimationRuntime &animation_runtime,
     bool devhud_enabled) {
+  if (!devhud_enabled) {
+    return RenderMesh{};
+  }
   RuntimeDebugSceneSnapshot snapshot{};
   snapshot.devhud_enabled = devhud_enabled;
   snapshot.local_player = &player;
@@ -282,7 +290,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
             bw.surface_height_above_base(glm::dvec3(direction)));
       });
 
-  // Player spawn on +X equator column of the outer shell.
+  // Player spawn on the sun-facing +X equator of the outer shell.
   {
     const int32_t shell = block_world_.shell_count() - 1;
     const int32_t equator_col =
@@ -311,9 +319,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
     debug_fly_mode_ = false;
 
     // ── Solar system initialization ───────────────────────────────────
-    // Keplerian orbits: Sun at origin, Planet (our voxel world) at ~2000m,
-    // Moon at ~300m from planet.  The planet's orbital position determines
-    // sun direction; the planet centre stays at origin for block-world.
+    // Keplerian orbits use planetary distances. The planet's orbital position
+    // determines sun direction; its block-world centre remains at the origin.
     solar_system_.init();
     solar_system_time_ = 0.0;
 
@@ -401,6 +408,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   // Initialize camera-relative snap origin at player spawn position.
   camera_snap_origin_ = glm::dvec3(local_player.transform.position);
   snap_origin_dirty_ = true;
+  rebuild_planet_impostor();
 
   if (!renderer.init(RendererCreateInfo{
       .backend = runtime_options.render_backend,
@@ -614,6 +622,20 @@ void Engine::tick(double frame_dt,
   update_first_person_camera(local_player, local_player.transform.position,
                               camera);
 
+  // Preserve precision near blocks while allowing an entire 2,000 km planet
+  // to fit in the frustum during atmospheric/orbital flight.
+  const double camera_altitude = std::max(
+      0.0, glm::length(glm::dvec3(camera.transform.position) -
+                       block_world_.planet().center) -
+               block_world_.planet().radius);
+  camera.z_near = camera_altitude > 10'000.0
+                      ? static_cast<float>(std::clamp(
+                            camera_altitude / 100'000.0, 2.0, 100.0))
+                      : 0.25f;
+  camera.z_far = static_cast<float>(std::max(
+      512.0, std::min(block_world_.planet().radius * 12.0,
+                      (block_world_.planet().radius + camera_altitude) * 4.0)));
+
   // ── Block interaction (raycast pick, break/place) ─────────────────────
   // Raycast from camera center forward to find targeted block.
   // Left click: break block (set to Air). Right click: place block.
@@ -630,9 +652,13 @@ void Engine::tick(double frame_dt,
     constexpr float k_step = 0.3f;  // sub-block step for reliable thin-wall detection
     for (float d = k_step; d <= k_pick_range; d += k_step) {
       const glm::vec3 test_pos = ray_origin + ray_dir * d;
-      // Clamp to valid range: must be within ~planet radius + some buffer.
-      const float r = glm::length(test_pos);
-      if (r < 1.0f || r > 2000.0f) continue;
+      // Reject samples far from the planet's editable surface shell. The old
+      // fixed 2 km limit silently disabled interaction on the 2,000 km planet.
+      const double radial_distance = glm::length(
+          glm::dvec3(test_pos) - block_world_.planet().center);
+      const double surface_band = block_world_.max_surface_height_above_base()
+                                + static_cast<double>(k_pick_range) + 32.0;
+      if (std::abs(radial_distance - block_world_.planet().radius) > surface_band) continue;
       const BlockAddress addr = block_world_.address_from_world(glm::dvec3(test_pos));
       const VoxelChunk *chunk = block_world_.find_chunk(addr);
       if (chunk == nullptr) continue;
@@ -722,15 +748,29 @@ void Engine::tick(double frame_dt,
     }
   }
   // ── Camera-relative rendering origin ─────────────────────────────────
-  // Snap origin drifts when the camera moves >500 m from the current
-  // origin.  When updated, all chunk meshes must be rebuilt so vertices
-  // stay within float32 precision range (±500 m → sub-mm precision).
-  if (active_frame_ == CoordinateFrame::Planet) {
+  // Snap origin follows the camera with an altitude-scaled threshold. When it
+  // changes, camera-relative terrain representations are rebuilt.
+  {
     const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
     const double drift = glm::distance(cam_pos, camera_snap_origin_);
-    if (drift > 100.0) {
+    const double snap_distance = std::clamp(
+        camera_altitude * 0.20, 100.0, 50'000.0);
+    const bool flight_clipmap_needed =
+        camera_altitude >= kFlightTerrainMinAltitudeMeters &&
+        camera_altitude <= kFlightTerrainMaxAltitudeMeters;
+    if (drift > snap_distance ||
+        (flight_clipmap_needed && flight_clipmap_mesh_.vertices.empty())) {
       camera_snap_origin_ = cam_pos;
       snap_origin_dirty_ = true;
+      rebuild_planet_impostor();
+      if (flight_clipmap_needed) {
+        flight_clipmap_mesh_ = build_planet_flight_clipmap(
+            block_world_, cam_pos - block_world_.planet().center,
+            camera_altitude, camera_snap_origin_);
+        flight_clipmap_mesh_.mesh_id = kFlightVoxelLodMeshId;
+      } else {
+        flight_clipmap_mesh_ = RenderMesh{};
+      }
     }
   }
   // Camera origin must be the snap origin so the GPU shader can compute
@@ -804,10 +844,17 @@ void Engine::tick(double frame_dt,
   // terrain top (Grass) in the outer thin shell is meshed (not just deep stone).
   double chunk_gen_ms = 0.0;
   double mesh_build_ms = 0.0;
-  {
+  if (camera_altitude <= kLocalTerrainMaxAltitudeMeters) {
+    const glm::dvec3 player_offset =
+        glm::dvec3(local_player.transform.position) - block_world_.planet().center;
+    const glm::dvec3 surface_direction = glm::dot(player_offset, player_offset) > 1.0e-9
+                                             ? glm::normalize(player_offset)
+                                             : glm::dvec3(1.0, 0.0, 0.0);
+    const glm::dvec3 stream_anchor =
+        block_world_.planet().center +
+        surface_direction * block_world_.surface_radial_distance(surface_direction);
     const BlockAddress player_addr =
-        block_world_.address_from_world(
-            glm::dvec3(local_player.transform.position));
+        block_world_.address_from_world(stream_anchor);
     const int32_t surface_shell = block_world_.shell_count() - 1;
     const int32_t chunk_radius = kSurfaceStreamRadiusChunks;
 
@@ -832,7 +879,6 @@ void Engine::tick(double frame_dt,
     // Generate missing chunks nearest-first with a per-frame budget (Craft-style
     // streaming: show something quickly, fill the halo over subsequent frames).
     const PerfClock::time_point chunk_gen_start = PerfClock::now();
-    const glm::dvec3 stream_anchor = glm::dvec3(local_player.transform.position);
     auto chunk_dist_sq = [&](const BlockAddress &addr) -> double {
       const glm::dvec3 center =
           block_world_.world_from_address(chunk_address_key(addr));
@@ -1066,6 +1112,29 @@ void Engine::tick(double frame_dt,
       }
     }
     mesh_build_ms = elapsed_ms(mesh_build_start, PerfClock::now());
+  } else {
+    // The macro planet owns the view at altitude. Keeping hundreds of metre-
+    // scale chunks resident here wastes CPU/GPU time and used to leave a lone
+    // floating patch that read visually as a flat world.
+    block_world_.evict_chunks_except({});
+    scene.opaque_meshes.clear();
+    snap_origin_dirty_ = false;
+    last_chunk_center_hash_ = 0;
+  }
+
+  // Bridge detailed editable chunks to the orbital mesh with nested,
+  // camera-relative voxel terrain rings. This prevents fast flight from
+  // collapsing directly from Minecraft-scale blocks to a flat green sphere.
+  scene.opaque_meshes.erase(
+      std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+                     [](const RenderMesh &mesh) {
+                       return mesh.mesh_id == kFlightVoxelLodMeshId;
+                     }),
+      scene.opaque_meshes.end());
+  if (camera_altitude >= kFlightTerrainMinAltitudeMeters &&
+      camera_altitude <= kFlightTerrainMaxAltitudeMeters &&
+      !flight_clipmap_mesh_.vertices.empty()) {
+    scene.opaque_meshes.push_back(flight_clipmap_mesh_);
   }
 
   // Wireframe overlay — regenerate when dirty. Only show when devhud enabled.
@@ -1209,6 +1278,15 @@ void Engine::tick(double frame_dt,
         scene.opaque_meshes.end());
     last_celestial_mesh_count_ = 0;
 
+    const auto planet_it = std::find_if(
+        scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+        [](const RenderMesh &mesh) {
+          return mesh.mesh_id == kPlanetImpostorMeshId;
+        });
+    if (planet_it == scene.opaque_meshes.end()) {
+      scene.opaque_meshes.push_back(planet_impostor_mesh_);
+    }
+
     const glm::dvec3 planet_orbit_pos = solar_system_.body_position(1);
 
     for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
@@ -1306,6 +1384,23 @@ void Engine::tick(double frame_dt,
     const glm::dvec3 cam_world_pos = glm::dvec3(camera.transform.position);
     const glm::dvec3 cam_dir = glm::dvec3(camera.forward());
     atmosphere_state_ = atmosphere_.compute_sky_color(cam_world_pos, cam_dir);
+    const float inside_atmosphere = static_cast<float>(std::clamp(
+        1.0 - camera_altitude / atmosphere_.params().atmosphere_height,
+        0.0, 1.0));
+    // HDR daylight target; Reinhard tone mapping later produces the saturated
+    // blue sky and strong terrain silhouette seen in the Meese reference.
+    const glm::vec3 daylight_sky(0.80f, 1.55f, 7.0f);
+    glm::vec3 physical_sky = atmosphere_state_.sky_color;
+    for (int component = 0; component < 3; ++component) {
+      if (!std::isfinite(physical_sky[component]) ||
+          physical_sky[component] < 0.0f) {
+        physical_sky[component] = 0.0f;
+      }
+    }
+    physical_sky = glm::min(physical_sky, glm::vec3(4.0f));
+    atmosphere_state_.sky_color = glm::mix(
+        physical_sky, daylight_sky,
+        0.72f * inside_atmosphere);
   }
 
   RenderFrameContext ctx{};
@@ -1393,6 +1488,15 @@ void Engine::reset_camera() {
 
 GuiMenu::Character Engine::preferred_character() const {
   return GuiMenu::Character::Capsule;
+}
+
+void Engine::rebuild_planet_impostor() {
+  planet_impostor_mesh_ = build_planet_impostor_mesh(block_world_.planet(), 24);
+  for (RenderVertex &vertex : planet_impostor_mesh_.vertices) {
+    vertex.position -= glm::vec3(camera_snap_origin_);
+  }
+  planet_impostor_mesh_.mesh_id = kPlanetImpostorMeshId;
+  planet_impostor_mesh_.content_hash = ++planet_impostor_revision_;
 }
 
 void Engine::update_first_person_camera(PlayerEntity &player,

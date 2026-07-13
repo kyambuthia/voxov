@@ -508,8 +508,37 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
 
     if (noclip) {
         (void)tuning;
-        const float noclip_speed = input.sprint_held ? 500000.0f : 80.0f;
-        player.transform.position += (has_move_input ? desired_move : glm::vec3(0.0f)) * noclip_speed * dt;
+        // Planet flight uses the same pitched forward vector as the camera;
+        // the previous tangent-only vector could circle the surface but could
+        // never actually fly toward/away from it with WASD.
+        const float pitch_rad = to_radians(player.camera_rig.pitch);
+        const glm::vec3 flight_forward = glm::normalize(
+            movement_debug.forward * std::cos(pitch_rad) +
+            up * std::sin(pitch_rad));
+        glm::vec3 flight_move =
+            flight_forward * input.move.y + movement_debug.right * input.move.x;
+        if (glm::dot(flight_move, flight_move) > 1.0e-6f) {
+            flight_move = glm::normalize(flight_move);
+        }
+
+        float altitude = 0.0f;
+        glm::vec3 surface_point(0.0f);
+        glm::vec3 surface_up = up;
+        if (collision_world.planet_surface_point(
+                player.transform.position, surface_point, surface_up)) {
+            altitude = std::max(
+                0.0f, glm::dot(player.transform.position - surface_point,
+                               surface_up));
+        }
+        // Shift is a scale-aware travel drive: controllable near blocks, then
+        // progressively faster through atmosphere and orbit without a sudden
+        // 500 km/s discontinuity at ground level.
+        const float noclip_speed = input.sprint_held
+                                       ? std::clamp(600.0f + altitude * 2.0f,
+                                                    600.0f, 1'000'000.0f)
+                                       : 80.0f;
+        const glm::vec3 start = player.transform.position;
+        player.transform.position += flight_move * noclip_speed * dt;
         if (input.jump_held) {
             player.transform.position += up * (noclip_speed * dt);
         }
@@ -517,7 +546,8 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
             player.transform.position -= up * (noclip_speed * dt);
         }
         player.controller.grounded = false;
-        player.controller.velocity = glm::vec3(0.0f);
+        player.controller.velocity =
+            (player.transform.position - start) / std::max(dt, 0.0001f);
         motion.planar_velocity = glm::vec3(0.0f);
         motion.move_speed = 0.0f;
         set_locomotion_state(player, PlayerLocomotionState::AirborneFall);

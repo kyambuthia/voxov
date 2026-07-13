@@ -197,6 +197,17 @@ private:
     bool initialized_ = false;
 };
 
+// Camera-relative, nested voxel terrain rings used between editable chunks and
+// the orbital planet mesh. Each outer ring covers more ground with larger
+// cells, preserving a block-built surface during high-speed atmospheric flight.
+RenderMesh build_planet_flight_clipmap(
+    const BlockWorld &world,
+    const glm::dvec3 &center_direction,
+    double camera_altitude,
+    const glm::dvec3 &camera_relative_origin,
+    int32_t cells_per_ring = 40,
+    int32_t ring_count = 4);
+
 // ── 3D noise on sphere surface ─────────────────────────────────────────────
 
 // Seamless terrain height via 3D noise sampled on the unit sphere.

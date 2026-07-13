@@ -1801,8 +1801,62 @@ RenderMesh build_debug_planet_mesh(const PlanetDefinition &planet,
 
 RenderMesh build_planet_impostor_mesh(const PlanetDefinition &planet,
                                       int subdivisions) {
-  (void)subdivisions;
-  return build_debug_planet_mesh(planet, 6);
+  RenderMesh mesh{};
+  const int32_t grid = std::clamp(subdivisions, 4, 64);
+  mesh.vertices.reserve(static_cast<size_t>(6 * grid * grid * 4));
+  mesh.indices.reserve(static_cast<size_t>(6 * grid * grid * 6));
+
+  // The impostor is the macro-LOD counterpart to the near-surface voxel
+  // chunks.  Direction-based colour keeps the six cube-sphere faces seamless
+  // and deliberately uses broad features that remain legible from orbit.
+  auto macro_color = [&planet](const glm::dvec3 &direction) {
+    const double seed_phase = static_cast<double>(planet.seed & 0xffffu) *
+                              (1.0 / 65535.0) * std::numbers::pi;
+    const double continents =
+        std::sin(direction.x * 5.1 + direction.z * 2.7 + seed_phase) * 0.48 +
+        std::sin(direction.y * 7.3 - direction.x * 3.2 - seed_phase) * 0.31 +
+        std::sin((direction.x + direction.y + direction.z) * 11.0) * 0.21;
+    const double latitude = std::abs(direction.y);
+    if (latitude > 0.82) {
+      return glm::vec3(0.78f, 0.84f, 0.82f);
+    }
+    if (continents < -0.22) {
+      const float deep = static_cast<float>(std::clamp(-continents, 0.0, 1.0));
+      return glm::mix(glm::vec3(0.06f, 0.24f, 0.42f),
+                      glm::vec3(0.03f, 0.11f, 0.25f), deep);
+    }
+    if (continents < -0.08) {
+      return glm::vec3(0.10f, 0.38f, 0.50f);
+    }
+    if (continents > 0.55) {
+      return glm::vec3(0.38f, 0.34f, 0.25f);
+    }
+    const float lushness = static_cast<float>(
+        std::clamp(0.45 + continents * 0.35 - latitude * 0.12, 0.0, 1.0));
+    return glm::mix(glm::vec3(0.24f, 0.36f, 0.16f),
+                    glm::vec3(0.16f, 0.50f, 0.22f), lushness);
+  };
+
+  for (PlanetFace face : k_debug_faces) {
+    for (int32_t y = 0; y < grid; ++y) {
+      const double v0 = -1.0 + 2.0 * static_cast<double>(y) / grid;
+      const double v1 = -1.0 + 2.0 * static_cast<double>(y + 1) / grid;
+      for (int32_t x = 0; x < grid; ++x) {
+        const double u0 = -1.0 + 2.0 * static_cast<double>(x) / grid;
+        const double u1 = -1.0 + 2.0 * static_cast<double>(x + 1) / grid;
+        const glm::dvec3 center_direction = face_uv_to_direction(
+            face, (u0 + u1) * 0.5, (v0 + v1) * 0.5);
+        const glm::vec3 color = macro_color(center_direction);
+        debug_append_oriented_quad(
+            mesh, debug_vertex_fn(planet, face, u0, v0, color),
+            debug_vertex_fn(planet, face, u1, v0, color),
+            debug_vertex_fn(planet, face, u1, v1, color),
+            debug_vertex_fn(planet, face, u0, v1, color));
+      }
+    }
+  }
+  mesh.material = static_cast<uint8_t>(VoxelMaterial::Grass);
+  return mesh;
 }
 
 RenderMesh build_debug_planet_grid_mesh(const PlanetDefinition &planet,

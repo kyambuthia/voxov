@@ -567,6 +567,27 @@ void test_player_moves_on_planet_surface() {
   assert(tangential > 0.5f);
 }
 
+void test_planet_flight_follows_camera_pitch() {
+  VoxelCollisionWorld collision{};
+  collision.set_planet_surface_collider(glm::vec3(0.0f), 50.0f);
+
+  PlayerEntity player{};
+  player.transform.position = glm::vec3(60.0f, 0.0f, 0.0f);
+  player.camera_rig.yaw = 180.0f;
+  player.camera_rig.pitch = 60.0f;
+
+  InputState input{};
+  input.move = glm::vec2(0.0f, 1.0f);
+  const glm::vec3 start = player.transform.position;
+  const glm::vec3 up = collision.planet_up_at(start);
+  PlayerControllerSystem::simulate_fixed(
+      player, input, collision, 1.0f / 60.0f, true);
+
+  const glm::vec3 delta = player.transform.position - start;
+  assert(glm::dot(delta, up) > 0.5f);
+  assert(glm::length(player.controller.velocity) > 1.0f);
+}
+
 void test_block_world_cross_sector_chunk_offset() {
   BlockWorldConfig cfg{};
   cfg.planet.radius = 50.0;
@@ -880,6 +901,73 @@ void test_planet_surface_flat_mesh_uses_local_plane() {
   assert(max_z <= 16.001f);
   assert(max_x - min_x >= 15.0f);
   assert(max_z - min_z >= 15.0f);
+}
+
+void test_planet_impostor_is_complete_sphere_lod() {
+  PlanetDefinition planet{};
+  planet.radius = 256.0;
+  planet.seed = 0x31415926u;
+
+  constexpr int32_t subdivisions = 8;
+  const RenderMesh mesh =
+      build_planet_impostor_mesh(planet, subdivisions);
+  assert(mesh.vertices.size() ==
+         static_cast<size_t>(6 * subdivisions * subdivisions * 4));
+  assert(mesh.indices.size() ==
+         static_cast<size_t>(6 * subdivisions * subdivisions * 6));
+
+  glm::vec3 min_color(1.0f);
+  glm::vec3 max_color(0.0f);
+  for (const RenderVertex &vertex : mesh.vertices) {
+    assert(std::fabs(glm::length(vertex.position) - 256.0f) < 0.05f);
+    assert(glm::dot(glm::normalize(vertex.position),
+                    glm::normalize(vertex.normal)) > 0.999f);
+    min_color = glm::min(min_color, vertex.color);
+    max_color = glm::max(max_color, vertex.color);
+  }
+  assert(glm::length(max_color - min_color) > 0.2f);
+}
+
+void test_planet_flight_clipmap_is_camera_relative_and_textured() {
+  PlanetDefinition planet{};
+  planet.center = glm::dvec3(0.0);
+  planet.radius = 8'192.0;
+  planet.voxel_size = 1.0;
+  planet.seed = 0x4d45455345u;
+
+  BlockWorldConfig config{};
+  config.planet = planet;
+  config.surface_shells = 4;
+  config.base_resolution = 64;
+  config.block_size = 1.0;
+  config.terrain_feature_size = 512.0;
+  config.chunk_size = 16;
+  config.seed = planet.seed;
+  BlockWorld world;
+  world.init(config);
+
+  const glm::dvec3 direction(1.0, 0.0, 0.0);
+  const glm::dvec3 camera_origin = direction * (planet.radius + 1'000.0);
+  const RenderMesh mesh = build_planet_flight_clipmap(
+      world, direction, 1'000.0, camera_origin, 16, 2);
+  assert(!mesh.vertices.empty());
+  assert(!mesh.indices.empty());
+  assert(mesh.content_hash != 0);
+
+  glm::vec3 bounds_min(std::numeric_limits<float>::max());
+  glm::vec3 bounds_max(-std::numeric_limits<float>::max());
+  for (const RenderVertex &vertex : mesh.vertices) {
+    const glm::dvec3 world_position =
+        glm::dvec3(vertex.position) + camera_origin;
+    const double radial_distance = glm::length(world_position - planet.center);
+    assert(radial_distance >= planet.radius - 1.0);
+    assert(radial_distance <= planet.radius + 1'000.0);
+    assert(vertex.texcoord.z >= 0.0f);
+    bounds_min = glm::min(bounds_min, vertex.position);
+    bounds_max = glm::max(bounds_max, vertex.position);
+  }
+  assert(bounds_max.y - bounds_min.y > 1'000.0f);
+  assert(bounds_max.z - bounds_min.z > 1'000.0f);
 }
 
 void test_planet_streamer_returns_runtime_terrain_chunks() {
@@ -2180,6 +2268,7 @@ int main() {
   test_block_world_streamed_surface_meshes_are_non_empty();
   test_player_spawn_on_planet_surface();
   test_player_moves_on_planet_surface();
+  test_planet_flight_follows_camera_pitch();
   test_block_world_cross_sector_chunk_offset();
   test_cube_edge_pairings_preserve_direction();
   test_surface_height_matches_quantized_surface_block();
@@ -2188,6 +2277,8 @@ int main() {
   test_planet_terrain_root_chunk_covers_face();
   test_planet_terrain_lod_chunks_cover_expected_regions();
   test_planet_surface_flat_mesh_uses_local_plane();
+  test_planet_impostor_is_complete_sphere_lod();
+  test_planet_flight_clipmap_is_camera_relative_and_textured();
   test_planet_streamer_returns_runtime_terrain_chunks();
   test_planet_streamer_refines_near_surface();
   test_planet_streamer_reports_budgeted_stats_and_revision();

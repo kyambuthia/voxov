@@ -92,11 +92,6 @@ static const char *kSceneFsSrc = R"(
         float dist = length(dir);
         if (dist < 0.001) return vec3(1.0);
 
-        vec3 step_dir = dir / dist;
-        float step_size = dist / 8.0;   // 8 samples for performance
-        vec3 opt_depth = vec3(0.0);
-        float opt_depth_mie = 0.0;
-
         float R = planet_center_radius.w;
         vec3 center = planet_center_radius.xyz;
         float Hr = atm_params_1.y;
@@ -104,20 +99,13 @@ static const char *kSceneFsSrc = R"(
         vec3 betaR = rayleigh_scatter_unused.xyz;
         float betaM = mie_scatter_pad.x;
 
-        for (int i = 0; i < 8; i++) {
-            float t = (float(i) + 0.5) * step_size;
-            vec3 p = start + step_dir * t;
-            float h = length(p - center) - R;
-            if (h < 0.0) break;  // inside planet
-
-            float dr = exp(-h / Hr) * step_size;
-            float dm = exp(-h / Hm) * step_size;
-            opt_depth += betaR * dr;
-            opt_depth_mie += betaM * dm;
-        }
-        // Mie extinction ≈ 1.1 × scattering
-        opt_depth_mie *= 1.1;
-        return exp(-(opt_depth + vec3(opt_depth_mie)));
+        float start_h = max(length(start - center) - R, 0.0);
+        float end_h = max(length(end - center) - R, 0.0);
+        float density_r = 0.5 * (exp(-start_h / Hr) + exp(-end_h / Hr));
+        float density_m = 0.5 * (exp(-start_h / Hm) + exp(-end_h / Hm));
+        vec3 optical_depth = betaR * dist * density_r +
+                             vec3(betaM * 1.1 * dist * density_m);
+        return exp(-optical_depth);
     }
 
     void main() {
@@ -138,18 +126,28 @@ static const char *kSceneFsSrc = R"(
 
         vec3 base_color = v_color;
         if (v_texcoord.z >= 0.0) {
-            vec3 texel = texture(voxel_tex,
-                                 vec3(fract(v_texcoord.xy), v_texcoord.z)).rgb;
-            base_color = texel * mix(vec3(1.0), v_color, 0.25);
+            vec2 tiled_uv = fract(v_texcoord.xy);
+            vec3 texel;
+            if (v_texcoord.z >= 2.5) {
+                vec3 soil = texture(voxel_tex, vec3(tiled_uv, 1.0)).rgb;
+                vec3 turf = texture(voxel_tex, vec3(tiled_uv, 0.0)).rgb;
+                texel = mix(soil, turf, step(0.78, tiled_uv.y));
+            } else {
+                texel = texture(voxel_tex,
+                                vec3(tiled_uv, v_texcoord.z)).rgb;
+            }
+            base_color = pow(texel, vec3(0.78)) *
+                         mix(vec3(1.0), v_color, 0.18);
         }
 
         vec3 n = normalize(v_normal);
         vec3 sun_dir = normalize(sun_dir_intensity.xyz);
-        vec3 l = normalize(light_direction + sun_dir);
+        vec3 l = normalize(light_direction);
         vec3 v = normalize(camera_pos - v_world_pos);
-        vec3 h = normalize(l + v);
+        vec3 h = normalize(sun_dir + v);
 
-        float ndl = max(dot(n, l), 0.0);
+        float ndl = clamp(max(dot(n, l), 0.0) * 0.35 +
+                          max(dot(n, sun_dir), 0.0) * 0.90, 0.0, 1.25);
         float ndh = max(dot(n, h), 0.0);
         float spec_norm = (material_shininess + 8.0) * 0.0397887358;
         float spec_factor = spec_norm * pow(ndh, material_shininess) * ndl;
@@ -160,7 +158,11 @@ static const char *kSceneFsSrc = R"(
         float sun_boost = max(sun_dir_intensity.w / 20.0, 0.0);
         vec3 lit = (ambient + diffuse + specular) * sun_boost;
 
-        frag_color = vec4(base_color * lit * atm_trans, 1.0);
+        vec3 terrain_lit = base_color * lit * atm_trans;
+        float fog_amount = clamp(
+            (1.0 - dot(atm_trans, vec3(0.333333))) * 0.55, 0.0, 0.72);
+        vec3 aerial_color = vec3(0.42, 0.61, 0.88);
+        frag_color = vec4(mix(terrain_lit, aerial_color, fog_amount), 1.0);
     }
 )";
 #elif defined(SOKOL_GLES3)
@@ -217,11 +219,6 @@ static const char *kSceneFsSrc = R"(#version 300 es
         float dist = length(dir);
         if (dist < 0.001) return vec3(1.0);
 
-        vec3 step_dir = dir / dist;
-        float step_size = dist / 8.0;
-        vec3 opt_depth = vec3(0.0);
-        float opt_depth_mie = 0.0;
-
         float R = planet_center_radius.w;
         vec3 center = planet_center_radius.xyz;
         float Hr = atm_params_1.y;
@@ -229,19 +226,13 @@ static const char *kSceneFsSrc = R"(#version 300 es
         vec3 betaR = rayleigh_scatter_unused.xyz;
         float betaM = mie_scatter_pad.x;
 
-        for (int i = 0; i < 8; i++) {
-            float t = (float(i) + 0.5) * step_size;
-            vec3 p = start + step_dir * t;
-            float h = length(p - center) - R;
-            if (h < 0.0) break;
-
-            float dr = exp(-h / Hr) * step_size;
-            float dm = exp(-h / Hm) * step_size;
-            opt_depth += betaR * dr;
-            opt_depth_mie += betaM * dm;
-        }
-        opt_depth_mie *= 1.1;
-        return exp(-(opt_depth + vec3(opt_depth_mie)));
+        float start_h = max(length(start - center) - R, 0.0);
+        float end_h = max(length(end - center) - R, 0.0);
+        float density_r = 0.5 * (exp(-start_h / Hr) + exp(-end_h / Hr));
+        float density_m = 0.5 * (exp(-start_h / Hm) + exp(-end_h / Hm));
+        vec3 optical_depth = betaR * dist * density_r +
+                             vec3(betaM * 1.1 * dist * density_m);
+        return exp(-optical_depth);
     }
 
     void main() {
@@ -258,18 +249,28 @@ static const char *kSceneFsSrc = R"(#version 300 es
 
         vec3 base_color = v_color;
         if (v_texcoord.z >= 0.0) {
-            vec3 texel = texture(voxel_tex,
-                                 vec3(fract(v_texcoord.xy), v_texcoord.z)).rgb;
-            base_color = texel * mix(vec3(1.0), v_color, 0.25);
+            vec2 tiled_uv = fract(v_texcoord.xy);
+            vec3 texel;
+            if (v_texcoord.z >= 2.5) {
+                vec3 soil = texture(voxel_tex, vec3(tiled_uv, 1.0)).rgb;
+                vec3 turf = texture(voxel_tex, vec3(tiled_uv, 0.0)).rgb;
+                texel = mix(soil, turf, step(0.78, tiled_uv.y));
+            } else {
+                texel = texture(voxel_tex,
+                                vec3(tiled_uv, v_texcoord.z)).rgb;
+            }
+            base_color = pow(texel, vec3(0.78)) *
+                         mix(vec3(1.0), v_color, 0.18);
         }
 
         vec3 n = normalize(v_normal);
         vec3 sun_dir = normalize(sun_dir_intensity.xyz);
-        vec3 l = normalize(light_direction + sun_dir);
+        vec3 l = normalize(light_direction);
         vec3 v = normalize(camera_pos - v_world_pos);
-        vec3 h = normalize(l + v);
+        vec3 h = normalize(sun_dir + v);
 
-        float ndl = max(dot(n, l), 0.0);
+        float ndl = clamp(max(dot(n, l), 0.0) * 0.35 +
+                          max(dot(n, sun_dir), 0.0) * 0.90, 0.0, 1.25);
         float ndh = max(dot(n, h), 0.0);
         float spec_norm = (material_shininess + 8.0) * 0.0397887358;
         float spec_factor = spec_norm * pow(ndh, material_shininess) * ndl;
@@ -280,7 +281,11 @@ static const char *kSceneFsSrc = R"(#version 300 es
         float sun_boost = max(sun_dir_intensity.w / 20.0, 0.0);
         vec3 lit = (ambient + diffuse + specular) * sun_boost;
 
-        frag_color = vec4(base_color * lit * atm_trans, 1.0);
+        vec3 terrain_lit = base_color * lit * atm_trans;
+        float fog_amount = clamp(
+            (1.0 - dot(atm_trans, vec3(0.333333))) * 0.55, 0.0, 0.72);
+        vec3 aerial_color = vec3(0.42, 0.61, 0.88);
+        frag_color = vec4(mix(terrain_lit, aerial_color, fog_amount), 1.0);
     }
 )";
 #else

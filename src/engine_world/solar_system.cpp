@@ -15,25 +15,26 @@ CelestialBody make_sun() {
     sun.name = "Sun";
     sun.is_star = true;
     sun.parent_index = -1;
-    sun.orbital.radius = 100.0;          // 100 m visible sphere
+    sun.orbital.radius = 10'000'000.0;   // stylized macro-scale star
     sun.color = glm::vec3(1.0f, 0.95f, 0.2f);  // warm yellow
     return sun;
 }
 
 CelestialBody make_planet() {
-    // Our voxel world — radius matches planet_def.radius = 500.0 m.
-    // Orbits the sun at 2000 m with slight eccentricity.
+    // Our voxel world uses a 2,000 km radius. Orbital distances must be larger
+    // than the body itself; the previous 2 km orbit put the sun and moon
+    // literally inside the voxel planet and corrupted sun direction/SOI math.
     CelestialBody planet{};
     planet.name = "Voxov";
     planet.parent_index = 0;   // orbits the sun
-    planet.orbital.semi_major_axis = 2000.0;   // m from sun
+    planet.orbital.semi_major_axis = 150'000'000.0; // 150,000 km from sun
     planet.orbital.eccentricity = 0.0167;       // similar to Earth
     planet.orbital.inclination = 0.0;
     planet.orbital.longitude_ascending_node = 0.0;
     planet.orbital.argument_periapsis = 1.8;    // rad (~103°)
     planet.orbital.mean_anomaly_epoch = 0.0;    // start at periapsis
-    planet.orbital.orbital_period = 60.0;       // 1 minute per full orbit (gameplay scale)
-    planet.orbital.radius = 500.0;              // visual radius matches terrain
+    planet.orbital.orbital_period = 3'600.0;    // one gameplay hour
+    planet.orbital.radius = 2'000'000.0;        // matches voxel terrain
     planet.orbital.mass = 1.0e24;
     planet.color = glm::vec3(0.2f, 0.5f, 0.8f); // blue-green
     return planet;
@@ -43,14 +44,14 @@ CelestialBody make_moon() {
     CelestialBody moon{};
     moon.name = "Luna";
     moon.parent_index = 1;   // orbits the planet
-    moon.orbital.semi_major_axis = 300.0;    // m from planet surface-ish
+    moon.orbital.semi_major_axis = 8'000'000.0;
     moon.orbital.eccentricity = 0.05;
     moon.orbital.inclination = 0.09;          // ~5° tilt
     moon.orbital.longitude_ascending_node = 0.5;
     moon.orbital.argument_periapsis = 2.3;
     moon.orbital.mean_anomaly_epoch = 1.2;
-    moon.orbital.orbital_period = 10.0;       // 10 seconds per orbit
-    moon.orbital.radius = 50.0;               // m
+    moon.orbital.orbital_period = 600.0;
+    moon.orbital.radius = 500'000.0;
     moon.orbital.mass = 7.3e22;
     moon.color = glm::vec3(0.7f, 0.7f, 0.7f); // gray
     return moon;

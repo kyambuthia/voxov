@@ -11,20 +11,6 @@
 #include <vector>
 
 namespace {
-constexpr int32_t kSurfaceHeightSteps = 8;
-
-uint8_t encode_surface_fraction(float fraction) {
-    const int32_t step = std::clamp(
-        static_cast<int32_t>(std::lround(fraction * kSurfaceHeightSteps)),
-        1, kSurfaceHeightSteps);
-    return static_cast<uint8_t>(std::clamp(
-        static_cast<int32_t>(std::lround(
-            static_cast<double>(step) /
-            static_cast<double>(kSurfaceHeightSteps) *
-            VoxelChunk::kMaxBlockHeight)),
-        1, static_cast<int32_t>(VoxelChunk::kMaxBlockHeight)));
-}
-
 // vertical_layers / chunk_size truncates; surface layers 16+ need a second chunk row.
 int32_t chunk_axis_count(int32_t axis_res, int32_t chunk_size) {
     return std::max(1, (axis_res + chunk_size - 1) / chunk_size);
@@ -278,7 +264,6 @@ BlockAddress BlockWorld::address_from_world(const glm::dvec3 &world_pos) const {
 }
 
 glm::dvec3 BlockWorld::world_from_address(const BlockAddress &addr) const {
-    const ShellConfig &sh = shell_config(addr.shell);
     const int32_t cx = addr.chunk.x * config_.chunk_size + addr.block.x;
     const int32_t cz = addr.chunk.z * config_.chunk_size + addr.block.z;
     const int32_t ly = addr.chunk.y * config_.chunk_size + addr.block.y;
@@ -299,6 +284,7 @@ glm::dvec3 BlockWorld::block_world_center(PlanetFace face, int32_t shell_idx,
 void BlockWorld::block_face_uv(PlanetFace face, int32_t shell_idx,
                                int32_t col_x, int32_t col_z,
                                double &u, double &v) const {
+    (void)face;
     const ShellConfig &sh = shell_config(shell_idx);
     u = -1.0 + (static_cast<double>(col_x) + 0.5) / static_cast<double>(sh.horizontal_res) * 2.0;
     v = -1.0 + (static_cast<double>(col_z) + 0.5) / static_cast<double>(sh.horizontal_res) * 2.0;
@@ -314,7 +300,7 @@ int32_t BlockWorld::terrain_height_at(const glm::dvec3 &world_dir) const {
         1.0, config_.planet.radius / config_.terrain_feature_size));
     // The integer layer is the floor of the continuous height. The fractional
     // remainder is encoded on the surface block and reused by collision.
-    return noise.terrain_height(world_dir, 18.0f, 5.0f, frequency);
+    return noise.terrain_height(world_dir, 18.0f, 8.0f, frequency);
 }
 
 int32_t BlockWorld::terrain_height_at_face_uv(PlanetFace face, int32_t col_x,
@@ -327,15 +313,9 @@ int32_t BlockWorld::terrain_height_at_face_uv(PlanetFace face, int32_t col_x,
 
 double BlockWorld::surface_radial_distance(const glm::dvec3 &direction) const {
     const glm::dvec3 dir = glm::normalize(direction);
-    const SphereNoise3D noise(config_.seed);
-    const float frequency = static_cast<float>(std::max(
-        1.0, config_.planet.radius / config_.terrain_feature_size));
-    const int32_t layer = noise.terrain_height(dir, 18.0f, 5.0f, frequency);
-    const int encoded_fraction = encode_surface_fraction(
-        noise.terrain_surface_fraction(dir, 18.0f, 5.0f, frequency));
-    const double height = static_cast<double>(layer) +
-                          static_cast<double>(encoded_fraction) /
-                              static_cast<double>(VoxelChunk::kMaxBlockHeight);
+    // Minecraft-style terrain uses whole blocks. Fractional-height surface
+    // cells created hairline trenches and made the ground read as cracked.
+    const double height = static_cast<double>(terrain_height_at(dir) + 1);
     const ShellConfig &sh = shell_config(shell_count() - 1);
     const double layer_t = std::clamp(
         height / static_cast<double>(std::max(1, sh.vertical_layers)),
@@ -395,9 +375,6 @@ VoxelMaterial BlockWorld::block_material_at(const BlockAddress &addr,
 void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const {
     const int32_t base_col_x = addr.chunk.x * config_.chunk_size;
     const int32_t base_col_z = addr.chunk.z * config_.chunk_size;
-    const ShellConfig &sh = shell_config(addr.shell);
-    const int32_t surface_layers =
-        shell_config(shell_count() - 1).vertical_layers;
 
     const int32_t cs = config_.chunk_size;
     std::vector<int32_t> col_heights(static_cast<size_t>(cs * cs), 0);
@@ -411,38 +388,17 @@ void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const
         }
     }
 
-    SphereNoise3D surface_noise(config_.seed);
-    const float terrain_frequency = static_cast<float>(std::max(
-        1.0, config_.planet.radius / config_.terrain_feature_size));
-    const int32_t outer_shell = shell_count() - 1;
     int32_t solid_count = 0;
     for (int32_t z = 0; z < cs; ++z) {
         for (int32_t x = 0; x < cs; ++x) {
             const int32_t surf_h = col_height(x, z);
-            const int32_t col_x = base_col_x + x;
-            const int32_t col_z = base_col_z + z;
-            double col_u = 0.0;
-            double col_v = 0.0;
-            block_face_uv(addr.sector, outer_shell, col_x, col_z, col_u, col_v);
-            const glm::dvec3 col_dir =
-                face_uv_to_direction(addr.sector, col_u, col_v);
             for (int32_t y = 0; y < cs; ++y) {
                 BlockAddress ba = addr;
                 ba.block = glm::ivec3(x, y, z);
                 const VoxelMaterial mat = block_material_at(ba, surf_h);
                 uint8_t block_h = 0;
                 if (mat != VoxelMaterial::Air) {
-                    const int32_t layer =
-                        ba.chunk.y * config_.chunk_size + ba.block.y;
-                    const bool is_surface_block =
-                        addr.shell == outer_shell && layer == surf_h;
-                    if (is_surface_block) {
-                        const float frac = surface_noise.terrain_surface_fraction(
-                            col_dir, 18.0f, 5.0f, terrain_frequency);
-                        block_h = encode_surface_fraction(frac);
-                    } else {
-                        block_h = VoxelChunk::kMaxBlockHeight;
-                    }
+                    block_h = VoxelChunk::kMaxBlockHeight;
                 }
                 out.set_material(x, y, z, mat, block_h);
                 if (mat != VoxelMaterial::Air) {
@@ -913,8 +869,9 @@ RenderMesh BlockWorld::build_chunk_mesh(
 
     auto texture_layer = [](VoxelMaterial material, bool top_face) -> float {
         if (material == VoxelMaterial::Grass && top_face) return 0.0f;
+        if (material == VoxelMaterial::Grass) return 3.0f;
         if (material == VoxelMaterial::Stone) return 2.0f;
-        return 1.0f; // dirt, and the soil side of a grass block
+        return 1.0f;
     };
 
     auto emit_quad = [&](glm::dvec3 v0, glm::dvec3 v1, glm::dvec3 v2, glm::dvec3 v3,
@@ -1165,18 +1122,6 @@ RenderMesh BlockWorld::build_chunk_mesh(
                     config_.planet.center + d11 * r_cell1,
                 };
 
-                // p_actual[0..3] = bottom face (r_cell0), p_actual[4..7] = top (r_block_top).
-                const glm::dvec3 p_actual[8] = {
-                    config_.planet.center + d00 * r_cell0,
-                    config_.planet.center + d10 * r_cell0,
-                    config_.planet.center + d01 * r_cell0,
-                    config_.planet.center + d11 * r_cell0,
-                    config_.planet.center + d00 * r_block_top,
-                    config_.planet.center + d10 * r_block_top,
-                    config_.planet.center + d01 * r_block_top,
-                    config_.planet.center + d11 * r_block_top,
-                };
-
                 // Height fraction for color tinting.
                 const float height_t = std::clamp(
                     static_cast<float>(gy0) / static_cast<float>(std::max(1, sh.vertical_layers)),
@@ -1233,37 +1178,35 @@ RenderMesh BlockWorld::build_chunk_mesh(
 
                         glm::dvec3 v0, v1, v2, v3;
                         if (face.fd == BlockDir::Left || face.fd == BlockDir::Right) {
+                            const glm::dvec3 side_dir0 =
+                                face.fd == BlockDir::Left ? d00 : d10;
+                            const glm::dvec3 side_dir1 =
+                                face.fd == BlockDir::Left ? d01 : d11;
                             const glm::dvec3 p_side_z0[2] = {
-                                config_.planet.center + d00 * r_emit_bottom,
-                                config_.planet.center + d00 * r_my_top,
+                                config_.planet.center + side_dir0 * r_emit_bottom,
+                                config_.planet.center + side_dir0 * r_my_top,
                             };
                             const glm::dvec3 p_side_z1[2] = {
-                                config_.planet.center + d01 * r_emit_bottom,
-                                config_.planet.center + d01 * r_my_top,
+                                config_.planet.center + side_dir1 * r_emit_bottom,
+                                config_.planet.center + side_dir1 * r_my_top,
                             };
-                            if (face.fd == BlockDir::Left) {
-                                v0 = p_side_z0[0]; v1 = p_side_z1[0];
-                                v2 = p_side_z1[1]; v3 = p_side_z0[1];
-                            } else {
-                                v0 = p_side_z1[0]; v1 = p_side_z0[0];
-                                v2 = p_side_z0[1]; v3 = p_side_z1[1];
-                            }
+                            v0 = p_side_z0[0]; v1 = p_side_z1[0];
+                            v2 = p_side_z1[1]; v3 = p_side_z0[1];
                         } else {
+                            const glm::dvec3 side_dir0 =
+                                face.fd == BlockDir::Back ? d00 : d01;
+                            const glm::dvec3 side_dir1 =
+                                face.fd == BlockDir::Back ? d10 : d11;
                             const glm::dvec3 p_side_x0[2] = {
-                                config_.planet.center + d00 * r_emit_bottom,
-                                config_.planet.center + d00 * r_my_top,
+                                config_.planet.center + side_dir0 * r_emit_bottom,
+                                config_.planet.center + side_dir0 * r_my_top,
                             };
                             const glm::dvec3 p_side_x1[2] = {
-                                config_.planet.center + d10 * r_emit_bottom,
-                                config_.planet.center + d10 * r_my_top,
+                                config_.planet.center + side_dir1 * r_emit_bottom,
+                                config_.planet.center + side_dir1 * r_my_top,
                             };
-                            if (face.fd == BlockDir::Back) {
-                                v0 = p_side_x0[0]; v1 = p_side_x0[1];
-                                v2 = p_side_x1[1]; v3 = p_side_x1[0];
-                            } else {
-                                v0 = p_side_x1[0]; v1 = p_side_x1[1];
-                                v2 = p_side_x0[1]; v3 = p_side_x0[0];
-                            }
+                            v0 = p_side_x0[0]; v1 = p_side_x0[1];
+                            v2 = p_side_x1[1]; v3 = p_side_x1[0];
                         }
 
                         const bool top_face = false;
@@ -1376,10 +1319,6 @@ float SphereNoise3D::value_noise(const glm::dvec3 &p) const {
                         p.y - static_cast<double>(iy),
                         p.z - static_cast<double>(iz));
 
-    uint64_t h000 = ns_splitmix64(seed_ ^ (static_cast<uint64_t>(ix) * 73856093ull) ^
-                                  (static_cast<uint64_t>(iy) * 19349663ull) ^
-                                  (static_cast<uint64_t>(iz) * 83492791ull));
-
     const float sx = ns_smoothstep(static_cast<float>(f.x));
     const float sy = ns_smoothstep(static_cast<float>(f.y));
     const float sz = ns_smoothstep(static_cast<float>(f.z));
@@ -1445,4 +1384,185 @@ float SphereNoise3D::terrain_surface_fraction(const glm::dvec3 &direction,
     const float h = terrain_height_raw(direction, base_height, amplitude,
                                        base_frequency);
     return std::clamp(h - std::floor(h), 0.0f, 0.999999f);
+}
+
+RenderMesh build_planet_flight_clipmap(
+    const BlockWorld &world,
+    const glm::dvec3 &center_direction,
+    double camera_altitude,
+    const glm::dvec3 &camera_relative_origin,
+    int32_t cells_per_ring,
+    int32_t ring_count) {
+    RenderMesh mesh{};
+    if (!world.initialized()) {
+        return mesh;
+    }
+
+    const int32_t cells = std::clamp(cells_per_ring, 16, 64);
+    const int32_t rings = std::clamp(ring_count, 1, 5);
+    const PlanetDefinition &planet = world.planet();
+    const glm::dvec3 up = glm::normalize(center_direction);
+    const PlanetTangentBasis basis = tangent_basis(up);
+    const double radius = planet.radius;
+    const double base_half_extent = std::max(
+        768.0, std::min(radius * 0.08, camera_altitude * 1.5 + 512.0));
+    const double max_half_extent = radius * 0.65;
+    const SphereNoise3D geology_noise(world.config().seed ^ 0x9e3779b97f4a7c15ull);
+    const float geology_frequency = static_cast<float>(std::max(
+        8.0, radius / 8'192.0));
+    // A one-metre heightfield becomes sub-pixel within a few hundred metres.
+    // Coarser rings therefore preserve the min/max relief of the fine voxels
+    // with a gradual vertical scale, analogous to conservative voxel mipmaps.
+    const double vertical_lod_scale = std::clamp(
+        1.0 + std::sqrt(std::max(0.0, camera_altitude - 256.0) / 256.0) * 3.0,
+        1.0, 64.0);
+
+    mesh.vertices.reserve(static_cast<size_t>(rings * cells * cells * 8));
+    mesh.indices.reserve(static_cast<size_t>(rings * cells * cells * 12));
+
+    auto direction_at = [&](double east_m, double north_m) {
+        return glm::normalize(up * radius + basis.east * east_m +
+                              basis.north * north_m);
+    };
+
+    auto append_quad = [&](glm::dvec3 p0, glm::dvec3 p1, glm::dvec3 p2,
+                           glm::dvec3 p3, const glm::vec3 &color,
+                           float texture_layer, float repeat_u,
+                           float repeat_v) {
+        glm::dvec3 normal = glm::cross(p1 - p0, p2 - p0);
+        if (glm::dot(normal, normal) < 1.0e-12) {
+            return;
+        }
+        normal = glm::normalize(normal);
+        const glm::dvec3 outward = (p0 + p1 + p2 + p3) * 0.25 - planet.center;
+        if (glm::dot(normal, outward) < 0.0) {
+            std::swap(p1, p3);
+            normal = -normal;
+        }
+
+        const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+        const glm::vec3 n(normal);
+        mesh.vertices.push_back({glm::vec3(p0 - camera_relative_origin), color, n,
+                                 glm::vec3(0.0f, 0.0f, texture_layer)});
+        mesh.vertices.push_back({glm::vec3(p1 - camera_relative_origin), color, n,
+                                 glm::vec3(repeat_u, 0.0f, texture_layer)});
+        mesh.vertices.push_back({glm::vec3(p2 - camera_relative_origin), color, n,
+                                 glm::vec3(repeat_u, repeat_v, texture_layer)});
+        mesh.vertices.push_back({glm::vec3(p3 - camera_relative_origin), color, n,
+                                 glm::vec3(0.0f, repeat_v, texture_layer)});
+        mesh.indices.insert(mesh.indices.end(), {base, base + 1, base + 2,
+                                                 base, base + 2, base + 3});
+    };
+
+    double previous_half_extent = 0.0;
+    for (int32_t ring = 0; ring < rings; ++ring) {
+        const double half_extent = std::min(
+            max_half_extent, base_half_extent * std::pow(3.0, ring));
+        if (ring > 0 && half_extent <= previous_half_extent + 1.0) {
+            break;
+        }
+        const double inner_extent = ring == 0 ? 0.0 : previous_half_extent * 0.90;
+        const double cell_size = (half_extent * 2.0) / static_cast<double>(cells);
+        const int32_t sample_dim = cells + 2;
+        std::vector<double> sample_heights(
+            static_cast<size_t>(sample_dim * sample_dim), 0.0);
+
+        auto sample_index = [sample_dim](int32_t x, int32_t z) {
+            return static_cast<size_t>(z * sample_dim + x);
+        };
+        for (int32_t z = 0; z < sample_dim; ++z) {
+            const double north_m = -half_extent +
+                (static_cast<double>(z) - 0.5) * cell_size;
+            for (int32_t x = 0; x < sample_dim; ++x) {
+                const double east_m = -half_extent +
+                    (static_cast<double>(x) - 0.5) * cell_size;
+                const double fine_height = world.surface_height_above_base(
+                    direction_at(east_m, north_m));
+                sample_heights[sample_index(x, z)] = std::max(
+                    0.0, 18.0 + (fine_height - 18.0) * vertical_lod_scale);
+            }
+        }
+
+        for (int32_t z = 0; z < cells; ++z) {
+            const double z0 = -half_extent + static_cast<double>(z) * cell_size;
+            const double z1 = z0 + cell_size;
+            const double cz = (z0 + z1) * 0.5;
+            for (int32_t x = 0; x < cells; ++x) {
+                const double x0 = -half_extent + static_cast<double>(x) * cell_size;
+                const double x1 = x0 + cell_size;
+                const double cx = (x0 + x1) * 0.5;
+                if (ring > 0 && std::abs(cx) < inner_extent &&
+                    std::abs(cz) < inner_extent) {
+                    continue;
+                }
+
+                const double height = sample_heights[sample_index(x + 1, z + 1)];
+                const glm::dvec3 center_dir = direction_at(cx, cz);
+                const int32_t terrain_layer = world.terrain_height_at(center_dir);
+                const double local_relief = std::max({
+                    std::abs(height - sample_heights[sample_index(x, z + 1)]),
+                    std::abs(height - sample_heights[sample_index(x + 2, z + 1)]),
+                    std::abs(height - sample_heights[sample_index(x + 1, z)]),
+                    std::abs(height - sample_heights[sample_index(x + 1, z + 2)])});
+                const float geology = geology_noise.sample(
+                    center_dir, geology_frequency);
+                const bool rocky = terrain_layer >= 23 || local_relief > 12.0 ||
+                                   geology > 0.48f;
+                const bool bare_soil = !rocky && geology < -0.50f;
+                const VoxelMaterial top_material = rocky
+                    ? VoxelMaterial::Stone
+                    : (bare_soil ? VoxelMaterial::Dirt : VoxelMaterial::Grass);
+                const float height_t = std::clamp(
+                    static_cast<float>(height / std::max(
+                        1.0, world.max_surface_height_above_base())), 0.0f, 1.0f);
+                const glm::vec3 top_color = VoxelChunk::material_color(
+                    top_material, true, height_t);
+                const float top_texture = rocky ? 2.0f : (bare_soil ? 1.0f : 0.0f);
+                // Sink the clipmap slightly beneath editable one-metre blocks,
+                // preventing z-fighting where the two representations overlap.
+                const double top_radius = radius + height - 0.35;
+                const glm::dvec3 d00 = direction_at(x0, z0);
+                const glm::dvec3 d10 = direction_at(x1, z0);
+                const glm::dvec3 d11 = direction_at(x1, z1);
+                const glm::dvec3 d01 = direction_at(x0, z1);
+                append_quad(planet.center + d00 * top_radius,
+                            planet.center + d10 * top_radius,
+                            planet.center + d11 * top_radius,
+                            planet.center + d01 * top_radius,
+                            top_color, top_texture, 1.0f, 1.0f);
+
+                const double neighbor_heights[4] = {
+                    sample_heights[sample_index(x, z + 1)],
+                    sample_heights[sample_index(x + 2, z + 1)],
+                    sample_heights[sample_index(x + 1, z)],
+                    sample_heights[sample_index(x + 1, z + 2)],
+                };
+                const glm::dvec3 edge_a[4] = {d00, d10, d00, d01};
+                const glm::dvec3 edge_b[4] = {d01, d11, d10, d11};
+                for (int32_t edge = 0; edge < 4; ++edge) {
+                    const double lower_height = neighbor_heights[edge];
+                    if (height <= lower_height + 0.125) {
+                        continue;
+                    }
+                    const double bottom_radius = radius + lower_height - 0.35;
+                    const float side_repeat_v = static_cast<float>(std::clamp(
+                        height - lower_height, 1.0, 16.0));
+                    const float side_texture = rocky ? 2.0f : 3.0f;
+                    const glm::vec3 side_color = VoxelChunk::material_color(
+                        rocky ? VoxelMaterial::Stone : VoxelMaterial::Dirt,
+                        false, height_t);
+                    append_quad(planet.center + edge_a[edge] * bottom_radius,
+                                planet.center + edge_b[edge] * bottom_radius,
+                                planet.center + edge_b[edge] * top_radius,
+                                planet.center + edge_a[edge] * top_radius,
+                                side_color, side_texture, 1.0f, side_repeat_v);
+                }
+            }
+        }
+        previous_half_extent = half_extent;
+    }
+
+    mesh.material = static_cast<uint8_t>(VoxelMaterial::Grass);
+    mesh.content_hash = block_mesh_content_hash(mesh);
+    return mesh;
 }

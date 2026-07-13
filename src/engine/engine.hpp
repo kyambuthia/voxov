@@ -80,6 +80,7 @@ private:
   void update_first_person_camera(PlayerEntity &player,
                                   const glm::vec3 &render_position,
                                   Camera &out_camera);
+  void rebuild_planet_impostor();
   void refresh_overlay_text();
 
   Renderer renderer;
@@ -125,10 +126,21 @@ private:
   // ── Camera-relative rendering ────────────────────────────────────────
   // Snap origin tracks the camera-relative float32 reference point.
   // Mesh vertices are stored as offsets from this origin to preserve
-  // float32 sub-mm precision at 2000 km planet scale.  Updated when the
-  // camera moves >500 m from the current origin (forces mesh rebuild).
+  // float32 precision at 2000 km planet scale. The snap threshold grows with
+  // altitude so fast flight does not constantly rebuild terrain meshes.
   glm::dvec3 camera_snap_origin_{0.0};
   bool snap_origin_dirty_ = true;       // force initial mesh build
+
+  // Macro LOD for atmospheric/orbital views. Near the ground, streamed
+  // Minecraft-like chunks sit above this sphere; at altitude it preserves a
+  // complete planetary silhouette instead of leaving one floating flat patch.
+  RenderMesh planet_impostor_mesh_{};
+  uint64_t planet_impostor_revision_ = 0;
+
+  // Nested camera-relative terrain rings for atmospheric flight. Unlike the
+  // orbital silhouette, this retains block textures and stepped relief while
+  // moving quickly above the editable chunk radius.
+  RenderMesh flight_clipmap_mesh_{};
 
   // ── Wireframe debug overlay ─────────────────────────────────────────
   // Same PlanetDefinition as terrain, coarser grid (64 cells/face = ~62 km/cell).

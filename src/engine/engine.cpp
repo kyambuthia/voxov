@@ -26,8 +26,8 @@
 namespace {
 using PerfClock = std::chrono::steady_clock;
 
-constexpr uint64_t kPlanetImpostorMeshId = 0x504c414e45544c4full; // "PLANETLO"
-constexpr uint64_t kFlightVoxelLodMeshId = 0x464c59434c49504dull; // "FLYCLIPM"
+constexpr uint64_t kGlobalPlanetSurfaceMeshId =
+    0x504c414e45544c4full; // "PLANETLO"
 #if defined(VOXOV_PLATFORM_ANDROID) || defined(VOXOV_PLATFORM_WEB)
 constexpr int32_t kSurfaceStreamRadiusChunks = 2;
 constexpr uint32_t kChunkGenerationBudget = 1;
@@ -282,7 +282,9 @@ bool Engine::init(const EngineRuntimeOptions &options) {
     LODConfig lod_cfg{};
     lod_cfg.error_threshold = 4.0f;      // pixels
     lod_cfg.hysteresis_factor = 1.5f;    // dead zone to prevent oscillation
-    lod_cfg.max_lod_level = 3;           // LOD 3 = 2³ effective (coarsest)
+    // A 64 m planet only keeps a small detailed patch. Coarsening those chunks
+    // saved little while introducing unstitched mixed-stride borders.
+    lod_cfg.max_lod_level = 0;
     lod_system_.init(lod_cfg);
   }
 
@@ -355,7 +357,9 @@ bool Engine::init(const EngineRuntimeOptions &options) {
           planet_def.center + observation_direction *
                                   (planet_def.radius +
                                    kPlayablePlanetConfig.capture_flight_altitude_m));
-      local_player.camera_rig.pitch = 0.0f;
+      // Look back toward the compact planet so automated flight captures
+      // exercise the terrain handoff instead of recording empty sky.
+      local_player.camera_rig.pitch = -89.0f;
       local_player_prev_position = local_player.transform.position;
       debug_fly_mode_ = true;
     }
@@ -453,7 +457,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   // Initialize camera-relative snap origin at player spawn position.
   camera_snap_origin_ = glm::dvec3(local_player.transform.position);
   snap_origin_dirty_ = true;
-  rebuild_planet_impostor();
+  rebuild_global_planet_surface();
 
   if (!renderer.init(RendererCreateInfo{
       .backend = runtime_options.render_backend,
@@ -507,11 +511,6 @@ void Engine::stop_client_session() {
 }
 
 void Engine::shutdown() {
-  if (flight_clipmap_future_.valid()) {
-    flight_clipmap_future_.wait();
-    flight_clipmap_future_.get();
-  }
-  flight_clipmap_build_pending_ = false;
   lan_discovery_.stop();
   if (local_server_running_) {
     local_server_.shutdown();
@@ -873,8 +872,6 @@ void Engine::tick(double frame_dt,
   {
     const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
     camera_snap_origin_ = cam_pos;
-    update_flight_clipmap(
-        cam_pos, glm::dvec3(local_player.controller.velocity), camera_altitude);
   }
   // Camera origin must be the snap origin so the GPU shader can compute
   // correct camera-relative positions for lighting.
@@ -947,16 +944,8 @@ void Engine::tick(double frame_dt,
   // terrain top (Grass) in the outer thin shell is meshed (not just deep stone).
   double chunk_gen_ms = 0.0;
   double mesh_build_ms = 0.0;
-  const double player_flight_speed =
-      glm::length(glm::dvec3(local_player.controller.velocity));
-  const double close_flight_altitude =
-      std::min(128.0, block_world_.planet().radius * 0.5);
   const bool detailed_terrain_needed =
-      camera_altitude <= kPlayablePlanetConfig.local_terrain_max_altitude_m &&
-      (!debug_fly_mode_ || camera_altitude < close_flight_altitude ||
-       player_flight_speed <
-           kPlayablePlanetConfig.debug_flight_sprint_base_mps ||
-       flight_clipmap_mesh_.vertices.empty());
+      camera_altitude <= kPlayablePlanetConfig.local_terrain_max_altitude_m;
   if (detailed_terrain_needed) {
     const glm::dvec3 player_offset =
         glm::dvec3(local_player.transform.position) - block_world_.planet().center;
@@ -1287,8 +1276,7 @@ void Engine::tick(double frame_dt,
             std::remove_if(meshes.begin(), meshes.end(),
                            [&resident_ids](const RenderMesh &m) {
                              if (m.mesh_id == 0 ||
-                                 m.mesh_id == kPlanetImpostorMeshId ||
-                                 m.mesh_id == kFlightVoxelLodMeshId) {
+                                 m.mesh_id == kGlobalPlanetSurfaceMeshId) {
                                return false;
                              }
                              return resident_ids.find(m.mesh_id) ==
@@ -1299,31 +1287,22 @@ void Engine::tick(double frame_dt,
     }
     mesh_build_ms = elapsed_ms(mesh_build_start, PerfClock::now());
   } else {
-    // The macro planet owns the view at altitude. Keeping hundreds of metre-
-    // scale chunks resident here wastes CPU/GPU time and used to leave a lone
-    // floating patch that read visually as a flat world.
+    // The complete global surface owns the view at altitude. Remove only
+    // streamed chunk meshes; clearing the whole opaque scene caused a visible
+    // one-frame hole and discarded unrelated stable meshes.
     block_world_.evict_chunks_except({});
-    scene.opaque_meshes.clear();
+    scene.opaque_meshes.erase(
+        std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+                       [](const RenderMesh &mesh) {
+                         return mesh.mesh_id != 0 &&
+                                mesh.mesh_id != kGlobalPlanetSurfaceMeshId;
+                       }),
+        scene.opaque_meshes.end());
+    for (int i = 0; i < 4; ++i) {
+      render_stats.lod_chunk_count[i] = 0;
+    }
     snap_origin_dirty_ = false;
     last_chunk_center_hash_ = 0;
-  }
-
-  // Bridge detailed editable chunks to the orbital mesh with nested,
-  // camera-relative voxel terrain rings. This prevents fast flight from
-  // collapsing directly from Minecraft-scale blocks to a flat green sphere.
-  scene.opaque_meshes.erase(
-      std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-                     [](const RenderMesh &mesh) {
-                       return mesh.mesh_id == kFlightVoxelLodMeshId;
-                     }),
-      scene.opaque_meshes.end());
-  if ((debug_fly_mode_ ||
-       camera_altitude >=
-           kPlayablePlanetConfig.flight_terrain_min_altitude_m) &&
-      camera_altitude <=
-          kPlayablePlanetConfig.flight_terrain_max_altitude_m &&
-      !flight_clipmap_mesh_.vertices.empty()) {
-    scene.opaque_meshes.push_back(flight_clipmap_mesh_);
   }
 
   // Wireframe overlay — regenerate when dirty. Only show when devhud enabled.
@@ -1467,13 +1446,16 @@ void Engine::tick(double frame_dt,
         scene.opaque_meshes.end());
     last_celestial_mesh_count_ = 0;
 
+    // Keep the complete terrain globe resident as a slightly recessed safety
+    // shell. It fills streaming and meshing seams near the ground and becomes
+    // the sole representation in flight/orbit, so no altitude can expose sky.
     const auto planet_it = std::find_if(
         scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
         [](const RenderMesh &mesh) {
-          return mesh.mesh_id == kPlanetImpostorMeshId;
+          return mesh.mesh_id == kGlobalPlanetSurfaceMeshId;
         });
     if (planet_it == scene.opaque_meshes.end()) {
-      scene.opaque_meshes.push_back(planet_impostor_mesh_);
+      scene.opaque_meshes.push_back(global_planet_surface_mesh_);
     }
 
     const glm::dvec3 planet_orbit_pos = solar_system_.body_position(1);
@@ -1803,115 +1785,11 @@ GuiMenu::Character Engine::preferred_character() const {
   return GuiMenu::Character::Capsule;
 }
 
-void Engine::rebuild_planet_impostor() {
-  planet_impostor_mesh_ = build_planet_impostor_mesh(block_world_.planet(), 24);
-  const glm::dvec3 mesh_origin = block_world_.planet().center;
-  for (RenderVertex &vertex : planet_impostor_mesh_.vertices) {
-    vertex.position -= glm::vec3(mesh_origin);
-  }
-  planet_impostor_mesh_.world_origin = mesh_origin;
-  planet_impostor_mesh_.mesh_id = kPlanetImpostorMeshId;
-  planet_impostor_mesh_.content_hash = ++planet_impostor_revision_;
-}
-
-void Engine::update_flight_clipmap(
-    const glm::dvec3 &camera_position,
-    const glm::dvec3 &camera_velocity,
-    double camera_altitude) {
-  const bool terrain_needed =
-      (debug_fly_mode_ ||
-       camera_altitude >=
-           kPlayablePlanetConfig.flight_terrain_min_altitude_m) &&
-      camera_altitude <=
-          kPlayablePlanetConfig.flight_terrain_max_altitude_m;
-
-  if (flight_clipmap_build_pending_ && flight_clipmap_future_.valid() &&
-      flight_clipmap_future_.wait_for(std::chrono::seconds(0)) ==
-          std::future_status::ready) {
-    RenderMesh completed = flight_clipmap_future_.get();
-    flight_clipmap_build_pending_ = false;
-    if (terrain_needed && !completed.vertices.empty()) {
-      completed.mesh_id = kFlightVoxelLodMeshId;
-      flight_clipmap_mesh_ = std::move(completed);
-      flight_clipmap_anchor_direction_ =
-          pending_flight_clipmap_direction_;
-      flight_clipmap_anchor_altitude_ =
-          pending_flight_clipmap_altitude_;
-    }
-  }
-
-  if (!terrain_needed) {
-    if (!flight_clipmap_build_pending_) {
-      flight_clipmap_mesh_ = RenderMesh{};
-      flight_clipmap_anchor_direction_ = glm::dvec3(0.0);
-      flight_clipmap_anchor_altitude_ = -1.0;
-    }
-    return;
-  }
-
-  const PlanetDefinition &planet = block_world_.planet();
-  const glm::dvec3 camera_offset = camera_position - planet.center;
-  if (glm::dot(camera_offset, camera_offset) < 1.0) {
-    return;
-  }
-
-  // Predict into the velocity vector so high-speed flight fills terrain in
-  // front of the camera. The current clipmap remains active until this build
-  // completes, providing double-buffered, never-empty terrain coverage.
-  const double speed = glm::length(camera_velocity);
-  const double lead_seconds = std::clamp(0.35 + speed / 4'000.0, 0.35, 1.25);
-  const double max_lead_distance = std::max(
-      planet.radius,
-      camera_altitude * 2.0 + planet.radius * 0.5);
-  glm::dvec3 lead = camera_velocity * lead_seconds;
-  const double lead_distance = glm::length(lead);
-  if (lead_distance > max_lead_distance) {
-    lead *= max_lead_distance / lead_distance;
-  }
-  const glm::dvec3 predicted_position = camera_position + lead;
-  const glm::dvec3 predicted_offset = predicted_position - planet.center;
-  const glm::dvec3 predicted_direction = glm::normalize(predicted_offset);
-
-  const double base_half_extent =
-      planet_flight_clipmap_half_extent(planet.radius, camera_altitude);
-  // Refill only after crossing a substantial fraction of the innermost ring.
-  // The predictive centre leaves terrain ahead, so rebuilding every few
-  // hundred metres merely keeps a CPU core and the GPU upload path saturated.
-  const double rebuild_distance =
-      std::max(planet.radius * 0.25, base_half_extent * 0.65);
-  double anchor_distance = std::numeric_limits<double>::infinity();
-  if (glm::dot(flight_clipmap_anchor_direction_,
-               flight_clipmap_anchor_direction_) > 0.5) {
-    const double cosine = std::clamp(
-        glm::dot(flight_clipmap_anchor_direction_, predicted_direction),
-        -1.0, 1.0);
-    anchor_distance = std::acos(cosine) * planet.radius;
-  }
-  const double altitude_bias = std::min(256.0, planet.radius * 0.5);
-  const bool altitude_lod_changed = flight_clipmap_anchor_altitude_ < 0.0 ||
-      std::abs(std::log2((camera_altitude + altitude_bias) /
-                         (flight_clipmap_anchor_altitude_ + altitude_bias))) >
-          0.35;
-  const bool rebuild_needed = flight_clipmap_mesh_.vertices.empty() ||
-      anchor_distance > rebuild_distance || altitude_lod_changed;
-  if (!rebuild_needed || flight_clipmap_build_pending_) {
-    return;
-  }
-
-  const BlockWorldConfig snapshot_config = block_world_.config();
-  const glm::dvec3 build_origin = predicted_position;
-  pending_flight_clipmap_direction_ = predicted_direction;
-  pending_flight_clipmap_altitude_ = camera_altitude;
-  flight_clipmap_build_pending_ = true;
-  flight_clipmap_future_ = std::async(
-      std::launch::async,
-      [snapshot_config, predicted_direction, camera_altitude, build_origin]() {
-        BlockWorld snapshot;
-        snapshot.init(snapshot_config);
-        return build_planet_flight_clipmap(
-            snapshot, predicted_direction, camera_altitude, build_origin,
-            32, 4);
-      });
+void Engine::rebuild_global_planet_surface() {
+  global_planet_surface_mesh_ = build_compact_planet_surface_mesh(
+      block_world_, kPlayablePlanetConfig.global_surface_subdivisions,
+      kPlayablePlanetConfig.global_surface_radial_bias_m);
+  global_planet_surface_mesh_.mesh_id = kGlobalPlanetSurfaceMeshId;
 }
 
 void Engine::update_first_person_camera(PlayerEntity &player,

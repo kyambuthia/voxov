@@ -996,6 +996,105 @@ void test_planet_impostor_is_complete_sphere_lod() {
   assert(glm::length(max_color - min_color) > 0.2f);
 }
 
+void test_compact_planet_surface_is_complete_and_seamless() {
+  BlockWorldConfig config{};
+  config.planet.center = glm::dvec3(17.0, -4.0, 9.0);
+  config.planet.radius = 64.0;
+  config.planet.seed = 0x31415926u;
+  config.surface_shells = 2;
+  config.base_resolution = 32;
+  config.block_size = 1.0;
+  config.terrain_feature_size = 24.0;
+  config.terrain_base_height = 4.0f;
+  config.terrain_amplitude = 3.0f;
+  config.terrain_min_height = 1;
+  config.terrain_max_height = 8;
+  config.chunk_size = 16;
+  config.seed = config.planet.seed;
+  BlockWorld world;
+  world.init(config);
+
+  constexpr int32_t grid = 16;
+  constexpr double bias = 0.20;
+  const RenderMesh mesh =
+      build_compact_planet_surface_mesh(world, grid, bias);
+  assert(mesh.use_16_bit_indices);
+  assert(mesh.indices.empty());
+  assert(mesh.vertices.size() ==
+         static_cast<size_t>(6 * (grid + 1) * (grid + 1)));
+  assert(mesh.indices16.size() ==
+         static_cast<size_t>(6 * grid * grid * 6));
+  assert(mesh.content_hash != 0);
+  assert(glm::distance(mesh.world_origin, config.planet.center) < 1.0e-9);
+
+  for (const RenderVertex &vertex : mesh.vertices) {
+    const glm::dvec3 relative(vertex.position);
+    const glm::dvec3 direction = glm::normalize(relative);
+    const double expected_radius = config.planet.radius + std::max(
+        0.0, world.surface_height_above_base(direction) - bias);
+    assert(std::abs(glm::length(relative) - expected_radius) < 1.0e-4);
+    assert(glm::dot(glm::normalize(vertex.normal), glm::vec3(direction)) >
+           0.999f);
+    assert(vertex.texcoord.z == 0.0f);
+  }
+
+  for (size_t i = 0; i < mesh.indices16.size(); i += 3) {
+    const glm::dvec3 a(mesh.vertices[mesh.indices16[i]].position);
+    const glm::dvec3 b(mesh.vertices[mesh.indices16[i + 1]].position);
+    const glm::dvec3 c(mesh.vertices[mesh.indices16[i + 2]].position);
+    const glm::dvec3 normal = glm::cross(b - a, c - a);
+    assert(glm::dot(normal, a + b + c) > 0.0);
+  }
+
+  auto face_index = [](PlanetFace face) -> int32_t {
+    switch (face) {
+    case PlanetFace::PosX: return 0;
+    case PlanetFace::NegX: return 1;
+    case PlanetFace::PosY: return 2;
+    case PlanetFace::NegY: return 3;
+    case PlanetFace::PosZ: return 4;
+    case PlanetFace::NegZ: return 5;
+    }
+    return 0;
+  };
+  auto vertex_at_uv = [&](PlanetFace face, double u, double v)
+      -> const RenderVertex & {
+    const int32_t x = std::clamp(
+        static_cast<int32_t>(std::lround((u + 1.0) * 0.5 * grid)), 0, grid);
+    const int32_t z = std::clamp(
+        static_cast<int32_t>(std::lround((v + 1.0) * 0.5 * grid)), 0, grid);
+    const size_t face_base = static_cast<size_t>(face_index(face)) *
+                             static_cast<size_t>((grid + 1) * (grid + 1));
+    return mesh.vertices[face_base +
+                         static_cast<size_t>(z * (grid + 1) + x)];
+  };
+  auto edge_uv = [](CubeEdge edge, double along) {
+    switch (edge) {
+    case CubeEdge::Left: return glm::dvec2(-1.0, along);
+    case CubeEdge::Right: return glm::dvec2(1.0, along);
+    case CubeEdge::Top: return glm::dvec2(along, 1.0);
+    case CubeEdge::Bottom: return glm::dvec2(along, -1.0);
+    }
+    return glm::dvec2(0.0);
+  };
+
+  for (const CubeEdgePairing &pairing : BlockWorld::all_edge_pairings()) {
+    for (int32_t step = 0; step <= grid; ++step) {
+      const double along = -1.0 + 2.0 * static_cast<double>(step) / grid;
+      const glm::dvec2 source_uv = edge_uv(pairing.from_edge, along);
+      double dest_u = pairing.swap_uv ? source_uv.y : source_uv.x;
+      double dest_v = pairing.swap_uv ? source_uv.x : source_uv.y;
+      if (pairing.flip_u) dest_u = -dest_u;
+      if (pairing.flip_v) dest_v = -dest_v;
+      const RenderVertex &source = vertex_at_uv(
+          pairing.from_face, source_uv.x, source_uv.y);
+      const RenderVertex &dest = vertex_at_uv(
+          pairing.to_face, dest_u, dest_v);
+      assert(glm::distance(source.position, dest.position) < 1.0e-4f);
+    }
+  }
+}
+
 void test_planet_flight_clipmap_is_camera_relative_and_textured() {
   PlanetDefinition planet{};
   planet.center = glm::dvec3(0.0);
@@ -2355,6 +2454,7 @@ int main() {
   test_planet_terrain_lod_chunks_cover_expected_regions();
   test_planet_surface_flat_mesh_uses_local_plane();
   test_planet_impostor_is_complete_sphere_lod();
+  test_compact_planet_surface_is_complete_and_seamless();
   test_planet_flight_clipmap_is_camera_relative_and_textured();
   test_planet_streamer_returns_runtime_terrain_chunks();
   test_planet_streamer_refines_near_surface();

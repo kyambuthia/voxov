@@ -218,6 +218,15 @@ RenderMesh build_planet_flight_clipmap(
 double planet_flight_clipmap_half_extent(double planet_radius,
                                          double camera_altitude);
 
+// Complete terrain-aware surface used by compact planets during flight and
+// orbit. Unlike the tangent-plane clipmap, this mesh covers all six cube faces
+// with shared per-face grids and samples the same quantized height function as
+// editable chunks. Vertices are relative to the planet center.
+RenderMesh build_compact_planet_surface_mesh(
+    const BlockWorld &world,
+    int32_t subdivisions = 64,
+    double radial_bias = 0.75);
+
 // ── 3D noise on sphere surface ─────────────────────────────────────────────
 
 // Seamless terrain height via 3D noise sampled on the unit sphere.

@@ -19,8 +19,8 @@ struct PlanetGameplayConfig {
   int32_t terrain_shell_margin_blocks = 1;
 
   double local_terrain_max_altitude_m = 32.0;
-  double flight_terrain_min_altitude_m = 16.0;
-  double flight_terrain_max_altitude_m = 256.0;
+  int32_t global_surface_subdivisions = 64;
+  double global_surface_radial_bias_m = 0.75;
   double atmosphere_height_m = 32.0;
   bool atmosphere_enabled = false;
   bool flight_vehicle_enabled = false;

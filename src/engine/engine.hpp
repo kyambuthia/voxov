@@ -30,7 +30,6 @@
 
 #include <string>
 #include <optional>
-#include <future>
 
 struct EngineRuntimeOptions {
   PhysicsSolverBackend physics_backend = PhysicsSolverBackend::AvbdExperimental;
@@ -86,10 +85,7 @@ private:
   void update_first_person_camera(PlayerEntity &player,
                                   const glm::vec3 &render_position,
                                   Camera &out_camera);
-  void rebuild_planet_impostor();
-  void update_flight_clipmap(const glm::dvec3 &camera_position,
-                             const glm::dvec3 &camera_velocity,
-                             double camera_altitude);
+  void rebuild_global_planet_surface();
   void refresh_overlay_text();
   void sync_network_state(uint32_t sim_tick, const InputState &input);
   void start_local_server(uint16_t port, bool loopback_only);
@@ -152,22 +148,10 @@ private:
   glm::dvec3 camera_snap_origin_{0.0};
   bool snap_origin_dirty_ = true;       // force initial mesh build
 
-  // Macro LOD for atmospheric/orbital views. Near the ground, streamed
-  // Minecraft-like chunks sit above this sphere; at altitude it preserves a
-  // complete planetary silhouette instead of leaving one floating flat patch.
-  RenderMesh planet_impostor_mesh_{};
-  uint64_t planet_impostor_revision_ = 0;
-
-  // Nested camera-relative terrain rings for atmospheric flight. Unlike the
-  // orbital silhouette, this retains block textures and stepped relief while
-  // moving quickly above the editable chunk radius.
-  RenderMesh flight_clipmap_mesh_{};
-  std::future<RenderMesh> flight_clipmap_future_{};
-  bool flight_clipmap_build_pending_ = false;
-  glm::dvec3 flight_clipmap_anchor_direction_{0.0};
-  glm::dvec3 pending_flight_clipmap_direction_{0.0};
-  double flight_clipmap_anchor_altitude_ = -1.0;
-  double pending_flight_clipmap_altitude_ = -1.0;
+  // Complete terrain-aware globe for compact-world flight and orbit. It is
+  // static, cached, and built from the same height sampler as editable chunks.
+  // A small radial inset makes it a safe underlay for streamed chunk seams.
+  RenderMesh global_planet_surface_mesh_{};
 
   // ── Wireframe debug overlay ─────────────────────────────────────────
   // Same PlanetDefinition as terrain, coarser grid (64 cells/face = ~62 km/cell).

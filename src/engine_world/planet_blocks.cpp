@@ -1411,6 +1411,108 @@ double planet_flight_clipmap_half_extent(double planet_radius,
                       std::max(min_extent, radius * 0.65));
 }
 
+RenderMesh build_compact_planet_surface_mesh(
+    const BlockWorld &world,
+    int32_t subdivisions,
+    double radial_bias) {
+    RenderMesh mesh{};
+    if (!world.initialized()) {
+        return mesh;
+    }
+
+    // Six independent face grids keep indexing simple while remaining
+    // watertight: face_uv_to_direction returns identical directions on paired
+    // cube edges, and the direction-based terrain sampler therefore produces
+    // identical border positions. The compact profile stays below the 16-bit
+    // vertex limit through 96 cells per face.
+    const int32_t grid = std::clamp(subdivisions, 8, 96);
+    const int32_t side = grid + 1;
+    const size_t vertex_count =
+        static_cast<size_t>(6 * side * side);
+    const size_t index_count =
+        static_cast<size_t>(6 * grid * grid * 6);
+    mesh.vertices.reserve(vertex_count);
+    mesh.indices16.reserve(index_count);
+    mesh.use_16_bit_indices = true;
+    mesh.world_origin = world.planet().center;
+
+    constexpr PlanetFace faces[] = {
+        PlanetFace::PosX, PlanetFace::NegX,
+        PlanetFace::PosY, PlanetFace::NegY,
+        PlanetFace::PosZ, PlanetFace::NegZ,
+    };
+    const double planet_radius = world.planet().radius;
+    const double max_height =
+        std::max(1.0, world.max_surface_height_above_base());
+    const double bias = std::clamp(radial_bias, 0.0, 1.0);
+
+    for (PlanetFace face : faces) {
+        const uint32_t face_base =
+            static_cast<uint32_t>(mesh.vertices.size());
+        for (int32_t z = 0; z <= grid; ++z) {
+            const double v = -1.0 + 2.0 * static_cast<double>(z) /
+                                       static_cast<double>(grid);
+            for (int32_t x = 0; x <= grid; ++x) {
+                const double u = -1.0 + 2.0 * static_cast<double>(x) /
+                                           static_cast<double>(grid);
+                const glm::dvec3 direction =
+                    face_uv_to_direction(face, u, v);
+                const double height =
+                    world.surface_height_above_base(direction);
+                const double radial_distance =
+                    planet_radius + std::max(0.0, height - bias);
+                const float height_t = static_cast<float>(
+                    std::clamp(height / max_height, 0.0, 1.0));
+                const glm::vec3 color = VoxelChunk::material_color(
+                    VoxelMaterial::Grass, true, height_t);
+
+                mesh.vertices.push_back(RenderVertex{
+                    glm::vec3(direction * radial_distance),
+                    color,
+                    glm::vec3(direction),
+                    glm::vec3(static_cast<float>(x),
+                              static_cast<float>(z), 0.0f),
+                });
+            }
+        }
+
+        for (int32_t z = 0; z < grid; ++z) {
+            for (int32_t x = 0; x < grid; ++x) {
+                const uint32_t i00 = face_base +
+                    static_cast<uint32_t>(z * side + x);
+                const uint32_t i10 = i00 + 1;
+                const uint32_t i01 = i00 +
+                    static_cast<uint32_t>(side);
+                const uint32_t i11 = i01 + 1;
+
+                const glm::dvec3 p00(mesh.vertices[i00].position);
+                const glm::dvec3 p10(mesh.vertices[i10].position);
+                const glm::dvec3 p01(mesh.vertices[i01].position);
+                const glm::dvec3 p11(mesh.vertices[i11].position);
+                const glm::dvec3 outward =
+                    glm::normalize((p00 + p10 + p01 + p11) * 0.25);
+                const bool ccw_outward =
+                    glm::dot(glm::cross(p10 - p00, p11 - p00), outward) > 0.0;
+
+                auto push = [&](uint32_t index) {
+                    mesh.indices16.push_back(static_cast<uint16_t>(index));
+                };
+                if (ccw_outward) {
+                    push(i00); push(i10); push(i11);
+                    push(i00); push(i11); push(i01);
+                } else {
+                    push(i00); push(i01); push(i11);
+                    push(i00); push(i11); push(i10);
+                }
+            }
+        }
+    }
+
+    mesh.material = static_cast<uint8_t>(VoxelMaterial::Grass);
+    mesh.content_hash = block_mesh_content_hash(mesh);
+    return mesh;
+}
+
 RenderMesh build_planet_flight_clipmap(
     const BlockWorld &world,
     const glm::dvec3 &center_direction,

@@ -94,7 +94,7 @@ jobs:
           key: emscripten-${{ runner.os }}-${{ env.EMSDK_VERSION }}
 
       - name: Setup Emscripten
-        uses: mymindstorm/setup-emsdk@v14
+        uses: emscripten-core/setup-emsdk@v15
         with:
           version: ${{ env.EMSDK_VERSION }}
 

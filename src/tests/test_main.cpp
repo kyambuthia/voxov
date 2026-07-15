@@ -470,6 +470,11 @@ void test_block_world_stream_includes_all_vertical_rows() {
 
   std::vector<BlockAddress> stream{};
   world.collect_stream_chunks(origin, origin.shell, 1, stream);
+  for (size_t i = 0; i < stream.size(); ++i) {
+    for (size_t j = i + 1; j < stream.size(); ++j) {
+      assert(!(stream[i] == stream[j]));
+    }
+  }
 
   const int32_t vc =
       (world.shell_config(origin.shell).vertical_layers + cfg.chunk_size - 1) /

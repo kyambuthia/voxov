@@ -561,8 +561,12 @@ void BlockWorld::collect_stream_chunks(const BlockAddress &player_addr,
     // +1 halo: generate/mesh neighbors so cross-chunk face culling is correct
     // at sector seams and chunk xz boundaries (prevents visible gaps).
     const int32_t stream_r = radius + 1;
-    out.reserve(static_cast<size_t>(vc) *
-                static_cast<size_t>((2 * stream_r + 1) * (2 * stream_r + 1)));
+    const size_t candidate_count =
+        static_cast<size_t>(vc) *
+        static_cast<size_t>((2 * stream_r + 1) * (2 * stream_r + 1));
+    out.reserve(candidate_count);
+    std::unordered_set<BlockAddress, BlockAddressHash> seen;
+    seen.reserve(candidate_count);
 
     // Stream every radial chunk row in the shell, not only the player's row.
     // Surface terrain spans layers 0..N across vc rows; streaming only
@@ -580,16 +584,7 @@ void BlockWorld::collect_stream_chunks(const BlockAddress &player_addr,
                     continue;
                 }
 
-                bool duplicate = false;
-                for (const BlockAddress &existing : out) {
-                    if (existing.sector == addr.sector &&
-                        existing.shell == addr.shell &&
-                        existing.chunk == addr.chunk) {
-                        duplicate = true;
-                        break;
-                    }
-                }
-                if (!duplicate) {
+                if (seen.insert(addr).second) {
                     out.push_back(addr);
                 }
             }

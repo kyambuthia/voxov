@@ -183,6 +183,43 @@ target_include_directories(engine_world PUBLIC src)
 target_link_libraries(engine_world PUBLIC engine_math)
 
 # ── Render backends ────────────────────────────────────────────────────
+if(CMAKE_HOST_WIN32)
+    set(VOXOV_SOKOL_SHDC "${CMAKE_SOURCE_DIR}/dependencies/sokol-tools-bin/bin/win32/sokol-shdc.exe")
+elseif(CMAKE_HOST_APPLE)
+    if(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+        set(VOXOV_SOKOL_SHDC "${CMAKE_SOURCE_DIR}/dependencies/sokol-tools-bin/bin/osx_arm64/sokol-shdc")
+    else()
+        set(VOXOV_SOKOL_SHDC "${CMAKE_SOURCE_DIR}/dependencies/sokol-tools-bin/bin/osx/sokol-shdc")
+    endif()
+elseif(CMAKE_HOST_SYSTEM_PROCESSOR MATCHES "^(arm64|aarch64)$")
+    set(VOXOV_SOKOL_SHDC "${CMAKE_SOURCE_DIR}/dependencies/sokol-tools-bin/bin/linux_arm64/sokol-shdc")
+else()
+    set(VOXOV_SOKOL_SHDC "${CMAKE_SOURCE_DIR}/dependencies/sokol-tools-bin/bin/linux/sokol-shdc")
+endif()
+if(NOT EXISTS "${VOXOV_SOKOL_SHDC}")
+    message(FATAL_ERROR "sokol-shdc not found for build host: ${VOXOV_SOKOL_SHDC}")
+endif()
+
+set(VOXOV_GENERATED_SHADER_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/shaders")
+set(VOXOV_SCENE_SHADER_HEADER "${VOXOV_GENERATED_SHADER_DIR}/voxov_scene.glsl.h")
+add_custom_command(
+    OUTPUT "${VOXOV_SCENE_SHADER_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory "${VOXOV_GENERATED_SHADER_DIR}"
+    COMMAND "${VOXOV_SOKOL_SHDC}"
+        -i "${CMAKE_SOURCE_DIR}/src/engine_render/shaders/voxov_scene.glsl"
+        -o "${VOXOV_SCENE_SHADER_HEADER}"
+        -l glsl410:glsl300es:hlsl5:metal_macos
+        -f sokol_impl
+        --ifdef
+        --no-log-cmdline
+    DEPENDS
+        "${CMAKE_SOURCE_DIR}/src/engine_render/shaders/voxov_scene.glsl"
+        "${VOXOV_SOKOL_SHDC}"
+    COMMENT "Compiling portable scene shaders"
+    VERBATIM
+)
+add_custom_target(voxov_scene_shader DEPENDS "${VOXOV_SCENE_SHADER_HEADER}")
+
 add_library(engine_render_core STATIC
     src/engine_render/renderer.cpp
     src/engine_render/debug_text.cpp
@@ -197,12 +234,17 @@ target_link_libraries(engine_render_core PUBLIC glm::glm fmt::fmt spdlog::spdlog
 
 add_library(engine_render_sokol STATIC
     src/engine_render/sokol_renderer.cpp
+    "${VOXOV_SCENE_SHADER_HEADER}"
 )
+add_dependencies(engine_render_sokol voxov_scene_shader)
 target_include_directories(engine_render_sokol PUBLIC
     src
     ${VOXOV_SOKOL_DIR}
     ${VOXOV_SOKOL_UTIL_DIR}
     ${CMAKE_SOURCE_DIR}/dependencies/stb
+)
+target_include_directories(engine_render_sokol PRIVATE
+    "${VOXOV_GENERATED_SHADER_DIR}"
 )
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")
     target_compile_options(engine_render_sokol PRIVATE -fpermissive)

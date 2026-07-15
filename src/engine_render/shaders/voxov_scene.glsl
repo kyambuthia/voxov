@@ -91,6 +91,8 @@ vec3 atmosphere_transmittance(vec3 start, vec3 end) {
 void main() {
     // Aerial perspective: attenuate terrain by atmosphere along view ray.
     vec3 atm_trans = atmosphere_transmittance(camera_pos, v_world_pos);
+    // Preserve nearby voxel readability at dense, low-altitude sight lines.
+    atm_trans = max(atm_trans, vec3(0.35));
 
     float normal_len2 = dot(v_normal, v_normal);
     if (normal_len2 < 0.001) {

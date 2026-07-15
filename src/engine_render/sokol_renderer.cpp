@@ -8,6 +8,12 @@
 #endif
 #include "sokol_log.h"
 
+#if defined(SOKOL_GLCORE)
+#include <GL/gl.h>
+#elif defined(SOKOL_GLES3)
+#include <GLES3/gl3.h>
+#endif
+
 #define STB_IMAGE_WRITE_IMPLEMENTATION
 #if defined(__GNUC__)
 #pragma GCC diagnostic push
@@ -16,12 +22,6 @@
 #include "stb_image_write.h"
 #if defined(__GNUC__)
 #pragma GCC diagnostic pop
-#endif
-
-#if defined(SOKOL_GLCORE)
-#include <GL/gl.h>
-#elif defined(SOKOL_GLES3)
-#include <GLES3/gl3.h>
 #endif
 
 #include <algorithm>
@@ -33,273 +33,9 @@
 #include <glm/gtc/type_ptr.hpp>
 #include <glm/vec4.hpp>
 
-// ---------------------------------------------------------------------------
-// Shader — inline GLSL for Phase 1 smoke-test.  Production path is
-// sokol-shdc compiled shaders (see CMake rule for voxov_scene.glsl).
-// ---------------------------------------------------------------------------
+#define SOKOL_SHDC_IMPL
+#include "voxov_scene.glsl.h"
 
-#if defined(SOKOL_GLCORE)
-static const char *kSceneVsSrc = R"(
-    #version 330
-    uniform mat4 mvp;
-    uniform mat4 model;
-    layout(location=0) in vec3 position;
-    layout(location=1) in vec3 color0;
-    layout(location=2) in vec3 normal;
-    layout(location=3) in vec3 texcoord0;
-    out vec3 v_color;
-    out vec3 v_normal;
-    out vec3 v_world_pos;
-    out vec3 v_texcoord;
-    void main() {
-        vec4 world_pos = model * vec4(position, 1.0);
-        mat4 normal_model = model;
-        normal_model[3] = vec4(0.0, 0.0, 0.0, 1.0);
-
-        v_color = color0;
-        v_normal = mat3(normal_model) * normal;
-        v_world_pos = world_pos.xyz;
-        v_texcoord = texcoord0;
-        gl_Position = mvp * vec4(position, 1.0);
-    }
-)";
-static const char *kSceneFsSrc = R"(
-    #version 330
-    uniform vec3 light_direction;
-    uniform vec3 light_ambient;
-    uniform vec3 light_diffuse;
-    uniform vec3 light_specular;
-    uniform vec3 material_ambient;
-    uniform vec3 material_diffuse;
-    uniform vec3 material_specular;
-    uniform float material_shininess;
-    uniform vec3 camera_pos;
-    uniform sampler2DArray voxel_tex;
-
-    // Loose uniforms (not a UBO block): sokol GL uploads via glGetUniformLocation
-    // on member names; std140 blocks leave gl_loc=-1 and transmittance never runs.
-    uniform vec4 planet_center_radius;      // xyz=planet center, w=radius
-    uniform vec4 atm_params_1;              // x=atm_height, y=H_R, z=H_M, w=g
-    uniform vec4 rayleigh_scatter_unused;   // xyz=beta_R
-    uniform vec4 mie_scatter_pad;           // x=beta_M
-    uniform vec4 sun_dir_intensity;         // xyz=sun_dir, w=intensity
-
-    in vec3 v_color;
-    in vec3 v_normal;
-    in vec3 v_world_pos;
-    in vec3 v_texcoord;
-    out vec4 frag_color;
-
-    // ── Atmospheric transmittance along a ray segment ──────────────────
-    // Numerically integrates the optical depth from 'start' to 'end'
-    // within the atmosphere shell, returning transmittance (1=clear, 0=opaque).
-    // Uses exponential density falloff: ρ(h) = exp(-h / H).
-    vec3 atmosphere_transmittance(vec3 start, vec3 end) {
-        vec3 dir = end - start;
-        float dist = length(dir);
-        if (dist < 0.001) return vec3(1.0);
-
-        float R = planet_center_radius.w;
-        vec3 center = planet_center_radius.xyz;
-        float Hr = atm_params_1.y;
-        float Hm = atm_params_1.z;
-        vec3 betaR = rayleigh_scatter_unused.xyz;
-        float betaM = mie_scatter_pad.x;
-
-        float start_h = max(length(start - center) - R, 0.0);
-        float end_h = max(length(end - center) - R, 0.0);
-        float density_r = 0.5 * (exp(-start_h / Hr) + exp(-end_h / Hr));
-        float density_m = 0.5 * (exp(-start_h / Hm) + exp(-end_h / Hm));
-        vec3 optical_depth = betaR * dist * density_r +
-                             vec3(betaM * 1.1 * dist * density_m);
-        return exp(-optical_depth);
-    }
-
-    void main() {
-        // ── Atmospheric aerial perspective ─────────────────────────────
-        // Terrain color is attenuated by atmosphere between camera and
-        // fragment.  Distant fragments get bluer (Rayleigh) and hazier (Mie).
-        // Sky color is set as the clear color via CPU-side computation.
-        vec3 atm_trans = atmosphere_transmittance(camera_pos, v_world_pos);
-        // Near-surface fragments were fully extinguished (black pits against
-        // black sky). Keep a floor so voxel faces stay visible at close range.
-        atm_trans = max(atm_trans, vec3(0.35));
-
-        float normal_len2 = dot(v_normal, v_normal);
-        if (normal_len2 < 0.001) {
-            frag_color = vec4(v_color * atm_trans, 1.0);
-            return;
-        }
-
-        vec3 base_color = v_color;
-        if (v_texcoord.z >= 0.0) {
-            vec2 tiled_uv = fract(v_texcoord.xy);
-            vec3 texel;
-            if (v_texcoord.z >= 2.5) {
-                vec3 soil = texture(voxel_tex, vec3(tiled_uv, 1.0)).rgb;
-                vec3 turf = texture(voxel_tex, vec3(tiled_uv, 0.0)).rgb;
-                texel = mix(soil, turf, step(0.78, tiled_uv.y));
-            } else {
-                texel = texture(voxel_tex,
-                                vec3(tiled_uv, v_texcoord.z)).rgb;
-            }
-            base_color = pow(texel, vec3(0.78)) *
-                         mix(vec3(1.0), v_color, 0.18);
-        }
-
-        vec3 n = normalize(v_normal);
-        vec3 sun_dir = normalize(sun_dir_intensity.xyz);
-        vec3 l = normalize(light_direction);
-        vec3 v = normalize(camera_pos - v_world_pos);
-        vec3 h = normalize(sun_dir + v);
-
-        float ndl = clamp(max(dot(n, l), 0.0) * 0.35 +
-                          max(dot(n, sun_dir), 0.0) * 0.90, 0.0, 1.25);
-        float ndh = max(dot(n, h), 0.0);
-        float spec_norm = (material_shininess + 8.0) * 0.0397887358;
-        float spec_factor = spec_norm * pow(ndh, material_shininess) * ndl;
-
-        vec3 ambient = light_ambient * material_ambient;
-        vec3 diffuse = light_diffuse * material_diffuse * ndl;
-        vec3 specular = light_specular * material_specular * spec_factor;
-        float sun_boost = max(sun_dir_intensity.w / 20.0, 0.0);
-        vec3 lit = (ambient + diffuse + specular) * sun_boost;
-
-        vec3 terrain_lit = base_color * lit * atm_trans;
-        float fog_amount = clamp(
-            (1.0 - dot(atm_trans, vec3(0.333333))) * 0.55, 0.0, 0.72);
-        vec3 aerial_color = vec3(0.42, 0.61, 0.88);
-        frag_color = vec4(mix(terrain_lit, aerial_color, fog_amount), 1.0);
-    }
-)";
-#elif defined(SOKOL_GLES3)
-static const char *kSceneVsSrc = R"(#version 300 es
-    uniform mat4 mvp;
-    uniform mat4 model;
-    layout(location=0) in vec3 position;
-    layout(location=1) in vec3 color0;
-    layout(location=2) in vec3 normal;
-    layout(location=3) in vec3 texcoord0;
-    out vec3 v_color;
-    out vec3 v_normal;
-    out vec3 v_world_pos;
-    out vec3 v_texcoord;
-    void main() {
-        vec4 world_pos = model * vec4(position, 1.0);
-        mat4 normal_model = model;
-        normal_model[3] = vec4(0.0, 0.0, 0.0, 1.0);
-
-        v_color = color0;
-        v_normal = mat3(normal_model) * normal;
-        v_world_pos = world_pos.xyz;
-        v_texcoord = texcoord0;
-        gl_Position = mvp * vec4(position, 1.0);
-    }
-)";
-static const char *kSceneFsSrc = R"(#version 300 es
-    precision mediump float;
-    uniform vec3 light_direction;
-    uniform vec3 light_ambient;
-    uniform vec3 light_diffuse;
-    uniform vec3 light_specular;
-    uniform vec3 material_ambient;
-    uniform vec3 material_diffuse;
-    uniform vec3 material_specular;
-    uniform float material_shininess;
-    uniform vec3 camera_pos;
-    uniform highp sampler2DArray voxel_tex;
-
-    uniform vec4 planet_center_radius;
-    uniform vec4 atm_params_1;
-    uniform vec4 rayleigh_scatter_unused;
-    uniform vec4 mie_scatter_pad;
-    uniform vec4 sun_dir_intensity;
-
-    in vec3 v_color;
-    in vec3 v_normal;
-    in vec3 v_world_pos;
-    in vec3 v_texcoord;
-    out vec4 frag_color;
-
-    vec3 atmosphere_transmittance(vec3 start, vec3 end) {
-        vec3 dir = end - start;
-        float dist = length(dir);
-        if (dist < 0.001) return vec3(1.0);
-
-        float R = planet_center_radius.w;
-        vec3 center = planet_center_radius.xyz;
-        float Hr = atm_params_1.y;
-        float Hm = atm_params_1.z;
-        vec3 betaR = rayleigh_scatter_unused.xyz;
-        float betaM = mie_scatter_pad.x;
-
-        float start_h = max(length(start - center) - R, 0.0);
-        float end_h = max(length(end - center) - R, 0.0);
-        float density_r = 0.5 * (exp(-start_h / Hr) + exp(-end_h / Hr));
-        float density_m = 0.5 * (exp(-start_h / Hm) + exp(-end_h / Hm));
-        vec3 optical_depth = betaR * dist * density_r +
-                             vec3(betaM * 1.1 * dist * density_m);
-        return exp(-optical_depth);
-    }
-
-    void main() {
-        vec3 atm_trans = atmosphere_transmittance(camera_pos, v_world_pos);
-        // Near-surface fragments were fully extinguished (black pits against
-        // black sky). Keep a floor so voxel faces stay visible at close range.
-        atm_trans = max(atm_trans, vec3(0.35));
-
-        float normal_len2 = dot(v_normal, v_normal);
-        if (normal_len2 < 0.001) {
-            frag_color = vec4(v_color * atm_trans, 1.0);
-            return;
-        }
-
-        vec3 base_color = v_color;
-        if (v_texcoord.z >= 0.0) {
-            vec2 tiled_uv = fract(v_texcoord.xy);
-            vec3 texel;
-            if (v_texcoord.z >= 2.5) {
-                vec3 soil = texture(voxel_tex, vec3(tiled_uv, 1.0)).rgb;
-                vec3 turf = texture(voxel_tex, vec3(tiled_uv, 0.0)).rgb;
-                texel = mix(soil, turf, step(0.78, tiled_uv.y));
-            } else {
-                texel = texture(voxel_tex,
-                                vec3(tiled_uv, v_texcoord.z)).rgb;
-            }
-            base_color = pow(texel, vec3(0.78)) *
-                         mix(vec3(1.0), v_color, 0.18);
-        }
-
-        vec3 n = normalize(v_normal);
-        vec3 sun_dir = normalize(sun_dir_intensity.xyz);
-        vec3 l = normalize(light_direction);
-        vec3 v = normalize(camera_pos - v_world_pos);
-        vec3 h = normalize(sun_dir + v);
-
-        float ndl = clamp(max(dot(n, l), 0.0) * 0.35 +
-                          max(dot(n, sun_dir), 0.0) * 0.90, 0.0, 1.25);
-        float ndh = max(dot(n, h), 0.0);
-        float spec_norm = (material_shininess + 8.0) * 0.0397887358;
-        float spec_factor = spec_norm * pow(ndh, material_shininess) * ndl;
-
-        vec3 ambient = light_ambient * material_ambient;
-        vec3 diffuse = light_diffuse * material_diffuse * ndl;
-        vec3 specular = light_specular * material_specular * spec_factor;
-        float sun_boost = max(sun_dir_intensity.w / 20.0, 0.0);
-        vec3 lit = (ambient + diffuse + specular) * sun_boost;
-
-        vec3 terrain_lit = base_color * lit * atm_trans;
-        float fog_amount = clamp(
-            (1.0 - dot(atm_trans, vec3(0.333333))) * 0.55, 0.0, 0.72);
-        vec3 aerial_color = vec3(0.42, 0.61, 0.88);
-        frag_color = vec4(mix(terrain_lit, aerial_color, fog_amount), 1.0);
-    }
-)";
-#else
-// Dummy fallback for non-GL backends (Metal/D3D11/WGPU) — production uses shdc.
-static const char *kSceneVsSrc = nullptr;
-static const char *kSceneFsSrc = nullptr;
-#endif
 
 namespace {
 
@@ -380,99 +116,16 @@ static_assert(sizeof(atm_params_t) == 80);
 // ---------------------------------------------------------------------------
 
 bool SokolRenderer::setup_pipelines() {
-    if (!kSceneVsSrc || !kSceneFsSrc) {
-        // Non-GL backend detected — sokol-shdc compiled shaders are required.
-        // For Phase 1 smoke-test on Linux with GLCORE, inline GLSL works.
+    const sg_shader_desc *shader_desc =
+        voxov_scene_voxov_scene_shader_desc(sg_query_backend());
+    if (shader_desc == nullptr) {
         slog_func("voxov", 2, 0,
-                  "SokolRenderer: inline GLSL only supported on GL backends",
+                  "SokolRenderer: no compiled shader for active backend",
                   __LINE__, __FILE__, nullptr);
         return false;
     }
 
-    sg_shader_desc shd_desc = {};
-    shd_desc.vertex_func.source = kSceneVsSrc;
-    shd_desc.fragment_func.source = kSceneFsSrc;
-
-    // Uniform block 0: vertex transforms.
-    shd_desc.uniform_blocks[0].stage = SG_SHADERSTAGE_VERTEX;
-    shd_desc.uniform_blocks[0].size = sizeof(vs_params_t);
-    shd_desc.uniform_blocks[0].layout = SG_UNIFORMLAYOUT_STD140;
-    shd_desc.uniform_blocks[0].glsl_uniforms[0].glsl_name = "mvp";
-    shd_desc.uniform_blocks[0].glsl_uniforms[0].type = SG_UNIFORMTYPE_MAT4;
-    shd_desc.uniform_blocks[0].glsl_uniforms[0].array_count = 1;
-    shd_desc.uniform_blocks[0].glsl_uniforms[1].glsl_name = "model";
-    shd_desc.uniform_blocks[0].glsl_uniforms[1].type = SG_UNIFORMTYPE_MAT4;
-    shd_desc.uniform_blocks[0].glsl_uniforms[1].array_count = 1;
-
-    // Uniform block 1: fragment light, material, and view state.
-    shd_desc.uniform_blocks[1].stage = SG_SHADERSTAGE_FRAGMENT;
-    shd_desc.uniform_blocks[1].size = sizeof(fs_params_t);
-    shd_desc.uniform_blocks[1].layout = SG_UNIFORMLAYOUT_STD140;
-    shd_desc.uniform_blocks[1].glsl_uniforms[0].glsl_name = "light_direction";
-    shd_desc.uniform_blocks[1].glsl_uniforms[0].type = SG_UNIFORMTYPE_FLOAT3;
-    shd_desc.uniform_blocks[1].glsl_uniforms[0].array_count = 1;
-    shd_desc.uniform_blocks[1].glsl_uniforms[1].glsl_name = "light_ambient";
-    shd_desc.uniform_blocks[1].glsl_uniforms[1].type = SG_UNIFORMTYPE_FLOAT3;
-    shd_desc.uniform_blocks[1].glsl_uniforms[1].array_count = 1;
-    shd_desc.uniform_blocks[1].glsl_uniforms[2].glsl_name = "light_diffuse";
-    shd_desc.uniform_blocks[1].glsl_uniforms[2].type = SG_UNIFORMTYPE_FLOAT3;
-    shd_desc.uniform_blocks[1].glsl_uniforms[2].array_count = 1;
-    shd_desc.uniform_blocks[1].glsl_uniforms[3].glsl_name = "light_specular";
-    shd_desc.uniform_blocks[1].glsl_uniforms[3].type = SG_UNIFORMTYPE_FLOAT3;
-    shd_desc.uniform_blocks[1].glsl_uniforms[3].array_count = 1;
-    shd_desc.uniform_blocks[1].glsl_uniforms[4].glsl_name = "material_ambient";
-    shd_desc.uniform_blocks[1].glsl_uniforms[4].type = SG_UNIFORMTYPE_FLOAT3;
-    shd_desc.uniform_blocks[1].glsl_uniforms[4].array_count = 1;
-    shd_desc.uniform_blocks[1].glsl_uniforms[5].glsl_name = "material_diffuse";
-    shd_desc.uniform_blocks[1].glsl_uniforms[5].type = SG_UNIFORMTYPE_FLOAT3;
-    shd_desc.uniform_blocks[1].glsl_uniforms[5].array_count = 1;
-    shd_desc.uniform_blocks[1].glsl_uniforms[6].glsl_name = "material_specular";
-    shd_desc.uniform_blocks[1].glsl_uniforms[6].type = SG_UNIFORMTYPE_FLOAT3;
-    shd_desc.uniform_blocks[1].glsl_uniforms[6].array_count = 1;
-    shd_desc.uniform_blocks[1].glsl_uniforms[7].glsl_name = "material_shininess";
-    shd_desc.uniform_blocks[1].glsl_uniforms[7].type = SG_UNIFORMTYPE_FLOAT;
-    shd_desc.uniform_blocks[1].glsl_uniforms[7].array_count = 1;
-    shd_desc.uniform_blocks[1].glsl_uniforms[8].glsl_name = "camera_pos";
-    shd_desc.uniform_blocks[1].glsl_uniforms[8].type = SG_UNIFORMTYPE_FLOAT3;
-    shd_desc.uniform_blocks[1].glsl_uniforms[8].array_count = 1;
-
-    // Uniform block 2: atmosphere parameters (fragment stage).
-    shd_desc.uniform_blocks[2].stage = SG_SHADERSTAGE_FRAGMENT;
-    shd_desc.uniform_blocks[2].size = sizeof(atm_params_t);
-    shd_desc.uniform_blocks[2].layout = SG_UNIFORMLAYOUT_STD140;
-    shd_desc.uniform_blocks[2].glsl_uniforms[0].glsl_name = "planet_center_radius";
-    shd_desc.uniform_blocks[2].glsl_uniforms[0].type = SG_UNIFORMTYPE_FLOAT4;
-    shd_desc.uniform_blocks[2].glsl_uniforms[0].array_count = 1;
-    shd_desc.uniform_blocks[2].glsl_uniforms[1].glsl_name = "atm_params_1";
-    shd_desc.uniform_blocks[2].glsl_uniforms[1].type = SG_UNIFORMTYPE_FLOAT4;
-    shd_desc.uniform_blocks[2].glsl_uniforms[1].array_count = 1;
-    shd_desc.uniform_blocks[2].glsl_uniforms[2].glsl_name = "rayleigh_scatter_unused";
-    shd_desc.uniform_blocks[2].glsl_uniforms[2].type = SG_UNIFORMTYPE_FLOAT4;
-    shd_desc.uniform_blocks[2].glsl_uniforms[2].array_count = 1;
-    shd_desc.uniform_blocks[2].glsl_uniforms[3].glsl_name = "mie_scatter_pad";
-    shd_desc.uniform_blocks[2].glsl_uniforms[3].type = SG_UNIFORMTYPE_FLOAT4;
-    shd_desc.uniform_blocks[2].glsl_uniforms[3].array_count = 1;
-    shd_desc.uniform_blocks[2].glsl_uniforms[4].glsl_name = "sun_dir_intensity";
-    shd_desc.uniform_blocks[2].glsl_uniforms[4].type = SG_UNIFORMTYPE_FLOAT4;
-    shd_desc.uniform_blocks[2].glsl_uniforms[4].array_count = 1;
-
-    // Vertex attributes: position, colour, normal, and repeating voxel UV/layer.
-    shd_desc.attrs[0].glsl_name = "position";
-    shd_desc.attrs[1].glsl_name = "color0";
-    shd_desc.attrs[2].glsl_name = "normal";
-    shd_desc.attrs[3].glsl_name = "texcoord0";
-
-    shd_desc.views[0].texture.stage = SG_SHADERSTAGE_FRAGMENT;
-    shd_desc.views[0].texture.image_type = SG_IMAGETYPE_ARRAY;
-    shd_desc.views[0].texture.sample_type = SG_IMAGESAMPLETYPE_FLOAT;
-    shd_desc.samplers[0].stage = SG_SHADERSTAGE_FRAGMENT;
-    shd_desc.samplers[0].sampler_type = SG_SAMPLERTYPE_FILTERING;
-    shd_desc.texture_sampler_pairs[0].stage = SG_SHADERSTAGE_FRAGMENT;
-    shd_desc.texture_sampler_pairs[0].view_slot = 0;
-    shd_desc.texture_sampler_pairs[0].sampler_slot = 0;
-    shd_desc.texture_sampler_pairs[0].glsl_name = "voxel_tex";
-
-    pipelines_.scene_shader = sg_make_shader(&shd_desc);
+    pipelines_.scene_shader = sg_make_shader(shader_desc);
     if (pipelines_.scene_shader.id == SG_INVALID_ID) {
         slog_func("voxov", 1, 0, "SokolRenderer: failed to create scene shader",
                   __LINE__, __FILE__, nullptr);

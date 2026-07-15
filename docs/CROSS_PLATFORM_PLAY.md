@@ -15,7 +15,43 @@ player presence while terrain remains deterministic from the session seed.
 | Web | `emcmake cmake -S . -B build/web/main -G Ninja && cmake --build build/web/main --parallel 2` | `build/web/main/bin/voxov_web.html` |
 
 CI compiles and tests Linux and Windows, builds the WebAssembly target, and
-boots the APK in an Android emulator. Tagged releases package all four targets.
+boots the APK in an Android emulator. Tagged releases package all four targets;
+the Linux and Windows archives contain both the client and `voxov_server`.
+
+## Test a downloaded desktop release
+
+Extract the same tagged release on every desktop. On the host:
+
+```bash
+# Linux convenience script (equivalent to ./voxov_server --lan)
+./host.sh --port 7777
+```
+
+```powershell
+# Windows
+.\voxov_server.exe --lan --port 7777
+```
+
+On each Linux client:
+
+```bash
+./run.sh --connect HOST_IP --port 7777
+```
+
+On each Windows client:
+
+```powershell
+.\voxov.exe --connect HOST_IP --port 7777
+```
+
+Allow inbound UDP port 7777 on the host firewall. Everyone must use artifacts
+from the same tag because protocol compatibility is exact, not negotiated.
+
+The current multiplayer slice is intended for connection and shared-player
+presence testing. Compact-planet terrain and movement are still simulated by
+each client, and the server validates bounds rather than authoritatively
+simulating the full spherical `BlockWorld`. Do not treat this build as
+cheat-resistant or persistent-world multiplayer yet.
 
 ## Native cross-play
 

@@ -7,7 +7,7 @@ on:
       - "*.*.*"
 
 permissions:
-  contents: write
+  contents: read
 
 jobs:
   build-linux:
@@ -52,17 +52,26 @@ jobs:
       - name: Prepare linux artifact bundle
         run: |
           ASSET_DIR="VOXOV-${GITHUB_REF_NAME}-linux-x86_64"
-          mkdir -p "${ASSET_DIR}/assets"
+          mkdir -p "${ASSET_DIR}/assets" "${ASSET_DIR}/docs"
           cp build/desktop/release-linux/bin/voxov "${ASSET_DIR}/"
-          chmod +x "${ASSET_DIR}/voxov"
+          cp build/desktop/release-linux/bin/voxov_server "${ASSET_DIR}/"
+          chmod +x "${ASSET_DIR}/voxov" "${ASSET_DIR}/voxov_server"
           cp -R assets/fonts "${ASSET_DIR}/assets/"
+          cp docs/CROSS_PLATFORM_PLAY.md "${ASSET_DIR}/docs/MULTIPLAYER.md"
           cat > "${ASSET_DIR}/run.sh" << 'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
           SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
           exec "${SCRIPT_DIR}/voxov" "$@"
           EOF
+          cat > "${ASSET_DIR}/host.sh" << 'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+          SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          exec "${SCRIPT_DIR}/voxov_server" --lan "$@"
+          EOF
           chmod +x "${ASSET_DIR}/run.sh"
+          chmod +x "${ASSET_DIR}/host.sh"
           tar -czf "${ASSET_DIR}.tar.gz" "${ASSET_DIR}"
 
       - name: Validate linux artifact bundle
@@ -72,15 +81,34 @@ jobs:
           mkdir -p smoke-linux
           tar -xzf "${ASSET_TGZ}" -C smoke-linux
           test -x "smoke-linux/${ASSET_DIR}/voxov"
+          test -x "smoke-linux/${ASSET_DIR}/voxov_server"
           test -x "smoke-linux/${ASSET_DIR}/run.sh"
+          test -x "smoke-linux/${ASSET_DIR}/host.sh"
           test -f "smoke-linux/${ASSET_DIR}/assets/fonts/IBMPlexMono-Regular.ttf"
+          test -f "smoke-linux/${ASSET_DIR}/docs/MULTIPLAYER.md"
           ldd "smoke-linux/${ASSET_DIR}/voxov" | tee /tmp/voxov-linux-ldd.txt
           if grep -q "not found" /tmp/voxov-linux-ldd.txt; then
             echo "Unresolved runtime dependency in linux bundle"
             exit 1
           fi
+          ldd "smoke-linux/${ASSET_DIR}/voxov_server" | tee /tmp/voxov-server-linux-ldd.txt
+          if grep -q "not found" /tmp/voxov-server-linux-ldd.txt; then
+            echo "Unresolved runtime dependency in linux server bundle"
+            exit 1
+          fi
+          "smoke-linux/${ASSET_DIR}/voxov_server" --port 37777 --loopback-only \
+            >/tmp/voxov-linux-server.log 2>&1 &
+          server_pid=$!
+          trap 'kill "${server_pid}" 2>/dev/null || true' EXIT
+          sleep 1
+          if ! kill -0 "${server_pid}" 2>/dev/null; then
+            echo "Linux bundled server exited during startup"
+            cat /tmp/voxov-linux-server.log
+            exit 1
+          fi
           set +e
-          timeout 10s xvfb-run -a "smoke-linux/${ASSET_DIR}/run.sh" >/tmp/voxov-linux-smoke.log 2>&1
+          timeout 10s xvfb-run -a "smoke-linux/${ASSET_DIR}/run.sh" \
+            --connect 127.0.0.1 --port 37777 >/tmp/voxov-linux-smoke.log 2>&1
           smoke_rc=$?
           set -e
           if [ "$smoke_rc" -ne 0 ] && [ "$smoke_rc" -ne 124 ]; then
@@ -88,6 +116,15 @@ jobs:
             cat /tmp/voxov-linux-smoke.log
             exit 1
           fi
+          if ! grep -q "NetClient: connected" /tmp/voxov-linux-smoke.log; then
+            echo "Linux bundled client did not connect to bundled server"
+            cat /tmp/voxov-linux-server.log
+            cat /tmp/voxov-linux-smoke.log
+            exit 1
+          fi
+          kill "${server_pid}" 2>/dev/null || true
+          wait "${server_pid}" 2>/dev/null || true
+          trap - EXIT
 
       - name: Upload linux artifact
         uses: actions/upload-artifact@v4
@@ -125,10 +162,12 @@ jobs:
         shell: powershell
         run: |
           $AssetDir = "VOXOV-$env:GITHUB_REF_NAME-windows-x86_64"
-          New-Item -ItemType Directory -Force -Path "$AssetDir/assets" | Out-Null
+          New-Item -ItemType Directory -Force -Path "$AssetDir/assets", "$AssetDir/docs" | Out-Null
           Copy-Item "build/desktop/release-windows/bin/voxov.exe" "$AssetDir/" -Force
+          Copy-Item "build/desktop/release-windows/bin/voxov_server.exe" "$AssetDir/" -Force
           Copy-Item "build/desktop/release-windows/bin/*.dll" "$AssetDir/" -ErrorAction SilentlyContinue
           Copy-Item "assets/fonts" "$AssetDir/assets/" -Recurse -Force
+          Copy-Item "docs/CROSS_PLATFORM_PLAY.md" "$AssetDir/docs/MULTIPLAYER.md" -Force
           $AssetZip = "$AssetDir.zip"
           Compress-Archive -Path "$AssetDir/*" -DestinationPath $AssetZip -Force
 
@@ -142,17 +181,44 @@ jobs:
           New-Item -ItemType Directory -Force -Path $SmokeDir | Out-Null
           Expand-Archive -Path $AssetZip -DestinationPath $SmokeDir -Force
           if (-not (Test-Path "$SmokeDir/voxov.exe")) { throw "voxov.exe missing from windows bundle" }
+          if (-not (Test-Path "$SmokeDir/voxov_server.exe")) { throw "voxov_server.exe missing from windows bundle" }
           if (-not (Test-Path "$SmokeDir/libgcc_s_seh-1.dll")) { throw "libgcc_s_seh-1.dll missing from windows bundle" }
           if (-not (Test-Path "$SmokeDir/libstdc++-6.dll")) { throw "libstdc++-6.dll missing from windows bundle" }
           if (-not (Test-Path "$SmokeDir/libwinpthread-1.dll")) { throw "libwinpthread-1.dll missing from windows bundle" }
           if (-not (Test-Path "$SmokeDir/assets/fonts/IBMPlexMono-Regular.ttf")) { throw "IBMPlexMono-Regular.ttf missing from windows bundle" }
-          $proc = Start-Process -FilePath "$SmokeDir/voxov.exe" -WorkingDirectory $SmokeDir -PassThru
-          Start-Sleep -Seconds 3
-          if ($proc.HasExited -and $proc.ExitCode -ne 0) {
-            throw "voxov.exe exited early with code $($proc.ExitCode)"
-          }
-          if (-not $proc.HasExited) {
-            Stop-Process -Id $proc.Id -Force
+          if (-not (Test-Path "$SmokeDir/docs/MULTIPLAYER.md")) { throw "multiplayer guide missing from windows bundle" }
+          $ServerOut = Join-Path $SmokeDir "server.stdout.log"
+          $ServerErr = Join-Path $SmokeDir "server.stderr.log"
+          $ClientOut = Join-Path $SmokeDir "client.stdout.log"
+          $ClientErr = Join-Path $SmokeDir "client.stderr.log"
+          $server = Start-Process -FilePath "$SmokeDir/voxov_server.exe" -WorkingDirectory $SmokeDir `
+            -ArgumentList "--port", "37777", "--loopback-only" -PassThru `
+            -RedirectStandardOutput $ServerOut -RedirectStandardError $ServerErr
+          try {
+            Start-Sleep -Seconds 1
+            if ($server.HasExited) { throw "voxov_server.exe exited during startup" }
+            $client = Start-Process -FilePath "$SmokeDir/voxov.exe" -WorkingDirectory $SmokeDir `
+              -ArgumentList "--connect", "127.0.0.1", "--port", "37777" -PassThru `
+              -RedirectStandardOutput $ClientOut -RedirectStandardError $ClientErr
+            try {
+              Start-Sleep -Seconds 5
+              if ($client.HasExited -and $client.ExitCode -ne 0) {
+                throw "voxov.exe exited early with code $($client.ExitCode)"
+              }
+              if (-not $client.HasExited) {
+                Stop-Process -Id $client.Id -Force
+                Wait-Process -Id $client.Id -ErrorAction SilentlyContinue
+              }
+              $ClientLog = ((Get-Content $ClientOut -ErrorAction SilentlyContinue) +
+                (Get-Content $ClientErr -ErrorAction SilentlyContinue)) -join "`n"
+              if ($ClientLog -notmatch "NetClient: connected") {
+                throw "bundled Windows client did not connect to bundled server"
+              }
+            } finally {
+              if ($client -and -not $client.HasExited) { Stop-Process -Id $client.Id -Force }
+            }
+          } finally {
+            if ($server -and -not $server.HasExited) { Stop-Process -Id $server.Id -Force }
           }
 
       - name: Upload windows artifact
@@ -283,6 +349,8 @@ jobs:
   publish-release:
     runs-on: ubuntu-latest
     needs: [build-linux, build-windows, build-android, build-web]
+    permissions:
+      contents: write
 
     steps:
       - name: Download linux artifact
@@ -317,11 +385,14 @@ jobs:
         run: |
           mkdir -p release
           find dist -type f -print -exec cp {} release/ \;
+          (cd release && sha256sum * > SHA256SUMS.txt)
           ls -la release
 
       - name: Publish GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          name: VOXOV ${{ github.ref_name }} (Linux/Windows/Android/Web)
-          generate_release_notes: true
-          files: release/*
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh release create "${GITHUB_REF_NAME}" release/* \
+            --verify-tag \
+            --title "VOXOV ${GITHUB_REF_NAME} (Desktop Server/Linux/Windows/Android/Web)" \
+            --generate-notes

@@ -17,10 +17,11 @@ Release artifacts are published on GitHub Releases:
 
 Published bundles currently include:
 
-- Linux: `VOXOV-<tag>-linux-x86_64.tar.gz`
-- Windows: `VOXOV-<tag>-windows-x86_64.zip`
+- Linux: `VOXOV-<tag>-linux-x86_64.tar.gz` (client + dedicated server)
+- Windows: `VOXOV-<tag>-windows-x86_64.zip` (client + dedicated server)
 - Android: `VOXOV-<tag>-android-arm64-v8a.apk`
 - Web: `voxov_web.html`, `voxov_web.js`, `voxov_web.wasm`, and `voxov_web.data`
+- Integrity: `SHA256SUMS.txt`
 
 ## Build From Source
 
@@ -58,6 +59,8 @@ ctest --test-dir build/desktop/main --output-on-failure
 
 See [`docs/CROSS_PLATFORM_PLAY.md`](docs/CROSS_PLATFORM_PLAY.md) for Android,
 WebAssembly, dedicated-server, and cross-platform multiplayer commands.
+See [`docs/SCALABILITY_ROADMAP.md`](docs/SCALABILITY_ROADMAP.md) for the
+planet-to-galaxy architecture boundaries and prioritized engineering work.
 
 ## Architecture Snapshot
 

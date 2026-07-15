@@ -181,7 +181,11 @@ bool run_scenario(const StressScenario &scenario) {
                     player_state.player_id = local_id;
                     player_state.tick = static_cast<uint32_t>(tick);
                     player_state.sequence = static_cast<uint32_t>(tick);
-                    player_state.x = 2'000'000.0f + static_cast<float>(i * 3);
+                    // Deliberately exercise large float coordinates. The
+                    // receiver uses this sentinel range to prove relay state
+                    // survives serialization; it is not a gameplay spawn.
+                    player_state.x =
+                        2'000'000.0f + static_cast<float>(i * 3);
                     player_state.y = static_cast<float>(i);
                     player_state.z = static_cast<float>(tick % 120) * 0.05f;
                     player_state.vz = 3.0f;

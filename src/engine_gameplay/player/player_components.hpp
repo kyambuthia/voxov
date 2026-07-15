@@ -69,6 +69,11 @@ struct LocomotionTuningData {
     float jump_start_duration = 0.10f;
     float start_move_duration = 0.10f;
     float stop_move_duration = 0.12f;
+    float flight_speed = 80.0f;
+    float flight_sprint_base_speed = 600.0f;
+    float flight_sprint_altitude_scale = 2.0f;
+    float flight_sprint_max_speed = 1'000'000.0f;
+    float flight_acceleration = 2'400.0f;
 };
 
 struct PlayerLocomotionStateData {
@@ -119,6 +124,8 @@ struct CameraRig {
     float pitchMaxDeg = 89.0f;
     float follow_lag = 0.0f;
     float jump_distance_bias = 0.3f;
+    glm::vec3 surface_reference_forward = glm::vec3(0.0f);
+    bool surface_frame_initialized = false;
 };
 
 struct PlayerEntity {

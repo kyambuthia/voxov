@@ -20,10 +20,7 @@ CelestialBody make_sun() {
     return sun;
 }
 
-CelestialBody make_planet() {
-    // Our voxel world uses a 2,000 km radius. Orbital distances must be larger
-    // than the body itself; the previous 2 km orbit put the sun and moon
-    // literally inside the voxel planet and corrupted sun direction/SOI math.
+CelestialBody make_planet(double playable_planet_radius) {
     CelestialBody planet{};
     planet.name = "Voxov";
     planet.parent_index = 0;   // orbits the sun
@@ -34,24 +31,25 @@ CelestialBody make_planet() {
     planet.orbital.argument_periapsis = 1.8;    // rad (~103°)
     planet.orbital.mean_anomaly_epoch = 0.0;    // start at periapsis
     planet.orbital.orbital_period = 3'600.0;    // one gameplay hour
-    planet.orbital.radius = 2'000'000.0;        // matches voxel terrain
+    planet.orbital.radius = std::max(1.0, playable_planet_radius);
     planet.orbital.mass = 1.0e24;
     planet.color = glm::vec3(0.2f, 0.5f, 0.8f); // blue-green
     return planet;
 }
 
-CelestialBody make_moon() {
+CelestialBody make_moon(double playable_planet_radius) {
     CelestialBody moon{};
     moon.name = "Luna";
     moon.parent_index = 1;   // orbits the planet
-    moon.orbital.semi_major_axis = 8'000'000.0;
+    const double planet_radius = std::max(1.0, playable_planet_radius);
+    moon.orbital.semi_major_axis = planet_radius * 12.0;
     moon.orbital.eccentricity = 0.05;
     moon.orbital.inclination = 0.09;          // ~5° tilt
     moon.orbital.longitude_ascending_node = 0.5;
     moon.orbital.argument_periapsis = 2.3;
     moon.orbital.mean_anomaly_epoch = 1.2;
     moon.orbital.orbital_period = 600.0;
-    moon.orbital.radius = 500'000.0;
+    moon.orbital.radius = planet_radius * 0.27;
     moon.orbital.mass = 7.3e22;
     moon.color = glm::vec3(0.7f, 0.7f, 0.7f); // gray
     return moon;
@@ -61,11 +59,11 @@ CelestialBody make_moon() {
 
 // ── SolarSystem public interface ───────────────────────────────────────────
 
-void SolarSystem::init() {
+void SolarSystem::init(double playable_planet_radius) {
     bodies_.clear();
     bodies_.push_back(make_sun());     // index 0
-    bodies_.push_back(make_planet());  // index 1
-    bodies_.push_back(make_moon());    // index 2
+    bodies_.push_back(make_planet(playable_planet_radius));  // index 1
+    bodies_.push_back(make_moon(playable_planet_radius));    // index 2
 }
 
 void SolarSystem::update(double time_seconds) {

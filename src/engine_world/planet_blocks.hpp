@@ -98,6 +98,11 @@ struct BlockWorldConfig {
     int32_t base_resolution  = 8;     // blocks per axis on innermost shell
     double  block_size       = 1.0;   // meters, target block width at surface
     double  terrain_feature_size = 512.0; // meters per lowest-frequency noise cell
+    float   terrain_base_height = 18.0f;  // blocks above the base sphere
+    float   terrain_amplitude = 8.0f;     // height variation in blocks
+    int32_t terrain_min_height = 10;      // inclusive generated height bound
+    int32_t terrain_max_height = 26;      // inclusive generated height bound
+    int32_t terrain_shell_margin = 4;     // empty layers above maximum terrain
     int32_t chunk_size       = 16;    // blocks per chunk edge
     uint64_t seed            = 0;
 };
@@ -208,6 +213,11 @@ RenderMesh build_planet_flight_clipmap(
     int32_t cells_per_ring = 40,
     int32_t ring_count = 4);
 
+// Shared by Engine's rebuild policy and the mesh builder so compact planets
+// never inherit the old 768 m minimum clipmap footprint.
+double planet_flight_clipmap_half_extent(double planet_radius,
+                                         double camera_altitude);
+
 // ── 3D noise on sphere surface ─────────────────────────────────────────────
 
 // Seamless terrain height via 3D noise sampled on the unit sphere.
@@ -230,7 +240,9 @@ public:
     int32_t terrain_height(const glm::dvec3 &direction,
                            float base_height = 12.0f,
                            float amplitude = 10.0f,
-                           float base_frequency = 1.0f) const;
+                           float base_frequency = 1.0f,
+                           int32_t min_height = 10,
+                           int32_t max_height = 26) const;
 
     // Fractional part of terrain height within the top layer [0, 1).
     // Used only on the surface block for sub-voxel vertical variation.

@@ -48,7 +48,7 @@ struct CelestialBody {
 class SolarSystem {
 public:
     // Initialise with default bodies: Sun, Planet (voxel world), Moon.
-    void init();
+    void init(double playable_planet_radius);
 
     // Update all body positions for the given elapsed simulation time.
     // time_seconds: total simulation time (monotonically increasing).

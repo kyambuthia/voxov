@@ -1,9 +1,11 @@
 #include "engine/engine.hpp"
+#include "engine/planet_gameplay_config.hpp"
 
 #include "engine_core/memory.hpp"
 #include "engine_core/timing.hpp"
 #include "engine_presentation/debug_scene_builder.hpp"
 #include "engine_gameplay/player/player_visuals.hpp"
+#include "engine_gameplay/player/surface_orientation.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
 #include "engine_world/wireframe_planet.hpp"
@@ -24,11 +26,6 @@
 namespace {
 using PerfClock = std::chrono::steady_clock;
 
-constexpr double kPlayablePlanetRadiusMeters = 2'000'000.0;
-constexpr double kTerrainFeatureSizeMeters = 128.0;
-constexpr double kLocalTerrainMaxAltitudeMeters = 768.0;
-constexpr double kFlightTerrainMinAltitudeMeters = 64.0;
-constexpr double kFlightTerrainMaxAltitudeMeters = 400'000.0;
 constexpr uint64_t kPlanetImpostorMeshId = 0x504c414e45544c4full; // "PLANETLO"
 constexpr uint64_t kFlightVoxelLodMeshId = 0x464c59434c49504dull; // "FLYCLIPM"
 #if defined(VOXOV_PLATFORM_ANDROID) || defined(VOXOV_PLATFORM_WEB)
@@ -250,18 +247,29 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   // 3D noise on sphere surface for seamless terrain.
   PlanetDefinition planet_def{};
   planet_def.center = glm::dvec3(0.0);
-  planet_def.radius = kPlayablePlanetRadiusMeters;
-  planet_def.voxel_size = 1.0;
+  planet_def.radius = kPlayablePlanetConfig.radius_m;
+  planet_def.voxel_size = kPlayablePlanetConfig.voxel_size_m;
   planet_def.chunks_per_face = 64;
   planet_def.seed = k_voxov_flat_world_seed;
 
   BlockWorldConfig bw_cfg{};
   bw_cfg.planet = planet_def;
-  bw_cfg.surface_shells = 4;
-  bw_cfg.base_resolution = 64;
-  bw_cfg.block_size = 1.0;
-  bw_cfg.terrain_feature_size = kTerrainFeatureSizeMeters;
-  bw_cfg.chunk_size = 16;
+  bw_cfg.surface_shells = kPlayablePlanetConfig.surface_shells;
+  bw_cfg.base_resolution = kPlayablePlanetConfig.base_resolution;
+  bw_cfg.block_size = kPlayablePlanetConfig.voxel_size_m;
+  bw_cfg.terrain_feature_size =
+      kPlayablePlanetConfig.terrain_feature_size_m;
+  bw_cfg.terrain_base_height =
+      kPlayablePlanetConfig.terrain_base_height_blocks;
+  bw_cfg.terrain_amplitude =
+      kPlayablePlanetConfig.terrain_amplitude_blocks;
+  bw_cfg.terrain_min_height =
+      kPlayablePlanetConfig.terrain_min_height_blocks;
+  bw_cfg.terrain_max_height =
+      kPlayablePlanetConfig.terrain_max_height_blocks;
+  bw_cfg.terrain_shell_margin =
+      kPlayablePlanetConfig.terrain_shell_margin_blocks;
+  bw_cfg.chunk_size = kPlayablePlanetConfig.chunk_size;
   bw_cfg.seed = k_voxov_flat_world_seed;
   block_world_.init(bw_cfg);
   chunk_generation_budget_ = kChunkGenerationBudget;
@@ -308,6 +316,16 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   local_player.camera_rig.maxDistance = 0.0f;
   local_player.camera_rig.minDistance = 0.0f;
   local_player.camera_rig.pivotHeight = 0.0f;
+  local_player.locomotion_tuning.flight_speed =
+      kPlayablePlanetConfig.debug_flight_speed_mps;
+  local_player.locomotion_tuning.flight_sprint_base_speed =
+      kPlayablePlanetConfig.debug_flight_sprint_base_mps;
+  local_player.locomotion_tuning.flight_sprint_altitude_scale =
+      kPlayablePlanetConfig.debug_flight_sprint_altitude_scale;
+  local_player.locomotion_tuning.flight_sprint_max_speed =
+      kPlayablePlanetConfig.debug_flight_sprint_max_mps;
+  local_player.locomotion_tuning.flight_acceleration =
+      kPlayablePlanetConfig.debug_flight_acceleration_mps2;
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
   camera.z_far = 512.0f;
@@ -325,7 +343,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
           glm::dvec3(local_player.transform.position) - planet_def.center);
       local_player.transform.position = glm::vec3(
           planet_def.center + observation_direction *
-                                  (planet_def.radius + 1'500'000.0));
+                                  (planet_def.radius +
+                                   kPlayablePlanetConfig.capture_orbit_altitude_m));
       local_player.camera_rig.pitch = -89.0f;
       local_player_prev_position = local_player.transform.position;
       debug_fly_mode_ = true;
@@ -334,7 +353,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
           glm::dvec3(local_player.transform.position) - planet_def.center);
       local_player.transform.position = glm::vec3(
           planet_def.center + observation_direction *
-                                  (planet_def.radius + 600.0));
+                                  (planet_def.radius +
+                                   kPlayablePlanetConfig.capture_flight_altitude_m));
       local_player.camera_rig.pitch = 0.0f;
       local_player_prev_position = local_player.transform.position;
       debug_fly_mode_ = true;
@@ -343,7 +363,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
     // ── Solar system initialization ───────────────────────────────────
     // Keplerian orbits use planetary distances. The planet's orbital position
     // determines sun direction; its block-world centre remains at the origin.
-    solar_system_.init();
+    solar_system_.init(planet_def.radius);
     solar_system_time_ = 0.0;
 
     // ── Coordinate frame manager initialization ───────────────────────
@@ -362,7 +382,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
     {
         AtmosphereParams atm_params{};
         atm_params.planet_radius = planet_def.radius;
-        atm_params.atmosphere_height = 80'000.0;
+        atm_params.atmosphere_height =
+            kPlayablePlanetConfig.atmosphere_height_m;
         atm_params.rayleigh_scattering = glm::dvec3(5.8e-6, 13.5e-6, 33.1e-6);
         atm_params.mie_scattering = 21.0e-5;
         atm_params.rayleigh_scale_height = 8'000.0;
@@ -374,7 +395,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
         atm_params.view_ray_samples = 12;
         atm_params.light_ray_samples = 6;
         atmosphere_.init(atm_params);
-        atmosphere_enabled_ = true;
+        atmosphere_enabled_ = kPlayablePlanetConfig.atmosphere_enabled;
     }
 
     spdlog::info("Engine init: block planet r={:.0f}m, shells={}, fly=OFF",
@@ -383,7 +404,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
     // ── Flight vehicle spawn ──────────────────────────────────────────────
     // Spawn the vehicle on the planet surface near the player, with
     // initial forward direction pointing east (tangent to sphere).
-    {
+    if (kPlayablePlanetConfig.flight_vehicle_enabled) {
         VehicleConfig vcfg{};
         vcfg.mass = 1500.0;
         vcfg.wing_area = 25.0;
@@ -417,6 +438,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
         flight_vehicle_.state().up = surface_normal;
         flight_vehicle_.state().right = east;
         flight_vehicle_spawned_ = true;
+    } else {
+        flight_vehicle_spawned_ = false;
     }
 
     spdlog::info("Player spawn: ({:.1f}, {:.1f}, {:.1f}), terrain_h={}, z_far={:.0f}",
@@ -702,8 +725,8 @@ void Engine::tick(double frame_dt,
   update_first_person_camera(local_player, local_player.transform.position,
                               camera);
 
-  // Preserve precision near blocks while allowing an entire 2,000 km planet
-  // to fit in the frustum during atmospheric/orbital flight.
+  // Preserve precision near blocks while allowing the whole compact planet
+  // to fit in the frustum during debug flight.
   const double camera_altitude = std::max(
       0.0, glm::length(glm::dvec3(camera.transform.position) -
                        block_world_.planet().center) -
@@ -723,8 +746,10 @@ void Engine::tick(double frame_dt,
                      ? target_far
                      : glm::mix(camera.z_far, target_far, camera_ease);
   const float flight_speed = glm::length(local_player.controller.velocity);
+  const float flight_fov_speed = std::max(
+      1.0f, kPlayablePlanetConfig.debug_flight_sprint_max_mps);
   const float speed_fov = debug_fly_mode_
-                              ? std::clamp(flight_speed / 5'000.0f,
+                              ? std::clamp(flight_speed / flight_fov_speed,
                                            0.0f, 1.0f) * 12.0f
                               : 0.0f;
   camera.fov_y_radians = glm::mix(
@@ -924,10 +949,13 @@ void Engine::tick(double frame_dt,
   double mesh_build_ms = 0.0;
   const double player_flight_speed =
       glm::length(glm::dvec3(local_player.controller.velocity));
+  const double close_flight_altitude =
+      std::min(128.0, block_world_.planet().radius * 0.5);
   const bool detailed_terrain_needed =
-      camera_altitude <= kLocalTerrainMaxAltitudeMeters &&
-      (!debug_fly_mode_ || camera_altitude < 128.0 ||
-       player_flight_speed < 240.0 ||
+      camera_altitude <= kPlayablePlanetConfig.local_terrain_max_altitude_m &&
+      (!debug_fly_mode_ || camera_altitude < close_flight_altitude ||
+       player_flight_speed <
+           kPlayablePlanetConfig.debug_flight_sprint_base_mps ||
        flight_clipmap_mesh_.vertices.empty());
   if (detailed_terrain_needed) {
     const glm::dvec3 player_offset =
@@ -958,9 +986,12 @@ void Engine::tick(double frame_dt,
     const glm::dvec3 player_velocity(local_player.controller.velocity);
     const double stream_speed = glm::length(player_velocity);
     const double lookahead_seconds = std::clamp(
-        0.35 + stream_speed / 2'000.0, 0.35, 1.0);
+        0.35 + stream_speed /
+                   std::max(64.0, block_world_.planet().radius * 4.0),
+        0.35, 1.0);
     glm::dvec3 lookahead = player_velocity * lookahead_seconds;
-    const double max_lookahead = 128.0;
+    const double max_lookahead =
+        std::min(128.0, block_world_.planet().radius * 0.5);
     const double lookahead_distance = glm::length(lookahead);
     if (lookahead_distance > max_lookahead) {
       lookahead *= max_lookahead / lookahead_distance;
@@ -1202,7 +1233,9 @@ void Engine::tick(double frame_dt,
       // feel broken, especially on tile-based mobile GPUs.
       const uint32_t active_mesh_budget = std::min<uint32_t>(
           10u, mesh_build_budget_ +
-                   static_cast<uint32_t>(stream_speed / 240.0));
+                   static_cast<uint32_t>(stream_speed / std::max(
+                       1.0f,
+                       kPlayablePlanetConfig.debug_flight_sprint_base_mps)));
       uint32_t mesh_count = 0;
       for (const MeshWorkItem &item : mesh_work) {
         if (mesh_count >= active_mesh_budget) {
@@ -1285,8 +1318,10 @@ void Engine::tick(double frame_dt,
                      }),
       scene.opaque_meshes.end());
   if ((debug_fly_mode_ ||
-       camera_altitude >= kFlightTerrainMinAltitudeMeters) &&
-      camera_altitude <= kFlightTerrainMaxAltitudeMeters &&
+       camera_altitude >=
+           kPlayablePlanetConfig.flight_terrain_min_altitude_m) &&
+      camera_altitude <=
+          kPlayablePlanetConfig.flight_terrain_max_altitude_m &&
       !flight_clipmap_mesh_.vertices.empty()) {
     scene.opaque_meshes.push_back(flight_clipmap_mesh_);
   }
@@ -1784,8 +1819,11 @@ void Engine::update_flight_clipmap(
     const glm::dvec3 &camera_velocity,
     double camera_altitude) {
   const bool terrain_needed =
-      (debug_fly_mode_ || camera_altitude >= kFlightTerrainMinAltitudeMeters) &&
-      camera_altitude <= kFlightTerrainMaxAltitudeMeters;
+      (debug_fly_mode_ ||
+       camera_altitude >=
+           kPlayablePlanetConfig.flight_terrain_min_altitude_m) &&
+      camera_altitude <=
+          kPlayablePlanetConfig.flight_terrain_max_altitude_m;
 
   if (flight_clipmap_build_pending_ && flight_clipmap_future_.valid() &&
       flight_clipmap_future_.wait_for(std::chrono::seconds(0)) ==
@@ -1823,7 +1861,8 @@ void Engine::update_flight_clipmap(
   const double speed = glm::length(camera_velocity);
   const double lead_seconds = std::clamp(0.35 + speed / 4'000.0, 0.35, 1.25);
   const double max_lead_distance = std::max(
-      2'048.0, camera_altitude * 2.0 + 4'096.0);
+      planet.radius,
+      camera_altitude * 2.0 + planet.radius * 0.5);
   glm::dvec3 lead = camera_velocity * lead_seconds;
   const double lead_distance = glm::length(lead);
   if (lead_distance > max_lead_distance) {
@@ -1833,13 +1872,13 @@ void Engine::update_flight_clipmap(
   const glm::dvec3 predicted_offset = predicted_position - planet.center;
   const glm::dvec3 predicted_direction = glm::normalize(predicted_offset);
 
-  const double base_half_extent = std::max(
-      768.0, std::min(planet.radius * 0.08,
-                      camera_altitude * 1.5 + 512.0));
+  const double base_half_extent =
+      planet_flight_clipmap_half_extent(planet.radius, camera_altitude);
   // Refill only after crossing a substantial fraction of the innermost ring.
   // The predictive centre leaves terrain ahead, so rebuilding every few
   // hundred metres merely keeps a CPU core and the GPU upload path saturated.
-  const double rebuild_distance = std::max(256.0, base_half_extent * 0.65);
+  const double rebuild_distance =
+      std::max(planet.radius * 0.25, base_half_extent * 0.65);
   double anchor_distance = std::numeric_limits<double>::infinity();
   if (glm::dot(flight_clipmap_anchor_direction_,
                flight_clipmap_anchor_direction_) > 0.5) {
@@ -1848,9 +1887,11 @@ void Engine::update_flight_clipmap(
         -1.0, 1.0);
     anchor_distance = std::acos(cosine) * planet.radius;
   }
+  const double altitude_bias = std::min(256.0, planet.radius * 0.5);
   const bool altitude_lod_changed = flight_clipmap_anchor_altitude_ < 0.0 ||
-      std::abs(std::log2((camera_altitude + 256.0) /
-                         (flight_clipmap_anchor_altitude_ + 256.0))) > 0.35;
+      std::abs(std::log2((camera_altitude + altitude_bias) /
+                         (flight_clipmap_anchor_altitude_ + altitude_bias))) >
+          0.35;
   const bool rebuild_needed = flight_clipmap_mesh_.vertices.empty() ||
       anchor_distance > rebuild_distance || altitude_lod_changed;
   if (!rebuild_needed || flight_clipmap_build_pending_) {
@@ -1891,14 +1932,12 @@ void Engine::update_first_person_camera(PlayerEntity &player,
   glm::vec3 local_up = glm::normalize(render_position);
   if (glm::length(local_up) < 0.1f) local_up = glm::vec3(0.0f, 1.0f, 0.0f);
 
-  // Build a local tangent basis at the player position.
-  // Use world +Y as reference for "north", with pole fallback to +Z.
-  glm::vec3 world_ref = glm::vec3(0.0f, 1.0f, 0.0f);
-  if (std::abs(glm::dot(local_up, world_ref)) > 0.99f) {
-    world_ref = glm::vec3(0.0f, 0.0f, 1.0f);
-  }
-  const glm::vec3 east = glm::normalize(glm::cross(world_ref, local_up));
-  const glm::vec3 north = glm::normalize(glm::cross(local_up, east));
+  // Use the same transported tangent frame as locomotion. It stays continuous
+  // through the poles instead of switching reference axes abruptly.
+  const glm::vec3 north =
+      player_surface_orientation::reference_forward(player.camera_rig, local_up);
+  const glm::vec3 east =
+      player_surface_orientation::east_from_forward(north, local_up);
 
   const float yaw_rad = glm::radians(player.camera_rig.yaw);
   const float pitch_rad = glm::radians(player.camera_rig.pitch);

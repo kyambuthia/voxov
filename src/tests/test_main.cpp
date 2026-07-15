@@ -1,7 +1,9 @@
 #include "engine_core/cvar.hpp"
 #include "engine_core/string_id.hpp"
+#include "engine/planet_gameplay_config.hpp"
 #include "engine_gameplay/minigames/minigames.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
+#include "engine_gameplay/player/surface_orientation.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net_proto/net_protocol_helpers.hpp"
 #include "engine_runtime/runtime_game_session.hpp"
@@ -115,6 +117,26 @@ void test_camera_view_override_basis() {
 
   camera.clear_view_override();
   assert(!camera.has_view_override());
+}
+
+void test_surface_orientation_parallel_transports_through_poles() {
+  CameraRig rig{};
+  glm::vec3 previous = player_surface_orientation::reference_forward(
+      rig, glm::vec3(1.0f, 0.0f, 0.0f));
+
+  for (int degree = 1; degree <= 360; ++degree) {
+    const float angle = glm::radians(static_cast<float>(degree));
+    const glm::vec3 up(std::cos(angle), std::sin(angle), 0.0f);
+    const glm::vec3 forward =
+        player_surface_orientation::reference_forward(rig, up);
+    const glm::vec3 east =
+        player_surface_orientation::east_from_forward(forward, up);
+    assert(std::fabs(glm::dot(forward, up)) < 1.0e-4f);
+    assert(std::fabs(glm::length(forward) - 1.0f) < 1.0e-4f);
+    assert(std::fabs(glm::dot(east, up)) < 1.0e-4f);
+    assert(glm::dot(previous, forward) > 0.99f);
+    previous = forward;
+  }
 }
 
 void test_net_pod_serialization() {
@@ -322,6 +344,52 @@ void test_block_world_terrain_height_is_smooth_across_columns() {
   // HF direction noise produced single-block spikes; smooth UV FBM stays gradual.
   // Pit fill allows one layer below neighbors, so steps can be 2 across a pit edge.
   assert(max_step <= 4);
+}
+
+void test_compact_planet_profile_has_playable_scale() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = kPlayablePlanetConfig.radius_m;
+  cfg.planet.voxel_size = kPlayablePlanetConfig.voxel_size_m;
+  cfg.surface_shells = kPlayablePlanetConfig.surface_shells;
+  cfg.base_resolution = kPlayablePlanetConfig.base_resolution;
+  cfg.block_size = kPlayablePlanetConfig.voxel_size_m;
+  cfg.terrain_feature_size = kPlayablePlanetConfig.terrain_feature_size_m;
+  cfg.terrain_base_height =
+      kPlayablePlanetConfig.terrain_base_height_blocks;
+  cfg.terrain_amplitude = kPlayablePlanetConfig.terrain_amplitude_blocks;
+  cfg.terrain_min_height = kPlayablePlanetConfig.terrain_min_height_blocks;
+  cfg.terrain_max_height = kPlayablePlanetConfig.terrain_max_height_blocks;
+  cfg.terrain_shell_margin =
+      kPlayablePlanetConfig.terrain_shell_margin_blocks;
+  cfg.chunk_size = kPlayablePlanetConfig.chunk_size;
+  cfg.seed = 42;
+
+  BlockWorld world{};
+  world.init(cfg);
+  assert(world.shell_count() == 2);
+  const ShellConfig &surface = world.shell_config(world.shell_count() - 1);
+  assert(surface.horizontal_res == 128);
+  assert(surface.vertical_layers == 9);
+  assert(std::fabs(surface.inner_radius - 64.0) < 1.0e-9);
+  assert(std::fabs(surface.outer_radius - 73.0) < 1.0e-9);
+
+  const glm::dvec3 directions[] = {
+      {1.0, 0.0, 0.0}, {-1.0, 0.0, 0.0},
+      {0.0, 1.0, 0.0}, {0.0, -1.0, 0.0},
+      {0.0, 0.0, 1.0}, {0.0, 0.0, -1.0},
+      glm::normalize(glm::dvec3(1.0, 1.0, 1.0)),
+      glm::normalize(glm::dvec3(-1.0, 0.3, 0.7)),
+  };
+  for (const glm::dvec3 &direction : directions) {
+    const int32_t height = world.terrain_height_at(direction);
+    assert(height >= kPlayablePlanetConfig.terrain_min_height_blocks);
+    assert(height <= kPlayablePlanetConfig.terrain_max_height_blocks);
+  }
+
+  assert(std::fabs(planet_flight_clipmap_half_extent(64.0, 0.0) - 16.0) <
+         1.0e-9);
+  assert(std::fabs(planet_flight_clipmap_half_extent(64.0, 128.0) - 16.0) <
+         1.0e-9);
 }
 
 void test_block_world_production_radius_keeps_meter_scale_detail() {
@@ -2257,6 +2325,7 @@ int main() {
   test_cvar_not_found_returns_zero();
   test_camera_vectors();
   test_camera_view_override_basis();
+  test_surface_orientation_parallel_transports_through_poles();
   test_net_pod_serialization();
   test_session_info_serialization();
   test_chunk_state_serialization();
@@ -2269,6 +2338,7 @@ int main() {
   test_planet_tangent_basis_orthonormal();
   test_planet_neighbor_within_face_bounds();
   test_block_world_terrain_height_is_smooth_across_columns();
+  test_compact_planet_profile_has_playable_scale();
   test_block_world_production_radius_keeps_meter_scale_detail();
   test_block_world_evicts_chunks_outside_resident_patch();
   test_block_world_stream_includes_all_vertical_rows();

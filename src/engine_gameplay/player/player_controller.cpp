@@ -1,4 +1,5 @@
 #include "engine_gameplay/player/player_controller.hpp"
+#include "engine_gameplay/player/surface_orientation.hpp"
 
 #include "engine_gameplay/animation/player_animation_graph.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
@@ -460,16 +461,13 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
                              : glm::vec3(0.0f, 1.0f, 0.0f);
     MovementDebug movement_debug = compute_movement_vectors(player.camera_rig.yaw, input.move);
     if (collision_world.has_planet_surface_collider()) {
-        // Build tangent basis matching the first-person camera's frame.
-        // WHY: the camera uses world_ref=(0,1,0) with pole fallback to (0,0,1),
-        // then east=cross(world_ref, up), north=cross(up, east).
-        // Movement must use the same basis so WASD directions match the view.
-        glm::vec3 world_ref = glm::vec3(0.0f, 1.0f, 0.0f);
-        if (std::abs(glm::dot(up, world_ref)) > 0.99f) {
-            world_ref = glm::vec3(0.0f, 0.0f, 1.0f);
-        }
-        const glm::vec3 east = glm::normalize(glm::cross(world_ref, up));
-        const glm::vec3 north = glm::normalize(glm::cross(up, east));
+        // Movement and camera share a transported tangent frame. Rebuilding
+        // from world +Y caused heading flips whenever a compact planet's pole
+        // was crossed.
+        const glm::vec3 north =
+            player_surface_orientation::reference_forward(player.camera_rig, up);
+        const glm::vec3 east =
+            player_surface_orientation::east_from_forward(north, up);
 
         const float yaw_rad = to_radians(player.camera_rig.yaw);
         movement_debug.forward =
@@ -534,9 +532,12 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
         // progressively faster through atmosphere and orbit without a sudden
         // 500 km/s discontinuity at ground level.
         const float noclip_speed = input.sprint_held
-                                       ? std::clamp(600.0f + altitude * 2.0f,
-                                                    600.0f, 1'000'000.0f)
-                                       : 80.0f;
+            ? std::clamp(
+                  tuning.flight_sprint_base_speed +
+                      altitude * tuning.flight_sprint_altitude_scale,
+                  tuning.flight_sprint_base_speed,
+                  tuning.flight_sprint_max_speed)
+            : tuning.flight_speed;
         glm::vec3 desired_velocity = flight_move * noclip_speed;
         if (input.jump_held) {
             desired_velocity += up * noclip_speed;
@@ -547,7 +548,8 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
         // Ease into and out of high-speed flight. Besides making the camera
         // transition readable, bounded acceleration gives the terrain
         // predictor time to fill the forward guard band before arrival.
-        const float acceleration = std::max(2'400.0f, noclip_speed * 3.0f);
+        const float acceleration =
+            std::max(tuning.flight_acceleration, noclip_speed * 3.0f);
         player.controller.velocity = move_towards_vec3(
             player.controller.velocity, desired_velocity, acceleration * dt);
         player.transform.position += player.controller.velocity * dt;

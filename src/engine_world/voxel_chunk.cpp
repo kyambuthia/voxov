@@ -201,6 +201,9 @@ VoxelMaterial VoxelChunk::material(int x, int y, int z) const {
 }
 
 bool VoxelChunk::solid(int x, int y, int z) const {
+  if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
+    return false;
+  }
   // Block is solid if material (lower 2 bits) is not Air.
   return (voxels[index(x, y, z)] & 0x03u) != 0u;
 }

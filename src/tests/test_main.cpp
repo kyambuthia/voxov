@@ -1300,6 +1300,12 @@ void test_chunk_world_footprint() {
 void test_single_voxel_mesh_bounds() {
   VoxelChunk chunk;
   chunk.set_solid(0, 0, 0, true);
+  assert(!chunk.solid(-1, 0, 0));
+  assert(!chunk.solid(0, -1, 0));
+  assert(!chunk.solid(0, 0, -1));
+  assert(!chunk.solid(VoxelChunk::CHUNK_X, 0, 0));
+  assert(!chunk.solid(0, VoxelChunk::CHUNK_Y, 0));
+  assert(!chunk.solid(0, 0, VoxelChunk::CHUNK_Z));
   const RenderMesh mesh = chunk.build_greedy_mesh();
 
   assert(mesh.vertices.size() == 24);

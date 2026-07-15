@@ -15,7 +15,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -127,7 +127,7 @@ jobs:
           trap - EXIT
 
       - name: Upload linux artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-linux
           path: VOXOV-${{ github.ref_name }}-linux-x86_64.tar.gz
@@ -137,7 +137,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -222,7 +222,7 @@ jobs:
           }
 
       - name: Upload windows artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-windows
           path: VOXOV-${{ github.ref_name }}-windows-x86_64.zip
@@ -232,12 +232,12 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
       - name: Setup Java
-        uses: actions/setup-java@v4
+        uses: actions/setup-java@v5
         with:
           distribution: temurin
           java-version: "21"
@@ -280,7 +280,7 @@ jobs:
           cp android/app/build/outputs/apk/release/app-release.apk "VOXOV-${GITHUB_REF_NAME}-android-arm64-v8a.apk"
 
       - name: Upload android artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-android
           path: VOXOV-${{ github.ref_name }}-android-arm64-v8a.apk
@@ -290,7 +290,7 @@ jobs:
 
     steps:
       - name: Checkout
-        uses: actions/checkout@v4
+        uses: actions/checkout@v6
         with:
           submodules: recursive
 
@@ -341,7 +341,7 @@ jobs:
           test -f "${WEB_DIR}/voxov_web.data.gz"
 
       - name: Upload web artifact
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: release-web
           path: VOXOV-${{ github.ref_name }}-web/*
@@ -354,32 +354,28 @@ jobs:
 
     steps:
       - name: Download linux artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-linux
           path: dist/release-linux
-          if-no-files-found: error
 
       - name: Download android artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-android
           path: dist/release-android
-          if-no-files-found: error
 
       - name: Download windows artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-windows
           path: dist/release-windows
-          if-no-files-found: error
 
       - name: Download web artifact
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           name: release-web
           path: dist/release-web
-          if-no-files-found: error
 
       - name: Flatten artifacts
         run: |

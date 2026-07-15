@@ -27,6 +27,7 @@ jobs:
             cmake \
             ninja-build \
             xvfb \
+            libasound2-dev \
             libgl1-mesa-dev \
             libwayland-dev \
             libx11-dev \

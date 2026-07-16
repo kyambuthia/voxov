@@ -36,7 +36,6 @@
 #define SOKOL_SHDC_IMPL
 #include "voxov_scene.glsl.h"
 
-
 namespace {
 
 // O(1) change-detection token: vertex count + index count.
@@ -124,7 +123,6 @@ bool SokolRenderer::setup_pipelines() {
                   __LINE__, __FILE__, nullptr);
         return false;
     }
-
     pipelines_.scene_shader = sg_make_shader(shader_desc);
     if (pipelines_.scene_shader.id == SG_INVALID_ID) {
         slog_func("voxov", 1, 0, "SokolRenderer: failed to create scene shader",

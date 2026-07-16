@@ -212,9 +212,13 @@ add_custom_command(
         -f sokol_impl
         --ifdef
         --no-log-cmdline
+    COMMAND "${CMAKE_COMMAND}"
+        -DINPUT="${VOXOV_SCENE_SHADER_HEADER}"
+        -P "${CMAKE_SOURCE_DIR}/cmake/patch_glsl330.cmake"
     DEPENDS
         "${CMAKE_SOURCE_DIR}/src/engine_render/shaders/voxov_scene.glsl"
         "${VOXOV_SOKOL_SHDC}"
+        "${CMAKE_SOURCE_DIR}/cmake/patch_glsl330.cmake"
     COMMENT "Compiling portable scene shaders"
     VERBATIM
 )

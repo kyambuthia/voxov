@@ -364,6 +364,7 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
     dst.bounds_max = bmax;
     dst.world_origin = src.world_origin;
     dst.material = src.material;
+    dst.double_sided = src.double_sided;
     dst.content_hash = src.content_hash;
     dst.index_type =
         use_16_bit_indices ? SG_INDEXTYPE_UINT16 : SG_INDEXTYPE_UINT32;
@@ -605,6 +606,7 @@ void SokolRenderer::upload_scene(const RenderScene &new_scene) {
                 mesh.content_hash != 0 &&
                 it->second.content_hash == mesh.content_hash) {
                 it->second.world_origin = mesh.world_origin;
+                it->second.double_sided = mesh.double_sided;
                 continue;
             }
             destroy_mesh(it->second);
@@ -764,9 +766,14 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                 continue;
             }
             record_draw(mesh);
+            const sg_pipeline pipeline_u32 =
+                mesh.double_sided ? pipelines_.debug_no_cull : pipelines_.opaque;
+            const sg_pipeline pipeline_u16 = mesh.double_sided
+                ? pipelines_.debug_no_cull_u16
+                : pipelines_.opaque_u16;
             draw_mesh(mesh, retained_vp, model, camera_pos,
                       mesh.world_origin,
-                      pipelines_.opaque, pipelines_.opaque_u16);
+                      pipeline_u32, pipeline_u16);
         }
 
         // Wireframe geometry (drawn over opaque, with depth).

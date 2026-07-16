@@ -42,6 +42,9 @@ struct RenderMesh {
     // Primary material (most-frequent) for draw-call batching.
     // 0 = unset/unknown; otherwise matches VoxelMaterial enum values.
     uint8_t material = 0;
+    // Selects the no-cull pipeline for fallback geometry whose back face may be
+    // visible from an interior/oblique camera angle. Terrain chunks stay culled.
+    bool double_sided = false;
 };
 
 struct CameraRelativeOrigin {

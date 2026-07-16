@@ -28,6 +28,7 @@ struct SokolGpuMesh {
     glm::vec3 bounds_min{};
     glm::vec3 bounds_max{};
     uint8_t material = 0;
+    bool double_sided = false;
 };
 
 struct SokolPipelines {

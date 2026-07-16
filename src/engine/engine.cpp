@@ -944,8 +944,19 @@ void Engine::tick(double frame_dt,
   // terrain top (Grass) in the outer thin shell is meshed (not just deep stone).
   double chunk_gen_ms = 0.0;
   double mesh_build_ms = 0.0;
+  const glm::dvec3 player_velocity(local_player.controller.velocity);
+  const double stream_speed = glm::length(player_velocity);
+  // A small planet brings the horizon into view quickly. Start the detailed
+  // stream before the player reaches the old 32 m cutoff, with extra lead for
+  // high-speed flight. This gives generation and meshing time to finish before
+  // a chunk crosses the near-plane instead of relying on the coarse shell.
+  const double stream_lead = std::clamp(
+      16.0 + stream_speed * 0.75,
+      16.0,
+      block_world_.planet().radius * 1.5);
   const bool detailed_terrain_needed =
-      camera_altitude <= kPlayablePlanetConfig.local_terrain_max_altitude_m;
+      camera_altitude <=
+      kPlayablePlanetConfig.local_terrain_max_altitude_m + stream_lead;
   if (detailed_terrain_needed) {
     const glm::dvec3 player_offset =
         glm::dvec3(local_player.transform.position) - block_world_.planet().center;
@@ -972,15 +983,13 @@ void Engine::tick(double frame_dt,
     // Predict ahead along the actual flight velocity. Detailed chunks are
     // requested around both the player and the future position, while a wider
     // guard band retains the old neighborhood until it is safely behind us.
-    const glm::dvec3 player_velocity(local_player.controller.velocity);
-    const double stream_speed = glm::length(player_velocity);
     const double lookahead_seconds = std::clamp(
         0.35 + stream_speed /
                    std::max(64.0, block_world_.planet().radius * 4.0),
-        0.35, 1.0);
+        0.35, 1.25);
     glm::dvec3 lookahead = player_velocity * lookahead_seconds;
     const double max_lookahead =
-        std::min(128.0, block_world_.planet().radius * 0.5);
+        std::min(192.0, block_world_.planet().radius * 1.5);
     const double lookahead_distance = glm::length(lookahead);
     if (lookahead_distance > max_lookahead) {
       lookahead *= max_lookahead / lookahead_distance;
@@ -1060,7 +1069,7 @@ void Engine::tick(double frame_dt,
     new_chunks.reserve(missing_chunks.size());
     const uint32_t active_generation_budget = std::min<uint32_t>(
         12u, chunk_generation_budget_ +
-                 static_cast<uint32_t>(stream_speed / 160.0));
+                 static_cast<uint32_t>(stream_speed / 96.0));
     uint32_t gen_count = 0;
     for (const BlockAddress &addr : missing_chunks) {
       if (gen_count >= active_generation_budget) {
@@ -1790,6 +1799,10 @@ void Engine::rebuild_global_planet_surface() {
       block_world_, kPlayablePlanetConfig.global_surface_subdivisions,
       kPlayablePlanetConfig.global_surface_radial_bias_m);
   global_planet_surface_mesh_.mesh_id = kGlobalPlanetSurfaceMeshId;
+  // This is a recessed safety shell for the brief interval while a detailed
+  // chunk is being generated. Render both faces so oblique approach rays can
+  // never look through a missing chunk into the sky.
+  global_planet_surface_mesh_.double_sided = true;
 }
 
 void Engine::update_first_person_camera(PlayerEntity &player,

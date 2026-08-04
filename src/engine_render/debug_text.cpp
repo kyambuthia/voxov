@@ -171,7 +171,7 @@ bool load_raster_font(RasterFont &font) {
   std::vector<uint8_t> font_bytes;
   bool found_font = false;
   const std::vector<std::filesystem::path> candidates =
-      candidate_font_paths("IBMPlexMono-Regular.ttf");
+      candidate_font_paths("SpaceMono-Regular.ttf");
   for (const std::filesystem::path &path : candidates) {
     if (load_file_bytes(path, font_bytes)) {
       found_font = true;
@@ -188,7 +188,7 @@ bool load_raster_font(RasterFont &font) {
       searched += candidates[i].generic_string();
     }
     spdlog::warn(
-        "DebugText: font IBMPlexMono-Regular.ttf not found; searched {}",
+        "DebugText: font SpaceMono-Regular.ttf not found; searched {}",
         searched);
     return false;
   }

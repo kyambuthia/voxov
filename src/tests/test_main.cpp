@@ -12,6 +12,7 @@
 #include "engine_world/planet.hpp"
 #include "engine_world/planet_blocks.hpp"
 #include "engine_world/solar_system.hpp"
+#include "engine_world/coordinate_frames.hpp"
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_physics/vehicle/aircraft_controller.hpp"
 #include "engine_physics/vehicle/ground_vehicle_controller.hpp"
@@ -118,6 +119,32 @@ void test_camera_view_override_basis() {
 
   camera.clear_view_override();
   assert(!camera.has_view_override());
+}
+
+void test_coordinate_frames_preserve_body_specific_origins() {
+  SolarSystem solar_system;
+  solar_system.init(64.0);
+  solar_system.update(0.0);
+
+  CoordinateFrameManager frames;
+  frames.init();
+  frames.update(solar_system);
+
+  const glm::dvec3 local_point(3.0, 4.0, 5.0);
+  const glm::dvec3 voxov_solar = frames.transform(
+      local_point, CoordinateFrame::Planet, CoordinateFrame::Solar, 1);
+  const glm::dvec3 aster_solar = frames.transform(
+      local_point, CoordinateFrame::Planet, CoordinateFrame::Solar, 3);
+
+  assert(glm::length(voxov_solar -
+                     (local_point + solar_system.body_position(1))) < 1.0e-6);
+  assert(glm::length(aster_solar -
+                     (local_point + solar_system.body_position(3))) < 1.0e-6);
+  assert(glm::length(aster_solar - voxov_solar) > 1.0);
+
+  const glm::dvec3 round_trip = frames.transform(
+      aster_solar, CoordinateFrame::Solar, CoordinateFrame::Planet, 3);
+  assert(glm::length(round_trip - local_point) < 1.0e-6);
 }
 
 void test_surface_orientation_parallel_transports_through_poles() {
@@ -660,6 +687,32 @@ void test_planet_flight_follows_camera_pitch() {
   const glm::vec3 delta = player.transform.position - start;
   assert(glm::dot(delta, up) > 0.5f);
   assert(glm::length(player.controller.velocity) > 1.0f);
+}
+
+void test_planet_flight_descends_and_lands_on_surface() {
+  VoxelCollisionWorld collision{};
+  collision.set_planet_surface_collider(glm::vec3(0.0f), 50.0f);
+
+  PlayerEntity player{};
+  player.transform.position = glm::vec3(55.0f, 0.0f, 0.0f);
+  player.controller.capsuleRadius = 0.7f;
+  player.controller.capsuleHeight = 1.8f;
+  player.locomotion_tuning.flight_speed = 20.0f;
+  player.locomotion_tuning.flight_acceleration = 120.0f;
+  player.locomotion_tuning.flight_atmosphere_height = 32.0f;
+
+  InputState input{};
+  for (int i = 0; i < 180 && !player.controller.grounded; ++i) {
+    PlayerControllerSystem::simulate_fixed(
+        player, input, collision, 1.0f / 60.0f, true);
+  }
+
+
+  assert(player.controller.grounded);
+  assert(player.flight.phase == PlayerFlightPhase::Grounded);
+  assert(player.flight.altitude_m < 0.5f);
+  assert(glm::dot(player.controller.velocity,
+                  collision.planet_up_at(player.transform.position)) >= -0.01f);
 }
 
 void test_block_world_cross_sector_chunk_offset() {
@@ -2470,6 +2523,7 @@ int main() {
   test_cvar_not_found_returns_zero();
   test_camera_vectors();
   test_camera_view_override_basis();
+  test_coordinate_frames_preserve_body_specific_origins();
   test_surface_orientation_parallel_transports_through_poles();
   test_net_pod_serialization();
   test_session_info_serialization();
@@ -2491,6 +2545,7 @@ int main() {
   test_player_spawn_on_planet_surface();
   test_player_moves_on_planet_surface();
   test_planet_flight_follows_camera_pitch();
+  test_planet_flight_descends_and_lands_on_surface();
   test_block_world_cross_sector_chunk_offset();
   test_block_world_cross_sector_neighbor_lands_on_destination_edge();
   test_solar_system_has_nearby_companion_planet();

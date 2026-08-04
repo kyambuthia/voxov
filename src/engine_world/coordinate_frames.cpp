@@ -4,28 +4,15 @@
 #include <algorithm>
 #include <cmath>
 
-// ── Frame priority ordering for transform chain traversal ──────────────
-// We need to know which direction to walk the chain.
-// Order: Local < Planet < Orbital < Solar
-namespace {
-    int frame_priority(CoordinateFrame f) {
-        switch (f) {
-            case CoordinateFrame::Local:   return 0;
-            case CoordinateFrame::Planet:  return 1;
-            case CoordinateFrame::Orbital: return 2;
-            case CoordinateFrame::Solar:   return 3;
-        }
-        return 0;
-    }
-} // namespace
-
 void CoordinateFrameManager::init() {
     body_transforms_.clear();
+    body_solar_positions_.clear();
     // Default bodies: Sun (0), Voxov (1), Luna (2), Aster (3).
     // Sun is at origin in Solar frame (no parent).
     // Planet orbits the Sun.
     // Moon orbits the Planet.
-    body_transforms_.resize(3);
+    body_transforms_.resize(4);
+    body_solar_positions_.resize(4, glm::dvec3(0.0));
     for (auto& t : body_transforms_) {
         t.origin = glm::dvec3(0.0);
         t.rotation = glm::dquat(1.0, 0.0, 0.0, 0.0);
@@ -39,69 +26,28 @@ glm::dvec3 CoordinateFrameManager::transform(
     CoordinateFrame from,
     CoordinateFrame to,
     int32_t body_index) const {
-    // WHY body_index unused currently: the transform chain always goes through
-    // the planet (body 1) for Planet↔Orbital transitions.  When multiple
-    // voxel planets are supported, body_index selects which body's frame.
-    (void)body_index;
-
     if (from == to) return position;
 
-    const int fp = frame_priority(from);
-    const int tp = frame_priority(to);
+    // Planet and Orbital are both body-centered representations. Their
+    // relationship is an identity transform; only crossing the Solar
+    // boundary changes the origin. This keeps the operation stable for
+    // arbitrary body indices and avoids the old Voxov-only special case.
+    const int32_t resolved_body =
+        (body_index >= 0 &&
+         static_cast<size_t>(body_index) < body_solar_positions_.size())
+            ? body_index
+            : 1;
+    const glm::dvec3 body_origin = body_solar_positions_.empty()
+        ? glm::dvec3(0.0)
+        : body_solar_positions_[static_cast<size_t>(resolved_body)];
 
-    // ── Forward transform (lower priority → higher priority) ──────────
-    // Walk the chain upward: Planet → Orbital → Solar.
-    // At each step, add the body's position in the parent frame.
-    auto apply_forward_step = [&](glm::dvec3 pos, CoordinateFrame current) -> glm::dvec3 {
-        if (current == CoordinateFrame::Planet && frame_priority(to) >= frame_priority(CoordinateFrame::Orbital)) {
-            // Planet → Orbital: add planet's orbital position
-            // body_index 1 = planet. Its orbital position is in Solar frame
-            // relative to the Sun (which is at origin in Solar frame).
-            // So Planet pos + planet_orbital_pos = Orbital (solar-centric) pos.
-            const FrameTransform& planet_t = body_transform(1);
-            // The planet's orbital position is stored in its transform origin
-            // (position of planet in Solar frame).
-            pos = pos + planet_t.origin;
-        }
-        if (current == CoordinateFrame::Orbital && frame_priority(to) >= frame_priority(CoordinateFrame::Solar)) {
-            // Already in Solar frame — Orbital and Solar are the same for
-            // the top-level hierarchy since the Sun is at origin.
-            // No additional transform needed.
-        }
-        return pos;
-    };
-
-    // ── Inverse transform (higher priority → lower priority) ──────────
-    // Walk the chain downward: Solar → Orbital → Planet.
-    auto apply_inverse_step = [&](glm::dvec3 pos, CoordinateFrame current) -> glm::dvec3 {
-        if (current == CoordinateFrame::Solar && tp <= frame_priority(CoordinateFrame::Orbital)) {
-            // Solar → Orbital: subtract planet's orbital position
-            const FrameTransform& planet_t = body_transform(1);
-            pos = pos - planet_t.origin;
-        }
-        // Orbital → Planet is the same subtraction (no extra steps needed
-        // since Orbital = Solar for planet-centric coords minus planet offset).
-        return pos;
-    };
-
-    // ── Compose transforms ──────────────────────────────────────────────
-    // Walk from `from` to `to` stepping through intermediate frames.
-    glm::dvec3 result = position;
-
-    if (fp < tp) {
-        // Going up: Planet → Orbital → Solar
-        result = apply_forward_step(result, from);
-        // If skipping a level (e.g., Planet → Solar), apply again
-        // for the intermediate level.
-        // Currently we only have Planet→Orbital and Orbital→Solar (identical),
-        // so one step covers Planet→Solar.
-    } else {
-        // Going down: Solar → Orbital → Planet
-        result = apply_inverse_step(result, from);
-        // If skipping a level, apply again.
+    if (from == CoordinateFrame::Solar && to != CoordinateFrame::Solar) {
+        return position - body_origin;
     }
-
-    return result;
+    if (from != CoordinateFrame::Solar && to == CoordinateFrame::Solar) {
+        return position + body_origin;
+    }
+    return position;
 }
 
 CoordinateFrame CoordinateFrameManager::current_frame(
@@ -130,6 +76,10 @@ void CoordinateFrameManager::update(const SolarSystem& solar_system) {
     if (static_cast<int32_t>(body_transforms_.size()) < count) {
         body_transforms_.resize(static_cast<size_t>(count));
     }
+    if (static_cast<int32_t>(body_solar_positions_.size()) < count) {
+        body_solar_positions_.resize(static_cast<size_t>(count),
+                                     glm::dvec3(0.0));
+    }
 
     // Update each body's transform from the solar system.
     // The transform origin is the body's position in the PARENT frame,
@@ -138,6 +88,7 @@ void CoordinateFrameManager::update(const SolarSystem& solar_system) {
     for (int32_t i = 0; i < count; ++i) {
         const CelestialBody& body = solar_system.bodies()[static_cast<size_t>(i)];
         FrameTransform& t = body_transforms_[static_cast<size_t>(i)];
+        body_solar_positions_[static_cast<size_t>(i)] = body.position;
 
         if (body.is_star || body.parent_index < 0) {
             // Root body (Sun) — at origin of Solar frame.

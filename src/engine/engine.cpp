@@ -326,6 +326,26 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   bw_cfg.chunk_size = kPlayablePlanetConfig.chunk_size;
   bw_cfg.seed = k_voxov_flat_world_seed;
   block_world_.init(bw_cfg);
+
+  // Build the nearby companion's terrain runtime up front. It shares the
+  // generator contract with Voxov but has its own radius, seed, chunk cache,
+  // and collision surface so an arrival can become a real landing rather than
+  // stopping at a rendered sphere.
+  {
+    BlockWorldConfig aster_cfg = bw_cfg;
+    aster_cfg.planet.radius = 32.0;
+    aster_cfg.planet.seed = k_voxov_flat_world_seed ^ 0xa57e'c0deull;
+    aster_cfg.seed = aster_cfg.planet.seed;
+    aster_block_world_.init(aster_cfg);
+    aster_collision_world.set_planet_surface_collider(
+        glm::vec3(0.0f), static_cast<float>(aster_cfg.planet.radius),
+        static_cast<float>(aster_block_world_.max_surface_height_above_base()),
+        [this](glm::vec3 direction) -> float {
+          return static_cast<float>(
+              aster_block_world_.surface_height_above_base(
+                  glm::dvec3(direction)));
+        });
+  }
   chunk_generation_budget_ = kChunkGenerationBudget;
   mesh_build_budget_ = kChunkMeshBudget;
 
@@ -384,6 +404,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
       kPlayablePlanetConfig.debug_flight_sprint_max_mps;
   local_player.locomotion_tuning.flight_acceleration =
       kPlayablePlanetConfig.debug_flight_acceleration_mps2;
+  local_player.locomotion_tuning.flight_atmosphere_height =
+      static_cast<float>(kPlayablePlanetConfig.atmosphere_height_m);
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
   camera.z_far = 512.0f;
@@ -658,6 +680,69 @@ void Engine::tick(double frame_dt,
   if (session_state_.menu_open || !session_state_.gameplay_started) {
     disable_gameplay_actions(gameplay_input);
     gameplay_input.look_delta = glm::vec2(0.0f);
+  }
+
+  // Holding W after locking a destination engages a readable flight assist:
+  // the camera slews onto the dashed route, propulsion follows that route,
+  // and arrival hands control to the destination's resident terrain runtime.
+  // Releasing W returns control to the normal flight input.
+  if (sky_navigation_mode_ && sky_navigation_locked_ &&
+      gameplay_input.key_w &&
+      sky_navigation_target_index_ >= 0 &&
+      sky_navigation_target_index_ < solar_system_.body_count()) {
+    const glm::dvec3 active_origin =
+        solar_system_.body_position(active_body_index_);
+    const CelestialBody &target = solar_system_.bodies()[static_cast<size_t>(
+        sky_navigation_target_index_)];
+    const glm::dvec3 target_local = target.position - active_origin;
+    const glm::dvec3 to_target = target_local -
+        glm::dvec3(local_player.transform.position);
+    const double distance = glm::length(to_target);
+
+    if (distance <= target.orbital.radius + 4.0 &&
+        sky_navigation_target_index_ == 3) {
+      const glm::dvec3 approach = glm::length(glm::dvec3(
+          local_player.transform.position) - target_local) > 1.0e-6
+          ? glm::normalize(glm::dvec3(local_player.transform.position) -
+                           target_local)
+          : glm::dvec3(1.0, 0.0, 0.0);
+      switch_active_planet(sky_navigation_target_index_);
+      local_player.transform.position = glm::vec3(
+          approach * block_world_.surface_radial_distance(approach) +
+          approach * 2.0);
+      local_player.controller.velocity = glm::vec3(0.0f);
+      local_player.controller.grounded = true;
+      local_player.flight = PlayerFlightState{};
+      debug_fly_mode_ = false;
+      sky_navigation_locked_ = false;
+      last_hud_message_ = "Landed on " + target.name;
+    } else {
+      debug_fly_mode_ = true;
+      gameplay_input.move = glm::vec2(0.0f, 1.0f);
+      gameplay_input.sprint_held = true;
+
+      const glm::vec3 up = collision_world.planet_up_at(
+          local_player.transform.position);
+      const glm::vec3 north =
+          player_surface_orientation::reference_forward(
+              local_player.camera_rig, up);
+      const glm::vec3 east =
+          player_surface_orientation::east_from_forward(north, up);
+      const glm::vec3 direction = glm::normalize(glm::vec3(to_target));
+      const float tangent_length = std::max(
+          1.0e-5f, glm::length(direction - up * glm::dot(direction, up)));
+      const float target_yaw = glm::degrees(std::atan2(
+          glm::dot(direction, east), glm::dot(direction, north)));
+      const float target_pitch = glm::degrees(std::atan2(
+          glm::dot(direction, up), tangent_length));
+      const float yaw_delta = std::remainder(
+          target_yaw - local_player.camera_rig.yaw, 360.0f);
+      const float steer = static_cast<float>(std::clamp(
+          frame_dt * 5.0, 0.0, 1.0));
+      local_player.camera_rig.yaw += yaw_delta * steer;
+      local_player.camera_rig.pitch = glm::mix(
+          local_player.camera_rig.pitch, target_pitch, steer);
+    }
   }
   touch_controls_visible_ = input_frame.touch_mode;
 
@@ -1471,7 +1556,8 @@ void Engine::tick(double frame_dt,
 
   if (sky_navigation_mode_) {
     RenderMesh navigation_mesh{};
-    const glm::dvec3 planet_orbit_pos = solar_system_.body_position(1);
+    const glm::dvec3 planet_orbit_pos =
+        solar_system_.body_position(active_body_index_);
     const glm::dvec3 ring_right = glm::dvec3(camera.right());
     const glm::dvec3 ring_up = glm::dvec3(camera.up());
     const glm::dvec3 player_world =
@@ -1587,17 +1673,23 @@ void Engine::tick(double frame_dt,
     if (soi_body >= 0 && soi_body != active_body_index_ &&
         frame_transition_cooldown_ <= 0.0) {
       const auto& body = solar_system_.bodies()[static_cast<size_t>(soi_body)];
-      spdlog::info("SOI transition: entering {} SOI (body_index={})",
-                   body.name, soi_body);
-      active_body_index_ = soi_body;
-      frame_transition_cooldown_ = k_frame_transition_hysteresis;
-      // When entering a body's SOI, switch to its Orbital/Planet frame.
-      if (altitude < atm_height) {
-        active_frame_ = CoordinateFrame::Planet;
-        active_frame_label_ = "Planet";
-      } else {
-        active_frame_ = CoordinateFrame::Orbital;
-        active_frame_label_ = "Orbital";
+      // Entering a body's SOI is not by itself a landing. Keep the current
+      // body-local terrain frame until the explicit approach solver has a
+      // resident runtime and can atomically swap position, collision, and
+      // streamed chunks together.
+      if (soi_body != 3 || active_body_index_ != 1) {
+        spdlog::info("SOI transition: entering {} SOI (body_index={})",
+                     body.name, soi_body);
+        active_body_index_ = soi_body;
+        frame_transition_cooldown_ = k_frame_transition_hysteresis;
+        // When entering a body's SOI, switch to its Orbital/Planet frame.
+        if (altitude < atm_height) {
+          active_frame_ = CoordinateFrame::Planet;
+          active_frame_label_ = "Planet";
+        } else {
+          active_frame_ = CoordinateFrame::Orbital;
+          active_frame_label_ = "Orbital";
+        }
       }
     }
 
@@ -1610,7 +1702,8 @@ void Engine::tick(double frame_dt,
   // positions so the planet-centre stays at world (0,0,0) for
   // block-world compatibility, while the sun appears to move.
   {
-    const glm::dvec3 planet_orbit_pos = solar_system_.body_position(1); // planet
+    const glm::dvec3 planet_orbit_pos =
+        solar_system_.body_position(active_body_index_);
     const glm::dvec3 cam_world = glm::dvec3(camera.transform.position);
     const glm::dvec3 sun_planet_centric = solar_system_.sun_position() - planet_orbit_pos;
     const glm::dvec3 sun_dir = glm::normalize(sun_planet_centric - cam_world);
@@ -1643,12 +1736,14 @@ void Engine::tick(double frame_dt,
       }
     }
 
-    const glm::dvec3 planet_orbit_pos = solar_system_.body_position(1);
+    const glm::dvec3 planet_orbit_pos =
+        solar_system_.body_position(active_body_index_);
 
     for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
       const CelestialBody& body = solar_system_.bodies()[i];
-      // Skip the planet body — the player is standing on the voxel planet.
-      if (i == 1) continue;
+      // Skip the active body — its detailed terrain runtime owns the local
+      // surface silhouette after landing.
+      if (i == active_body_index_) continue;
 
       const glm::dvec3 body_world = body.position - planet_orbit_pos;
       const glm::vec3 rel_pos = camera_relative_position(
@@ -1987,6 +2082,55 @@ void Engine::rebuild_global_planet_surface() {
   global_planet_surface_mesh_.double_sided = true;
 }
 
+void Engine::switch_active_planet(int32_t body_index) {
+  if (body_index == active_body_index_) {
+    return;
+  }
+  if (!((active_body_index_ == 1 && body_index == 3) ||
+        (active_body_index_ == 3 && body_index == 1))) {
+    last_hud_message_ = "Terrain runtime unavailable for destination";
+    return;
+  }
+
+  // Swap complete body-local runtimes, including resident chunks. This keeps
+  // edits and collision data alive on both planets without pretending that a
+  // single global voxel cache can represent two different surfaces.
+  std::swap(block_world_, aster_block_world_);
+  std::swap(collision_world, aster_collision_world);
+
+  collision_world.set_planet_surface_collider(
+      glm::vec3(0.0f), static_cast<float>(block_world_.planet().radius),
+      static_cast<float>(block_world_.max_surface_height_above_base()),
+      [this](glm::vec3 direction) -> float {
+        return static_cast<float>(
+            block_world_.surface_height_above_base(glm::dvec3(direction)));
+      });
+  aster_collision_world.set_planet_surface_collider(
+      glm::vec3(0.0f), static_cast<float>(aster_block_world_.planet().radius),
+      static_cast<float>(aster_block_world_.max_surface_height_above_base()),
+      [this](glm::vec3 direction) -> float {
+        return static_cast<float>(aster_block_world_.surface_height_above_base(
+            glm::dvec3(direction)));
+      });
+
+  active_body_index_ = body_index;
+  active_frame_ = CoordinateFrame::Planet;
+  active_frame_label_ = "Planet";
+  frame_transition_cooldown_ = k_frame_transition_hysteresis;
+
+  wireframe_planet_ = block_world_.planet();
+  wireframe_planet_dirty_ = true;
+  atmosphere_wireframe_mesh_ = build_atmosphere_wireframe_mesh(
+      wireframe_planet_, kPlayablePlanetConfig.atmosphere_height_m);
+  rebuild_global_planet_surface();
+
+  AtmosphereParams atmosphere_params = atmosphere_.params();
+  atmosphere_params.planet_radius = block_world_.planet().radius;
+  atmosphere_.init(atmosphere_params);
+  last_chunk_center_hash_ = 0;
+  snap_origin_dirty_ = true;
+}
+
 void Engine::update_first_person_camera(PlayerEntity &player,
                                         Camera &out_camera) {
   update_first_person_camera(player, player.transform.position, out_camera);
@@ -2103,7 +2247,8 @@ void Engine::refresh_overlay_text() {
 
     const glm::mat4 vp = camera.projection(sky_navigation_aspect_ratio_) *
                          camera.view();
-    const glm::dvec3 planet_orbit_pos = solar_system_.body_position(1);
+    const glm::dvec3 planet_orbit_pos =
+        solar_system_.body_position(active_body_index_);
     const glm::dvec3 player_world =
         glm::dvec3(local_player.transform.position);
     for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
@@ -2241,7 +2386,8 @@ void Engine::refresh_overlay_text() {
       std::to_string(static_cast<int>(atmosphere_.params().sun_direction.y * 100.0) / 100.0) + ", " +
       std::to_string(static_cast<int>(atmosphere_.params().sun_direction.z * 100.0) / 100.0) + ")";
   {
-    const glm::dvec3 planet_pos = solar_system_.body_position(1);
+    const glm::dvec3 planet_pos =
+        solar_system_.body_position(active_body_index_);
     overlay_text += "\nPlanet orbit pos: (" +
         std::to_string(static_cast<int>(planet_pos.x)) + ", " +
         std::to_string(static_cast<int>(planet_pos.y)) + ", " +

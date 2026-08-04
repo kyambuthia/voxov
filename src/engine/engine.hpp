@@ -87,6 +87,7 @@ private:
                                   Camera &out_camera);
   void rebuild_global_planet_surface();
   void refresh_overlay_text();
+  void switch_active_planet(int32_t body_index);
   void sync_network_state(uint32_t sim_tick, const InputState &input);
   void start_local_server(uint16_t port, bool loopback_only);
   void stop_client_session();
@@ -127,6 +128,11 @@ private:
   // 3D noise on sphere for seamless terrain, gravity-aligned block
   // meshing with cross-face neighbor culling via cube net.
   BlockWorld block_world_;
+  // Aster is kept as a resident procedural runtime so a landing can swap
+  // body-local terrain/collision state without destroying Voxov edits. This
+  // becomes a cache of PlanetRuntime instances as the catalog grows.
+  BlockWorld aster_block_world_;
+  VoxelCollisionWorld aster_collision_world{nullptr};
   PlanetLODSystem lod_system_;
   std::vector<BlockAddress> loaded_chunks_;    // currently resident chunks
   uint64_t block_mesh_revision_ = 0;

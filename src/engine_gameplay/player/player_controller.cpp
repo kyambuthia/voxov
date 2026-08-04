@@ -505,7 +505,7 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
     }
 
     if (noclip) {
-        (void)tuning;
+        player.flight.active = true;
         // Planet flight uses the same pitched forward vector as the camera;
         // the previous tangent-only vector could circle the surface but could
         // never actually fly toward/away from it with WASD.
@@ -545,21 +545,96 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
         if (input.crouch_held) {
             desired_velocity -= up * noclip_speed;
         }
+        // A flight controller must still have a gravity vector. Without it,
+        // releasing the controls leaves the player suspended forever and the
+        // landing path is impossible to reason about. A pitched flight input
+        // or explicit vertical input provides lift; otherwise the craft
+        // settles toward the surface at a bounded descent speed.
+        const float vertical_intent = glm::dot(desired_velocity, up);
+        if (std::abs(vertical_intent) < 0.01f) {
+            desired_velocity -= up * std::min(
+                noclip_speed, tuning.gravity * 2.0f);
+        }
         // Ease into and out of high-speed flight. Besides making the camera
         // transition readable, bounded acceleration gives the terrain
         // predictor time to fill the forward guard band before arrival.
         const float acceleration =
             std::max(tuning.flight_acceleration, noclip_speed * 3.0f);
+        const glm::vec3 start_position = player.transform.position;
         player.controller.velocity = move_towards_vec3(
             player.controller.velocity, desired_velocity, acceleration * dt);
-        player.transform.position += player.controller.velocity * dt;
-        player.controller.grounded = false;
+
+        const glm::vec3 flight_delta = player.controller.velocity * dt;
+        glm::vec3 candidate_position = start_position + flight_delta;
+
+        // Resolve both voxel contacts and the spherical terrain surface. This
+        // keeps high-speed descent from tunnelling through the planet and
+        // gives the flight state machine an authoritative landing signal.
+        if (glm::dot(flight_delta, flight_delta) > 1.0e-8f) {
+            const float travel = glm::length(flight_delta);
+            const glm::vec3 direction = flight_delta / travel;
+            float hit_distance = 0.0f;
+            if (collision_world.raycast(
+                    start_position, direction, travel, hit_distance)) {
+                candidate_position = start_position + direction *
+                    std::max(0.0f, hit_distance - 0.02f);
+            }
+        }
+
+        const CapsuleResolveResult resolve = collision_world.resolve_capsule(
+            candidate_position, player.controller.capsuleRadius,
+            player.controller.capsuleHeight, 0.02f, 8, 4.0f);
+        player.transform.position = resolve.position;
+        player.controller.grounded = resolve.grounded;
+        if (player.controller.grounded) {
+            const glm::vec3 ground_up = collision_world.has_planet_surface_collider()
+                ? collision_world.planet_up_at(player.transform.position)
+                : glm::vec3(0.0f, 1.0f, 0.0f);
+            const float normal_speed = glm::dot(player.controller.velocity, ground_up);
+            if (normal_speed < 0.0f) {
+                player.controller.velocity -= ground_up * normal_speed;
+            }
+            player.flight.phase = PlayerFlightPhase::Grounded;
+        }
+
+        const glm::vec3 current_up = collision_world.has_planet_surface_collider()
+            ? collision_world.planet_up_at(player.transform.position)
+            : glm::vec3(0.0f, 1.0f, 0.0f);
+        surface_point = glm::vec3(0.0f);
+        surface_up = current_up;
+        altitude = 0.0f;
+        if (collision_world.planet_surface_point(
+                player.transform.position, surface_point, surface_up)) {
+            altitude = std::max(
+                0.0f, glm::dot(player.transform.position - surface_point,
+                                surface_up));
+        }
+        player.flight.altitude_m = altitude;
+        player.flight.vertical_speed_mps = glm::dot(
+            player.controller.velocity, current_up);
+        player.flight.air_density = std::exp(
+            -altitude / std::max(1.0f, tuning.flight_atmosphere_height));
+        if (!player.controller.grounded) {
+            if (altitude < tuning.flight_atmosphere_height) {
+                player.flight.phase = altitude < 2.0f
+                    ? PlayerFlightPhase::Landing
+                    : PlayerFlightPhase::AtmosphericCruise;
+            } else {
+                player.flight.phase = PlayerFlightPhase::OrbitalCruise;
+            }
+        }
         motion.planar_velocity = glm::vec3(0.0f);
         motion.move_speed = 0.0f;
-        set_locomotion_state(player, PlayerLocomotionState::AirborneFall);
+        set_locomotion_state(
+            player,
+            player.controller.grounded
+                ? PlayerLocomotionState::Idle
+                : PlayerLocomotionState::AirborneFall);
         update_animation_state(player, input, dt, noclip, was_grounded);
         return debug;
     }
+
+    player.flight = PlayerFlightState{};
 
     const bool run_intent = input.sprint_held;
     const float desired_speed = has_move_input ? (run_intent ? tuning.run_speed : tuning.walk_speed) * motion.input_magnitude : 0.0f;

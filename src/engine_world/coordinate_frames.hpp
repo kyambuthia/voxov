@@ -118,6 +118,11 @@ private:
     /// Index 0 = Sun (parent: none), 1 = Planet (parent: Sun), 2 = Moon (parent: Planet).
     std::vector<FrameTransform> body_transforms_;
 
+    // Absolute body origins in Solar space. FrameTransform::origin is kept
+    // parent-relative for diagnostics, but transforms need the accumulated
+    // origin when the active body is Luna/Aster rather than Voxov.
+    std::vector<glm::dvec3> body_solar_positions_;
+
     /// Transform from Solar (heliocentric) frame to planet-centered frame.
     /// Used when converting between Orbital and Planet frames for the voxel world.
     FrameTransform solar_to_planet_;

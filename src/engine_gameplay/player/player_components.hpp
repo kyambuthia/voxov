@@ -43,6 +43,26 @@ enum class PlayerLocomotionState : uint8_t {
     Recovery
 };
 
+// Flight is deliberately separate from locomotion. Walking/jumping is a
+// contact-driven controller; flight needs a continuous inertial state and a
+// stable phase for atmosphere, approach, and landing presentation.
+enum class PlayerFlightPhase : uint8_t {
+    Grounded = 0,
+    Takeoff,
+    AtmosphericCruise,
+    OrbitalCruise,
+    Approach,
+    Landing,
+};
+
+struct PlayerFlightState {
+    PlayerFlightPhase phase = PlayerFlightPhase::Grounded;
+    bool active = false;
+    float altitude_m = 0.0f;
+    float vertical_speed_mps = 0.0f;
+    float air_density = 0.0f;
+};
+
 struct LocomotionTuningData {
     float walk_speed = 5.5f;
     float run_speed = 9.0f;
@@ -74,6 +94,7 @@ struct LocomotionTuningData {
     float flight_sprint_altitude_scale = 2.0f;
     float flight_sprint_max_speed = 1'000'000.0f;
     float flight_acceleration = 2'400.0f;
+    float flight_atmosphere_height = 32.0f;
 };
 
 struct PlayerLocomotionStateData {
@@ -135,6 +156,7 @@ struct PlayerEntity {
     CameraRig camera_rig{};
     LocomotionTuningData locomotion_tuning{};
     PlayerLocomotionStateData locomotion{};
+    PlayerFlightState flight{};
     PlayerAnimationStateData animation{};
     PlayerProceduralStateData procedural{};
     PlayerAnimState anim_state = PlayerAnimState::Idle;

@@ -98,6 +98,14 @@ vec3 atmosphere_transmittance(vec3 start, vec3 end) {
 }
 
 void main() {
+    // Debug text carries coverage in texcoord.x and uses a negative texture
+    // layer sentinel. Render it as alpha-blended coverage so TTF antialiasing
+    // survives rasterization instead of becoming opaque block pixels.
+    if (v_texcoord.z < -1.5) {
+        frag_color = vec4(v_color, clamp(v_texcoord.x, 0.0, 1.0));
+        return;
+    }
+
     // Aerial perspective: attenuate terrain by atmosphere along view ray.
     vec3 atm_trans = atmosphere_transmittance(camera_pos, v_world_pos);
     // Preserve nearby voxel readability at dense, low-altitude sight lines.

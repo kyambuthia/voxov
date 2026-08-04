@@ -48,7 +48,10 @@ struct RasterFont {
 };
 
 constexpr int k_font_bitmap_height = 32;
-constexpr uint8_t k_font_alpha_threshold = 84;
+// Keep the antialiased edge coverage from stb_truetype. The previous binary
+// cutoff turned every glyph into a coarse grid of opaque rectangles, which
+// made the font look heavier and more jagged than the source typeface.
+constexpr uint8_t k_font_alpha_floor = 12;
 
 const std::unordered_map<char, GlyphRows> kGlyphs = {
     {'A', {0x04, 0x0A, 0x11, 0x11, 0x1F, 0x11, 0x11}},
@@ -251,17 +254,28 @@ const RasterFont *debug_font() {
 void add_pixel_rect(RenderMesh &mesh, const glm::vec3 &origin,
                     const glm::vec3 &right, const glm::vec3 &up, float x,
                     float y, float width, float height, float cell_size,
-                    const glm::vec3 &color) {
+                    const glm::vec3 &color, float text_alpha = -1.0f) {
   const glm::vec3 p0 = origin + right * (x * cell_size) - up * (y * cell_size);
   const glm::vec3 p1 = p0 + right * (width * cell_size);
   const glm::vec3 p2 = p1 - up * (height * cell_size);
   const glm::vec3 p3 = p0 - up * (height * cell_size);
 
   uint32_t start = static_cast<uint32_t>(mesh.vertices.size());
-  mesh.vertices.push_back({p0, color});
-  mesh.vertices.push_back({p1, color});
-  mesh.vertices.push_back({p2, color});
-  mesh.vertices.push_back({p3, color});
+  RenderVertex v0{p0, color};
+  RenderVertex v1{p1, color};
+  RenderVertex v2{p2, color};
+  RenderVertex v3{p3, color};
+  if (text_alpha >= 0.0f) {
+    const glm::vec3 coverage(text_alpha, 0.0f, -2.0f);
+    v0.texcoord = coverage;
+    v1.texcoord = coverage;
+    v2.texcoord = coverage;
+    v3.texcoord = coverage;
+  }
+  mesh.vertices.push_back(v0);
+  mesh.vertices.push_back(v1);
+  mesh.vertices.push_back(v2);
+  mesh.vertices.push_back(v3);
   mesh.indices.insert(mesh.indices.end(), {start, start + 1, start + 2, start,
                                            start + 2, start + 3});
 }
@@ -269,7 +283,8 @@ void add_pixel_rect(RenderMesh &mesh, const glm::vec3 &origin,
 void add_screen_pixel_rect_ndc(RenderMesh &mesh, float origin_x_ndc,
                                float origin_y_ndc, float x, float y,
                                float width, float height, float cell_size_ndc,
-                               const glm::vec3 &color) {
+                               const glm::vec3 &color,
+                               float text_alpha = -1.0f) {
   const float x0 = origin_x_ndc + x * cell_size_ndc;
   const float y0 = origin_y_ndc - y * cell_size_ndc;
   const float x1 = x0 + width * cell_size_ndc;
@@ -281,10 +296,21 @@ void add_screen_pixel_rect_ndc(RenderMesh &mesh, float origin_x_ndc,
   const glm::vec3 p3(x0, y1, 0.0f);
 
   uint32_t start = static_cast<uint32_t>(mesh.vertices.size());
-  mesh.vertices.push_back({p0, color});
-  mesh.vertices.push_back({p1, color});
-  mesh.vertices.push_back({p2, color});
-  mesh.vertices.push_back({p3, color});
+  RenderVertex v0{p0, color};
+  RenderVertex v1{p1, color};
+  RenderVertex v2{p2, color};
+  RenderVertex v3{p3, color};
+  if (text_alpha >= 0.0f) {
+    const glm::vec3 coverage(text_alpha, 0.0f, -2.0f);
+    v0.texcoord = coverage;
+    v1.texcoord = coverage;
+    v2.texcoord = coverage;
+    v3.texcoord = coverage;
+  }
+  mesh.vertices.push_back(v0);
+  mesh.vertices.push_back(v1);
+  mesh.vertices.push_back(v2);
+  mesh.vertices.push_back(v3);
   mesh.indices.insert(mesh.indices.end(), {start, start + 1, start + 2, start,
                                            start + 2, start + 3});
 }
@@ -316,18 +342,36 @@ void append_raster_glyph_world(RenderMesh &mesh, const RasterFont &font, char c,
       pen_y + static_cast<float>(font.ascent + glyph.offset_y);
   for (int row = 0; row < glyph.height; ++row) {
     int run_start = -1;
+    float run_alpha = 0.0f;
     for (int col = 0; col <= glyph.width; ++col) {
-      const bool on =
-          col < glyph.width &&
-          glyph.bitmap[static_cast<size_t>(row * glyph.width + col)] >=
-              k_font_alpha_threshold;
-      if (on && run_start < 0) {
+      float alpha = 0.0f;
+      if (col < glyph.width) {
+        const uint8_t coverage =
+            glyph.bitmap[static_cast<size_t>(row * glyph.width + col)];
+        if (coverage >= k_font_alpha_floor) {
+          // Sixteen coverage levels preserve antialiased edges without
+          // exploding the number of tiny quads in the debug mesh.
+          const int level = (static_cast<int>(coverage) * 16 + 127) / 255;
+          alpha = static_cast<float>(std::max(1, level)) / 16.0f;
+        }
+      }
+      if (alpha > 0.0f && run_start < 0) {
         run_start = col;
-      } else if (!on && run_start >= 0) {
+        run_alpha = alpha;
+      } else if (alpha > 0.0f && std::abs(alpha - run_alpha) > 0.001f) {
         add_pixel_rect(
             mesh, origin, right, up, glyph_x + static_cast<float>(run_start),
             glyph_y + static_cast<float>(row),
-            static_cast<float>(col - run_start), 1.0f, cell_size, color);
+            static_cast<float>(col - run_start), 1.0f, cell_size, color,
+            run_alpha);
+        run_start = col;
+        run_alpha = alpha;
+      } else if (alpha <= 0.0f && run_start >= 0) {
+        add_pixel_rect(
+            mesh, origin, right, up, glyph_x + static_cast<float>(run_start),
+            glyph_y + static_cast<float>(row),
+            static_cast<float>(col - run_start), 1.0f, cell_size, color,
+            run_alpha);
         run_start = -1;
       }
     }
@@ -352,19 +396,35 @@ void append_raster_glyph_screen(RenderMesh &mesh, const RasterFont &font,
       pen_y + static_cast<float>(font.ascent + glyph.offset_y);
   for (int row = 0; row < glyph.height; ++row) {
     int run_start = -1;
+    float run_alpha = 0.0f;
     for (int col = 0; col <= glyph.width; ++col) {
-      const bool on =
-          col < glyph.width &&
-          glyph.bitmap[static_cast<size_t>(row * glyph.width + col)] >=
-              k_font_alpha_threshold;
-      if (on && run_start < 0) {
+      float alpha = 0.0f;
+      if (col < glyph.width) {
+        const uint8_t coverage =
+            glyph.bitmap[static_cast<size_t>(row * glyph.width + col)];
+        if (coverage >= k_font_alpha_floor) {
+          const int level = (static_cast<int>(coverage) * 16 + 127) / 255;
+          alpha = static_cast<float>(std::max(1, level)) / 16.0f;
+        }
+      }
+      if (alpha > 0.0f && run_start < 0) {
         run_start = col;
-      } else if (!on && run_start >= 0) {
+        run_alpha = alpha;
+      } else if (alpha > 0.0f && std::abs(alpha - run_alpha) > 0.001f) {
+        add_screen_pixel_rect_ndc(
+            mesh, origin_x_ndc, origin_y_ndc,
+            glyph_x + static_cast<float>(run_start),
+            glyph_y + static_cast<float>(row),
+            static_cast<float>(col - run_start), 1.0f, cell_size_ndc, color,
+            run_alpha);
+        run_start = col;
+        run_alpha = alpha;
+      } else if (alpha <= 0.0f && run_start >= 0) {
         add_screen_pixel_rect_ndc(mesh, origin_x_ndc, origin_y_ndc,
                                   glyph_x + static_cast<float>(run_start),
                                   glyph_y + static_cast<float>(row),
                                   static_cast<float>(col - run_start), 1.0f,
-                                  cell_size_ndc, color);
+                                  cell_size_ndc, color, run_alpha);
         run_start = -1;
       }
     }

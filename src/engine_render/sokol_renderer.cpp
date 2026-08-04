@@ -215,6 +215,12 @@ bool SokolRenderer::setup_pipelines() {
     scr_desc.cull_mode = SG_CULLMODE_NONE;
     scr_desc.depth.compare = SG_COMPAREFUNC_ALWAYS;
     scr_desc.depth.write_enabled = false;
+    scr_desc.colors[0].blend.enabled = true;
+    scr_desc.colors[0].blend.src_factor_rgb = SG_BLENDFACTOR_SRC_ALPHA;
+    scr_desc.colors[0].blend.dst_factor_rgb =
+        SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+    scr_desc.colors[0].blend.src_factor_alpha = SG_BLENDFACTOR_ONE;
+    scr_desc.colors[0].blend.dst_factor_alpha = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
     scr_desc.label = "voxov-screen";
     pipelines_.screen = sg_make_pipeline(&scr_desc);
     scr_desc.index_type = SG_INDEXTYPE_UINT16;

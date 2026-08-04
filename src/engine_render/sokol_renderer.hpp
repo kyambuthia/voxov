@@ -89,7 +89,8 @@ private:
                    sg_pipeline pipeline_u32 = {},
                    sg_pipeline pipeline_u16 = {});
     void draw_wireframe(const SokolGpuMesh &mesh,
-                        const glm::mat4 &mvp);
+                        const glm::mat4 &mvp,
+                        const glm::vec3 &camera_pos);
 
     bool setup_pipelines();
 

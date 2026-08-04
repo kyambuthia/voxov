@@ -504,7 +504,8 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
 }
 
 void SokolRenderer::draw_wireframe(const SokolGpuMesh &mesh,
-                                     const glm::mat4 &mvp) {
+                                     const glm::mat4 &mvp,
+                                     const glm::vec3 &camera_pos) {
     if (!mesh.vertex_buffer.id || !mesh.index_buffer.id ||
         mesh.index_count == 0) {
         return;
@@ -524,7 +525,7 @@ void SokolRenderer::draw_wireframe(const SokolGpuMesh &mesh,
         glm::vec4(1.0f, 1.0f, 1.0f, 0.0f), // material_ambient (white → vertex color)
         glm::vec4(1.0f, 1.0f, 1.0f, 0.0f), // material_diffuse (white → vertex color)
         glm::vec4(0.0f, 0.0f, 0.0f, 0.0f), // material_specular (no specular)
-        glm::vec4(0.0f, 0.0f, 0.0f, 0.0f), // camera_pos (not used for wireframe)
+        glm::vec4(camera_pos, 0.0f),
     };
     const sg_range vs_range = SG_RANGE(vs_params);
     const sg_range fs_range = SG_RANGE(fs_params);
@@ -780,7 +781,7 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         // Wireframe verts are absolute world (see build_wireframe_... and
         // its mesh_id caching); must use raw vp.
         record_draw(wireframe_mesh_);
-        draw_wireframe(wireframe_mesh_, vp);
+        draw_wireframe(wireframe_mesh_, vp, camera_pos);
 
         // Debug world (x-ray or normal)
         record_draw(debug_world_mesh_);

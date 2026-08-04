@@ -292,6 +292,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   wireframe_planet_ = planet_def;
   wireframe_planet_.chunks_per_face = 64;
   wireframe_planet_dirty_ = true;
+  atmosphere_wireframe_mesh_ = build_atmosphere_wireframe_mesh(
+      planet_def, kPlayablePlanetConfig.atmosphere_height_m);
 
   // Planet-surface collision from block-world terrain (shell-mapped meters).
   collision_world.set_planet_surface_collider(
@@ -1348,6 +1350,9 @@ void Engine::tick(double frame_dt,
   scene.wireframe_meshes.clear();
   if (session_state_.devhud_enabled) {
     scene.wireframe_meshes.push_back(wireframe_planet_mesh_);
+  }
+  if (kPlayablePlanetConfig.atmosphere_preview_enabled) {
+    scene.wireframe_meshes.push_back(atmosphere_wireframe_mesh_);
   }
 
   // ── Solar system update ──────────────────────────────────────────────

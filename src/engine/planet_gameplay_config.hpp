@@ -23,6 +23,7 @@ struct PlanetGameplayConfig {
   double global_surface_radial_bias_m = 0.75;
   double atmosphere_height_m = 32.0;
   bool atmosphere_enabled = false;
+  bool atmosphere_preview_enabled = true;
   bool flight_vehicle_enabled = false;
 
   float debug_flight_speed_mps = 20.0f;

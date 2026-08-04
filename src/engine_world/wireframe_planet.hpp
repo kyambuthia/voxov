@@ -20,3 +20,11 @@ struct PlanetDefinition;
 
 RenderMesh build_wireframe_voxel_planet_mesh(const PlanetDefinition &planet,
                                               int32_t voxels_per_face_edge);
+
+// A lightweight dashed shell used as a visual atmosphere treatment while the
+// full scattering pass remains disabled or under development.
+RenderMesh build_atmosphere_wireframe_mesh(const PlanetDefinition &planet,
+                                            double atmosphere_height,
+                                            int32_t latitude_lines = 12,
+                                            int32_t longitude_lines = 24,
+                                            int32_t dash_segments = 48);

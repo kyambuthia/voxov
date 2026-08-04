@@ -159,6 +159,7 @@ private:
   // Generated once at init; GPU buffer cached by mesh_id in sokol renderer.
   PlanetDefinition wireframe_planet_{};
   RenderMesh wireframe_planet_mesh_{};
+  RenderMesh atmosphere_wireframe_mesh_{};
   bool wireframe_planet_dirty_ = true;
 
   uint64_t frame_index = 0;

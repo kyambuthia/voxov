@@ -38,6 +38,7 @@ static PlatformKey map_sokol_key(int sokol_key) {
     case SAPP_KEYCODE_F3:           return PlatformKey::F3;
     case SAPP_KEYCODE_F4:           return PlatformKey::F4;
     case SAPP_KEYCODE_F5:           return PlatformKey::F5;
+    case SAPP_KEYCODE_F6:           return PlatformKey::F6;
     case SAPP_KEYCODE_F11:          return PlatformKey::F11;
     case SAPP_KEYCODE_F12:          return PlatformKey::F12;
     case SAPP_KEYCODE_LEFT_SHIFT:   return PlatformKey::LeftShift;

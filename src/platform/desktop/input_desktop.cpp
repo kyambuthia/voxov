@@ -104,6 +104,7 @@ InputState DesktopInputBackend::poll() {
 
     const bool enter_down = k(PlatformKey::Enter);
     out.menu_select_pressed = enter_down && !prev_enter_down;
+    out.sky_navigation_lock_pressed = out.menu_select_pressed;
     prev_enter_down = enter_down;
 
     const bool f_down = k(PlatformKey::F);
@@ -132,6 +133,19 @@ InputState DesktopInputBackend::poll() {
     const bool f5_down = k(PlatformKey::F5);
     out.debug_reconcile_toggle_pressed = f5_down && !prev_f5_down;
     prev_f5_down = f5_down;
+
+    const bool f6_down = k(PlatformKey::F6);
+    out.sky_navigation_toggle_pressed = f6_down && !prev_f6_down;
+    prev_f6_down = f6_down;
+
+    const bool left_down = k(PlatformKey::Left);
+    const bool right_down = k(PlatformKey::Right);
+    out.sky_navigation_prev_pressed =
+        (left_down && !prev_left_down) || out.menu_up_pressed;
+    out.sky_navigation_next_pressed =
+        (right_down && !prev_right_down) || out.menu_down_pressed;
+    prev_left_down = left_down;
+    prev_right_down = right_down;
 
     const bool t_down = k(PlatformKey::T);
     out.engine_toggle_pressed = t_down && !prev_t_down;

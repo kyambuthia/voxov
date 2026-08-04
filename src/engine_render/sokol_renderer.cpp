@@ -42,8 +42,11 @@ namespace {
 uint64_t mesh_size_token(const RenderMesh &mesh) {
     const size_t index_count =
         mesh.use_16_bit_indices ? mesh.indices16.size() : mesh.indices.size();
-    return (static_cast<uint64_t>(mesh.vertices.size()) << 32) |
-           static_cast<uint64_t>(index_count);
+    uint64_t token = (static_cast<uint64_t>(mesh.vertices.size()) << 32) |
+                     static_cast<uint64_t>(index_count);
+    token ^= mesh.content_hash + 0x9e3779b97f4a7c15ull +
+             (token << 6) + (token >> 2);
+    return token;
 }
 
 // --- Frustum culling (same as GL renderer) ---
@@ -92,6 +95,7 @@ struct fs_params_t {
     glm::vec4 material_diffuse;
     glm::vec4 material_specular_shininess;
     glm::vec4 camera_pos;
+    glm::vec4 render_flags;
 };
 
 // Atmosphere uniform block (binding 2, std140).
@@ -105,7 +109,7 @@ struct atm_params_t {
 };
 
 static_assert(sizeof(vs_params_t) == 128);
-static_assert(sizeof(fs_params_t) == 128);
+static_assert(sizeof(fs_params_t) == 144);
 static_assert(sizeof(atm_params_t) == 80);
 
 } // namespace
@@ -444,7 +448,8 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
                               const glm::vec3 &camera_pos,
                               const glm::dvec3 &camera_relative_origin,
                               sg_pipeline pipeline_u32,
-                              sg_pipeline pipeline_u16) {
+                              sg_pipeline pipeline_u16,
+                              bool grayscale) {
     if (!mesh.vertex_buffer.id || !mesh.index_buffer.id ||
         mesh.index_count == 0) {
         return;
@@ -478,6 +483,7 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
         glm::vec4(material_.diffuse, 0.0f),
         glm::vec4(material_.specular, material_.shininess),
         glm::vec4(relative_camera_pos, 0.0f),
+        glm::vec4(grayscale ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f),
     };
     const sg_range vs_range = SG_RANGE(vs_params);
     const sg_range fs_range = SG_RANGE(fs_params);
@@ -526,6 +532,7 @@ void SokolRenderer::draw_wireframe(const SokolGpuMesh &mesh,
         glm::vec4(1.0f, 1.0f, 1.0f, 0.0f), // material_diffuse (white → vertex color)
         glm::vec4(0.0f, 0.0f, 0.0f, 0.0f), // material_specular (no specular)
         glm::vec4(camera_pos, 0.0f),
+        glm::vec4(0.0f), // navigation lines remain accented over grayscale world
     };
     const sg_range vs_range = SG_RANGE(vs_params);
     const sg_range fs_range = SG_RANGE(fs_params);
@@ -627,6 +634,8 @@ void SokolRenderer::upload_scene(const RenderScene &new_scene) {
     for (const RenderMesh &mesh : new_scene.wireframe_meshes) {
         wireframe_hash ^= mesh.mesh_id + 0x9e3779b97f4a7c15ull +
                           (wireframe_hash << 6) + (wireframe_hash >> 2);
+        wireframe_hash ^= mesh.content_hash + 0x517cc1b727220a95ull +
+                          (wireframe_hash << 7) + (wireframe_hash >> 3);
     }
     if (wireframe_hash != last_wireframe_hash_ || wireframe_hash == 0) {
         RenderMesh wireframe_scene{};
@@ -755,7 +764,8 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         const glm::mat4 transient_vp = mesh_vp(transient_mesh_);
         draw_mesh(transient_mesh_, transient_vp, model, camera_pos,
                   transient_mesh_.world_origin,
-                  pipelines_.opaque, pipelines_.opaque_u16);
+                  pipelines_.opaque, pipelines_.opaque_u16,
+                  ctx.grayscale_view);
 
         // Each retained mesh carries its own double-precision origin, so a
         // camera rebase changes only the draw transform, never its GPU data.
@@ -774,7 +784,8 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                 : pipelines_.opaque_u16;
             draw_mesh(mesh, retained_vp, model, camera_pos,
                       mesh.world_origin,
-                      pipeline_u32, pipeline_u16);
+                      pipeline_u32, pipeline_u16,
+                      ctx.grayscale_view);
         }
 
         // Wireframe geometry (drawn over opaque, with depth).
@@ -789,12 +800,14 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                   debug_world_mesh_.world_origin,
                   ctx.debug_xray ? pipelines_.debug_xray : pipelines_.opaque,
                   ctx.debug_xray ? pipelines_.debug_xray_u16
-                                 : pipelines_.opaque_u16);
+                                 : pipelines_.opaque_u16,
+                  false);
 
         // Screen-space overlay
         record_draw(debug_screen_mesh_);
         draw_mesh(debug_screen_mesh_, glm::mat4(1.0f), model, camera_pos,
-                  glm::dvec3(0.0), pipelines_.screen, pipelines_.screen_u16);
+                  glm::dvec3(0.0), pipelines_.screen, pipelines_.screen_u16,
+                  false);
     }
 
     // Write GPU draw call count back so the dev HUD can display it.

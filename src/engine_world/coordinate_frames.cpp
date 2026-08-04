@@ -21,7 +21,7 @@ namespace {
 
 void CoordinateFrameManager::init() {
     body_transforms_.clear();
-    // Three bodies: Sun (0), Planet (1), Moon (2)
+    // Default bodies: Sun (0), Voxov (1), Luna (2), Aster (3).
     // Sun is at origin in Solar frame (no parent).
     // Planet orbits the Sun.
     // Moon orbits the Planet.

@@ -55,6 +55,28 @@ CelestialBody make_moon(double playable_planet_radius) {
     return moon;
 }
 
+CelestialBody make_companion_planet(double playable_planet_radius) {
+    CelestialBody planet{};
+    planet.name = "Aster";
+    planet.parent_index = 1; // close companion of Voxov
+
+    // Deliberately close and slow-moving for traversal experiments: at the
+    // playable planet scale this is about 3 km away and roughly 19 seconds
+    // from the surface at the current debug flight maximum of 160 m/s.
+    const double planet_radius = std::max(1.0, playable_planet_radius);
+    planet.orbital.semi_major_axis = planet_radius * 48.0;
+    planet.orbital.eccentricity = 0.01;
+    planet.orbital.inclination = 0.02;
+    planet.orbital.longitude_ascending_node = 0.0;
+    planet.orbital.argument_periapsis = 0.0;
+    planet.orbital.mean_anomaly_epoch = 0.0;
+    planet.orbital.orbital_period = 1'200.0;
+    planet.orbital.radius = planet_radius * 0.5;
+    planet.orbital.mass = 2.0e23;
+    planet.color = glm::vec3(0.78f, 0.32f, 0.18f);
+    return planet;
+}
+
 } // namespace
 
 // ── SolarSystem public interface ───────────────────────────────────────────
@@ -64,6 +86,7 @@ void SolarSystem::init(double playable_planet_radius) {
     bodies_.push_back(make_sun());     // index 0
     bodies_.push_back(make_planet(playable_planet_radius));  // index 1
     bodies_.push_back(make_moon(playable_planet_radius));    // index 2
+    bodies_.push_back(make_companion_planet(playable_planet_radius)); // index 3
 }
 
 void SolarSystem::update(double time_seconds) {

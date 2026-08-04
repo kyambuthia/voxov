@@ -28,6 +28,10 @@ struct InputState {
     bool debug_freeze_toggle_pressed = false;
     bool debug_reconcile_toggle_pressed = false;
     bool engine_toggle_pressed = false;        // T key — flight vehicle engine on/off
+    bool sky_navigation_toggle_pressed = false; // F6 — sky navigation mode
+    bool sky_navigation_next_pressed = false;   // right/down arrow
+    bool sky_navigation_prev_pressed = false;   // left/up arrow
+    bool sky_navigation_lock_pressed = false;   // Enter — lock target
     bool screenshot_requested = false;
     float zoom_delta = 0.0f;
     // Block interaction: mouse button states (0=left, 1=right)

@@ -47,7 +47,7 @@ struct CelestialBody {
 // (star → planet → moon) without a separate co-ordinate frame stack.
 class SolarSystem {
 public:
-    // Initialise with default bodies: Sun, Planet (voxel world), Moon.
+    // Initialise with default bodies: Sun, Voxov, Luna, and nearby Aster.
     void init(double playable_planet_radius);
 
     // Update all body positions for the given elapsed simulation time.

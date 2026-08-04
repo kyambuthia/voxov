@@ -58,7 +58,7 @@ public:
     /// @param position  The position to convert.
     /// @param from      Source coordinate frame.
     /// @param to        Destination coordinate frame.
-    /// @param body_index  Index of the body whose frame to use (0=sun, 1=planet, 2=moon).
+    /// @param body_index  Index of the body whose frame to use (0=sun, 1=Voxov, 2=Luna, 3=Aster).
     /// @return The position in the destination frame.
     ///
     /// WHY body_index: different bodies have different positions in the

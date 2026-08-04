@@ -162,6 +162,14 @@ private:
   RenderMesh atmosphere_wireframe_mesh_{};
   bool wireframe_planet_dirty_ = true;
 
+  // ── Sky navigation mode ─────────────────────────────────────────────
+  // F6 desaturates the world and exposes celestial destinations as a simple
+  // selectable sky overlay. Enter locks the current target and draws a guide.
+  bool sky_navigation_mode_ = false;
+  bool sky_navigation_locked_ = false;
+  int32_t sky_navigation_target_index_ = 3; // Aster in the starter system
+  float sky_navigation_aspect_ratio_ = 16.0f / 9.0f;
+
   uint64_t frame_index = 0;
   uint64_t presentation_frame_events_seen_ = 0;
   double last_frame_dt = 0.0;

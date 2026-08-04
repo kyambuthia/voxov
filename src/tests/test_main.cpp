@@ -11,6 +11,7 @@
 #include "engine_world/net_chunk_state.hpp"
 #include "engine_world/planet.hpp"
 #include "engine_world/planet_blocks.hpp"
+#include "engine_world/solar_system.hpp"
 #include "engine_physics/avbd_solver.hpp"
 #include "engine_physics/vehicle/aircraft_controller.hpp"
 #include "engine_physics/vehicle/ground_vehicle_controller.hpp"
@@ -718,6 +719,21 @@ void test_block_world_cross_sector_neighbor_lands_on_destination_edge() {
   assert(result[0].address.sector == PlanetFace::PosZ);
   assert(result[0].address.chunk.x == hc - 1);
   assert(result[0].address.block.x == cfg.chunk_size - 1);
+}
+
+void test_solar_system_has_nearby_companion_planet() {
+  SolarSystem solar_system{};
+  solar_system.init(64.0);
+  solar_system.update(0.0);
+
+  assert(solar_system.body_count() == 4);
+  const CelestialBody &voxov = solar_system.bodies()[1];
+  const CelestialBody &aster = solar_system.bodies()[3];
+  assert(aster.name == "Aster");
+  assert(aster.parent_index == 1);
+  assert(aster.orbital.radius == 32.0);
+  assert(glm::length(aster.position - voxov.position) > 2'900.0);
+  assert(glm::length(aster.position - voxov.position) < 3'200.0);
 }
 
 void test_cube_edge_pairings_preserve_direction() {
@@ -2477,6 +2493,7 @@ int main() {
   test_planet_flight_follows_camera_pitch();
   test_block_world_cross_sector_chunk_offset();
   test_block_world_cross_sector_neighbor_lands_on_destination_edge();
+  test_solar_system_has_nearby_companion_planet();
   test_cube_edge_pairings_preserve_direction();
   test_surface_height_matches_quantized_surface_block();
   test_planet_quadtree_roots_are_stable();

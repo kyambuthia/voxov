@@ -15,11 +15,13 @@
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
+#include <cctype>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
 #include <limits>
+#include <numbers>
 #include <string>
 #include <unordered_set>
 
@@ -110,6 +112,58 @@ void append_screen_label(RenderMesh &dst, const std::string &text, float x,
                          const glm::vec3 &color = glm::vec3(0.92f, 0.96f,
                                                             1.0f)) {
   append_mesh(dst, build_screen_text_mesh(text, x, y, scale, color));
+}
+
+void append_wire_line(RenderMesh &mesh, const glm::dvec3 &a,
+                      const glm::dvec3 &b, const glm::vec3 &color) {
+  mesh.vertices.push_back(RenderVertex{glm::vec3(a), color, glm::vec3(0.0f)});
+  mesh.vertices.push_back(RenderVertex{glm::vec3(b), color, glm::vec3(0.0f)});
+  mesh.indices.push_back(static_cast<uint32_t>(mesh.vertices.size() - 2));
+  mesh.indices.push_back(static_cast<uint32_t>(mesh.vertices.size() - 1));
+}
+
+void append_dashed_line(RenderMesh &mesh, const glm::dvec3 &start,
+                        const glm::dvec3 &end, const glm::vec3 &color,
+                        int32_t segments) {
+  const int32_t count = std::max(4, segments);
+  for (int32_t i = 0; i < count; i += 2) {
+    const double t0 = static_cast<double>(i) / static_cast<double>(count);
+    const double t1 = static_cast<double>(i + 1) / static_cast<double>(count);
+    append_wire_line(mesh, glm::mix(start, end, t0),
+                     glm::mix(start, end, t1), color);
+  }
+}
+
+void append_dashed_ring(RenderMesh &mesh, const glm::dvec3 &center,
+                        const glm::dvec3 &right, const glm::dvec3 &up,
+                        double radius, double rotation,
+                        const glm::vec3 &color) {
+  constexpr int32_t kSegments = 32;
+  const double pi = std::numbers::pi_v<double>;
+  for (int32_t i = 0; i < kSegments; i += 2) {
+    const double a0 = rotation + 2.0 * pi * static_cast<double>(i) /
+                      static_cast<double>(kSegments);
+    const double a1 = rotation + 2.0 * pi * static_cast<double>(i + 1) /
+                      static_cast<double>(kSegments);
+    const glm::dvec3 p0 = center +
+        (right * std::cos(a0) + up * std::sin(a0)) * radius;
+    const glm::dvec3 p1 = center +
+        (right * std::cos(a1) + up * std::sin(a1)) * radius;
+    append_wire_line(mesh, p0, p1, color);
+  }
+}
+
+bool is_sky_navigation_target(int32_t body_index) {
+  // Body 1 is the local voxel planet and is not a destination in its own sky.
+  return body_index != 1;
+}
+
+std::string uppercase_ascii(std::string value) {
+  for (char &character : value) {
+    character = static_cast<char>(std::toupper(
+        static_cast<unsigned char>(character)));
+  }
+  return value;
 }
 
 void append_touch_button_hint(RenderMesh &dst, float x0, float y0, float x1,
@@ -549,6 +603,52 @@ void Engine::tick(double frame_dt,
   });
 
   InputState gameplay_input = input_frame.primary;
+  if (gameplay_input.sky_navigation_toggle_pressed &&
+      session_state_.gameplay_started && !session_state_.menu_open) {
+    sky_navigation_mode_ = !sky_navigation_mode_;
+    sky_navigation_locked_ = false;
+    last_hud_message_ = sky_navigation_mode_
+        ? "Sky navigation ON — arrows select, ENTER locks"
+        : "Sky navigation OFF";
+  }
+
+  if (sky_navigation_mode_) {
+    const int32_t body_count = solar_system_.body_count();
+    auto valid_target = [&](int32_t index) {
+      return index >= 0 && index < body_count &&
+             is_sky_navigation_target(index);
+    };
+    if (!valid_target(sky_navigation_target_index_)) {
+      sky_navigation_target_index_ = body_count > 0 ? 0 : -1;
+    }
+
+    if (!sky_navigation_locked_ && body_count > 0 &&
+        (gameplay_input.sky_navigation_next_pressed ||
+         gameplay_input.sky_navigation_prev_pressed)) {
+      const int32_t direction = gameplay_input.sky_navigation_next_pressed ? 1 : -1;
+      int32_t candidate = sky_navigation_target_index_;
+      for (int32_t attempt = 0; attempt < body_count; ++attempt) {
+        candidate = (candidate + direction + body_count) % body_count;
+        if (valid_target(candidate)) {
+          sky_navigation_target_index_ = candidate;
+          break;
+        }
+      }
+    }
+
+    if (gameplay_input.sky_navigation_lock_pressed &&
+        valid_target(sky_navigation_target_index_)) {
+      sky_navigation_locked_ = !sky_navigation_locked_;
+      last_hud_message_ = sky_navigation_locked_
+          ? "Navigation locked"
+          : "Navigation unlocked";
+    }
+
+    // Arrow keys and Enter belong to the sky selector while it is open.
+    disable_gameplay_actions(gameplay_input);
+    gameplay_input.look_delta = glm::vec2(0.0f);
+  }
+
   if (gameplay_input.debug_freeze_toggle_pressed) {
     debug_fly_mode_ = !debug_fly_mode_;
     local_player.locomotion.vertical_velocity = 0.0f;
@@ -747,6 +847,12 @@ void Engine::tick(double frame_dt,
                      ? target_far
                      : glm::mix(camera.z_far, target_far, camera_ease);
   const float flight_speed = glm::length(local_player.controller.velocity);
+  sky_navigation_aspect_ratio_ = static_cast<float>(surface.width) /
+                                 static_cast<float>(std::max(1, surface.height));
+  if (sky_navigation_mode_) {
+    // Keep the star and distant planetary markers in the navigation frustum.
+    camera.z_far = std::max(camera.z_far, 250'000'000.0f);
+  }
   const float flight_fov_speed = std::max(
       1.0f, kPlayablePlanetConfig.debug_flight_sprint_max_mps);
   const float speed_fov = debug_fly_mode_
@@ -1363,6 +1469,48 @@ void Engine::tick(double frame_dt,
   solar_system_time_ += frame_dt;
   solar_system_.update(solar_system_time_);
 
+  if (sky_navigation_mode_) {
+    RenderMesh navigation_mesh{};
+    const glm::dvec3 planet_orbit_pos = solar_system_.body_position(1);
+    const glm::dvec3 ring_right = glm::dvec3(camera.right());
+    const glm::dvec3 ring_up = glm::dvec3(camera.up());
+    const glm::dvec3 player_world =
+        glm::dvec3(local_player.transform.position);
+
+    for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
+      if (!is_sky_navigation_target(i)) continue;
+      const CelestialBody &body = solar_system_.bodies()[static_cast<size_t>(i)];
+      const glm::dvec3 body_world = body.position - planet_orbit_pos;
+      const double distance = glm::length(body_world - player_world);
+      const double ring_radius = std::clamp(
+          std::max(6.0, body.orbital.radius * 1.4),
+          6.0, std::max(6.0, distance * 0.02));
+      const bool selected = i == sky_navigation_target_index_;
+      const glm::vec3 ring_color = sky_navigation_locked_ && selected
+          ? glm::vec3(1.0f, 0.82f, 0.24f)
+          : selected ? glm::vec3(0.35f, 1.0f, 0.88f)
+                     : glm::vec3(0.55f, 0.78f, 0.92f);
+      append_dashed_ring(
+          navigation_mesh, body_world, ring_right, ring_up, ring_radius,
+          solar_system_time_ * (selected ? 1.2 : 0.7) + i * 0.8,
+          ring_color);
+    }
+
+    if (sky_navigation_locked_ &&
+        sky_navigation_target_index_ >= 0 &&
+        sky_navigation_target_index_ < solar_system_.body_count()) {
+      const CelestialBody &target = solar_system_.bodies()[static_cast<size_t>(
+          sky_navigation_target_index_)];
+      const glm::dvec3 target_world = target.position - planet_orbit_pos;
+      append_dashed_line(navigation_mesh, player_world, target_world,
+                         glm::vec3(1.0f, 0.82f, 0.24f), 48);
+    }
+
+    navigation_mesh.mesh_id = 0;
+    navigation_mesh.content_hash = frame_index + 1;
+    scene.wireframe_meshes.push_back(std::move(navigation_mesh));
+  }
+
   // ── Coordinate frame update ─────────────────────────────────────────
   // Sync frame transforms from solar system orbital positions.
   // Then determine active frame based on vehicle/player altitude.
@@ -1648,6 +1796,7 @@ void Engine::tick(double frame_dt,
   ctx.views[0].camera = camera;
   ctx.views[0].viewport = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
   ctx.debug_xray = false;
+  ctx.grayscale_view = sky_navigation_mode_;
 
   // ── Atmosphere uniforms for GPU ─────────────────────────────────────
   // WHY camera-relative: terrain vertices are stored as offsets from
@@ -1677,6 +1826,11 @@ void Engine::tick(double frame_dt,
     // Simple Reinhard tone mapping: color / (1 + color).
     glm::vec3 sc = atmosphere_state_.sky_color;
     glm::vec3 tm = sc / (glm::vec3(1.0f) + sc);
+    if (sky_navigation_mode_) {
+      const float luma = glm::dot(
+          tm, glm::vec3(0.2126f, 0.7152f, 0.0722f));
+      tm = glm::vec3(luma);
+    }
     ctx.atmosphere.sky_color = glm::vec4(tm, 1.0f);
   }
 
@@ -1891,6 +2045,7 @@ void Engine::update_first_person_camera(PlayerEntity &player,
 
 void Engine::refresh_overlay_text() {
   scene.debug_screen = RenderMesh{};
+  scene.debug_screen.content_hash = frame_index + 1;
 
   if (session_state_.menu_open) {
     append_screen_rect(scene.debug_screen, -0.95f, 0.90f, 0.32f, -0.86f,
@@ -1930,6 +2085,56 @@ void Engine::refresh_overlay_text() {
                           "Touch: RUN=DOWN  CROUCH=UP  JUMP=SELECT  MENU=CLOSE",
                           -0.88f, -0.64f, 0.0048f,
                           glm::vec3(0.88f, 0.95f, 1.0f));
+    }
+    return;
+  }
+
+  if (sky_navigation_mode_) {
+    append_screen_rect(scene.debug_screen, -0.97f, 0.91f, -0.30f, 0.73f,
+                       glm::vec3(0.03f, 0.05f, 0.08f));
+    append_screen_label(scene.debug_screen, "SKY NAVIGATION", -0.93f, 0.86f,
+                        0.0058f, glm::vec3(0.80f, 0.95f, 1.0f));
+    append_screen_label(
+        scene.debug_screen,
+        sky_navigation_locked_
+            ? "ENTER UNLOCK   F6 CLOSE"
+            : "ARROWS SELECT   ENTER LOCK   F6 CLOSE",
+        -0.93f, 0.78f, 0.0042f, glm::vec3(0.65f, 0.78f, 0.86f));
+
+    const glm::mat4 vp = camera.projection(sky_navigation_aspect_ratio_) *
+                         camera.view();
+    const glm::dvec3 planet_orbit_pos = solar_system_.body_position(1);
+    const glm::dvec3 player_world =
+        glm::dvec3(local_player.transform.position);
+    for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
+      if (!is_sky_navigation_target(i)) continue;
+      const CelestialBody &body = solar_system_.bodies()[static_cast<size_t>(i)];
+      const glm::dvec3 body_world = body.position - planet_orbit_pos;
+      glm::vec4 clip = vp * glm::vec4(glm::vec3(body_world), 1.0f);
+      if (clip.w <= 0.0f) {
+        clip.x = -clip.x;
+        clip.y = -clip.y;
+        clip.w = std::max(0.001f, -clip.w);
+      }
+      float x = clip.x / clip.w;
+      float y = clip.y / clip.w;
+      x = std::clamp(x, -0.88f, 0.88f);
+      y = std::clamp(y, -0.78f, 0.78f);
+
+      const bool selected = i == sky_navigation_target_index_;
+      const glm::vec3 label_color = sky_navigation_locked_ && selected
+          ? glm::vec3(1.0f, 0.84f, 0.28f)
+          : selected ? glm::vec3(0.38f, 1.0f, 0.86f)
+                     : glm::vec3(0.80f, 0.88f, 0.94f);
+      const std::string name = uppercase_ascii(body.name);
+      const double distance = glm::length(body_world - player_world);
+      const std::string distance_text = distance >= 1000.0
+          ? std::to_string(static_cast<int>(distance / 1000.0)) + "KM"
+          : std::to_string(static_cast<int>(distance)) + "M";
+      append_screen_label(scene.debug_screen,
+                          (selected ? "> " : "  ") + name + " " + distance_text,
+                          x - 0.06f, y, selected ? 0.0058f : 0.0048f,
+                          label_color);
     }
     return;
   }

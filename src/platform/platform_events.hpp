@@ -43,7 +43,7 @@ enum class PlatformKey : uint16_t {
     Up, Down, Left, Right,
 
     // Function
-    F1,  F2,  F3,  F4,  F5,
+    F1,  F2,  F3,  F4,  F5,  F6,
     F11, F12,
 
     // Misc

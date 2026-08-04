@@ -42,6 +42,7 @@ layout(binding=1) uniform fs_params {
     vec3 material_specular;
     float material_shininess;
     vec3 camera_pos;
+    vec4 render_flags;
 };
 
 // ── Atmosphere parameters (binding 2, std140) ────────────────────────
@@ -63,6 +64,14 @@ in vec3 v_normal;
 in vec3 v_world_pos;
 in vec3 v_texcoord;
 out vec4 frag_color;
+
+vec3 apply_view_treatment(vec3 color) {
+    if (render_flags.x > 0.5) {
+        const float luma = dot(color, vec3(0.2126, 0.7152, 0.0722));
+        return mix(color, vec3(luma), 0.98);
+    }
+    return color;
+}
 
 // ── Atmospheric transmittance ────────────────────────────────────────
 // Ray march through atmosphere shell, exponential density falloff.
@@ -96,7 +105,7 @@ void main() {
 
     float normal_len2 = dot(v_normal, v_normal);
     if (normal_len2 < 0.001) {
-        frag_color = vec4(v_color * atm_trans, 1.0);
+        frag_color = vec4(apply_view_treatment(v_color * atm_trans), 1.0);
         return;
     }
 
@@ -143,7 +152,8 @@ void main() {
     float fog_amount = clamp(
         (1.0 - dot(atm_trans, vec3(0.333333))) * 0.55, 0.0, 0.72);
     vec3 aerial_color = vec3(0.42, 0.61, 0.88);
-    frag_color = vec4(mix(terrain_lit, aerial_color, fog_amount), 1.0);
+    frag_color = vec4(apply_view_treatment(
+        mix(terrain_lit, aerial_color, fog_amount)), 1.0);
 }
 @end
 

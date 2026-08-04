@@ -26,10 +26,13 @@ private:
     bool prev_f3_down = false;
     bool prev_f4_down = false;
     bool prev_f5_down = false;
+    bool prev_f6_down = false;
     bool prev_f12_down = false;
     bool prev_t_down = false;
     bool prev_rmb_down = false;
     bool prev_lmb_down = false;
+    bool prev_left_down = false;
+    bool prev_right_down = false;
     bool look_capture_enabled = true;
     double prev_mouse_x = 0.0;
     double prev_mouse_y = 0.0;

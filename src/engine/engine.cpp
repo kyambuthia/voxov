@@ -957,7 +957,17 @@ void Engine::tick(double frame_dt,
   const bool detailed_terrain_needed =
       camera_altitude <=
       kPlayablePlanetConfig.local_terrain_max_altitude_m + stream_lead;
+  const bool detailed_terrain_stream_active = detailed_terrain_needed;
   if (detailed_terrain_needed) {
+    // The coarse globe is intentionally absent while local voxel terrain is
+    // active. Keeping it underneath the chunks makes the recessed smooth
+    // surface visible through stream seams and masks the voxel topology.
+    scene.opaque_meshes.erase(
+        std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+                       [](const RenderMesh &mesh) {
+                         return mesh.mesh_id == kGlobalPlanetSurfaceMeshId;
+                       }),
+        scene.opaque_meshes.end());
     const glm::dvec3 player_offset =
         glm::dvec3(local_player.transform.position) - block_world_.planet().center;
     const glm::dvec3 surface_direction = glm::dot(player_offset, player_offset) > 1.0e-9
@@ -1252,7 +1262,19 @@ void Engine::tick(double frame_dt,
           const VoxelChunk *nc =
               (nk == ck) ? chunk : block_world_.find_chunk(nk);
           if (nc == nullptr) {
-            return false;
+            // Neighbor chunks are streamed independently, but terrain height
+            // is deterministic. Sample the missing column directly so a mesh
+            // can cap a stream boundary with the same voxel profile instead
+            // of either emitting a false wall or leaving a visible slit.
+            const int32_t gx =
+                nk.chunk.x * block_world_.config().chunk_size + na.block.x;
+            const int32_t gz =
+                nk.chunk.z * block_world_.config().chunk_size + na.block.z;
+            const int32_t layer =
+                nk.chunk.y * block_world_.config().chunk_size + na.block.y;
+            const int32_t surface_height =
+                block_world_.terrain_height_at_face_uv(nk.sector, gx, gz);
+            return layer <= surface_height;
           }
           return nc->solid(na.block.x, na.block.y, na.block.z);
         };
@@ -1455,16 +1477,17 @@ void Engine::tick(double frame_dt,
         scene.opaque_meshes.end());
     last_celestial_mesh_count_ = 0;
 
-    // Keep the complete terrain globe resident as a slightly recessed safety
-    // shell. It fills streaming and meshing seams near the ground and becomes
-    // the sole representation in flight/orbit, so no altitude can expose sky.
-    const auto planet_it = std::find_if(
-        scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-        [](const RenderMesh &mesh) {
-          return mesh.mesh_id == kGlobalPlanetSurfaceMeshId;
-        });
-    if (planet_it == scene.opaque_meshes.end()) {
-      scene.opaque_meshes.push_back(global_planet_surface_mesh_);
+    // Keep the complete terrain globe resident only when the local stream is
+    // inactive. Near the surface, the voxel mesh must own the silhouette.
+    if (!detailed_terrain_stream_active) {
+      const auto planet_it = std::find_if(
+          scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+          [](const RenderMesh &mesh) {
+            return mesh.mesh_id == kGlobalPlanetSurfaceMeshId;
+          });
+      if (planet_it == scene.opaque_meshes.end()) {
+        scene.opaque_meshes.push_back(global_planet_surface_mesh_);
+      }
     }
 
     const glm::dvec3 planet_orbit_pos = solar_system_.body_position(1);

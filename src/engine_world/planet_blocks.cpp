@@ -28,6 +28,25 @@ int32_t surface_resolution(double radius, double block_size) {
     return static_cast<int32_t>(std::min<uint64_t>(
         resolution, static_cast<uint64_t>(std::numeric_limits<int32_t>::max())));
 }
+
+void map_cross_face_coordinate(const CubeEdgePairing &pairing,
+                               int32_t &u, int32_t &v,
+                               int32_t extent) {
+    if (pairing.swap_uv) std::swap(u, v);
+    if (pairing.flip_u) u = extent - 1 - u;
+    if (pairing.flip_v) v = extent - 1 - v;
+
+    // The crossed coordinate is on the destination face's edge. The old
+    // mapping only transformed the wrapped coordinate and left this axis at
+    // whichever side happened to be produced by modulo arithmetic, which
+    // created overlaps and pinholes at cube-face seams.
+    switch (pairing.to_edge) {
+        case CubeEdge::Left:   u = 0; break;
+        case CubeEdge::Right:  u = extent - 1; break;
+        case CubeEdge::Bottom: v = 0; break;
+        case CubeEdge::Top:    v = extent - 1; break;
+    }
+}
 }  // namespace
 
 // ============================================================================
@@ -520,15 +539,7 @@ bool BlockWorld::offset_chunk_address(const BlockAddress &origin,
 
             int32_t tcx = next;
             int32_t tcz = cz;
-            if (p.swap_uv) {
-                std::swap(tcx, tcz);
-            }
-            if (p.flip_u) {
-                tcx = hc - 1 - tcx;
-            }
-            if (p.flip_v) {
-                tcz = hc - 1 - tcz;
-            }
+            map_cross_face_coordinate(p, tcx, tcz, hc);
             tcx = std::clamp(tcx, 0, hc - 1);
             tcz = std::clamp(tcz, 0, hc - 1);
             coord = tcx;
@@ -645,9 +656,7 @@ std::vector<BlockNeighbor> BlockWorld::neighbors(const BlockAddress &addr,
         nb.address.shell  = addr.shell;
         int tcx = nc.x;
         int tcz = nc.z;
-        if (p.swap_uv) std::swap(tcx, tcz);
-        if (p.flip_u) tcx = hc - 1 - tcx;
-        if (p.flip_v) tcz = hc - 1 - tcz;
+        map_cross_face_coordinate(p, tcx, tcz, hc);
         if (tcx < 0) tcx = 0;
         if (tcx >= hc) tcx = hc-1;
         if (tcz < 0) tcz = 0;
@@ -655,9 +664,7 @@ std::vector<BlockNeighbor> BlockWorld::neighbors(const BlockAddress &addr,
         nb.address.chunk = glm::ivec3(tcx, nc.y, tcz);
         int tbx = wr.x;
         int tbz = wr.z;
-        if (p.swap_uv) std::swap(tbx, tbz);
-        if (p.flip_u) tbx = config_.chunk_size - 1 - tbx;
-        if (p.flip_v) tbz = config_.chunk_size - 1 - tbz;
+        map_cross_face_coordinate(p, tbx, tbz, config_.chunk_size);
         nb.address.block = glm::ivec3(tbx, wr.y, tbz);
         result.push_back(nb);
         return result;
@@ -746,7 +753,6 @@ RenderMesh BlockWorld::build_chunk_mesh(
     RenderMesh mesh{};
     mesh.world_origin = camera_relative_origin;
     mesh.mesh_id = block_chunk_mesh_id(addr);
-    (void)solid_at;  // retained for API compat; neighbor queries use find_chunk.
     mesh.vertices.reserve(8192);
     mesh.indices.reserve(12288);
 
@@ -809,17 +815,13 @@ RenderMesh BlockWorld::build_chunk_mesh(
             int scx = std::clamp(cx, 0, hc - 1);
             int scz = std::clamp(cz, 0, hc - 1);
 
-            if (p.swap_uv) std::swap(scx, scz);
-            if (p.flip_u) scx = hc - 1 - scx;
-            if (p.flip_v) scz = hc - 1 - scz;
+            map_cross_face_coordinate(p, scx, scz, hc);
 
             nb_addr.chunk = glm::ivec3(scx, cy, scz);
 
             int tbx = bx_new;
             int tbz = bz_new;
-            if (p.swap_uv) std::swap(tbx, tbz);
-            if (p.flip_u) tbx = cs - 1 - tbx;
-            if (p.flip_v) tbz = cs - 1 - tbz;
+            map_cross_face_coordinate(p, tbx, tbz, cs);
 
             nb_addr.block = glm::ivec3(tbx, by_new, tbz);
             return true;
@@ -848,8 +850,13 @@ RenderMesh BlockWorld::build_chunk_mesh(
             ? &chunk
             : find_chunk(chunk_key);
         if (nc == nullptr) {
-            neighbor_exists = false;
-            return 0;
+            // A streamed chunk is an unknown solid boundary, not air. Treating
+            // it as air emits side faces into the not-yet-loaded neighbor and
+            // exposes the planet interior while the player moves.
+            neighbor_exists = static_cast<bool>(solid_at);
+            return neighbor_exists && solid_at(nb_addr)
+                ? VoxelChunk::kMaxBlockHeight
+                : 0;
         }
 
         neighbor_exists = true;
@@ -938,9 +945,11 @@ RenderMesh BlockWorld::build_chunk_mesh(
         return !(neighbor_exists && nbh > 0);
     };
 
-    // Pass 1: greedy-merge exposed Up faces per horizontal slice (0fps-style).
-    // WHY: surface columns are mostly grass tops; merging cuts verts ~4-16x
-    // while each merged quad keeps true spherical corner positions.
+    // Pass 1: emit exposed Up faces per voxel cell. Merging these faces into
+    // large plates made the terrain read as smooth slabs and amplified tiny
+    // rasterization cracks at chunk boundaries. Keeping one quad per surface
+    // cell preserves the block silhouette and gives adjacent chunks identical
+    // shared edges.
     std::vector<int16_t> up_mask(static_cast<size_t>(grid_w * grid_w), 0);
     for (int32_t by = 0; by < cs; by += stride) {
         std::fill(up_mask.begin(), up_mask.end(), 0);
@@ -974,27 +983,8 @@ RenderMesh BlockWorld::build_chunk_mesh(
                     continue;
                 }
 
-                int32_t width = 1;
-                while (ix + width < grid_w &&
-                       up_mask[static_cast<size_t>(iz * grid_w + ix + width)] ==
-                           face_key) {
-                    ++width;
-                }
-
-                int32_t height = 1;
-                bool done = false;
-                while (iz + height < grid_w && !done) {
-                    for (int32_t k = 0; k < width; ++k) {
-                        if (up_mask[static_cast<size_t>((iz + height) * grid_w +
-                                                        ix + k)] != face_key) {
-                            done = true;
-                            break;
-                        }
-                    }
-                    if (!done) {
-                        ++height;
-                    }
-                }
+                const int32_t width = 1;
+                const int32_t height = 1;
 
                 const int32_t bx = ix * stride;
                 const int32_t bz = iz * stride;

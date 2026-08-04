@@ -695,6 +695,31 @@ void test_block_world_cross_sector_chunk_offset() {
   assert(has_other_sector);
 }
 
+void test_block_world_cross_sector_neighbor_lands_on_destination_edge() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.surface_shells = 4;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  BlockWorld world{};
+  world.init(cfg);
+
+  BlockAddress origin{};
+  origin.sector = PlanetFace::PosX;
+  origin.shell = world.shell_count() - 1;
+  const int32_t hc =
+      world.shell_config(origin.shell).horizontal_res / cfg.chunk_size;
+  origin.chunk = glm::ivec3(hc - 1, 0, 3);
+  origin.block = glm::ivec3(cfg.chunk_size - 1, 0, 7);
+
+  const std::vector<BlockNeighbor> result =
+      world.neighbors(origin, BlockDir::Right);
+  assert(result.size() == 1);
+  assert(result[0].address.sector == PlanetFace::PosZ);
+  assert(result[0].address.chunk.x == hc - 1);
+  assert(result[0].address.block.x == cfg.chunk_size - 1);
+}
+
 void test_cube_edge_pairings_preserve_direction() {
   const auto edge_uv = [](CubeEdge edge, double along) {
     switch (edge) {
@@ -2451,6 +2476,7 @@ int main() {
   test_player_moves_on_planet_surface();
   test_planet_flight_follows_camera_pitch();
   test_block_world_cross_sector_chunk_offset();
+  test_block_world_cross_sector_neighbor_lands_on_destination_edge();
   test_cube_edge_pairings_preserve_direction();
   test_surface_height_matches_quantized_surface_block();
   test_planet_quadtree_roots_are_stable();

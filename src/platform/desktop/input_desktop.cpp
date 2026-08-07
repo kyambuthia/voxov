@@ -31,11 +31,28 @@ InputState DesktopInputBackend::poll() {
     prev_rmb_down = rmb_down;
     prev_lmb_down = lmb_down;
 
-    if (rmb_pressed || any_mouse_down) {
+    // F6 is consumed here as well as by the engine so the platform can
+    // change cursor policy in the same frame that the overlay opens.
+    auto k = [&](PlatformKey key) -> bool {
+        return snap.keys_down.test(static_cast<size_t>(key));
+    };
+    const bool f6_down = k(PlatformKey::F6);
+    const bool sky_navigation_toggle_pressed = f6_down && !prev_f6_down;
+    prev_f6_down = f6_down;
+    if (sky_navigation_toggle_pressed) {
+        sky_navigation_mode = !sky_navigation_mode;
+        if (sky_navigation_mode) {
+            // Sky navigation is a cursor UI, not a first-person look mode.
+            look_capture_enabled = false;
+        }
+    }
+
+    if (!sky_navigation_mode && (rmb_pressed || any_mouse_down)) {
         look_capture_enabled = true;
     }
 
-    const bool active_look_mode = snap.focused && look_capture_enabled;
+    const bool active_look_mode = snap.focused && look_capture_enabled &&
+                                  !sky_navigation_mode;
     set_pointer_lock(active_look_mode);
     out.look_mode = active_look_mode;
     out.rmb_down = rmb_down;
@@ -44,10 +61,9 @@ InputState DesktopInputBackend::poll() {
     out.pointer_locked = pointer_locked;
     out.look_enabled = active_look_mode;
 
+    out.cursor_position = snap.mouse_pos;
+
     // WASD — using PlatformKey enum
-    auto k = [&](PlatformKey key) -> bool {
-        return snap.keys_down.test(static_cast<size_t>(key));
-    };
 
     out.key_w = k(PlatformKey::W);
     out.key_a = k(PlatformKey::A);
@@ -134,9 +150,7 @@ InputState DesktopInputBackend::poll() {
     out.debug_reconcile_toggle_pressed = f5_down && !prev_f5_down;
     prev_f5_down = f5_down;
 
-    const bool f6_down = k(PlatformKey::F6);
-    out.sky_navigation_toggle_pressed = f6_down && !prev_f6_down;
-    prev_f6_down = f6_down;
+    out.sky_navigation_toggle_pressed = sky_navigation_toggle_pressed;
 
     const bool left_down = k(PlatformKey::Left);
     const bool right_down = k(PlatformKey::Right);

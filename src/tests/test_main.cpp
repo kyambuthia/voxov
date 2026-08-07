@@ -24,6 +24,7 @@
 #include "engine_physics/voxel/voxel_physics_bridge.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
+#include "engine_world/vegetation.hpp"
 #include "engine_world/world_gen.hpp"
 #include "platform/android_platform.hpp"
 #include "platform/web_platform.hpp"
@@ -839,6 +840,64 @@ void test_surface_height_matches_quantized_surface_block() {
   assert(height >= lower);
   assert(height <= upper);
   assert(height <= world.max_surface_height_above_base());
+}
+
+void test_grass_mesh_is_deterministic_and_surface_aligned() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 64.0;
+  cfg.planet.seed = 0x12345678ull;
+  cfg.seed = cfg.planet.seed;
+  cfg.surface_shells = 2;
+  cfg.base_resolution = 32;
+  cfg.chunk_size = 16;
+  cfg.terrain_min_height = 1;
+  cfg.terrain_max_height = 8;
+
+  BlockWorld world{};
+  world.init(cfg);
+  const glm::dvec3 direction(1.0, 0.0, 0.0);
+  BlockAddress chunk = world.address_from_world(
+      cfg.planet.center + direction * world.surface_radial_distance(direction));
+  chunk.block = glm::ivec3(0);
+  VoxelChunk &voxels = world.get_or_generate_chunk(chunk);
+
+  const RenderMesh first = vegetation::build_grass_mesh(
+      world, chunk, voxels, glm::dvec3(0.0));
+  const RenderMesh second = vegetation::build_grass_mesh(
+      world, chunk, voxels, glm::dvec3(0.0));
+
+  assert(first.mesh_id == second.mesh_id);
+  assert(first.content_hash == second.content_hash);
+  assert(first.vertices.size() == second.vertices.size());
+  assert(first.indices == second.indices);
+  assert(first.material == vegetation::kBillboardVegetationMaterial);
+  assert(!first.double_sided);
+  assert(!first.vertices.empty());
+
+  for (const RenderVertex &vertex : first.vertices) {
+    const glm::dvec3 world_position = glm::dvec3(vertex.position);
+    assert(glm::length(glm::dvec3(vertex.normal)) > 0.99);
+    assert(glm::length(world_position) > 1.0);
+    const uint8_t layer = static_cast<uint8_t>(vertex.texcoord.z);
+    assert(layer == vegetation::kGrassLayer ||
+           layer == vegetation::kFlowerLayer ||
+           layer == vegetation::kShrubLayer ||
+           layer == vegetation::kFernLayer);
+  }
+  for (size_t i = 0; i + 3 < first.vertices.size(); i += 4) {
+    assert(first.vertices[i].texcoord.y == 1.0f);
+    assert(first.vertices[i + 1].texcoord.y == 1.0f);
+    assert(first.vertices[i + 2].texcoord.y == 0.0f);
+    assert(first.vertices[i + 3].texcoord.y == 0.0f);
+  }
+  for (size_t i = 0; i + 2 < first.indices.size(); i += 3) {
+    const RenderVertex &a = first.vertices[first.indices[i]];
+    const RenderVertex &b = first.vertices[first.indices[i + 1]];
+    const RenderVertex &c = first.vertices[first.indices[i + 2]];
+    const glm::vec3 face_normal = glm::normalize(
+        glm::cross(b.position - a.position, c.position - a.position));
+    assert(glm::dot(face_normal, a.normal) > 0.5f);
+  }
 }
 
 void test_planet_quadtree_roots_are_stable() {
@@ -2551,6 +2610,7 @@ int main() {
   test_solar_system_has_nearby_companion_planet();
   test_cube_edge_pairings_preserve_direction();
   test_surface_height_matches_quantized_surface_block();
+  test_grass_mesh_is_deterministic_and_surface_aligned();
   test_planet_quadtree_roots_are_stable();
   test_planet_quadtree_subdivision_child_ids();
   test_planet_terrain_root_chunk_covers_face();

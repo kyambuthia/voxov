@@ -156,6 +156,9 @@ void DesktopPlatform::set_mouse_lock(bool enabled) {
     }
     mouse_locked_ = enabled;
     sapp_lock_mouse(enabled);
+    // Make the cursor policy explicit. Some backends keep the cursor hidden
+    // after unlocking unless visibility is restored separately.
+    sapp_show_mouse(!enabled);
 }
 
 // ── Legacy query helpers (bridge for incremental migration) ───────────

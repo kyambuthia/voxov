@@ -6,6 +6,7 @@
 layout(binding=0) uniform vs_params {
     mat4 mvp;
     mat4 model;
+    vec4 vegetation_params; // x=time, y=vegetation enable
 };
 
 in vec3 position;
@@ -19,7 +20,28 @@ out vec3 v_world_pos;
 out vec3 v_texcoord;
 
 void main() {
-    vec4 world_pos = model * vec4(position, 1.0);
+    vec3 animated_position = position;
+    if (vegetation_params.y > 0.5) {
+        vec3 up = normalize(normal);
+        vec3 wind_reference = normalize(vec3(0.73, 0.19, 0.61));
+        vec3 wind_direction = wind_reference - up * dot(wind_reference, up);
+        if (dot(wind_direction, wind_direction) < 0.001) {
+            wind_direction = normalize(cross(up, vec3(1.0, 0.0, 0.0)));
+        } else {
+            wind_direction = normalize(wind_direction);
+        }
+        // UV.y runs from the planted base to the blade tip. Weighting wind by
+        // the horizontal coordinate shears one side of the billboard and
+        // makes the plant look disconnected from its voxel block.
+        float weight = clamp(1.0 - texcoord0.y, 0.0, 1.0);
+        float phase = dot(position, vec3(0.17, 0.11, 0.13)) +
+                      texcoord0.y * 6.2831853;
+        float gust = sin(vegetation_params.x * 2.2 + phase) * 0.5 +
+                     sin(vegetation_params.x * 0.83 + phase * 0.47) * 0.25;
+            animated_position += wind_direction * gust * 0.06 * weight * weight;
+    }
+
+    vec4 world_pos = model * vec4(animated_position, 1.0);
     mat4 normal_model = model;
     normal_model[3] = vec4(0.0, 0.0, 0.0, 1.0);
 
@@ -27,7 +49,7 @@ void main() {
     v_normal = mat3(normal_model) * normal;
     v_world_pos = world_pos.xyz;
     v_texcoord = texcoord0;
-    gl_Position = mvp * vec4(position, 1.0);
+    gl_Position = mvp * vec4(animated_position, 1.0);
 }
 @end
 
@@ -58,6 +80,8 @@ layout(binding=2) uniform atm_params {
 
 layout(binding=0) uniform texture2DArray voxel_texture;
 layout(binding=0) uniform sampler voxel_sampler;
+layout(binding=1) uniform texture2DArray vegetation_texture;
+layout(binding=1) uniform sampler vegetation_sampler;
 
 in vec3 v_color;
 in vec3 v_normal;
@@ -71,6 +95,30 @@ vec3 apply_view_treatment(vec3 color) {
         return mix(color, vec3(luma), 0.98);
     }
     return color;
+}
+
+float impostor_frame_layer(float base_layer) {
+    // The plant normal is a billboard-card normal. Together with the radial
+    // surface up-vector it forms a stable local frame, so the selected yaw
+    // does not change when the planet is viewed from a different cube face.
+    vec3 plant_up = normalize(v_world_pos - planet_center_radius.xyz);
+    vec3 card_normal = v_normal - plant_up * dot(v_normal, plant_up);
+    if (dot(card_normal, card_normal) < 0.001) return base_layer;
+    card_normal = normalize(card_normal);
+    vec3 card_right = normalize(cross(plant_up, card_normal));
+    vec3 view_direction = normalize(camera_pos - v_world_pos);
+    vec3 horizontal_view = view_direction -
+                           plant_up * dot(view_direction, plant_up);
+    if (dot(horizontal_view, horizontal_view) < 0.001) {
+        horizontal_view = card_normal;
+    } else {
+        horizontal_view = normalize(horizontal_view);
+    }
+    const float kTau = 6.2831853;
+    float yaw = atan(dot(horizontal_view, card_right),
+                     dot(horizontal_view, card_normal));
+    float frame = mod(floor((yaw + 3.14159265) * (8.0 / kTau)), 8.0);
+    return base_layer + frame;
 }
 
 // ── Atmospheric transmittance ────────────────────────────────────────
@@ -118,7 +166,25 @@ void main() {
     }
 
     vec3 base_color = v_color;
-    if (v_texcoord.z >= 0.0) {
+    float output_alpha = 1.0;
+    if (render_flags.y > 0.5) {
+        float vegetation_layer = v_texcoord.z;
+        if (vegetation_layer >= 6.0) {
+            vegetation_layer = impostor_frame_layer(vegetation_layer);
+        }
+        vec4 plant_tex = texture(
+            sampler2DArray(vegetation_texture, vegetation_sampler),
+            vec3(fract(v_texcoord.xy), vegetation_layer));
+        if (plant_tex.a < 0.35) discard;
+        base_color = pow(plant_tex.rgb, vec3(0.78)) * v_color;
+        output_alpha = plant_tex.a;
+        if (v_texcoord.z < 2.0 ||
+            (v_texcoord.z >= 6.0 && v_texcoord.z < 14.0)) {
+            // Keep generated foliage in the same muted olive family as the
+            // voxel grass block instead of letting bright tips dominate it.
+            base_color = mix(base_color, vec3(0.34, 0.46, 0.12), 0.22);
+        }
+    } else if (v_texcoord.z >= 0.0) {
         vec2 tiled_uv = fract(v_texcoord.xy);
         vec3 texel;
         if (v_texcoord.z >= 2.5) {
@@ -144,8 +210,11 @@ void main() {
     vec3 v = normalize(camera_pos - v_world_pos);
     vec3 h = normalize(sun_dir + v);
 
-    float ndl = clamp(max(dot(n, l), 0.0) * 0.35 +
-                      max(dot(n, sun_dir), 0.0) * 0.90, 0.0, 1.25);
+    float ndl = render_flags.y > 0.5
+        ? clamp(abs(dot(n, l)) * 0.35 + abs(dot(n, sun_dir)) * 0.90,
+                0.0, 1.25)
+        : clamp(max(dot(n, l), 0.0) * 0.35 +
+                max(dot(n, sun_dir), 0.0) * 0.90, 0.0, 1.25);
     float ndh = max(dot(n, h), 0.0);
     float spec_norm = (material_shininess + 8.0) * 0.0397887358;
     float spec_factor = spec_norm * pow(ndh, material_shininess) * ndl;
@@ -161,7 +230,7 @@ void main() {
         (1.0 - dot(atm_trans, vec3(0.333333))) * 0.55, 0.0, 0.72);
     vec3 aerial_color = vec3(0.42, 0.61, 0.88);
     frag_color = vec4(apply_view_treatment(
-        mix(terrain_lit, aerial_color, fog_amount)), 1.0);
+        mix(terrain_lit, aerial_color, fog_amount)), output_alpha);
 }
 @end
 

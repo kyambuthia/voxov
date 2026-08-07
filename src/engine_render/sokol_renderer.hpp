@@ -35,6 +35,8 @@ struct SokolPipelines {
     sg_shader scene_shader{};
     sg_pipeline opaque{};
     sg_pipeline opaque_u16{};
+    sg_pipeline vegetation{};
+    sg_pipeline vegetation_u16{};
     sg_pipeline wireframe{};          // SG_PRIMITIVETYPE_LINES
     sg_pipeline wireframe_u16{};
     sg_pipeline debug_no_cull{};
@@ -99,6 +101,9 @@ private:
     sg_image voxel_texture_{};
     sg_view voxel_texture_view_{};
     sg_sampler voxel_sampler_{};
+    sg_image vegetation_texture_{};
+    sg_view vegetation_texture_view_{};
+    sg_sampler vegetation_sampler_{};
     SokolGpuMesh transient_mesh_{};
     SokolGpuMesh wireframe_mesh_{};
     SokolGpuMesh debug_world_mesh_{};
@@ -107,6 +112,7 @@ private:
     sg_pass_action pass_action_{};
     SokolDirectionalLight light_{};
     SokolMaterial material_{};
+    float vegetation_time_ = 0.0f;
 
     // ── Atmosphere per-frame uniforms ──────────────────────────────────
     // Packed std140 uniform block uploaded at binding 2 each frame.

@@ -1,5 +1,6 @@
 #include "engine_render/sokol_renderer.hpp"
 #include "engine_render/voxel_texture_data.hpp"
+#include "engine_render/vegetation_texture_data.hpp"
 
 #include "sokol_gfx.h"
 #if !defined(VOXOV_PLATFORM_ANDROID)
@@ -84,6 +85,7 @@ bool aabb_in_frustum(const Frustum &f, glm::vec3 bmin, glm::vec3 bmax) {
 struct vs_params_t {
     glm::mat4 mvp;
     glm::mat4 model;
+    glm::vec4 vegetation_params;
 };
 
 struct fs_params_t {
@@ -108,7 +110,7 @@ struct atm_params_t {
     glm::vec4 sun_dir_intensity;         // xyz=sun_dir, w=intensity
 };
 
-static_assert(sizeof(vs_params_t) == 128);
+static_assert(sizeof(vs_params_t) == 144);
 static_assert(sizeof(fs_params_t) == 144);
 static_assert(sizeof(atm_params_t) == 80);
 
@@ -151,6 +153,26 @@ bool SokolRenderer::setup_pipelines() {
     opq_desc.index_type = SG_INDEXTYPE_UINT16;
     opq_desc.label = "voxov-opaque-u16";
     pipelines_.opaque_u16 = sg_make_pipeline(&opq_desc);
+
+    // Alpha-tested/blended vegetation cards. They must be drawn after the
+    // terrain depth pass, with depth writes disabled so crossed cards do not
+    // erase one another. Back-face culling is disabled because the same card
+    // is intentionally visible from either flight direction.
+    sg_pipeline_desc veg_desc = opq_desc;
+    veg_desc.cull_mode = SG_CULLMODE_NONE;
+    veg_desc.depth.write_enabled = false;
+    veg_desc.colors[0].blend.enabled = true;
+    veg_desc.colors[0].blend.src_factor_rgb = SG_BLENDFACTOR_SRC_ALPHA;
+    veg_desc.colors[0].blend.dst_factor_rgb =
+        SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+    veg_desc.colors[0].blend.src_factor_alpha = SG_BLENDFACTOR_ONE;
+    veg_desc.colors[0].blend.dst_factor_alpha = SG_BLENDFACTOR_ONE_MINUS_SRC_ALPHA;
+    veg_desc.index_type = SG_INDEXTYPE_UINT32;
+    veg_desc.label = "voxov-vegetation";
+    pipelines_.vegetation = sg_make_pipeline(&veg_desc);
+    veg_desc.index_type = SG_INDEXTYPE_UINT16;
+    veg_desc.label = "voxov-vegetation-u16";
+    pipelines_.vegetation_u16 = sg_make_pipeline(&veg_desc);
 
     // Wireframe pipeline (line list, no cull, depth-less-equal)
     sg_pipeline_desc wire_desc = {};
@@ -284,6 +306,30 @@ bool SokolRenderer::init(const RenderDeviceDesc &desc) {
     voxel_sampler_desc.label = "voxov-voxel-materials-sampler";
     voxel_sampler_ = sg_make_sampler(&voxel_sampler_desc);
 
+    sg_image_desc vegetation_image_desc{};
+    vegetation_image_desc.type = SG_IMAGETYPE_ARRAY;
+    vegetation_image_desc.width = voxov::vegetation_textures::kWidth;
+    vegetation_image_desc.height = voxov::vegetation_textures::kHeight;
+    vegetation_image_desc.num_slices = voxov::vegetation_textures::kLayerCount;
+    vegetation_image_desc.pixel_format = SG_PIXELFORMAT_RGBA8;
+    vegetation_image_desc.data.mip_levels[0] =
+        SG_RANGE(voxov::vegetation_textures::kRgba);
+    vegetation_image_desc.label = "voxov-generated-vegetation";
+    vegetation_texture_ = sg_make_image(&vegetation_image_desc);
+
+    sg_view_desc vegetation_view_desc{};
+    vegetation_view_desc.texture.image = vegetation_texture_;
+    vegetation_view_desc.label = "voxov-generated-vegetation-view";
+    vegetation_texture_view_ = sg_make_view(&vegetation_view_desc);
+
+    sg_sampler_desc vegetation_sampler_desc{};
+    vegetation_sampler_desc.min_filter = SG_FILTER_NEAREST;
+    vegetation_sampler_desc.mag_filter = SG_FILTER_NEAREST;
+    vegetation_sampler_desc.wrap_u = SG_WRAP_CLAMP_TO_EDGE;
+    vegetation_sampler_desc.wrap_v = SG_WRAP_CLAMP_TO_EDGE;
+    vegetation_sampler_desc.label = "voxov-generated-vegetation-sampler";
+    vegetation_sampler_ = sg_make_sampler(&vegetation_sampler_desc);
+
     if (!setup_pipelines()) {
         sg_shutdown();
         return false;
@@ -314,13 +360,21 @@ void SokolRenderer::shutdown() {
     if (voxel_sampler_.id) sg_destroy_sampler(voxel_sampler_);
     if (voxel_texture_view_.id) sg_destroy_view(voxel_texture_view_);
     if (voxel_texture_.id) sg_destroy_image(voxel_texture_);
+    if (vegetation_sampler_.id) sg_destroy_sampler(vegetation_sampler_);
+    if (vegetation_texture_view_.id) sg_destroy_view(vegetation_texture_view_);
+    if (vegetation_texture_.id) sg_destroy_image(vegetation_texture_);
     voxel_sampler_ = {};
     voxel_texture_view_ = {};
     voxel_texture_ = {};
+    vegetation_sampler_ = {};
+    vegetation_texture_view_ = {};
+    vegetation_texture_ = {};
 
     if (pipelines_.scene_shader.id) sg_destroy_shader(pipelines_.scene_shader);
     if (pipelines_.opaque.id) sg_destroy_pipeline(pipelines_.opaque);
     if (pipelines_.opaque_u16.id) sg_destroy_pipeline(pipelines_.opaque_u16);
+    if (pipelines_.vegetation.id) sg_destroy_pipeline(pipelines_.vegetation);
+    if (pipelines_.vegetation_u16.id) sg_destroy_pipeline(pipelines_.vegetation_u16);
     if (pipelines_.wireframe.id) sg_destroy_pipeline(pipelines_.wireframe);
     if (pipelines_.wireframe_u16.id) sg_destroy_pipeline(pipelines_.wireframe_u16);
     if (pipelines_.debug_no_cull.id) sg_destroy_pipeline(pipelines_.debug_no_cull);
@@ -479,7 +533,13 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
     }
     const glm::vec3 relative_camera_pos =
         glm::vec3(glm::dvec3(camera_pos) - camera_relative_origin);
-    const vs_params_t vs_params{ mvp, model };
+    const bool vegetation = mesh.material == kVegetationRenderMaterial;
+    const vs_params_t vs_params{
+        mvp,
+        model,
+        glm::vec4(vegetation ? vegetation_time_ : 0.0f,
+                  vegetation ? 1.0f : 0.0f, 0.0f, 0.0f),
+    };
     const fs_params_t fs_params{
         glm::vec4(light_.direction, 0.0f),
         glm::vec4(light_.ambient, 0.0f),
@@ -489,7 +549,8 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
         glm::vec4(material_.diffuse, 0.0f),
         glm::vec4(material_.specular, material_.shininess),
         glm::vec4(relative_camera_pos, 0.0f),
-        glm::vec4(grayscale ? 1.0f : 0.0f, 0.0f, 0.0f, 0.0f),
+        glm::vec4(grayscale ? 1.0f : 0.0f,
+                  vegetation ? 1.0f : 0.0f, 0.0f, 0.0f),
     };
     const sg_range vs_range = SG_RANGE(vs_params);
     const sg_range fs_range = SG_RANGE(fs_params);
@@ -511,6 +572,8 @@ void SokolRenderer::draw_mesh(const SokolGpuMesh &mesh,
     bind.index_buffer = mesh.index_buffer;
     bind.views[0] = voxel_texture_view_;
     bind.samplers[0] = voxel_sampler_;
+    bind.views[1] = vegetation_texture_view_;
+    bind.samplers[1] = vegetation_sampler_;
     sg_apply_bindings(&bind);
     sg_draw(0, static_cast<int>(mesh.index_count), 1);
 }
@@ -528,7 +591,8 @@ void SokolRenderer::draw_wireframe(const SokolGpuMesh &mesh,
     if (pipeline.id != 0) {
         sg_apply_pipeline(pipeline);
     }
-    const vs_params_t vs_params{ mvp, glm::mat4(1.0f) };
+    const vs_params_t vs_params{
+        mvp, glm::mat4(1.0f), glm::vec4(0.0f)};
     const fs_params_t fs_params{
         glm::vec4(light_.direction, 0.0f),
         glm::vec4(light_.ambient, 0.0f),
@@ -551,6 +615,8 @@ void SokolRenderer::draw_wireframe(const SokolGpuMesh &mesh,
     bind.index_buffer = mesh.index_buffer;
     bind.views[0] = voxel_texture_view_;
     bind.samplers[0] = voxel_sampler_;
+    bind.views[1] = vegetation_texture_view_;
+    bind.samplers[1] = vegetation_sampler_;
     sg_apply_bindings(&bind);
     sg_draw(0, static_cast<int>(mesh.index_count), 1);
 }
@@ -697,6 +763,7 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                                   const RenderSurface &surface) {
     // Reset per-frame GPU counters.
     uint32_t draw_calls = 0;
+    vegetation_time_ += static_cast<float>(ctx.delta_seconds);
 
     // ── Copy atmosphere uniforms from frame context ───────────────────
     // Retained meshes can have different local origins. Keep the atmosphere
@@ -775,23 +842,36 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
 
         // Each retained mesh carries its own double-precision origin, so a
         // camera rebase changes only the draw transform, never its GPU data.
-        for (const auto &[id, mesh] : cached_meshes_) {
+        auto draw_cached_mesh = [&](const SokolGpuMesh &mesh,
+                                    sg_pipeline default_u32,
+                                    sg_pipeline default_u16) {
             const glm::mat4 retained_vp = mesh_vp(mesh);
             const Frustum retained_frustum = extract_frustum(retained_vp);
             if (!aabb_in_frustum(retained_frustum, mesh.bounds_min,
                                  mesh.bounds_max)) {
-                continue;
+                return;
             }
             record_draw(mesh);
             const sg_pipeline pipeline_u32 =
-                mesh.double_sided ? pipelines_.debug_no_cull : pipelines_.opaque;
+                mesh.double_sided ? pipelines_.debug_no_cull : default_u32;
             const sg_pipeline pipeline_u16 = mesh.double_sided
-                ? pipelines_.debug_no_cull_u16
-                : pipelines_.opaque_u16;
+                ? pipelines_.debug_no_cull_u16 : default_u16;
             draw_mesh(mesh, retained_vp, model, camera_pos,
                       mesh.world_origin,
                       pipeline_u32, pipeline_u16,
                       ctx.grayscale_view);
+        };
+
+        // Draw terrain first so its depth is established before transparent
+        // vegetation cards are composited over the surface.
+        for (const auto &[id, mesh] : cached_meshes_) {
+            if (mesh.material == kVegetationRenderMaterial) continue;
+            draw_cached_mesh(mesh, pipelines_.opaque, pipelines_.opaque_u16);
+        }
+        for (const auto &[id, mesh] : cached_meshes_) {
+            if (mesh.material != kVegetationRenderMaterial) continue;
+            draw_cached_mesh(mesh, pipelines_.vegetation,
+                             pipelines_.vegetation_u16);
         }
 
         // Wireframe geometry (drawn over opaque, with depth).

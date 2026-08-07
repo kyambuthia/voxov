@@ -175,6 +175,7 @@ add_library(engine_world STATIC
     src/engine_world/planet_lod.cpp
     src/engine_world/solar_system.cpp
     src/engine_world/voxel_chunk.cpp
+    src/engine_world/vegetation.cpp
     src/engine_world/world_gen.cpp
     src/engine_world/wireframe_planet.cpp
     src/engine_world/physics/voxel_collision.cpp
@@ -224,6 +225,36 @@ add_custom_command(
 )
 add_custom_target(voxov_scene_shader DEPENDS "${VOXOV_SCENE_SHADER_HEADER}")
 
+find_package(Python3 COMPONENTS Interpreter REQUIRED)
+set(VOXOV_GENERATED_ASSET_DIR "${CMAKE_CURRENT_BINARY_DIR}/generated/assets")
+set(VOXOV_VEGETATION_TEXTURE_HEADER
+    "${VOXOV_GENERATED_ASSET_DIR}/engine_render/vegetation_texture_data.hpp")
+add_custom_command(
+    OUTPUT "${VOXOV_VEGETATION_TEXTURE_HEADER}"
+    COMMAND "${CMAKE_COMMAND}" -E make_directory
+        "${VOXOV_GENERATED_ASSET_DIR}/engine_render"
+    COMMAND "${Python3_EXECUTABLE}"
+        "${CMAKE_SOURCE_DIR}/tools/generate_vegetation_texture_data.py"
+        "${CMAKE_SOURCE_DIR}/assets/textures/vegetation"
+        "${VOXOV_VEGETATION_TEXTURE_HEADER}"
+    DEPENDS
+        "${CMAKE_SOURCE_DIR}/tools/generate_vegetation_texture_data.py"
+        "${CMAKE_SOURCE_DIR}/assets/textures/vegetation/voxel/grass/transparent/01-apparel.png"
+        "${CMAKE_SOURCE_DIR}/assets/textures/vegetation/voxel/grass/transparent/03-desk.png"
+        "${CMAKE_SOURCE_DIR}/assets/textures/vegetation/voxel/foliage/transparent/01-apparel.png"
+        "${CMAKE_SOURCE_DIR}/assets/textures/vegetation/voxel/foliage/transparent/03-desk.png"
+        "${CMAKE_SOURCE_DIR}/assets/textures/vegetation/voxel/flowers/transparent/01-apparel.png"
+        "${CMAKE_SOURCE_DIR}/assets/textures/vegetation/voxel/flowers/transparent/02-carry.png"
+        "${CMAKE_SOURCE_DIR}/assets/textures/vegetation/impostors/transparent/temperate_grass_octa_4x2.png"
+        "${CMAKE_SOURCE_DIR}/assets/textures/vegetation/impostors/transparent/meadow_wildflowers_octa_4x2.png"
+        "${CMAKE_SOURCE_DIR}/assets/textures/vegetation/impostors/transparent/woodland_shrub_octa_4x2.png"
+        "${CMAKE_SOURCE_DIR}/assets/textures/vegetation/impostors/transparent/forest_fern_octa_4x2.png"
+    COMMENT "Packing vegetation impostor texture array"
+    VERBATIM
+)
+add_custom_target(voxov_vegetation_texture_data
+    DEPENDS "${VOXOV_VEGETATION_TEXTURE_HEADER}")
+
 add_library(engine_render_core STATIC
     src/engine_render/renderer.cpp
     src/engine_render/debug_text.cpp
@@ -240,14 +271,15 @@ add_library(engine_render_sokol STATIC
     src/engine_render/sokol_renderer.cpp
     "${VOXOV_SCENE_SHADER_HEADER}"
 )
-add_dependencies(engine_render_sokol voxov_scene_shader)
+add_dependencies(engine_render_sokol voxov_scene_shader voxov_vegetation_texture_data)
 target_include_directories(engine_render_sokol PUBLIC
     src
     ${VOXOV_SOKOL_DIR}
     ${VOXOV_SOKOL_UTIL_DIR}
     ${CMAKE_SOURCE_DIR}/dependencies/stb
 )
-target_include_directories(engine_render_sokol PRIVATE
+target_include_directories(engine_render_sokol BEFORE PRIVATE
+    "${VOXOV_GENERATED_ASSET_DIR}"
     "${VOXOV_GENERATED_SHADER_DIR}"
 )
 if(CMAKE_CXX_COMPILER_ID STREQUAL "GNU")

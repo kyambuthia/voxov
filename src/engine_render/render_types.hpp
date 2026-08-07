@@ -15,6 +15,8 @@ struct RenderVertex {
     glm::vec3 texcoord{-1.0f, -1.0f, -1.0f};
 };
 
+inline constexpr uint8_t kVegetationRenderMaterial = 250;
+
 struct PackedVertex {
     glm::vec3 position{0.0f, 0.0f, 0.0f};
     uint32_t color_rgba8 = 0xffffffffu;

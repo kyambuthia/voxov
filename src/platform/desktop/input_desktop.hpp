@@ -34,6 +34,7 @@ private:
     bool prev_left_down = false;
     bool prev_right_down = false;
     bool look_capture_enabled = true;
+    bool sky_navigation_mode = false;
     double prev_mouse_x = 0.0;
     double prev_mouse_y = 0.0;
     bool mouse_initialized = false;

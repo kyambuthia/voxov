@@ -18,6 +18,9 @@ struct InputState {
     bool rmb_down = false;
     bool pointer_locked = false;
     bool look_enabled = false;
+    // Window-space cursor position used by non-pointer-locked interfaces
+    // such as sky navigation. Coordinates use the platform surface space.
+    glm::vec2 cursor_position = glm::vec2(0.0f);
     bool menu_toggle_pressed = false;
     bool menu_up_pressed = false;
     bool menu_down_pressed = false;

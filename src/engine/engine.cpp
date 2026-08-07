@@ -10,6 +10,7 @@
 #include "engine_render/debug_text.hpp"
 #include "engine_world/wireframe_planet.hpp"
 #include "engine_world/world_gen.hpp"
+#include "engine_world/vegetation.hpp"
 #include "engine_world/planet.hpp"
 
 #include <spdlog/spdlog.h>
@@ -112,6 +113,16 @@ void append_screen_label(RenderMesh &dst, const std::string &text, float x,
                          const glm::vec3 &color = glm::vec3(0.92f, 0.96f,
                                                             1.0f)) {
   append_mesh(dst, build_screen_text_mesh(text, x, y, scale, color));
+}
+
+void append_screen_cursor(RenderMesh &dst, const glm::vec2 &position,
+                          const glm::vec3 &color) {
+  constexpr float kArm = 0.014f;
+  constexpr float kThickness = 0.0015f;
+  append_screen_rect(dst, position.x - kArm, position.y - kThickness,
+                     position.x + kArm, position.y + kThickness, color);
+  append_screen_rect(dst, position.x - kThickness, position.y - kArm,
+                     position.x + kThickness, position.y + kArm, color);
 }
 
 void append_wire_line(RenderMesh &mesh, const glm::dvec3 &a,
@@ -625,6 +636,14 @@ void Engine::tick(double frame_dt,
   });
 
   InputState gameplay_input = input_frame.primary;
+  if (surface.width > 0 && surface.height > 0) {
+    sky_navigation_cursor_ndc_ = glm::vec2(
+        gameplay_input.cursor_position.x /
+                static_cast<float>(surface.width) * 2.0f -
+            1.0f,
+        1.0f - gameplay_input.cursor_position.y /
+                  static_cast<float>(surface.height) * 2.0f);
+  }
   if (gameplay_input.sky_navigation_toggle_pressed &&
       session_state_.gameplay_started && !session_state_.menu_open) {
     sky_navigation_mode_ = !sky_navigation_mode_;
@@ -644,17 +663,42 @@ void Engine::tick(double frame_dt,
       sky_navigation_target_index_ = body_count > 0 ? 0 : -1;
     }
 
-    if (!sky_navigation_locked_ && body_count > 0 &&
-        (gameplay_input.sky_navigation_next_pressed ||
-         gameplay_input.sky_navigation_prev_pressed)) {
-      const int32_t direction = gameplay_input.sky_navigation_next_pressed ? 1 : -1;
-      int32_t candidate = sky_navigation_target_index_;
-      for (int32_t attempt = 0; attempt < body_count; ++attempt) {
-        candidate = (candidate + direction + body_count) % body_count;
-        if (valid_target(candidate)) {
-          sky_navigation_target_index_ = candidate;
-          break;
+    if (!sky_navigation_locked_ && body_count > 0 && surface.width > 0 &&
+        surface.height > 0) {
+      // Sky destinations are selected by hovering their projected marker.
+      // Keep the selection radius generous enough for a moving target while
+      // still requiring the cursor to be meaningfully over a destination.
+      const glm::mat4 vp = camera.projection(
+                               static_cast<float>(surface.width) /
+                               static_cast<float>(surface.height)) *
+                           camera.view();
+      const glm::dvec3 planet_orbit_pos =
+          solar_system_.body_position(active_body_index_);
+      constexpr float kSelectionRadius = 0.14f;
+      float best_distance_sq = kSelectionRadius * kSelectionRadius;
+      int32_t hovered_target = -1;
+
+      for (int32_t i = 0; i < body_count; ++i) {
+        if (!valid_target(i)) continue;
+        const CelestialBody &body =
+            solar_system_.bodies()[static_cast<size_t>(i)];
+        const glm::dvec3 body_world = body.position - planet_orbit_pos;
+        glm::vec4 clip = vp * glm::vec4(glm::vec3(body_world), 1.0f);
+        if (clip.w <= 0.0f) continue;
+        const glm::vec2 marker(clip.x / clip.w, clip.y / clip.w);
+        if (marker.x < -1.0f || marker.x > 1.0f || marker.y < -1.0f ||
+            marker.y > 1.0f) {
+          continue;
         }
+        const glm::vec2 delta = marker - sky_navigation_cursor_ndc_;
+        const float distance_sq = glm::dot(delta, delta);
+        if (distance_sq < best_distance_sq) {
+          best_distance_sq = distance_sq;
+          hovered_target = i;
+        }
+      }
+      if (hovered_target >= 0) {
+        sky_navigation_target_index_ = hovered_target;
       }
     }
 
@@ -666,7 +710,8 @@ void Engine::tick(double frame_dt,
           : "Navigation unlocked";
     }
 
-    // Arrow keys and Enter belong to the sky selector while it is open.
+    // Enter belongs to the sky selector while it is open. Cursor movement is
+    // intentionally not forwarded to first-person camera look.
     disable_gameplay_actions(gameplay_input);
     gameplay_input.look_delta = glm::vec2(0.0f);
   }
@@ -1027,9 +1072,13 @@ void Engine::tick(double frame_dt,
         chunk.set_solid(addr.block.x, addr.block.y, addr.block.z, false);
         // Remove stale mesh from scene so it will be rebuilt next frame.
         const uint64_t mid = BlockWorld::chunk_mesh_id(addr);
+        const uint64_t vegetation_mid = vegetation::mesh_id(addr);
         scene.opaque_meshes.erase(
             std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-                           [mid](const RenderMesh &m) { return m.mesh_id == mid; }),
+                           [mid, vegetation_mid](const RenderMesh &m) {
+                             return m.mesh_id == mid ||
+                                    m.mesh_id == vegetation_mid;
+                           }),
             scene.opaque_meshes.end());
       }
 
@@ -1049,9 +1098,13 @@ void Engine::tick(double frame_dt,
             place_chunk->set_solid(place_addr.block.x, place_addr.block.y, place_addr.block.z, true);
             // Remove stale mesh for the affected chunk.
             const uint64_t mid = BlockWorld::chunk_mesh_id(place_addr);
+            const uint64_t vegetation_mid = vegetation::mesh_id(place_addr);
             scene.opaque_meshes.erase(
                 std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-                               [mid](const RenderMesh &m) { return m.mesh_id == mid; }),
+                               [mid, vegetation_mid](const RenderMesh &m) {
+                                 return m.mesh_id == mid ||
+                                        m.mesh_id == vegetation_mid;
+                               }),
                 scene.opaque_meshes.end());
           }
         }
@@ -1150,17 +1203,10 @@ void Engine::tick(double frame_dt,
   const bool detailed_terrain_needed =
       camera_altitude <=
       kPlayablePlanetConfig.local_terrain_max_altitude_m + stream_lead;
-  const bool detailed_terrain_stream_active = detailed_terrain_needed;
   if (detailed_terrain_needed) {
-    // The coarse globe is intentionally absent while local voxel terrain is
-    // active. Keeping it underneath the chunks makes the recessed smooth
-    // surface visible through stream seams and masks the voxel topology.
-    scene.opaque_meshes.erase(
-        std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-                       [](const RenderMesh &mesh) {
-                         return mesh.mesh_id == kGlobalPlanetSurfaceMeshId;
-                       }),
-        scene.opaque_meshes.end());
+    // Keep the recessed coarse globe behind the local voxel stream. Detailed
+    // chunks own the visible silhouette when resident, while the fallback
+    // prevents generation and eviction gaps from exposing the sky.
     const glm::dvec3 player_offset =
         glm::dvec3(local_player.transform.position) - block_world_.planet().center;
     const glm::dvec3 surface_direction = glm::dot(player_offset, player_offset) > 1.0e-9
@@ -1316,6 +1362,10 @@ void Engine::tick(double frame_dt,
         has_pending_meshes = true;
         break;
       }
+      if (!mesh_in_scene(vegetation::mesh_id(ck))) {
+        has_pending_meshes = true;
+        break;
+      }
     }
 
     if (player_moved || !remesh_targets.empty() || snap_origin_dirty_ ||
@@ -1376,6 +1426,7 @@ void Engine::tick(double frame_dt,
 
         const bool must_remesh =
             need_full_rebuild || is_new || !mesh_in_scene(mid) ||
+            !mesh_in_scene(vegetation::mesh_id(ck)) ||
             remesh_targets.find(mid) != remesh_targets.end();
         if (!must_remesh) {
           continue;
@@ -1404,6 +1455,7 @@ void Engine::tick(double frame_dt,
         const BlockAddress ck = chunk_address_key(addr);
         if (block_world_.find_chunk(ck) != nullptr) {
           resident_ids.insert(BlockWorld::chunk_mesh_id(ck));
+          resident_ids.insert(vegetation::mesh_id(ck));
         }
       }
       uint32_t lod_distribution[4] = {0, 0, 0, 0};
@@ -1475,6 +1527,9 @@ void Engine::tick(double frame_dt,
         RenderMesh mesh = block_world_.build_chunk_mesh(
             ck, *chunk, solid_at, camera_snap_origin_, item.lod.level);
         upsert_opaque_mesh(std::move(mesh));
+        RenderMesh grass = vegetation::build_grass_mesh(
+            block_world_, ck, *chunk, camera_snap_origin_, item.lod.level);
+        upsert_opaque_mesh(std::move(grass));
         ++mesh_count;
       }
 
@@ -1723,17 +1778,16 @@ void Engine::tick(double frame_dt,
         scene.opaque_meshes.end());
     last_celestial_mesh_count_ = 0;
 
-    // Keep the complete terrain globe resident only when the local stream is
-    // inactive. Near the surface, the voxel mesh must own the silhouette.
-    if (!detailed_terrain_stream_active) {
-      const auto planet_it = std::find_if(
-          scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-          [](const RenderMesh &mesh) {
-            return mesh.mesh_id == kGlobalPlanetSurfaceMeshId;
-          });
-      if (planet_it == scene.opaque_meshes.end()) {
-        scene.opaque_meshes.push_back(global_planet_surface_mesh_);
-      }
+    // Keep the complete terrain globe resident at every altitude. Its radial
+    // bias places it behind the detailed voxel surface, and it closes holes
+    // while chunks are being generated or evicted.
+    const auto planet_it = std::find_if(
+        scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+        [](const RenderMesh &mesh) {
+          return mesh.mesh_id == kGlobalPlanetSurfaceMeshId;
+        });
+    if (planet_it == scene.opaque_meshes.end()) {
+      scene.opaque_meshes.push_back(global_planet_surface_mesh_);
     }
 
     const glm::dvec3 planet_orbit_pos =
@@ -2242,8 +2296,11 @@ void Engine::refresh_overlay_text() {
         scene.debug_screen,
         sky_navigation_locked_
             ? "ENTER UNLOCK   F6 CLOSE"
-            : "ARROWS SELECT   ENTER LOCK   F6 CLOSE",
+            : "MOVE CURSOR TO SELECT   ENTER LOCK   F6 CLOSE",
         -0.93f, 0.78f, 0.0042f, glm::vec3(0.65f, 0.78f, 0.86f));
+
+    append_screen_cursor(scene.debug_screen, sky_navigation_cursor_ndc_,
+                         glm::vec3(0.95f, 0.98f, 1.0f));
 
     const glm::mat4 vp = camera.projection(sky_navigation_aspect_ratio_) *
                          camera.view();

@@ -19,7 +19,7 @@ Published bundles currently include:
 
 - Linux: `VOXOV-<tag>-linux-x86_64.tar.gz` (client + dedicated server)
 - Windows: `VOXOV-<tag>-windows-x86_64.zip` (client + dedicated server)
-- Android: `VOXOV-<tag>-android-arm64-v8a.apk`
+- Android: `VOXOV-<tag>-android-universal.apk` (arm64-v8a, armeabi-v7a, and x86_64)
 - Web: `voxov_web.html`, `voxov_web.js`, `voxov_web.wasm`, and `voxov_web.data`
 - Integrity: `SHA256SUMS.txt`
 

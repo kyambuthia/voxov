@@ -17,6 +17,8 @@ player presence while terrain remains deterministic from the session seed.
 CI compiles and tests Linux and Windows, builds the WebAssembly target, and
 boots the APK in an Android emulator. Tagged releases package all four targets;
 the Linux and Windows archives contain both the client and `voxov_server`.
+The Android download is a signed universal APK for arm64-v8a, armeabi-v7a, and
+x86_64 devices.
 
 ## Test a downloaded desktop release
 
@@ -64,6 +66,21 @@ Start a dedicated server, or choose **Host LAN** in a native client:
 
 Windows, Linux, and Android clients use ENet UDP directly. Open UDP port 7777
 on the server host when clients are not on the same machine.
+
+## Android Wi-Fi play
+
+On Android, select **Multiplayer > Host LAN** to host, or **Multiplayer > Join
+Nearby** to discover and join a host. Discovery uses IPv4 UDP broadcast on port
+47777; gameplay uses UDP port 7777. Keep the game in the foreground while
+searching or hosting. The app holds Android's Wi-Fi multicast lock only while
+foregrounded so broadcast discovery can be received.
+
+All devices need to be on the same non-isolated Wi-Fi or Ethernet LAN. Guest
+networks, client/AP isolation, and some phone hotspots block peer-to-peer UDP;
+move all devices to a normal access point before joining. Desktop clients can
+bypass discovery with `--connect HOST_IP --port 7777`; the current Android UI
+joins through Nearby discovery. Allow inbound UDP port 7777 and UDP port 47777
+on a desktop host's firewall when discovery is required.
 
 ## Browser cross-play gateway
 

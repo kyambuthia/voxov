@@ -258,7 +258,6 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "9.3.1"
           validate-wrappers: false
 
       - name: Setup Android SDK tools
@@ -279,24 +278,29 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_TEST_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_TEST_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_TEST_KEY_PASSWORD }}
-        run: gradle -p android :app:assembleRelease --stacktrace --no-daemon
+        run: ./android/gradlew -p android :app:assembleRelease --stacktrace --no-daemon
 
-      - name: Verify APK contains native library
+      - name: Verify universal APK contains native libraries
         run: |
           APK_PATH="android/app/build/outputs/apk/release/app-release.apk"
           test -f "${APK_PATH}"
+          "${ANDROID_SDK_ROOT}/build-tools/34.0.0/aapt" dump permissions "${APK_PATH}" | tee /tmp/voxov-android-permissions.txt
+          grep -q "android.permission.INTERNET" /tmp/voxov-android-permissions.txt
+          grep -q "android.permission.CHANGE_WIFI_MULTICAST_STATE" /tmp/voxov-android-permissions.txt
           unzip -l "${APK_PATH}" | tee /tmp/apk-contents.txt
+          grep -q "lib/armeabi-v7a/libvoxov.so" /tmp/apk-contents.txt
           grep -q "lib/arm64-v8a/libvoxov.so" /tmp/apk-contents.txt
+          grep -q "lib/x86_64/libvoxov.so" /tmp/apk-contents.txt
 
       - name: Prepare android artifact
         run: |
-          cp android/app/build/outputs/apk/release/app-release.apk "VOXOV-${GITHUB_REF_NAME}-android-arm64-v8a.apk"
+          cp android/app/build/outputs/apk/release/app-release.apk "VOXOV-${GITHUB_REF_NAME}-android-universal.apk"
 
       - name: Upload android artifact
         uses: actions/upload-artifact@v7
         with:
           name: release-android
-          path: VOXOV-${{ github.ref_name }}-android-arm64-v8a.apk
+          path: VOXOV-${{ github.ref_name }}-android-universal.apk
 
   build-web:
     runs-on: ubuntu-latest
@@ -326,11 +330,12 @@ jobs:
       - name: Prepare web artifact
         run: |
           WEB_DIR="VOXOV-${GITHUB_REF_NAME}-web"
-          mkdir -p "${WEB_DIR}"
+          mkdir -p "${WEB_DIR}/docs"
           cp build/web/release/bin/voxov_web.html "${WEB_DIR}/"
           cp build/web/release/bin/voxov_web.js "${WEB_DIR}/"
           cp build/web/release/bin/voxov_web.wasm "${WEB_DIR}/"
           cp build/web/release/bin/voxov_web.data "${WEB_DIR}/"
+          cp docs/CROSS_PLATFORM_PLAY.md "${WEB_DIR}/docs/MULTIPLAYER.md"
           gzip -9 -k "${WEB_DIR}/voxov_web.html"
           gzip -9 -k "${WEB_DIR}/voxov_web.js"
           gzip -9 -k "${WEB_DIR}/voxov_web.wasm"
@@ -347,6 +352,7 @@ jobs:
           test -f "${WEB_DIR}/voxov_web.js.gz"
           test -f "${WEB_DIR}/voxov_web.wasm.gz"
           test -f "${WEB_DIR}/voxov_web.data.gz"
+          test -f "${WEB_DIR}/docs/MULTIPLAYER.md"
 
       - name: Upload web artifact
         uses: actions/upload-artifact@v7

@@ -141,7 +141,6 @@ jobs:
       - name: Setup Gradle
         uses: gradle/actions/setup-gradle@v4
         with:
-          gradle-version: "9.3.1"
           validate-wrappers: false
 
       - name: Setup Android SDK tools
@@ -160,7 +159,15 @@ jobs:
           echo "ANDROID_NDK_HOME=${ANDROID_SDK_ROOT}/ndk/26.1.10909125" >> "$GITHUB_ENV"
 
       - name: Build debug APK
-        run: gradle -p android :app:assembleDebug --stacktrace --no-daemon
+        run: ./android/gradlew -p android :app:assembleDebug --stacktrace --no-daemon
+
+      - name: Verify Android LAN package contract
+        run: |
+          APK_PATH="android/app/build/outputs/apk/debug/app-debug.apk"
+          test -f "${APK_PATH}"
+          "${ANDROID_SDK_ROOT}/build-tools/34.0.0/aapt" dump permissions "${APK_PATH}" | tee /tmp/voxov-android-permissions.txt
+          grep -q "android.permission.INTERNET" /tmp/voxov-android-permissions.txt
+          grep -q "android.permission.CHANGE_WIFI_MULTICAST_STATE" /tmp/voxov-android-permissions.txt
 
       - name: Emulator runtime smoke
         uses: reactivecircus/android-emulator-runner@v2

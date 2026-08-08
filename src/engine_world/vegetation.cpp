@@ -205,14 +205,18 @@ RenderMesh build_grass_mesh(const BlockWorld &world,
             };
             auto billboard = [&](double radians, double width,
                                   double height, uint8_t texture_layer,
-                                  const glm::vec3 &color) {
-                append_billboard_quad(mesh, position, tangent(radians), up,
-                                      width, height, texture_layer, color,
-                                      camera_relative_origin);
-                append_billboard_quad(mesh, position,
-                                      tangent(radians + 1.5707963), up,
-                                      width, height, texture_layer, color,
-                                      camera_relative_origin);
+                                  const glm::vec3 &color, int card_count) {
+                // Rotating several alpha cards around one planted base gives
+                // grass and shrubs a real radial silhouette instead of the
+                // flat crossed-card outline visible from oblique views.
+                for (int card = 0; card < card_count; ++card) {
+                    const double card_angle = radians +
+                        3.14159265 * static_cast<double>(card) /
+                            static_cast<double>(card_count);
+                    append_billboard_quad(mesh, position, tangent(card_angle),
+                                          up, width, height, texture_layer,
+                                          color, camera_relative_origin);
+                }
             };
 
             if (type_roll < 0.07f) {
@@ -220,25 +224,25 @@ RenderMesh build_grass_mesh(const BlockWorld &world,
                     static_cast<double>(unit_float(splitmix64(key ^ 0x49u))) *
                     0.18;
                 billboard(angle, 0.34, height, kFlowerLayer,
-                          glm::vec3(0.92f, 0.92f, 0.92f));
+                          glm::vec3(0.92f, 0.92f, 0.92f), 2);
             } else if (type_roll < 0.12f) {
-                const double height = 0.72 +
+                const double height = 0.86 +
                     static_cast<double>(unit_float(splitmix64(key ^ 0x4du))) *
-                    0.22;
-                billboard(angle, 0.78, height, kShrubLayer,
-                          glm::vec3(0.72f, 0.86f, 0.66f));
+                    0.28;
+                billboard(angle, 1.08, height, kShrubLayer,
+                          glm::vec3(0.72f, 0.86f, 0.66f), 3);
             } else if (type_roll < 0.30f) {
                 const double height = 0.34 +
                     static_cast<double>(unit_float(splitmix64(key ^ 0x51u))) *
                     0.18;
                 billboard(angle, 0.62, height, kFernLayer,
-                          glm::vec3(0.70f, 0.90f, 0.52f));
+                          glm::vec3(0.70f, 0.90f, 0.52f), 2);
             } else {
-                const double height = 0.48 +
+                const double height = 0.60 +
                     static_cast<double>(unit_float(splitmix64(key ^ 0x37u))) *
-                    0.24;
-                billboard(angle, 0.30, height, kGrassLayer,
-                          glm::vec3(0.68f, 0.84f, 0.28f));
+                    0.28;
+                billboard(angle, 0.42, height, kGrassLayer,
+                          glm::vec3(0.68f, 0.84f, 0.28f), 3);
             }
         }
     }

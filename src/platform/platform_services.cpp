@@ -129,6 +129,13 @@ PlatformServices PlatformServices::android(const char *internal_data_path) {
         std::move(asset_roots));
 }
 
+PlatformServices PlatformServices::for_testing(const fs::path &data_root) {
+    return PlatformServices(
+        data_root / "save",
+        data_root / "tmp",
+        std::vector<fs::path>{data_root});
+}
+
 fs::path PlatformServices::session_state_path() const {
     return save_root_ / "voxov_session_state.bin";
 }
@@ -171,4 +178,77 @@ bool PlatformServices::write_binary_file(
     out.write(static_cast<const char *>(data), static_cast<std::streamsize>(size));
     out.close();
     return out.good();
+}
+
+bool PlatformServices::write_binary_file_atomic(
+    const fs::path &path,
+    const void *data,
+    size_t size) const {
+    fs::path temp_path = path;
+    temp_path += ".tmp";
+    if (!write_binary_file(temp_path, data, size)) {
+        return false;
+    }
+
+    std::error_code ec;
+    fs::rename(temp_path, path, ec);
+    if (!ec) {
+        return true;
+    }
+
+    // Windows does not replace an existing destination with rename. Preserve
+    // the previous file until the complete replacement has been written.
+    fs::path backup_path = path;
+    backup_path += ".bak";
+    std::error_code backup_ec;
+    if (fs::exists(path, backup_ec) && !backup_ec) {
+        fs::remove(backup_path, backup_ec);
+        backup_ec.clear();
+        fs::rename(path, backup_path, backup_ec);
+        if (backup_ec) {
+            fs::remove(temp_path, ec);
+            return false;
+        }
+    }
+
+    ec.clear();
+    fs::rename(temp_path, path, ec);
+    if (ec) {
+        std::error_code restore_ec;
+        if (fs::exists(backup_path, restore_ec) && !restore_ec) {
+            fs::rename(backup_path, path, restore_ec);
+        }
+        fs::remove(temp_path, restore_ec);
+        return false;
+    }
+    fs::remove(backup_path, ec);
+    return true;
+}
+
+bool PlatformServices::read_binary_file(
+    const fs::path &path,
+    std::vector<uint8_t> &out) const {
+    out.clear();
+    std::ifstream input(path, std::ios::binary | std::ios::ate);
+    if (!input.is_open()) {
+        fs::path backup_path = path;
+        backup_path += ".bak";
+        input.clear();
+        input.open(backup_path, std::ios::binary | std::ios::ate);
+        if (!input.is_open()) {
+            return false;
+        }
+    }
+    const std::streampos end = input.tellg();
+    if (end < 0) {
+        return false;
+    }
+    const size_t size = static_cast<size_t>(end);
+    out.resize(size);
+    input.seekg(0, std::ios::beg);
+    if (size > 0) {
+        input.read(reinterpret_cast<char *>(out.data()),
+                   static_cast<std::streamsize>(size));
+    }
+    return input.good();
 }

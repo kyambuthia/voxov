@@ -345,12 +345,13 @@ target_include_directories(engine_ui PUBLIC src)
 target_link_libraries(engine_ui PUBLIC glm::glm)
 
 add_library(engine_runtime STATIC
+    src/engine_runtime/persistent_game_state.cpp
     src/engine_runtime/runtime_game_session.cpp
     src/engine_runtime/runtime_session_controller.cpp
     src/engine_runtime/runtime_world_state.cpp
 )
 target_include_directories(engine_runtime PUBLIC src)
-target_link_libraries(engine_runtime PUBLIC engine_core engine_net engine_net_proto engine_render_core engine_ui engine_world)
+target_link_libraries(engine_runtime PUBLIC engine_core engine_gameplay engine_net engine_net_proto engine_render_core engine_ui engine_world)
 
 add_library(engine_presentation STATIC
     src/engine_presentation/debug_scene_builder.cpp

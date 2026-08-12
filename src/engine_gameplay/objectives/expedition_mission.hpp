@@ -14,6 +14,7 @@ enum class ExpeditionStage : uint8_t {
 class ExpeditionMission {
 public:
     void reset();
+    bool restore(ExpeditionStage stage);
 
     void on_block_removed(int32_t body_index);
     void on_block_placed(int32_t body_index);

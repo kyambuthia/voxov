@@ -38,11 +38,13 @@ Client transforms are accepted after finite/range checks. Multiplayer can test
 presence today, but authoritative compact-planet movement, edits, and collision
 require a shared headless world-simulation module used by client and server.
 
-### P0: persistence is only a placeholder
+### P0: persistence needs region-scale journaling
 
-`RuntimeWorldState::load_persistent_state` and `save_persistent_state` are
-no-ops. Define versioned region journals and atomic snapshots before editable
-worlds or multiple server instances become production data.
+The active game now stores a versioned, checksummed snapshot with atomic
+replacement for expedition progress, player body-local position, character,
+and sparse edits on Voxov and Aster. The next persistence boundary is a
+server-owned region journal with compaction and per-region recovery; the current
+single-player snapshot should not become the multi-instance storage format.
 
 ### P1: frame hierarchy is hard-coded to one system
 

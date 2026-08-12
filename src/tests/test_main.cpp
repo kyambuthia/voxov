@@ -8,6 +8,7 @@
 #include "engine_math/camera.hpp"
 #include "engine_net_proto/net_protocol_helpers.hpp"
 #include "engine_runtime/runtime_game_session.hpp"
+#include "engine_runtime/persistent_game_state.hpp"
 #include "engine_net_proto/net_types.hpp"
 #include "engine_world/net_chunk_state.hpp"
 #include "engine_world/planet.hpp"
@@ -33,10 +34,12 @@
 
 #include <algorithm>
 #include <cassert>
+#include <chrono>
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
 #include <cstring>
+#include <filesystem>
 #include <vector>
 
 namespace {
@@ -96,6 +99,66 @@ void test_character_selection_is_retained_by_menu() {
   assert(menu.page_id() == GuiMenu::Page::CharacterSelect);
   menu.activate_index(0, false, false, actions);
   assert(menu.character() == GuiMenu::Character::Humanoid);
+}
+
+PersistentGameState make_test_persistent_state() {
+  PersistentGameState state{};
+  state.expedition_stage = ExpeditionStage::ReachAster;
+  state.character = GuiMenu::Character::Humanoid;
+  state.active_body_index = 3;
+  state.player_local_position = glm::dvec3(12.5, -3.25, 42.0);
+  PersistentBlockEdit edit{};
+  edit.body_index = 1;
+  edit.address.sector = PlanetFace::NegZ;
+  edit.address.shell = 1;
+  edit.address.chunk = glm::ivec3(1, 0, 2);
+  edit.address.block = glm::ivec3(3, 4, 5);
+  edit.material = VoxelMaterial::Stone;
+  edit.solid = true;
+  state.block_edits.push_back(edit);
+  return state;
+}
+
+void test_persistent_game_state_round_trip_and_corruption_detection() {
+  const PersistentGameState state = make_test_persistent_state();
+  std::vector<uint8_t> bytes;
+  std::string error;
+  assert(encode_persistent_game_state(state, bytes, error));
+  assert(!bytes.empty());
+
+  PersistentGameState decoded{};
+  assert(decode_persistent_game_state(bytes, decoded, error));
+  assert(decoded.expedition_stage == state.expedition_stage);
+  assert(decoded.character == state.character);
+  assert(decoded.active_body_index == state.active_body_index);
+  assert(decoded.player_local_position == state.player_local_position);
+  assert(decoded.block_edits == state.block_edits);
+
+  bytes.back() ^= 0x40u;
+  assert(!decode_persistent_game_state(bytes, decoded, error));
+  assert(!error.empty());
+}
+
+void test_persistent_game_state_atomic_file_round_trip() {
+  namespace fs = std::filesystem;
+  const auto nonce = std::chrono::steady_clock::now()
+                         .time_since_epoch()
+                         .count();
+  const fs::path root = fs::temp_directory_path() /
+      ("voxov-persistence-test-" + std::to_string(nonce));
+  const PlatformServices platform = PlatformServices::for_testing(root);
+  const PersistentGameState state = make_test_persistent_state();
+  std::string error;
+  assert(save_persistent_game_state(platform, state, error));
+
+  PersistentGameState decoded{};
+  assert(load_persistent_game_state(platform, decoded, error));
+  assert(decoded.block_edits == state.block_edits);
+  assert(decoded.expedition_stage == state.expedition_stage);
+
+  std::error_code cleanup_error;
+  fs::remove_all(root, cleanup_error);
+  assert(!cleanup_error);
 }
 
 void test_cvar_register_and_find() {
@@ -2635,6 +2698,8 @@ int main() {
   test_expedition_mission_requires_ordered_player_actions();
   test_player_preferences_are_changed_from_settings_menu();
   test_character_selection_is_retained_by_menu();
+  test_persistent_game_state_round_trip_and_corruption_detection();
+  test_persistent_game_state_atomic_file_round_trip();
   test_string_id_compile_time_hash();
   test_cvar_register_and_find();
   test_cvar_set_and_get_float();

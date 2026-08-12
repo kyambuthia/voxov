@@ -9,6 +9,15 @@ void ExpeditionMission::reset() {
     stage_ = ExpeditionStage::CollectSample;
 }
 
+bool ExpeditionMission::restore(ExpeditionStage stage) {
+    if (stage < ExpeditionStage::CollectSample ||
+        stage > ExpeditionStage::Complete) {
+        return false;
+    }
+    stage_ = stage;
+    return true;
+}
+
 void ExpeditionMission::on_block_removed(int32_t body_index) {
     if (body_index == kVoxovBodyIndex) {
         advance(ExpeditionStage::CollectSample, ExpeditionStage::DeployBeacon);

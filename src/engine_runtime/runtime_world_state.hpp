@@ -4,7 +4,6 @@
 #include "engine_render/render_types.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/voxel_chunk.hpp"
-#include "platform/platform_services.hpp"
 
 #include <glm/glm.hpp>
 
@@ -27,9 +26,6 @@ public:
     void rebuild_streamed_chunk_scene(
         const VoxelChunk &world_chunk,
         RenderScene &scene);
-    void load_persistent_state(const PlatformServices &platform_services);
-    void save_persistent_state(const PlatformServices &platform_services) const;
-
     std::unordered_map<int32_t, RuntimeStreamedChunk> streamed_chunks;
 
 private:

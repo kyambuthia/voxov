@@ -7,13 +7,7 @@
 #include <utility>
 
 namespace {
-constexpr uint64_t k_session_state_magic = 0x564F585356303031ull;
 constexpr int k_world_chunk_radius = 1;
-
-struct SavedSessionState {
-    uint64_t magic = k_session_state_magic;
-    uint64_t world_seed = k_voxov_flat_world_seed;
-};
 
 int32_t render_chunk_key(NetChunkCoord coord) {
     return (static_cast<int32_t>(coord.x) << 16) ^
@@ -118,14 +112,4 @@ void RuntimeWorldState::rebuild_streamed_chunk_scene(
         chunk_mesh_cache_[key] = mesh;
         scene.opaque_meshes.push_back(mesh);
     }
-}
-
-void RuntimeWorldState::load_persistent_state(
-    const PlatformServices &platform_services) {
-    (void)platform_services;
-}
-
-void RuntimeWorldState::save_persistent_state(
-    const PlatformServices &platform_services) const {
-    (void)platform_services;
 }

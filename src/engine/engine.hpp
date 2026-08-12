@@ -18,6 +18,7 @@
 #include "engine_physics/physics_world.hpp"
 #include "engine_render/renderer.hpp"
 #include "engine_runtime/runtime_game_session.hpp"
+#include "engine_runtime/persistent_game_state.hpp"
 #include "engine_runtime/runtime_session_controller.hpp"
 #include "engine_ui/gui_menu.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
@@ -31,6 +32,7 @@
 
 #include <string>
 #include <optional>
+#include <vector>
 
 struct EngineRuntimeOptions {
   PhysicsSolverBackend physics_backend = PhysicsSolverBackend::AvbdExperimental;
@@ -89,6 +91,11 @@ private:
   void rebuild_global_planet_surface();
   void refresh_overlay_text();
   void switch_active_planet(int32_t body_index);
+  BlockWorld *world_for_body(int32_t body_index);
+  void record_block_edit(int32_t body_index, const BlockAddress &address,
+                         VoxelMaterial material, bool solid);
+  void load_persistent_game();
+  bool save_persistent_game();
   void sync_network_state(uint32_t sim_tick, const InputState &input);
   void start_local_server(uint16_t port, bool loopback_only);
   void stop_client_session();
@@ -122,6 +129,7 @@ private:
   glm::vec3 local_player_prev_position = glm::vec3(0.0f);
   PlayerAnimationRuntime local_player_animation;
   ExpeditionMission expedition_mission_;
+  std::vector<PersistentBlockEdit> persistent_block_edits_;
 
   RenderScene scene;
 

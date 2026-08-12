@@ -1,6 +1,7 @@
 #pragma once
 
 #include <cstddef>
+#include <cstdint>
 #include <filesystem>
 #include <string>
 #include <string_view>
@@ -13,6 +14,7 @@ public:
     static PlatformServices desktop_default();
     static PlatformServices web();
     static PlatformServices android(const char *internal_data_path);
+    static PlatformServices for_testing(const std::filesystem::path &data_root);
 
     std::filesystem::path session_state_path() const;
     std::vector<std::string> candidate_asset_paths(
@@ -22,6 +24,13 @@ public:
         const std::filesystem::path &path,
         const void *data,
         size_t size) const;
+    bool write_binary_file_atomic(
+        const std::filesystem::path &path,
+        const void *data,
+        size_t size) const;
+    bool read_binary_file(
+        const std::filesystem::path &path,
+        std::vector<uint8_t> &out) const;
 
 private:
     explicit PlatformServices(

@@ -21,6 +21,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cmath>
+#include <filesystem>
 #include <limits>
 #include <numbers>
 #include <string>
@@ -548,6 +549,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   camera_snap_origin_ = glm::dvec3(local_player.transform.position);
   snap_origin_dirty_ = true;
   rebuild_global_planet_surface();
+  load_persistent_game();
+  update_first_person_camera(local_player, camera);
 
   if (!renderer.init(RendererCreateInfo{
       .backend = runtime_options.render_backend,
@@ -601,6 +604,7 @@ void Engine::stop_client_session() {
 }
 
 void Engine::shutdown() {
+  (void)save_persistent_game();
   lan_discovery_.stop();
   if (local_server_running_) {
     local_server_.shutdown();
@@ -708,6 +712,7 @@ void Engine::tick(double frame_dt,
       sky_navigation_locked_ = !sky_navigation_locked_;
       if (sky_navigation_locked_) {
         expedition_mission_.on_course_locked(sky_navigation_target_index_);
+        (void)save_persistent_game();
       }
       last_hud_message_ = sky_navigation_locked_
           ? "Navigation locked"
@@ -765,6 +770,7 @@ void Engine::tick(double frame_dt,
       debug_fly_mode_ = false;
       sky_navigation_locked_ = false;
       expedition_mission_.on_landed(active_body_index_);
+      (void)save_persistent_game();
       last_hud_message_ = "Landed on " + target.name;
     } else {
       debug_fly_mode_ = true;
@@ -1076,6 +1082,8 @@ void Engine::tick(double frame_dt,
         chunk.set_material(addr.block.x, addr.block.y, addr.block.z, VoxelMaterial::Air);
         chunk.set_solid(addr.block.x, addr.block.y, addr.block.z, false);
         expedition_mission_.on_block_removed(active_body_index_);
+        record_block_edit(active_body_index_, addr, VoxelMaterial::Air, false);
+        (void)save_persistent_game();
         // Remove stale mesh from scene so it will be rebuilt next frame.
         const uint64_t mid = BlockWorld::chunk_mesh_id(addr);
         const uint64_t vegetation_mid = vegetation::mesh_id(addr);
@@ -1103,6 +1111,9 @@ void Engine::tick(double frame_dt,
             place_chunk->set_material(place_addr.block.x, place_addr.block.y, place_addr.block.z, VoxelMaterial::Stone);
             place_chunk->set_solid(place_addr.block.x, place_addr.block.y, place_addr.block.z, true);
             expedition_mission_.on_block_placed(active_body_index_);
+            record_block_edit(active_body_index_, place_addr,
+                              VoxelMaterial::Stone, true);
+            (void)save_persistent_game();
             // Remove stale mesh for the affected chunk.
             const uint64_t mid = BlockWorld::chunk_mesh_id(place_addr);
             const uint64_t vegetation_mid = vegetation::mesh_id(place_addr);
@@ -2128,7 +2139,7 @@ void Engine::reset_camera() {
 }
 
 GuiMenu::Character Engine::preferred_character() const {
-  return GuiMenu::Character::Capsule;
+  return session_state_.selected_character;
 }
 
 void Engine::rebuild_global_planet_surface() {
@@ -2189,6 +2200,111 @@ void Engine::switch_active_planet(int32_t body_index) {
   atmosphere_.init(atmosphere_params);
   last_chunk_center_hash_ = 0;
   snap_origin_dirty_ = true;
+}
+
+BlockWorld *Engine::world_for_body(int32_t body_index) {
+  if (body_index == active_body_index_) {
+    return &block_world_;
+  }
+  if ((active_body_index_ == 1 && body_index == 3) ||
+      (active_body_index_ == 3 && body_index == 1)) {
+    return &aster_block_world_;
+  }
+  return nullptr;
+}
+
+void Engine::record_block_edit(int32_t body_index,
+                               const BlockAddress &address,
+                               VoxelMaterial material, bool solid) {
+  const auto existing = std::find_if(
+      persistent_block_edits_.begin(), persistent_block_edits_.end(),
+      [&](const PersistentBlockEdit &edit) {
+        return edit.body_index == body_index && edit.address == address;
+      });
+  const PersistentBlockEdit replacement{
+      .body_index = body_index,
+      .address = address,
+      .material = material,
+      .solid = solid,
+  };
+  if (existing != persistent_block_edits_.end()) {
+    *existing = replacement;
+  } else {
+    persistent_block_edits_.push_back(replacement);
+  }
+}
+
+void Engine::load_persistent_game() {
+  persistent_block_edits_.clear();
+  PersistentGameState state{};
+  std::string error;
+  if (!load_persistent_game_state(platform_services, state, error)) {
+    if (std::filesystem::exists(platform_services.session_state_path())) {
+      spdlog::warn("Could not load save state: {}", error);
+    }
+    return;
+  }
+
+  for (const PersistentBlockEdit &edit : state.block_edits) {
+    BlockWorld *world = world_for_body(edit.body_index);
+    if (world == nullptr || edit.address.shell < 0 ||
+        edit.address.shell >= world->shell_count()) {
+      continue;
+    }
+    const int32_t chunk_size = world->config().chunk_size;
+    const ShellConfig &shell = world->shell_config(edit.address.shell);
+    const int32_t horizontal_chunks =
+        (shell.horizontal_res + chunk_size - 1) / chunk_size;
+    const int32_t vertical_chunks =
+        (shell.vertical_layers + chunk_size - 1) / chunk_size;
+    const bool valid_chunk = edit.address.chunk.x >= 0 &&
+        edit.address.chunk.x < horizontal_chunks &&
+        edit.address.chunk.z >= 0 &&
+        edit.address.chunk.z < horizontal_chunks &&
+        edit.address.chunk.y >= 0 &&
+        edit.address.chunk.y < vertical_chunks;
+    const bool valid_block = edit.address.block.x >= 0 &&
+        edit.address.block.x < chunk_size && edit.address.block.y >= 0 &&
+        edit.address.block.y < chunk_size && edit.address.block.z >= 0 &&
+        edit.address.block.z < chunk_size;
+    if (!valid_chunk || !valid_block) {
+      continue;
+    }
+    VoxelChunk &chunk = world->get_or_generate_chunk(edit.address);
+    chunk.set_material(edit.address.block.x, edit.address.block.y,
+                       edit.address.block.z, edit.material);
+    chunk.set_solid(edit.address.block.x, edit.address.block.y,
+                    edit.address.block.z, edit.solid);
+    persistent_block_edits_.push_back(edit);
+  }
+
+  (void)expedition_mission_.restore(state.expedition_stage);
+  session_state_.selected_character = state.character;
+  if (state.active_body_index != active_body_index_) {
+    switch_active_planet(state.active_body_index);
+  }
+  local_player.transform.position = glm::vec3(state.player_local_position);
+  local_player_prev_position = local_player.transform.position;
+  camera_snap_origin_ = state.player_local_position;
+  snap_origin_dirty_ = true;
+  spdlog::info("Loaded save: body={}, edits={}, expedition={}",
+               active_body_index_, persistent_block_edits_.size(),
+               static_cast<int>(expedition_mission_.stage()));
+}
+
+bool Engine::save_persistent_game() {
+  PersistentGameState state{};
+  state.expedition_stage = expedition_mission_.stage();
+  state.character = session_state_.selected_character;
+  state.active_body_index = active_body_index_;
+  state.player_local_position = glm::dvec3(local_player.transform.position);
+  state.block_edits = persistent_block_edits_;
+  std::string error;
+  if (!save_persistent_game_state(platform_services, state, error)) {
+    spdlog::warn("Could not save game state: {}", error);
+    return false;
+  }
+  return true;
 }
 
 void Engine::update_first_person_camera(PlayerEntity &player,

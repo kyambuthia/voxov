@@ -46,11 +46,12 @@ worlds or multiple server instances become production data.
 
 ### P1: frame hierarchy is hard-coded to one system
 
-`CoordinateFrameManager` documents a hierarchy but ignores `body_index` during
-transforms and assumes indices 0/1/2 are sun/planet/moon. `SolarSystem` stores
-absolute heliocentric `dvec3` positions and linearly scans bodies for sphere of
-influence checks. Replace numeric vector indices with stable body IDs and a
-general parent-frame graph; keep coordinates parent-local.
+`CoordinateFrameManager` now preserves body-specific origins during transforms,
+and the compact flight path can swap between the Voxov and Aster terrain
+runtimes. The remaining identity is still based on numeric body indices, while
+`SolarSystem` stores absolute heliocentric `dvec3` positions and linearly scans
+bodies for sphere-of-influence checks. Replace numeric vector indices with
+stable body IDs and a general parent-frame graph; keep coordinates parent-local.
 
 ### P1: replication is quadratic
 

@@ -3,6 +3,44 @@
 #include <algorithm>
 #include <cstdio>
 
+float look_sensitivity_scale(LookSensitivity sensitivity) {
+    switch (sensitivity) {
+    case LookSensitivity::Low:
+        return 0.65f;
+    case LookSensitivity::Normal:
+        return 1.0f;
+    case LookSensitivity::High:
+        return 1.5f;
+    }
+    return 1.0f;
+}
+
+namespace {
+const char *look_sensitivity_label(LookSensitivity sensitivity) {
+    switch (sensitivity) {
+    case LookSensitivity::Low:
+        return "LOW";
+    case LookSensitivity::Normal:
+        return "NORMAL";
+    case LookSensitivity::High:
+        return "HIGH";
+    }
+    return "NORMAL";
+}
+
+LookSensitivity next_look_sensitivity(LookSensitivity sensitivity) {
+    switch (sensitivity) {
+    case LookSensitivity::Low:
+        return LookSensitivity::Normal;
+    case LookSensitivity::Normal:
+        return LookSensitivity::High;
+    case LookSensitivity::High:
+        return LookSensitivity::Low;
+    }
+    return LookSensitivity::Normal;
+}
+} // namespace
+
 int GuiMenu::item_count() const {
     switch (page) {
     case MenuPage::Main:
@@ -10,7 +48,7 @@ int GuiMenu::item_count() const {
     case MenuPage::Multiplayer:
         return 6;
     case MenuPage::Settings:
-        return 4;
+        return 7;
     case MenuPage::MultiplayerGuide:
         return 1;
     case MenuPage::CharacterSelect:
@@ -134,15 +172,26 @@ void GuiMenu::activate_index(int index, bool devhud_enabled, bool noclip_enabled
     if (page == MenuPage::Settings) {
         switch (selected_item) {
         case 0:
-            out_actions.toggle_devhud = true;
+            preferences_.look_sensitivity =
+                next_look_sensitivity(preferences_.look_sensitivity);
             break;
         case 1:
-            out_actions.toggle_noclip = true;
+            preferences_.invert_vertical_look =
+                !preferences_.invert_vertical_look;
             break;
         case 2:
-            out_actions.reset_camera = true;
+            preferences_.ui_audio_enabled = !preferences_.ui_audio_enabled;
             break;
         case 3:
+            out_actions.toggle_devhud = true;
+            break;
+        case 4:
+            out_actions.toggle_noclip = true;
+            break;
+        case 5:
+            out_actions.reset_camera = true;
+            break;
+        case 6:
             page = MenuPage::Main;
             selected_item = 0;
             break;
@@ -191,6 +240,10 @@ bool GuiMenu::open() const {
 
 GuiMenu::Character GuiMenu::character() const {
     return selected_character;
+}
+
+const PlayerPreferences &GuiMenu::preferences() const {
+    return preferences_;
 }
 
 void GuiMenu::set_character(Character character) {
@@ -290,13 +343,19 @@ std::string GuiMenu::build_text(bool devhud_enabled, bool noclip_enabled, const 
     std::snprintf(
         buffer,
         sizeof(buffer),
-        "SETTINGS\n\n%s DEVHUD: %s\n%s NOCLIP: %s\n%s RESET CAMERA\n%s BACK\n\nUP/DOWN + ENTER | ESC",
+        "SETTINGS\n\n%s LOOK SENSITIVITY: %s\n%s INVERT VERTICAL LOOK: %s\n%s UI SOUND: %s\n%s DEVHUD: %s\n%s NOCLIP: %s\n%s RESET CAMERA\n%s BACK\n\nUP/DOWN + ENTER | ESC",
         selected_item == 0 ? ">" : " ",
-        devhud_enabled ? "ON" : "OFF",
+        look_sensitivity_label(preferences_.look_sensitivity),
         selected_item == 1 ? ">" : " ",
-        noclip_enabled ? "ON" : "OFF",
+        preferences_.invert_vertical_look ? "ON" : "OFF",
         selected_item == 2 ? ">" : " ",
-        selected_item == 3 ? ">" : " ");
+        preferences_.ui_audio_enabled ? "ON" : "OFF",
+        selected_item == 3 ? ">" : " ",
+        devhud_enabled ? "ON" : "OFF",
+        selected_item == 4 ? ">" : " ",
+        noclip_enabled ? "ON" : "OFF",
+        selected_item == 5 ? ">" : " ",
+        selected_item == 6 ? ">" : " ");
     return std::string(buffer);
 }
 
@@ -357,10 +416,19 @@ std::string GuiMenu::item_label(int index, bool devhud_enabled, bool noclip_enab
         }
     case MenuPage::Settings:
         switch (index) {
-        case 0: return std::string("DEVHUD: ") + (devhud_enabled ? "ON" : "OFF");
-        case 1: return std::string("NOCLIP: ") + (noclip_enabled ? "ON" : "OFF");
-        case 2: return "RESET CAMERA";
-        case 3: return "BACK";
+        case 0:
+            return std::string("LOOK SENSITIVITY: ") +
+                look_sensitivity_label(preferences_.look_sensitivity);
+        case 1:
+            return std::string("INVERT VERTICAL LOOK: ") +
+                (preferences_.invert_vertical_look ? "ON" : "OFF");
+        case 2:
+            return std::string("UI SOUND: ") +
+                (preferences_.ui_audio_enabled ? "ON" : "OFF");
+        case 3: return std::string("DEVHUD: ") + (devhud_enabled ? "ON" : "OFF");
+        case 4: return std::string("NOCLIP: ") + (noclip_enabled ? "ON" : "OFF");
+        case 5: return "RESET CAMERA";
+        case 6: return "BACK";
         default: return std::string();
         }
     case MenuPage::MultiplayerGuide:

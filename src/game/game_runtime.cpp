@@ -76,10 +76,11 @@ public:
                 input_frame.primary,
                 gui_menu,
                 callbacks);
-        if (menu_result.ui_move_sfx) {
+        const PlayerPreferences &preferences = gui_menu.preferences();
+        if (preferences.ui_audio_enabled && menu_result.ui_move_sfx) {
             ui_audio.play_move();
         }
-        if (menu_result.ui_select_sfx) {
+        if (preferences.ui_audio_enabled && menu_result.ui_select_sfx) {
             ui_audio.play_click();
         }
         if (menu_result.reset_camera_requested) {
@@ -89,13 +90,25 @@ public:
         session_flow.update(engine, frame_dt);
         sync_session_state();
 
+        GameRuntimeInputFrame adjusted_input = input_frame;
+        const float look_scale =
+            look_sensitivity_scale(preferences.look_sensitivity);
+        adjusted_input.primary.look_delta *= look_scale;
+        adjusted_input.secondary.look_delta *= look_scale;
+        if (preferences.invert_vertical_look) {
+            adjusted_input.primary.look_delta.y =
+                -adjusted_input.primary.look_delta.y;
+            adjusted_input.secondary.look_delta.y =
+                -adjusted_input.secondary.look_delta.y;
+        }
+
         const RenderSurface surface = platform_adapter->surface();
         engine.tick(
             frame_dt,
             EngineInputFrame{
-                .primary = input_frame.primary,
-                .secondary = input_frame.secondary,
-                .touch_mode = input_frame.touch_mode,
+                .primary = adjusted_input.primary,
+                .secondary = adjusted_input.secondary,
+                .touch_mode = adjusted_input.touch_mode,
             },
             surface);
         const double previous_fps = runtime_stats.fps;

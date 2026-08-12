@@ -39,6 +39,20 @@ struct GuiMenuView {
     std::string status;
 };
 
+enum class LookSensitivity {
+    Low = 0,
+    Normal = 1,
+    High = 2,
+};
+
+struct PlayerPreferences {
+    LookSensitivity look_sensitivity = LookSensitivity::Normal;
+    bool invert_vertical_look = false;
+    bool ui_audio_enabled = true;
+};
+
+float look_sensitivity_scale(LookSensitivity sensitivity);
+
 class GuiMenu {
 public:
     enum class Character {
@@ -62,6 +76,7 @@ public:
     int count() const;
     Page page_id() const;
     Character character() const;
+    const PlayerPreferences &preferences() const;
     void set_character(Character character);
     void set_selected(int index);
     std::string build_text(
@@ -95,4 +110,5 @@ private:
     int selected_item = 0;
     MenuPage page = MenuPage::Main;
     Character selected_character = Character::Capsule;
+    PlayerPreferences preferences_{};
 };

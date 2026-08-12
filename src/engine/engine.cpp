@@ -2004,7 +2004,6 @@ const RenderStats &Engine::stats() const { return render_stats; }
 
 void Engine::set_session_state(const EngineSessionState &state) {
   session_state_ = state;
-  session_state_.selected_character = GuiMenu::Character::Capsule;
 }
 
 RuntimeSessionSnapshot Engine::session_snapshot() const {

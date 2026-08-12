@@ -64,42 +64,34 @@ planet-to-galaxy architecture boundaries and prioritized engineering work.
 
 ## Architecture Snapshot
 
-- `src/game/main.cpp` is the desktop entry point and boots the game through `GameRuntime` plus desktop input/platform adapters.
+- `src/game/main_sokol.cpp` is the desktop entry point and boots the game through `GameRuntime` plus desktop input/platform adapters.
 - `src/game/server_main.cpp` is the standalone dedicated server entry point.
 - `src/game/game_runtime.cpp` is the runtime-facing shell currently wrapping the transitional desktop `Engine`.
 - `src/engine/*` still owns most desktop simulation, rendering, networking, UI, and gameplay orchestration while the runtime extraction continues.
 - Networking is now split into protocol (`src/engine_net_proto/*`), ENet transport (`src/engine_net/*`), LAN discovery, and server-session layers.
 - `src/game/android_main.cpp` and `src/game/web_main.cpp` provide platform entry points around the shared `GameRuntime`.
-- Core third-party dependencies are GLFW, ENet, Dear ImGui, GLM, fmt, and spdlog.
+- Core third-party dependencies are Sokol, ENet, GLM, fmt, spdlog, cgltf, and stb.
 
 The codebase is designed reasonably well for a fast-moving prototype: the renderer targets desktop APIs and GLES3/WebGL2, the build graph is split into engine modules, the dedicated server is separated into its own binary, and CI validates packaged artifacts. The main design debt is the large `Engine` orchestration layer that still owns too many responsibilities behind the runtime seam.
 
 The current refactor direction is to deepen the `GameRuntime` contract and continue shrinking `Engine` while keeping all platform adapters on the same simulation and networking interfaces.
 
-## Docs
+## Controls
 
-- Canonical handbook: `docs/HANDBOOK.md`
-- The handbook consolidates the current repository docs into one place and preserves the existing file contents verbatim.
+- `WASD`: move; mouse: look; `Space`: jump; `Shift`: sprint.
+- Left mouse breaks a targeted block; right mouse places a stone block.
+- `F6`: sky navigation; point at a destination, press `Enter` to lock it,
+  then hold `W` to engage flight assist.
+- `Esc`: menu; `F11`: fullscreen; `F12`: screenshot.
+
+The in-game expedition panel guides the first journey from Voxov to Aster.
 
 ## Assets
 
 - UI sounds live under `assets/audio/ui/`.
 - Audio provenance and licensing are documented in `assets/audio/ui/README.md`.
 
-## Showcase
+## Project status
 
-### Current Android Gameplay
-
-![VOXOV Android Gameplay GIF](docs/media/voxov_android_gameplay.gif)
-
-| Android Screenshot 1 | Android Screenshot 2 |
-| --- | --- |
-| ![VOXOV Android Screenshot 1](docs/media/voxov_android_gameplay_01.jpg) | ![VOXOV Android Screenshot 2](docs/media/voxov_android_gameplay_02.jpg) |
-
-### Previous Showcase
-
-![VOXOV Gameplay GIF](docs/media/voxov_state.gif)
-
-| Screenshot 1 | Screenshot 2 |
-| --- | --- |
-| ![VOXOV Screenshot 1](docs/media/voxov_state_01.png) | ![VOXOV Screenshot 2](docs/media/voxov_state_02.png) |
+VOXOV is an actively developed prototype. Current release notes and playable
+artifacts are available on the linked GitHub Releases page.

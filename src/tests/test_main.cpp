@@ -27,6 +27,7 @@
 #include "engine_world/voxel_chunk.hpp"
 #include "engine_world/vegetation.hpp"
 #include "engine_world/world_gen.hpp"
+#include "engine_ui/gui_menu.hpp"
 #include "platform/android_platform.hpp"
 #include "platform/web_platform.hpp"
 
@@ -67,6 +68,34 @@ void test_expedition_mission_requires_ordered_player_actions() {
   mission.on_landed(3);
   assert(mission.complete());
   assert(mission.progress() == 1.0f);
+}
+
+void test_player_preferences_are_changed_from_settings_menu() {
+  GuiMenu menu;
+  GuiMenuActions actions{};
+
+  menu.activate_index(3, false, false, actions);
+  assert(menu.page_id() == GuiMenu::Page::Settings);
+  assert(menu.preferences().look_sensitivity == LookSensitivity::Normal);
+
+  menu.activate_index(0, false, false, actions);
+  assert(menu.preferences().look_sensitivity == LookSensitivity::High);
+  assert(look_sensitivity_scale(menu.preferences().look_sensitivity) > 1.0f);
+
+  menu.activate_index(1, false, false, actions);
+  assert(menu.preferences().invert_vertical_look);
+  menu.activate_index(2, false, false, actions);
+  assert(!menu.preferences().ui_audio_enabled);
+  assert(menu.item_label(0, false, false).find("HIGH") != std::string::npos);
+}
+
+void test_character_selection_is_retained_by_menu() {
+  GuiMenu menu;
+  GuiMenuActions actions{};
+  menu.activate_index(1, false, false, actions);
+  assert(menu.page_id() == GuiMenu::Page::CharacterSelect);
+  menu.activate_index(0, false, false, actions);
+  assert(menu.character() == GuiMenu::Character::Humanoid);
 }
 
 void test_cvar_register_and_find() {
@@ -2604,6 +2633,8 @@ void test_vehicle_sandbox_scene_step() {
 
 int main() {
   test_expedition_mission_requires_ordered_player_actions();
+  test_player_preferences_are_changed_from_settings_menu();
+  test_character_selection_is_retained_by_menu();
   test_string_id_compile_time_hash();
   test_cvar_register_and_find();
   test_cvar_set_and_get_float();

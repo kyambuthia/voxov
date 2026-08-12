@@ -3,6 +3,7 @@
 #include "engine_gameplay/animation/animation_runtime.hpp"
 #include "engine_gameplay/player/player_components.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
+#include "engine_gameplay/objectives/expedition_mission.hpp"
 #include "engine_events/event_bus.hpp"
 #include "engine_input/input_state.hpp"
 #include "engine_math/camera.hpp"
@@ -120,6 +121,7 @@ private:
   PlayerEntity local_player;
   glm::vec3 local_player_prev_position = glm::vec3(0.0f);
   PlayerAnimationRuntime local_player_animation;
+  ExpeditionMission expedition_mission_;
 
   RenderScene scene;
 

@@ -419,6 +419,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
       static_cast<float>(kPlayablePlanetConfig.atmosphere_height_m);
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
+  expedition_mission_.reset();
   camera.z_far = 512.0f;
   camera.z_near = 0.25f;
   update_first_person_camera(local_player, camera);
@@ -705,6 +706,9 @@ void Engine::tick(double frame_dt,
     if (gameplay_input.sky_navigation_lock_pressed &&
         valid_target(sky_navigation_target_index_)) {
       sky_navigation_locked_ = !sky_navigation_locked_;
+      if (sky_navigation_locked_) {
+        expedition_mission_.on_course_locked(sky_navigation_target_index_);
+      }
       last_hud_message_ = sky_navigation_locked_
           ? "Navigation locked"
           : "Navigation unlocked";
@@ -760,6 +764,7 @@ void Engine::tick(double frame_dt,
       local_player.flight = PlayerFlightState{};
       debug_fly_mode_ = false;
       sky_navigation_locked_ = false;
+      expedition_mission_.on_landed(active_body_index_);
       last_hud_message_ = "Landed on " + target.name;
     } else {
       debug_fly_mode_ = true;
@@ -1070,6 +1075,7 @@ void Engine::tick(double frame_dt,
         VoxelChunk &chunk = block_world_.get_or_generate_chunk(addr);
         chunk.set_material(addr.block.x, addr.block.y, addr.block.z, VoxelMaterial::Air);
         chunk.set_solid(addr.block.x, addr.block.y, addr.block.z, false);
+        expedition_mission_.on_block_removed(active_body_index_);
         // Remove stale mesh from scene so it will be rebuilt next frame.
         const uint64_t mid = BlockWorld::chunk_mesh_id(addr);
         const uint64_t vegetation_mid = vegetation::mesh_id(addr);
@@ -1096,6 +1102,7 @@ void Engine::tick(double frame_dt,
               place_chunk->material(place_addr.block.x, place_addr.block.y, place_addr.block.z) == VoxelMaterial::Air) {
             place_chunk->set_material(place_addr.block.x, place_addr.block.y, place_addr.block.z, VoxelMaterial::Stone);
             place_chunk->set_solid(place_addr.block.x, place_addr.block.y, place_addr.block.z, true);
+            expedition_mission_.on_block_placed(active_body_index_);
             // Remove stale mesh for the affected chunk.
             const uint64_t mid = BlockWorld::chunk_mesh_id(place_addr);
             const uint64_t vegetation_mid = vegetation::mesh_id(place_addr);
@@ -2298,6 +2305,9 @@ void Engine::refresh_overlay_text() {
             ? "ENTER UNLOCK   F6 CLOSE"
             : "MOVE CURSOR TO SELECT   ENTER LOCK   F6 CLOSE",
         -0.93f, 0.78f, 0.0042f, glm::vec3(0.65f, 0.78f, 0.86f));
+    append_screen_label(scene.debug_screen,
+                        std::string(expedition_mission_.status()), -0.93f,
+                        0.69f, 0.0043f, glm::vec3(0.92f, 0.95f, 1.0f));
 
     append_screen_cursor(scene.debug_screen, sky_navigation_cursor_ndc_,
                          glm::vec3(0.95f, 0.98f, 1.0f));
@@ -2355,6 +2365,20 @@ void Engine::refresh_overlay_text() {
     append_touch_button_hint(scene.debug_screen, 0.71f, -0.36f, 0.93f, -0.54f,
                              "CROUCH");
   }
+
+  append_screen_rect(scene.debug_screen, -0.94f, -0.63f, 0.24f, -0.88f,
+                     expedition_mission_.complete()
+                         ? glm::vec3(0.05f, 0.18f, 0.13f)
+                         : glm::vec3(0.04f, 0.07f, 0.10f));
+  append_screen_label(scene.debug_screen,
+                      std::string(expedition_mission_.status()), -0.90f,
+                      -0.69f, 0.0045f,
+                      expedition_mission_.complete()
+                          ? glm::vec3(0.45f, 1.0f, 0.68f)
+                          : glm::vec3(0.92f, 0.96f, 1.0f));
+  append_screen_label(scene.debug_screen,
+                      std::string(expedition_mission_.hint()), -0.90f,
+                      -0.78f, 0.0040f, glm::vec3(0.75f, 0.84f, 0.92f));
 
   if (!session_state_.devhud_enabled) {
     // ── Crosshair ────────────────────────────────────────────────────

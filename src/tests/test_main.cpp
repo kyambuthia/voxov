@@ -2,6 +2,7 @@
 #include "engine_core/string_id.hpp"
 #include "engine/planet_gameplay_config.hpp"
 #include "engine_gameplay/minigames/minigames.hpp"
+#include "engine_gameplay/objectives/expedition_mission.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_gameplay/player/surface_orientation.hpp"
 #include "engine_math/camera.hpp"
@@ -38,6 +39,35 @@
 #include <vector>
 
 namespace {
+
+void test_expedition_mission_requires_ordered_player_actions() {
+  ExpeditionMission mission;
+  assert(mission.stage() == ExpeditionStage::CollectSample);
+  assert(!mission.complete());
+  assert(mission.progress() == 0.0f);
+
+  mission.on_block_placed(1);
+  mission.on_course_locked(3);
+  assert(mission.stage() == ExpeditionStage::CollectSample);
+
+  mission.on_block_removed(3);
+  assert(mission.stage() == ExpeditionStage::CollectSample);
+  mission.on_block_removed(1);
+  assert(mission.stage() == ExpeditionStage::DeployBeacon);
+
+  mission.on_block_placed(1);
+  assert(mission.stage() == ExpeditionStage::PlotCourse);
+  mission.on_course_locked(2);
+  assert(mission.stage() == ExpeditionStage::PlotCourse);
+  mission.on_course_locked(3);
+  assert(mission.stage() == ExpeditionStage::ReachAster);
+
+  mission.on_landed(1);
+  assert(!mission.complete());
+  mission.on_landed(3);
+  assert(mission.complete());
+  assert(mission.progress() == 1.0f);
+}
 
 void test_cvar_register_and_find() {
   CVAR_FLOAT(test_value, 42.0f, CvarFlags::None, "test cvar");
@@ -2573,6 +2603,7 @@ void test_vehicle_sandbox_scene_step() {
 } // namespace
 
 int main() {
+  test_expedition_mission_requires_ordered_player_actions();
   test_string_id_compile_time_hash();
   test_cvar_register_and_find();
   test_cvar_set_and_get_float();

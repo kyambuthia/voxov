@@ -318,6 +318,7 @@ add_library(engine_gameplay STATIC
     src/engine_gameplay/animation/player_animation_types.cpp
     src/engine_gameplay/animation/skeletal_animator.cpp
     src/engine_gameplay/minigames/minigames.cpp
+    src/engine_gameplay/objectives/expedition_mission.cpp
     src/engine_gameplay/player/player_controller.cpp
     src/engine_gameplay/player/player_visuals.cpp
 )

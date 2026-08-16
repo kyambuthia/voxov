@@ -22,21 +22,26 @@ bubble should be represented by stable identifiers, seeds, and compact metadata.
 
 ## Findings from the current source
 
-### P0: identity and protocol block planetary scale
+### Completed foundation: protocol v7 identity and encoding
 
-`NetPlayerState` uses absolute `float x/y/z`, while `NetChunkCoord` is a flat
-2-D `int16 x/z`. Packets are raw in-memory POD layouts. These types cannot name
-a planet, survive galaxy-scale precision, or evolve safely across architectures.
-Protocol v7 should introduce explicit fixed-width serialization plus a
-`WorldAddress` and frame-local position before more world features are added.
+Protocol v7 now uses an explicit fixed-width little-endian codec rather than
+raw C++ object layouts. Player states and snapshots carry a system/body/frame
+address with body-local `double` positions, while chunk identity includes body,
+cube face, shell, and three local axes. Golden-byte and truncation tests cover
+the wire contract. Generator/build compatibility negotiation and fuzzing remain
+before mixed-version public servers are safe.
 
-### P0: the server and client do not own the same world
+### P0: finish unifying server and client world ownership
 
-The graphical runtime uses `BlockWorld`, but `ServerSession` owns one legacy
-`VoxelChunk`, and `RuntimeWorldState` maintains another legacy 3x3 flat stream.
-Client transforms are accepted after finite/range checks. Multiplayer can test
-presence today, but authoritative compact-planet movement, edits, and collision
-require a shared headless world-simulation module used by client and server.
+`ServerSession` now owns Voxov and Aster `BlockWorld` instances, derives
+body-scale spherical collision and spawn points from them, rejects
+client-authored transforms, and owns replicated player state from validated,
+sequenced inputs. However, detailed procedural terrain collision and world
+setup are still client-side or duplicated between server and graphical runtime,
+`RuntimeWorldState` retains a legacy 3x3 flat stream, clients do not reconcile
+prediction, and voxel edits remain client-local. Move configuration, fixed-step
+movement, edits, and region interest behind one shared headless simulation
+interface.
 
 ### P0: persistence needs region-scale journaling
 
@@ -95,8 +100,8 @@ them.
 
 1. Multiplayer test releases: ship matching desktop client/server binaries,
    end-to-end smoke them, and publish checksums.
-2. Protocol v7: explicit serialization, build/generator compatibility, stable
-   world IDs, frame-local positions, and protocol fuzz tests.
+2. Protocol v7: explicit serialization, world/body/frame identity, and golden
+   wire tests are complete; add build/generator compatibility and fuzz tests.
 3. Shared headless planet simulation: move `BlockWorld`, collision, fixed-step
    movement, edits, and region interest behind a runtime interface used by both
    client and dedicated server.

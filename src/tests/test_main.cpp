@@ -7,6 +7,8 @@
 #include "engine_gameplay/player/surface_orientation.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net_proto/net_protocol_helpers.hpp"
+#include "engine_net_proto/net_packet_codec.hpp"
+#include "engine_server/server_session.hpp"
 #include "engine_runtime/runtime_game_session.hpp"
 #include "engine_runtime/persistent_game_state.hpp"
 #include "engine_net_proto/net_types.hpp"
@@ -290,25 +292,45 @@ void test_surface_orientation_parallel_transports_through_poles() {
   }
 }
 
-void test_net_pod_serialization() {
+void test_net_packet_codec_is_explicit_and_endian_stable() {
   NetSnapshot in{};
+  in.player_id = 7;
   in.tick = 42;
-  in.x = 1.5f;
-  in.y = -2.0f;
-  in.z = 9.25f;
+  in.sequence = 0x11223344u;
+  in.world.system_id = 0x0102030405060708ull;
+  in.world.body_id = 3;
+  in.x = 1.5;
+  in.y = -2.0;
+  in.z = 9.25;
 
-  uint8_t buffer[sizeof(NetSnapshot)]{};
-  bool write_ok = net_write_pod(buffer, sizeof(buffer), in);
-  assert(write_ok);
+  std::vector<uint8_t> packet;
+  assert(net_encode_message(NetMsgType::Snapshot, 0xA1B2C3D4u, in,
+                            packet, 0x5Au));
+  assert(packet.size() > k_net_wire_header_size);
+  const uint8_t golden_header[] = {
+      0x32, 0x58, 0x4F, 0x56, 0x07, 0x00, 0x02,
+      0x5A, 0xD4, 0xC3, 0xB2, 0xA1, 0x40, 0x00};
+  assert(std::equal(std::begin(golden_header), std::end(golden_header),
+                    packet.begin()));
 
   NetSnapshot out{};
-  bool read_ok = net_read_pod(buffer, sizeof(buffer), out);
-  assert(read_ok);
+  assert(net_decode_message(packet.data(), packet.size(),
+                            NetMsgType::Snapshot, out));
 
+  assert(out.player_id == in.player_id);
   assert(out.tick == in.tick);
-  assert(std::fabs(out.x - in.x) < 0.0001f);
-  assert(std::fabs(out.y - in.y) < 0.0001f);
-  assert(std::fabs(out.z - in.z) < 0.0001f);
+  assert(out.sequence == in.sequence);
+  assert(out.world.system_id == in.world.system_id);
+  assert(out.world.body_id == in.world.body_id);
+  assert(std::fabs(out.x - in.x) < 0.0001);
+  assert(std::fabs(out.y - in.y) < 0.0001);
+  assert(std::fabs(out.z - in.z) < 0.0001);
+
+  assert(!net_decode_message(packet.data(), packet.size() - 1,
+                             NetMsgType::Snapshot, out));
+  assert(!net_decode_message(packet.data(), packet.size(),
+                             NetMsgType::ChunkState, out));
+  assert(!net_encode_message(NetMsgType::Input, 1u, in, packet));
 }
 
 void test_session_info_serialization() {
@@ -319,11 +341,12 @@ void test_session_info_serialization() {
   in.max_players = 32;
   in.flags = net_session_flag(NetSessionFlags::LanAdvertised);
 
-  uint8_t buffer[sizeof(NetSessionInfo)]{};
-  assert(net_write_pod(buffer, sizeof(buffer), in));
+  std::vector<uint8_t> packet;
+  assert(net_encode_message(NetMsgType::SessionInfo, 4u, in, packet));
 
   NetSessionInfo out{};
-  assert(net_read_pod(buffer, sizeof(buffer), out));
+  assert(net_decode_message(packet.data(), packet.size(),
+                            NetMsgType::SessionInfo, out));
   assert(std::strcmp(out.server_name, "VOXOV Host") == 0);
   assert(out.world_seed == in.world_seed);
   assert(out.current_players == in.current_players);
@@ -333,22 +356,77 @@ void test_session_info_serialization() {
 
 void test_chunk_state_serialization() {
   NetChunkState in{};
+  in.coord.body_id = 3;
+  in.coord.face = 5;
+  in.coord.shell = 9;
   in.coord.x = 3;
+  in.coord.y = 7;
   in.coord.z = -2;
   in.version = 17;
   in.world_seed = 0xD00DFEEDu;
   in.content_type = static_cast<uint8_t>(NetChunkContentType::ProceduralFlat);
 
-  uint8_t buffer[sizeof(NetChunkState)]{};
-  assert(net_write_pod(buffer, sizeof(buffer), in));
+  std::vector<uint8_t> packet;
+  assert(net_encode_message(NetMsgType::ChunkState, 12u, in, packet));
 
   NetChunkState out{};
-  assert(net_read_pod(buffer, sizeof(buffer), out));
+  assert(net_decode_message(packet.data(), packet.size(),
+                            NetMsgType::ChunkState, out));
+  assert(out.coord.body_id == in.coord.body_id);
+  assert(out.coord.face == in.coord.face);
+  assert(out.coord.shell == in.coord.shell);
   assert(out.coord.x == in.coord.x);
+  assert(out.coord.y == in.coord.y);
   assert(out.coord.z == in.coord.z);
   assert(out.version == in.version);
   assert(out.world_seed == in.world_seed);
   assert(out.content_type == in.content_type);
+}
+
+void test_server_rejects_invalid_or_replayed_client_requests() {
+  ServerSession session;
+  ServerClientState client{};
+
+  NetTickInput input{};
+  input.tick = 10;
+  input.body_id = 1;
+  input.move_x = 1.0f;
+  assert(session.accept_input(client, input));
+  assert(!session.accept_input(client, input));
+
+  input.tick = 11;
+  input.move_x = 1.01f;
+  assert(!session.accept_input(client, input));
+  input.move_x = 0.0f;
+  input.action_flags = 0x80u;
+  assert(!session.accept_input(client, input));
+  input.action_flags = 0;
+  input.body_id = 99;
+  assert(!session.accept_input(client, input));
+
+  NetChunkInterest interest{};
+  interest.body_id = 3;
+  interest.face = 5;
+  interest.shell = 4;
+  interest.radius = k_net_max_interest_radius;
+  assert(session.accept_interest(client, interest, 1000));
+  assert(!session.accept_interest(client, interest, 1020));
+  assert(session.accept_interest(client, interest, 1050));
+  interest.radius = static_cast<uint8_t>(k_net_max_interest_radius + 1u);
+  assert(!session.accept_interest(client, interest, 1100));
+
+  auto *fake_peer = reinterpret_cast<_ENetPeer *>(uintptr_t{1});
+  ServerClientState &connected = session.connect_client(fake_peer);
+  assert(connected.state.world.body_id == 1u);
+  assert(glm::length(connected.player.transform.position) > 60.0f);
+  NetTickInput body_transition{};
+  body_transition.tick = 1;
+  body_transition.body_id = 3;
+  assert(session.accept_input(connected, body_transition));
+  session.simulate_fixed_tick();
+  assert(connected.state.world.body_id == 3u);
+  assert(glm::length(connected.player.transform.position) > 30.0f);
+  assert(glm::length(connected.player.transform.position) < 48.0f);
 }
 
 void test_chunk_runtime_helpers() {
@@ -2711,9 +2789,10 @@ int main() {
   test_camera_view_override_basis();
   test_coordinate_frames_preserve_body_specific_origins();
   test_surface_orientation_parallel_transports_through_poles();
-  test_net_pod_serialization();
+  test_net_packet_codec_is_explicit_and_endian_stable();
   test_session_info_serialization();
   test_chunk_state_serialization();
+  test_server_rejects_invalid_or_replayed_client_requests();
   test_chunk_runtime_helpers();
   test_planet_face_uv_to_direction_unit_vectors();
   test_planet_direction_to_face();

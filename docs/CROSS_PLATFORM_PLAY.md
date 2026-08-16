@@ -1,9 +1,10 @@
 # Cross-platform builds and play
 
 VOXOV builds the same C++ game runtime and protocol for Linux, Windows,
-Android, and WebAssembly. Protocol version 6 relays each client's spherical
-planet transform through an ENet server, so clients on every target share
-player presence while terrain remains deterministic from the session seed.
+Android, and WebAssembly. Protocol version 7 uses an explicit little-endian
+wire codec and identifies every replicated position by system, body, and
+coordinate frame. Clients send inputs; the ENet server owns and replicates
+player transforms while terrain remains deterministic from the session seed.
 
 ## Build targets
 
@@ -50,10 +51,12 @@ Allow inbound UDP port 7777 on the host firewall. Everyone must use artifacts
 from the same tag because protocol compatibility is exact, not negotiated.
 
 The current multiplayer slice is intended for connection and shared-player
-presence testing. Compact-planet terrain and movement are still simulated by
-each client, and the server validates bounds rather than authoritatively
-simulating the full spherical `BlockWorld`. Do not treat this build as
-cheat-resistant or persistent-world multiplayer yet.
+presence testing. The server validates sequenced input and simulates player
+state on body-specific spherical collision surfaces derived from the same
+Voxov and Aster `BlockWorld` configuration and spawn scale as the graphical
+runtime. Client prediction is not yet reconciled against snapshots, detailed
+terrain height is client-side, and voxel edits are not server-owned. Do not
+treat this build as cheat-resistant or persistent-world multiplayer yet.
 
 ## Native cross-play
 
@@ -113,4 +116,5 @@ Set `VOXOV_WEB_ROOT` or `VOXOV_WEB_ADDR` to serve a different build directory
 or listen address.
 
 All participants must run the same protocol version. The server rejects
-malformed, non-finite, or extreme client transforms before replication.
+malformed, non-finite, out-of-range, replayed, or unknown-body input. Chunk
+interest is body/face/shell scoped, radius bounded, and request throttled.

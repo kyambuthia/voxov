@@ -576,6 +576,7 @@ EngineConnectResult Engine::connect(const char *host, uint16_t port) {
     return EngineConnectResult::ConnectFailed;
   }
   NetChunkInterest interest{};
+  interest.body_id = static_cast<uint32_t>(active_body_index_);
   interest.radius = 2;
   net_client_.set_chunk_interest(interest);
   return EngineConnectResult::Connected;
@@ -2093,6 +2094,7 @@ void Engine::sync_network_state(uint32_t sim_tick,
 
   NetTickInput tick_input{};
   tick_input.tick = sim_tick;
+  tick_input.body_id = static_cast<uint32_t>(active_body_index_);
   tick_input.move_x = input.move.x;
   tick_input.move_y = input.move.y;
   tick_input.camera_yaw_deg = local_player.camera_rig.yaw;
@@ -2109,27 +2111,6 @@ void Engine::sync_network_state(uint32_t sim_tick,
     tick_input.action_flags |= net_flag(NetInputFlags::CrouchHeld);
   }
   net_client_.send_input(tick_input);
-
-  // Local simulation remains 60 Hz; network transforms match the 30 Hz
-  // snapshot cadence to avoid doubling packet pressure at 32 players.
-  if ((sim_tick & 1u) != 0u) {
-    return;
-  }
-
-  NetPlayerState state{};
-  state.player_id = local_player.network_id;
-  state.tick = sim_tick;
-  state.sequence = sim_tick;
-  state.x = local_player.transform.position.x;
-  state.y = local_player.transform.position.y;
-  state.z = local_player.transform.position.z;
-  state.vx = local_player.controller.velocity.x;
-  state.vy = local_player.controller.velocity.y;
-  state.vz = local_player.controller.velocity.z;
-  state.anim_state = static_cast<uint8_t>(local_player.anim_state);
-  state.anim_phase = local_player.anim_phase;
-  state.anim_blend = local_player.anim_blend;
-  net_client_.send_player_state(state);
 }
 
 void Engine::reset_camera() {
@@ -2185,6 +2166,12 @@ void Engine::switch_active_planet(int32_t body_index) {
       });
 
   active_body_index_ = body_index;
+  if (net_client_.is_connected()) {
+    NetChunkInterest interest{};
+    interest.body_id = static_cast<uint32_t>(body_index);
+    interest.radius = 2;
+    net_client_.set_chunk_interest(interest);
+  }
   active_frame_ = CoordinateFrame::Planet;
   active_frame_label_ = "Planet";
   frame_transition_cooldown_ = k_frame_transition_hysteresis;

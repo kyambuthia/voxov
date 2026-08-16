@@ -23,7 +23,6 @@ public:
     void shutdown();
     void pump();
     void send_input(const NetTickInput &input);
-    void send_player_state(const NetPlayerState &state);
     void set_chunk_interest(const NetChunkInterest &interest);
     bool poll_snapshot(NetSnapshot &out_snapshot);
     bool poll_chunk_state(NetChunkState &out_state);

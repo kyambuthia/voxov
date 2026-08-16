@@ -21,7 +21,6 @@ struct WebNetClient::SharedState {
     std::optional<std::pair<std::string, uint16_t>> connect_request;
     bool disconnect_requested = false;
     std::optional<NetTickInput> pending_input;
-    std::optional<NetPlayerState> pending_player_state;
     std::optional<NetChunkInterest> pending_interest;
     std::optional<NetSnapshot> snapshot;
     std::deque<NetChunkState> chunk_updates;
@@ -79,7 +78,6 @@ void web_network_worker(const std::shared_ptr<WebNetClient::SharedState> &shared
     while (!shared->stop.load()) {
         std::optional<std::pair<std::string, uint16_t>> connect_request;
         std::optional<NetTickInput> input;
-        std::optional<NetPlayerState> player_state;
         std::optional<NetChunkInterest> interest;
         bool disconnect_requested = false;
         {
@@ -90,8 +88,6 @@ void web_network_worker(const std::shared_ptr<WebNetClient::SharedState> &shared
             shared->disconnect_requested = false;
             input = shared->pending_input;
             shared->pending_input.reset();
-            player_state = shared->pending_player_state;
-            shared->pending_player_state.reset();
             interest = shared->pending_interest;
             shared->pending_interest.reset();
         }
@@ -108,9 +104,6 @@ void web_network_worker(const std::shared_ptr<WebNetClient::SharedState> &shared
         }
         if (input.has_value()) {
             transport.send_input(*input);
-        }
-        if (player_state.has_value()) {
-            transport.send_player_state(*player_state);
         }
         transport.pump();
 
@@ -212,11 +205,6 @@ void WebNetClient::pump() {}
 void WebNetClient::send_input(const NetTickInput &input) {
     std::lock_guard lock(shared_->mutex);
     shared_->pending_input = input;
-}
-
-void WebNetClient::send_player_state(const NetPlayerState &state) {
-    std::lock_guard lock(shared_->mutex);
-    shared_->pending_player_state = state;
 }
 
 void WebNetClient::set_chunk_interest(const NetChunkInterest &interest) {

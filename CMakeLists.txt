@@ -158,8 +158,10 @@ add_library(engine_events STATIC
 target_include_directories(engine_events PUBLIC src)
 target_link_libraries(engine_events PUBLIC glm::glm)
 
-add_library(engine_net_proto INTERFACE)
-target_include_directories(engine_net_proto INTERFACE src)
+add_library(engine_net_proto STATIC
+    src/engine_net_proto/net_packet_codec.cpp
+)
+target_include_directories(engine_net_proto PUBLIC src)
 
 if(VOXOV_ENABLE_XR)
     add_library(engine_xr STATIC src/engine_xr/xr_session.cpp)

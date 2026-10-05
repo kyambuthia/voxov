@@ -4,7 +4,6 @@
 #include <algorithm>
 #include <cmath>
 #include <cstdint>
-#include <cstdio>    // std::fprintf for debug diagnostics (TODO: remove)
 #include <cstring>
 #include <limits>
 #include <unordered_set>
@@ -416,7 +415,6 @@ void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const
         }
     }
 
-    int32_t solid_count = 0;
     for (int32_t z = 0; z < cs; ++z) {
         for (int32_t x = 0; x < cs; ++x) {
             const int32_t surf_h = col_height(x, z);
@@ -429,33 +427,8 @@ void BlockWorld::generate_chunk(const BlockAddress &addr, VoxelChunk &out) const
                     block_h = VoxelChunk::kMaxBlockHeight;
                 }
                 out.set_material(x, y, z, mat, block_h);
-                if (mat != VoxelMaterial::Air) {
-                    ++solid_count;
-                }
             }
         }
-    }
-
-    // Debug: log terrain height range in first chunk.
-    static bool logged_first = false;
-    if (!logged_first) {
-        logged_first = true;
-        int32_t min_h = 999, max_h = 0;
-        for (int32_t z = 0; z < config_.chunk_size; ++z) {
-            for (int32_t x = 0; x < config_.chunk_size; ++x) {
-                const int32_t h = terrain_height_at_face_uv(
-                    addr.sector, base_col_x + x, base_col_z + z);
-                min_h = std::min(min_h, h);
-                max_h = std::max(max_h, h);
-            }
-        }
-        const ShellConfig &sh = shell_config(addr.shell);
-        std::fprintf(stderr, "Chunk gen: sector=%d shell=%d chunk=(%d,%d,%d) solid=%d/%d "
-                     "base_col=(%d, %d) terrain_h=[%d..%d] vlayers=%d\n",
-                     static_cast<int>(addr.sector), addr.shell,
-                     addr.chunk.x, addr.chunk.y, addr.chunk.z,
-                     solid_count, config_.chunk_size * config_.chunk_size * config_.chunk_size,
-                     base_col_x, base_col_z, min_h, max_h, sh.vertical_layers);
     }
 }
 
@@ -1249,34 +1222,6 @@ RenderMesh BlockWorld::build_chunk_mesh(
         }
     }
 
-    // Debug: log first mesh build stats.
-    static bool logged_mesh = false;
-    if (!logged_mesh) {
-        logged_mesh = true;
-        std::fprintf(stderr, "Mesh build: verts=%zu idxs=%zu tris=%zu camera_origin=(%.1f,%.1f,%.1f)\n",
-                     mesh.vertices.size(), mesh.indices.size(), mesh.indices.size() / 3,
-                     camera_relative_origin.x, camera_relative_origin.y, camera_relative_origin.z);
-        if (!mesh.vertices.empty()) {
-            const auto &v0 = mesh.vertices[0];
-            std::fprintf(stderr, "First vertex: pos=(%.3f,%.3f,%.3f) color=(%.2f,%.2f,%.2f)\n",
-                         v0.position.x, v0.position.y, v0.position.z,
-                         v0.color.x, v0.color.y, v0.color.z);
-        }
-        // Count faces by normal direction.
-        int face_count[6] = {0};
-        for (size_t i = 0; i < mesh.vertices.size(); i += 4) {
-            const glm::vec3 &n = mesh.vertices[i].normal;
-            if (n.x > 0.5f) face_count[0]++;
-            else if (n.x < -0.5f) face_count[1]++;
-            else if (n.y > 0.5f) face_count[2]++;
-            else if (n.y < -0.5f) face_count[3]++;
-            else if (n.z > 0.5f) face_count[4]++;
-            else if (n.z < -0.5f) face_count[5]++;
-        }
-        std::fprintf(stderr, "Face counts: +x=%d -x=%d +y=%d -y=%d +z=%d -z=%d\n",
-                     face_count[0], face_count[1], face_count[2],
-                     face_count[3], face_count[4], face_count[5]);
-    }
     mesh.content_hash = block_mesh_content_hash(mesh);
     return mesh;
 }

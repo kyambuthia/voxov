@@ -1183,57 +1183,28 @@ void Engine::tick(double frame_dt,
   // correct camera-relative positions for lighting.
   scene.camera_origin.world_origin = camera_snap_origin_;
 
-  // ── Debug diagnostics ────────────────────────────────────────────────
-  // WHY: voxel blocks were invisible despite chunks being generated and meshes
-  // being built. These diagnostics trace the full pipeline: camera position,
-  // snap origin, mesh count, and whether the first vertex projects to a
-  // visible screen-space location. Logs every 60 frames to avoid spam.
-  // TODO: remove once voxel rendering is confirmed working.
-  if (frame_index % 60 == 0) {
-    // AI debugging: log complete visual state each minute for AI agents.
-    // Includes camera orientation (to reconstruct view), player state,
-    // GPU workload, and LOD distribution — everything needed to understand
-    // what the player sees without a screen.
-    std::fprintf(stderr,
-        "Frame %llu | Cam(%.0f,%.0f,%.0f) pitch=%d yaw=%d alt=%.0fm | "
-        "Grounded=%s vel=%.0fm/s | "
-        "FPS=%.0f dt=%.1fms | "
-        "draw=%d verts=%d tris=%d | "
-        "LOD: %d/%d/%d/%d chunks=%zu opaques=%zu | gen=%.1f mesh=%.1f upload=%.1fms\n",
-        static_cast<unsigned long long>(frame_index),
-        camera.transform.position.x, camera.transform.position.y, camera.transform.position.z,
-        static_cast<int>(local_player.camera_rig.pitch),
-        static_cast<int>(local_player.camera_rig.yaw),
-        glm::length(local_player.transform.position) - block_world_.planet().radius,
-        local_player.controller.grounded ? "yes" : "no",
-        static_cast<double>(glm::length(local_player.controller.velocity)),
-        render_stats.fps, render_stats.frame_ms,
-        static_cast<int>(render_stats.draw_call_count),
-        static_cast<int>(render_stats.total_vertices),
-        static_cast<int>(render_stats.total_indices) / 3,
+  // Periodic frame summary for headless/automated diagnosis. Enable with
+  // SPDLOG_LEVEL=debug.
+  if (frame_index % 120 == 0 && spdlog::should_log(spdlog::level::debug)) {
+    spdlog::debug(
+        "Frame {} | cam=({:.0f},{:.0f},{:.0f}) pitch={:.0f} yaw={:.0f} "
+        "alt={:.0f}m | grounded={} vel={:.1f}m/s | fps={:.0f} dt={:.1f}ms | "
+        "draws={} verts={} tris={} | lod={}/{}/{}/{} chunks={} opaques={} | "
+        "gen={:.1f} mesh={:.1f} upload={:.1f}ms",
+        frame_index, camera.transform.position.x, camera.transform.position.y,
+        camera.transform.position.z, local_player.camera_rig.pitch,
+        local_player.camera_rig.yaw,
+        glm::length(local_player.transform.position) -
+            block_world_.planet().radius,
+        local_player.controller.grounded,
+        glm::length(local_player.controller.velocity), render_stats.fps,
+        render_stats.frame_ms, render_stats.draw_call_count,
+        render_stats.total_vertices, render_stats.total_indices / 3,
         render_stats.lod_chunk_count[0], render_stats.lod_chunk_count[1],
         render_stats.lod_chunk_count[2], render_stats.lod_chunk_count[3],
         block_world_.chunk_count(), scene.opaque_meshes.size(),
         render_stats.chunk_gen_ms, render_stats.mesh_build_ms,
         render_stats.gpu_upload_ms);
-
-    // Project first vertex to NDC to verify it lands on screen.
-    // WHY: confirms the camera-relative vertex offset + VP matrix produce
-    // valid clip coordinates. NDC in [-1,1] with z in [0,1] = visible.
-    if (!scene.opaque_meshes.empty() && !scene.opaque_meshes[0].vertices.empty()) {
-      const auto &v0 = scene.opaque_meshes[0].vertices[0];
-      const glm::vec3 rel_pos = v0.position; // already camera-relative
-      const glm::vec3 world_pos = rel_pos + glm::vec3(camera_snap_origin_);
-      const glm::mat4 p = camera.projection(16.0f / 9.0f);
-      const glm::mat4 vp = p * camera.view();
-      const glm::vec4 clip = vp * glm::vec4(world_pos, 1.0f);
-      const glm::vec3 ndc = (clip.w != 0.0f) ? glm::vec3(clip) / clip.w : glm::vec3(999.0f);
-      std::fprintf(stderr, "  Vertex0: world=(%.1f,%.1f,%.1f) clip=(%.2f,%.2f,%.2f,%.2f) ndc=(%.2f,%.2f,%.2f) %s\n",
-                   world_pos.x, world_pos.y, world_pos.z,
-                   clip.x, clip.y, clip.z, clip.w,
-                   ndc.x, ndc.y, ndc.z,
-                   (ndc.x >= -1 && ndc.x <= 1 && ndc.y >= -1 && ndc.y <= 1 && ndc.z >= 0 && ndc.z <= 1) ? "VISIBLE" : "CLIPPED");
-    }
   }
 
   // ── Block world chunk streaming ─────────────────────────────────────
@@ -1596,16 +1567,6 @@ void Engine::tick(double frame_dt,
       // Save LOD distribution to render stats for HUD display.
       for (int i = 0; i < 4; ++i) {
         render_stats.lod_chunk_count[i] = lod_distribution[i];
-      }
-      // Debug: log LOD distribution once to verify LOD system is working.
-      // WHY: confirm LOD levels are computed and populated for 49 chunks.
-      // TODO: remove once LOD system is confirmed working.
-      static bool logged_lod = false;
-      if (!logged_lod) {
-        logged_lod = true;
-        std::fprintf(stderr, "LOD distribution: L0=%u L1=%u L2=%u L3=%u\n",
-                     lod_distribution[0], lod_distribution[1],
-                     lod_distribution[2], lod_distribution[3]);
       }
 
       // Evict meshes no longer in the desired set (player moved away).

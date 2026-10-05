@@ -13,6 +13,7 @@
 #include "sokol_app.h"
 #include "sokol_log.h"
 
+#include <spdlog/cfg/env.h>
 #include <spdlog/spdlog.h>
 
 #include <atomic>
@@ -123,7 +124,12 @@ void voxov_frame() {
     // stale visual-debug artifacts in the working tree.
 
     auto take_screenshot = [](const char *path) {
-        std::system("mkdir -p screenshots 2>/dev/null");
+        const std::filesystem::path parent =
+            std::filesystem::path(path).parent_path();
+        if (!parent.empty()) {
+            std::error_code directory_error;
+            std::filesystem::create_directories(parent, directory_error);
+        }
         const int w = sapp_width();
         const int h = sapp_height();
         if (g_runtime->capture_screenshot(path, w, h)) {
@@ -134,27 +140,35 @@ void voxov_frame() {
     // Deterministic visual-regression capture for headless/automated runs.
     // The normal game remains entirely user-driven; setting the environment
     // variable captures a settled frame and exits without synthetic key tools.
+    // VOXOV_AUTO_SCREENSHOT_FRAME overrides the default settle frame.
     static uint32_t automated_capture_frame = 0;
     if (const char *path = std::getenv("VOXOV_AUTO_SCREENSHOT")) {
+        static const uint32_t capture_at = [] {
+            const char *frame = std::getenv("VOXOV_AUTO_SCREENSHOT_FRAME");
+            const long parsed = frame != nullptr ? std::strtol(frame, nullptr, 10) : 0;
+            return parsed > 0 ? static_cast<uint32_t>(parsed) : 220u;
+        }();
         ++automated_capture_frame;
-        if (automated_capture_frame == 220) {
+        if (automated_capture_frame == capture_at) {
             take_screenshot(path);
             sapp_request_quit();
         }
     }
 
-    // F5: quick debug screenshot (overwrites same file for easy Mimo analysis).
+    // F5: quick debug screenshot (overwrites the same file). The external
+    // analysis script is a developer tool and only runs with VOXOV_DEV_TOOLS.
     static bool f5_was_down = false;
     if (g_platform) {
         const bool f5_down = g_platform->input().keys_down.test(
             static_cast<size_t>(PlatformKey::F5));
         if (f5_down && !f5_was_down) {
-            std::error_code directory_error;
-            std::filesystem::create_directories("screenshots", directory_error);
             take_screenshot("screenshots/debug_screenshot.png");
 #if !defined(_WIN32)
-            std::system("./auto_analyze.sh screenshots/debug_screenshot.png &");
-            spdlog::info("Auto-analysis started");
+            if (std::getenv("VOXOV_DEV_TOOLS") != nullptr &&
+                std::filesystem::exists("auto_analyze.sh")) {
+                std::system("./auto_analyze.sh screenshots/debug_screenshot.png &");
+                spdlog::info("Auto-analysis started");
+            }
 #endif
         }
         f5_was_down = f5_down;
@@ -260,6 +274,8 @@ void voxov_event(const sapp_event *event) {
 // ---------------------------------------------------------------------------
 
 int main(int argc, char **argv) {
+    // SPDLOG_LEVEL=debug enables the periodic frame diagnostics.
+    spdlog::cfg::load_env_levels();
     // Parse CLI
     for (int i = 1; i < argc; ++i) {
         if (std::strcmp(argv[i], "--server") == 0) {

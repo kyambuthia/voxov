@@ -3,35 +3,103 @@
 
 from pathlib import Path
 import struct
-import subprocess
 import sys
+import zlib
 
 
-def png_size(source: Path) -> tuple[int, int]:
-    with source.open("rb") as handle:
-        signature = handle.read(8)
-        if signature != b"\x89PNG\r\n\x1a\n":
-            raise ValueError(f"not a PNG: {source}")
-        length = struct.unpack(">I", handle.read(4))[0]
-        chunk_type = handle.read(4)
-        if chunk_type != b"IHDR" or length < 8:
-            raise ValueError(f"missing PNG IHDR: {source}")
-        width, height = struct.unpack(">II", handle.read(8))
-        return width, height
+_PNG_SIGNATURE = b"\x89PNG\r\n\x1a\n"
+_CHANNELS = {0: 1, 2: 3, 4: 2, 6: 4}  # grey, RGB, grey+alpha, RGBA
+
+
+def _unfilter(raw: bytes, width: int, height: int, bpp: int) -> bytearray:
+    """Reverse PNG scanline filters (spec section 9)."""
+    stride = width * bpp
+    out = bytearray(height * stride)
+    previous = bytearray(stride)
+    offset = 0
+    for y in range(height):
+        kind = raw[offset]
+        line = bytearray(raw[offset + 1:offset + 1 + stride])
+        offset += 1 + stride
+        if kind == 1:  # Sub
+            for i in range(bpp, stride):
+                line[i] = (line[i] + line[i - bpp]) & 0xFF
+        elif kind == 2:  # Up
+            line = bytearray((a + b) & 0xFF for a, b in zip(line, previous))
+        elif kind == 3:  # Average
+            for i in range(stride):
+                left = line[i - bpp] if i >= bpp else 0
+                line[i] = (line[i] + ((left + previous[i]) >> 1)) & 0xFF
+        elif kind == 4:  # Paeth
+            for i in range(stride):
+                a = line[i - bpp] if i >= bpp else 0
+                b = previous[i]
+                c = previous[i - bpp] if i >= bpp else 0
+                p = a + b - c
+                pa, pb, pc = abs(p - a), abs(p - b), abs(p - c)
+                predictor = a if pa <= pb and pa <= pc else (b if pb <= pc else c)
+                line[i] = (line[i] + predictor) & 0xFF
+        elif kind != 0:
+            raise ValueError(f"unknown PNG filter {kind}")
+        out[y * stride:(y + 1) * stride] = line
+        previous = line
+    return out
 
 
 def rgba_pixels(source: Path) -> tuple[int, int, bytes]:
-    width, height = png_size(source)
-    result = subprocess.run(
-        ["ffmpeg", "-v", "error", "-i", str(source), "-f", "rawvideo",
-         "-pix_fmt", "rgba", "pipe:1"],
-        check=True,
-        stdout=subprocess.PIPE,
-    )
-    expected = width * height * 4
-    if len(result.stdout) != expected:
-        raise ValueError(f"unexpected decoded size for {source}")
-    return width, height, result.stdout
+    """Decode an 8-bit, non-interlaced PNG to RGBA with the standard library.
+
+    The build used to shell out to ffmpeg, which CI runners don't have.
+    """
+    data = source.read_bytes()
+    if data[:8] != _PNG_SIGNATURE:
+        raise ValueError(f"not a PNG: {source}")
+    offset = 8
+    width = height = depth = color_type = interlace = None
+    palette = b""
+    transparency = b""
+    compressed = bytearray()
+    while offset < len(data):
+        length = struct.unpack(">I", data[offset:offset + 4])[0]
+        kind = data[offset + 4:offset + 8]
+        body = data[offset + 8:offset + 8 + length]
+        offset += 12 + length
+        if kind == b"IHDR":
+            width, height, depth, color_type, _, _, interlace = struct.unpack(
+                ">IIBBBBB", body)
+        elif kind == b"PLTE":
+            palette = body
+        elif kind == b"tRNS":
+            transparency = body
+        elif kind == b"IDAT":
+            compressed += body
+        elif kind == b"IEND":
+            break
+    if width is None:
+        raise ValueError(f"missing PNG IHDR: {source}")
+    if depth != 8 or interlace != 0 or color_type not in (0, 2, 3, 4, 6):
+        raise ValueError(
+            f"unsupported PNG format (depth={depth}, type={color_type}, "
+            f"interlace={interlace}): {source}")
+    bpp = 1 if color_type == 3 else _CHANNELS[color_type]
+    pixels = _unfilter(zlib.decompress(bytes(compressed)), width, height, bpp)
+    if color_type == 6:
+        return width, height, bytes(pixels)
+    rgba = bytearray(width * height * 4)
+    for i in range(width * height):
+        if color_type == 3:
+            index = pixels[i]
+            rgba[i * 4:i * 4 + 3] = palette[index * 3:index * 3 + 3]
+            rgba[i * 4 + 3] = (transparency[index]
+                               if index < len(transparency) else 255)
+        elif color_type == 2:
+            rgba[i * 4:i * 4 + 3] = pixels[i * 3:i * 3 + 3]
+            rgba[i * 4 + 3] = 255
+        else:
+            grey = pixels[i * bpp]
+            rgba[i * 4:i * 4 + 3] = bytes((grey, grey, grey))
+            rgba[i * 4 + 3] = pixels[i * 2 + 1] if color_type == 4 else 255
+    return width, height, bytes(rgba)
 
 
 def make_layer(source: Path, size: int = 64) -> bytes:

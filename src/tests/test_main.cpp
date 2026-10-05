@@ -1,10 +1,13 @@
 #include "engine_core/cvar.hpp"
 #include "engine_core/string_id.hpp"
 #include "engine/planet_gameplay_config.hpp"
+#include "engine_gameplay/animation/skeletal_animator.hpp"
 #include "engine_gameplay/minigames/minigames.hpp"
 #include "engine_gameplay/objectives/expedition_mission.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
+#include "engine_gameplay/player/player_visuals.hpp"
 #include "engine_gameplay/player/surface_orientation.hpp"
+#include "engine_presentation/debug_scene_builder.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net_proto/net_protocol_helpers.hpp"
 #include "engine_net_proto/net_packet_codec.hpp"
@@ -40,11 +43,17 @@
 #include <cmath>
 #include <cstddef>
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 #include <filesystem>
+#include <limits>
 #include <vector>
 
 namespace {
+
+bool vector_is_finite(const glm::vec3 &v) {
+  return std::isfinite(v.x) && std::isfinite(v.y) && std::isfinite(v.z);
+}
 
 void test_expedition_mission_requires_ordered_player_actions() {
   ExpeditionMission mission;
@@ -2770,6 +2779,495 @@ void test_vehicle_sandbox_scene_step() {
   assert(snap.static_shape_count > 0);
 }
 
+struct AvatarVertexStats {
+  size_t vertex_count = 0;
+  size_t index_count = 0;
+  glm::vec3 min_position{0.0f};
+  glm::vec3 max_position{0.0f};
+};
+
+AvatarVertexStats mesh_bounds(const RenderMesh &mesh) {
+  AvatarVertexStats stats;
+  stats.vertex_count = mesh.vertices.size();
+  stats.index_count = mesh.indices.size();
+  stats.min_position = glm::vec3(std::numeric_limits<float>::max());
+  stats.max_position = glm::vec3(-std::numeric_limits<float>::max());
+  for (const RenderVertex &vertex : mesh.vertices) {
+    stats.min_position = glm::min(stats.min_position, vertex.position);
+    stats.max_position = glm::max(stats.max_position, vertex.position);
+  }
+  return stats;
+}
+
+void assert_avatar_geometry(const RenderMesh &mesh) {
+  assert(!mesh.vertices.empty());
+  assert(!mesh.indices.empty());
+  assert(mesh.indices.size() % 3 == 0);
+  assert(!mesh.use_16_bit_indices);
+  assert(mesh.indices16.empty());
+  for (const RenderVertex &vertex : mesh.vertices) {
+    assert(vector_is_finite(vertex.position));
+    assert(vector_is_finite(vertex.normal));
+    assert(vector_is_finite(vertex.color));
+    assert(vector_is_finite(vertex.texcoord));
+    assert(std::fabs(glm::length(vertex.normal) - 1.0f) < 1.0e-4f);
+  }
+  for (uint32_t index : mesh.indices) {
+    assert(index < mesh.vertices.size());
+  }
+  for (size_t i = 0; i < mesh.indices.size(); i += 3) {
+    const RenderVertex &a = mesh.vertices[mesh.indices[i]];
+    const RenderVertex &b = mesh.vertices[mesh.indices[i + 1]];
+    const RenderVertex &c = mesh.vertices[mesh.indices[i + 2]];
+    const glm::vec3 cross = glm::cross(b.position - a.position,
+                                      c.position - a.position);
+    assert(glm::length(cross) > 1.0e-7f);
+    const glm::vec3 face_normal = glm::normalize(cross);
+    assert(glm::dot(face_normal, a.normal) > 0.999f);
+    assert(glm::dot(face_normal, b.normal) > 0.999f);
+    assert(glm::dot(face_normal, c.normal) > 0.999f);
+  }
+}
+
+void assert_avatar_mesh_equal(const RenderMesh &actual,
+                              const RenderMesh &expected) {
+  assert(actual.vertices.size() == expected.vertices.size());
+  assert(actual.indices == expected.indices);
+  for (size_t i = 0; i < actual.vertices.size(); ++i) {
+    const RenderVertex &a = actual.vertices[i];
+    const RenderVertex &b = expected.vertices[i];
+    assert(glm::length(a.position - b.position) < 1.0e-4f);
+    assert(glm::length(a.normal - b.normal) < 1.0e-4f);
+    assert(a.color == b.color);
+    assert(a.texcoord == b.texcoord);
+  }
+}
+
+RenderMesh build_local_avatar_mesh(bool devhud_enabled) {
+  PlayerEntity player{};
+  player.network_id = 7;
+  player.transform.position = glm::vec3(3.0f, 0.0f, -4.0f);
+  player.controller.capsuleRadius = 0.35f;
+  player.controller.capsuleHeight = 1.8f;
+  player.anim_state = PlayerAnimState::Idle;
+  player.anim_phase = 0.0f;
+  player.anim_blend = 0.0f;
+
+  PlayerAnimationRuntime animation;
+  animation.reset(PlayerAnimState::Idle);
+
+  RuntimeDebugSceneSnapshot snapshot{};
+  snapshot.devhud_enabled = devhud_enabled;
+  snapshot.render_local_avatar = true;
+  snapshot.avatar_style = RuntimeDebugSceneSnapshot::AvatarStyle::Humanoid;
+  snapshot.local_player = &player;
+  snapshot.local_player_animation = &animation;
+  return DebugSceneBuilder{}.build(snapshot);
+}
+
+void test_debug_scene_builder_humanoid_thirdperson_without_overlays() {
+  const RenderMesh hud = build_local_avatar_mesh(true);
+  const AvatarVertexStats hud_stats = mesh_bounds(hud);
+  assert(hud_stats.vertex_count > 0);
+  assert(hud_stats.index_count > 0);
+
+  const RenderMesh plain = build_local_avatar_mesh(false);
+  const AvatarVertexStats plain_stats = mesh_bounds(plain);
+  // Without the devhud the scene is exactly the blocky body: no debug
+  // markers, axes, or collision overlays.
+  assert(plain_stats.vertex_count < hud_stats.vertex_count);
+  assert_avatar_geometry(plain);
+  assert_avatar_mesh_equal(build_local_avatar_mesh(false), plain);
+  RenderMesh expected_body;
+  SkeletalAnimator::append_blocky_mesh(
+      expected_body,
+      SkeletalAnimator::sample_pose(PlayerAnimState::Idle, 0.0f, 0.0f),
+      glm::vec3(3.0f, 0.0f, -4.0f), glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+      player_color_from_network_id(7));
+  assert_avatar_mesh_equal(plain, expected_body);
+  assert(plain_stats.min_position.x > 0.0f);
+  assert(plain_stats.max_position.y > 1.7f && plain_stats.max_position.y < 2.4f);
+
+  bool found_feet_marker = false;
+  for (const RenderVertex &vertex : hud.vertices) {
+    if (vertex.color.r > 0.9f && vertex.color.g > 0.8f &&
+        vertex.color.b < 0.2f) {
+      found_feet_marker = true;
+      break;
+    }
+  }
+  assert(!found_feet_marker);
+
+  bool found_body_color = false;
+  const glm::vec3 body_color =
+      player_color_from_network_id(7) * glm::vec3(0.92f, 0.94f, 0.96f);
+  for (const RenderVertex &vertex : plain.vertices) {
+    if (glm::length(vertex.color - body_color) < 0.01f) {
+      found_body_color = true;
+      break;
+    }
+  }
+  assert(found_body_color);
+
+  RuntimeDebugSceneSnapshot hidden{};
+  hidden.devhud_enabled = false;
+  hidden.render_local_avatar = false;
+  hidden.avatar_style = RuntimeDebugSceneSnapshot::AvatarStyle::Humanoid;
+  PlayerEntity player{};
+  PlayerAnimationRuntime animation;
+  animation.reset(PlayerAnimState::Idle);
+  hidden.local_player = &player;
+  hidden.local_player_animation = &animation;
+  const RenderMesh empty = DebugSceneBuilder{}.build(hidden);
+  assert(empty.vertices.empty());
+  assert(empty.indices.empty());
+}
+void test_skeletal_animator_append_blocky_mesh_geometry() {
+  const SkeletonPose pose = SkeletalAnimator::sample_pose(
+      PlayerAnimState::Idle, 0.0f, 0.0f);
+
+  RenderMesh mesh;
+  const glm::vec3 color(0.8f, 0.6f, 0.4f);
+  SkeletalAnimator::append_blocky_mesh(mesh, pose, glm::vec3(0.0f),
+                                       glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+                                       color);
+  assert(!mesh.vertices.empty());
+  assert(!mesh.indices.empty());
+  assert(mesh.vertices.size() % 24 == 0);
+  assert(mesh.indices.size() % 6 == 0);
+  assert(mesh.indices.size() == mesh.vertices.size() / 4 * 6);
+
+  const glm::vec3 base_color = color * glm::vec3(0.92f, 0.94f, 0.96f);
+  bool found_base_color = false;
+  bool found_accent = false;
+  for (const RenderVertex &vertex : mesh.vertices) {
+    if (glm::length(vertex.color - base_color) < 0.001f) {
+      found_base_color = true;
+    }
+    if (glm::length(vertex.color - color * glm::vec3(1.0f, 0.82f, 0.42f)) <
+        0.001f) {
+      found_accent = true;
+    }
+  }
+  assert(found_base_color);
+  assert(found_accent);
+
+  float min_y = std::numeric_limits<float>::max();
+  float max_y = -std::numeric_limits<float>::max();
+  for (const RenderVertex &vertex : mesh.vertices) {
+    min_y = std::min(min_y, vertex.position.y);
+    max_y = std::max(max_y, vertex.position.y);
+  }
+  assert(min_y > 0.0f);
+  assert(min_y < 0.15f);
+  assert(max_y > 1.7f);
+  assert(max_y < 2.4f);
+
+  assert_avatar_geometry(mesh);
+}
+
+void test_skeletal_animator_animation_alters_positions_and_translation() {
+  const glm::quat identity(1.0f, 0.0f, 0.0f, 0.0f);
+  const glm::vec3 color(1.0f, 1.0f, 1.0f);
+
+  const SkeletonPose idle_a = SkeletalAnimator::sample_pose(
+      PlayerAnimState::Idle, 0.0f, 0.0f);
+  const SkeletonPose idle_b = SkeletalAnimator::sample_pose(
+      PlayerAnimState::Idle, 1.3f, 0.0f);
+  const SkeletonPose walk_a = SkeletalAnimator::sample_pose(
+      PlayerAnimState::LocomotionWalk, 0.0f, 1.0f);
+  const SkeletonPose walk_b = SkeletalAnimator::sample_pose(
+      PlayerAnimState::LocomotionWalk, 1.3f, 1.0f);
+  const SkeletonPose jump = SkeletalAnimator::sample_pose(
+      PlayerAnimState::JumpTakeoff, 0.9f, 0.0f);
+
+  bool walk_differs = false;
+  bool walk_cycles = false;
+  bool idle_motion = false;
+  bool jump_lifts = false;
+  for (size_t i = 0; i < idle_a.local_joints.size(); ++i) {
+    if (glm::length(walk_a.local_joints[i] - idle_a.local_joints[i]) >
+        0.005f) {
+      walk_differs = true;
+    }
+    if (glm::length(walk_b.local_joints[i] - walk_a.local_joints[i]) >
+        0.005f) {
+      walk_cycles = true;
+    }
+    if (glm::length(idle_b.local_joints[i] - idle_a.local_joints[i]) >
+        0.0005f) {
+      idle_motion = true;
+    }
+    if (jump.local_joints[i].y > idle_a.local_joints[i].y + 0.15f) {
+      jump_lifts = true;
+    }
+  }
+  assert(walk_differs);
+  assert(walk_cycles);
+  assert(idle_motion);
+  assert(jump_lifts);
+
+  const glm::vec3 offset(7.0f, 1.5f, -3.0f);
+  RenderMesh origin_mesh;
+  SkeletalAnimator::append_blocky_mesh(origin_mesh, idle_a, glm::vec3(0.0f),
+                                       identity, color);
+  RenderMesh offset_mesh;
+  SkeletalAnimator::append_blocky_mesh(offset_mesh, idle_a, offset, identity,
+                                       color);
+  assert(origin_mesh.vertices.size() == offset_mesh.vertices.size());
+  for (size_t i = 0; i < origin_mesh.vertices.size(); ++i) {
+    assert(glm::length(offset_mesh.vertices[i].position -
+                       (origin_mesh.vertices[i].position + offset)) < 0.0001f);
+  }
+
+  const glm::quat yaw90 = glm::quat_cast(glm::rotate(
+      glm::mat4(1.0f), glm::half_pi<float>(), glm::vec3(0.0f, 1.0f, 0.0f)));
+  RenderMesh yaw_mesh;
+  SkeletalAnimator::append_blocky_mesh(yaw_mesh, idle_a, glm::vec3(0.0f),
+                                       yaw90, color);
+  bool rotated = false;
+  for (size_t i = 0; i < origin_mesh.vertices.size(); ++i) {
+    if (glm::length(yaw_mesh.vertices[i].position -
+                    origin_mesh.vertices[i].position) > 0.05f) {
+      rotated = true;
+      break;
+    }
+  }
+  assert(rotated);
+  const glm::mat3 yaw_frame = glm::mat3_cast(yaw90);
+  for (size_t i = 0; i < 6 * 24; ++i) {
+    const glm::vec3 rotated_position =
+        yaw_frame * origin_mesh.vertices[i].position;
+    assert(glm::length(yaw_mesh.vertices[i].position - rotated_position) <
+           0.001f);
+  }
+  bool limb_moved = false;
+  for (size_t i = 6 * 24; i < origin_mesh.vertices.size(); ++i) {
+    if (glm::length(yaw_mesh.vertices[i].position -
+                    yaw_frame * origin_mesh.vertices[i].position) > 0.005f) {
+      limb_moved = true;
+      break;
+    }
+  }
+  assert(limb_moved);
+}
+
+void test_blocky_mesh_rigid_transform_covariance() {
+  const SkeletonPose pose = SkeletalAnimator::sample_pose(
+      PlayerAnimState::Idle, 0.7f, 0.0f);
+  const glm::vec3 color(1.0f, 1.0f, 1.0f);
+
+  RenderMesh reference;
+  SkeletalAnimator::append_blocky_mesh(reference, pose, glm::vec3(0.0f),
+                                       glm::quat(1.0f, 0.0f, 0.0f, 0.0f),
+                                       color);
+  assert(!reference.vertices.empty());
+
+  const glm::vec3 translation(11.0f, -2.0f, 5.0f);
+  const glm::quat rotation = glm::angleAxis(glm::radians(123.0f),
+      glm::normalize(glm::vec3(0.3f, -0.5f, 0.8f)));
+  const glm::mat3 rotation_matrix = glm::mat3_cast(rotation);
+
+  RenderMesh transformed;
+  SkeletalAnimator::append_blocky_mesh(transformed, pose, translation,
+                                       rotation, color);
+  assert(transformed.vertices.size() == reference.vertices.size());
+  assert(transformed.indices.size() == reference.indices.size());
+
+  double sum_x = 0.0;
+  double sum_y = 0.0;
+  double sum_z = 0.0;
+  const size_t count = reference.vertices.size();
+  for (const RenderVertex &vertex : reference.vertices) {
+    sum_x += vertex.position.x;
+    sum_y += vertex.position.y;
+    sum_z += vertex.position.z;
+  }
+  const glm::vec3 reference_mean(
+      static_cast<float>(sum_x / static_cast<double>(count)),
+      static_cast<float>(sum_y / static_cast<double>(count)),
+      static_cast<float>(sum_z / static_cast<double>(count)));
+
+  double m00 = 0.0;
+  double m01 = 0.0;
+  double m02 = 0.0;
+  double m11 = 0.0;
+  double m12 = 0.0;
+  double m22 = 0.0;
+  for (const RenderVertex &vertex : reference.vertices) {
+    const glm::vec3 d = vertex.position - reference_mean;
+    m00 += static_cast<double>(d.x) * d.x;
+    m01 += static_cast<double>(d.x) * d.y;
+    m02 += static_cast<double>(d.x) * d.z;
+    m11 += static_cast<double>(d.y) * d.y;
+    m12 += static_cast<double>(d.y) * d.z;
+    m22 += static_cast<double>(d.z) * d.z;
+  }
+  const glm::mat3 reference_covariance(
+      static_cast<float>(m00 / count), static_cast<float>(m01 / count),
+      static_cast<float>(m02 / count), static_cast<float>(m01 / count),
+      static_cast<float>(m11 / count), static_cast<float>(m12 / count),
+      static_cast<float>(m02 / count), static_cast<float>(m12 / count),
+      static_cast<float>(m22 / count));
+
+  sum_x = 0.0;
+  sum_y = 0.0;
+  sum_z = 0.0;
+  for (const RenderVertex &vertex : transformed.vertices) {
+    sum_x += vertex.position.x;
+    sum_y += vertex.position.y;
+    sum_z += vertex.position.z;
+  }
+  const glm::vec3 transformed_mean(
+      static_cast<float>(sum_x / static_cast<double>(count)),
+      static_cast<float>(sum_y / static_cast<double>(count)),
+      static_cast<float>(sum_z / static_cast<double>(count)));
+  assert(glm::length(transformed_mean -
+                     (rotation_matrix * reference_mean + translation)) <
+         0.02f);
+
+  m00 = 0.0;
+  m01 = 0.0;
+  m02 = 0.0;
+  m11 = 0.0;
+  m12 = 0.0;
+  m22 = 0.0;
+  for (const RenderVertex &vertex : transformed.vertices) {
+    const glm::vec3 d = vertex.position - transformed_mean;
+    m00 += static_cast<double>(d.x) * d.x;
+    m01 += static_cast<double>(d.x) * d.y;
+    m02 += static_cast<double>(d.x) * d.z;
+    m11 += static_cast<double>(d.y) * d.y;
+    m12 += static_cast<double>(d.y) * d.z;
+    m22 += static_cast<double>(d.z) * d.z;
+  }
+  const glm::mat3 transformed_covariance(
+      static_cast<float>(m00 / count), static_cast<float>(m01 / count),
+      static_cast<float>(m02 / count), static_cast<float>(m01 / count),
+      static_cast<float>(m11 / count), static_cast<float>(m12 / count),
+      static_cast<float>(m02 / count), static_cast<float>(m12 / count),
+      static_cast<float>(m22 / count));
+
+  const glm::mat3 expected_covariance =
+      rotation_matrix * reference_covariance * glm::transpose(rotation_matrix);
+  for (int c = 0; c < 3; ++c) {
+    for (int r = 0; r < 3; ++r) {
+      assert(std::fabs(expected_covariance[c][r] -
+                       transformed_covariance[c][r]) < 0.002f);
+    }
+  }
+
+  for (size_t b = 0; b < 6; ++b) {
+    for (size_t i = 0; i < 24; ++i) {
+      const size_t index = b * 24 + i;
+      const glm::vec3 expected =
+          translation + rotation_matrix * reference.vertices[index].position;
+      assert(glm::length(transformed.vertices[index].position - expected) <
+             0.001f);
+      const glm::vec3 expected_normal =
+          rotation_matrix * reference.vertices[index].normal;
+      assert(glm::length(transformed.vertices[index].normal - expected_normal) <
+             0.001f);
+    }
+  }
+
+  const glm::quat south_pole = glm::angleAxis(glm::pi<float>(),
+                                              glm::vec3(1.0f, 0.0f, 0.0f));
+  RenderMesh south;
+  SkeletalAnimator::append_blocky_mesh(south, pose, glm::vec3(0.0f),
+                                       south_pole, color);
+  bool upside_down = false;
+  for (size_t i = 0; i < count; ++i) {
+    const glm::vec3 flipped = reference.vertices[i].position *
+        glm::vec3(1.0f, -1.0f, -1.0f);
+    if (glm::length(south.vertices[i].position - flipped) < 0.02f) {
+      upside_down = true;
+      break;
+    }
+  }
+  assert(upside_down);
+  for (const RenderVertex &vertex : south.vertices) {
+    assert(vector_is_finite(vertex.position));
+    assert(std::isfinite(vertex.normal.x) && std::isfinite(vertex.normal.y) &&
+           std::isfinite(vertex.normal.z));
+    assert(glm::length(vertex.normal) > 0.9f);
+    assert(glm::length(vertex.normal) < 1.1f);
+  }
+}
+
+void test_blocky_mesh_destination_index_offsets() {
+  const SkeletonPose pose = SkeletalAnimator::sample_pose(
+      PlayerAnimState::Idle, 0.0f, 0.0f);
+  const glm::quat identity(1.0f, 0.0f, 0.0f, 0.0f);
+  const glm::vec3 color(0.5f, 0.5f, 0.5f);
+
+  RenderMesh alone;
+  SkeletalAnimator::append_blocky_mesh(alone, pose, glm::vec3(0.0f), identity,
+                                       color);
+
+  RenderMesh terrain_like;
+  terrain_like.vertices.push_back(
+      {glm::vec3(-5.0f, -1.0f, -5.0f), glm::vec3(0.2f, 0.6f, 0.2f),
+       glm::vec3(0.0f, 1.0f, 0.0f)});
+  terrain_like.vertices.push_back(
+      {glm::vec3(5.0f, -1.0f, -5.0f), glm::vec3(0.2f, 0.6f, 0.2f),
+       glm::vec3(0.0f, 1.0f, 0.0f)});
+  terrain_like.vertices.push_back(
+      {glm::vec3(5.0f, -1.0f, 5.0f), glm::vec3(0.2f, 0.6f, 0.2f),
+       glm::vec3(0.0f, 1.0f, 0.0f)});
+  terrain_like.vertices.push_back(
+      {glm::vec3(-5.0f, -1.0f, 5.0f), glm::vec3(0.2f, 0.6f, 0.2f),
+       glm::vec3(0.0f, 1.0f, 1.0f)});
+  terrain_like.indices.insert(terrain_like.indices.end(),
+                              {0u, 1u, 2u, 0u, 2u, 3u});
+
+  const size_t seed_vertices = terrain_like.vertices.size();
+  const size_t seed_indices = terrain_like.indices.size();
+  const uint32_t first_avatar_base =
+      static_cast<uint32_t>(alone.indices.front());
+
+  SkeletalAnimator::append_blocky_mesh(terrain_like, pose, glm::vec3(0.0f),
+                                       identity, color);
+  assert(terrain_like.vertices.size() == seed_vertices + alone.vertices.size());
+  assert(terrain_like.indices.size() == seed_indices + alone.indices.size());
+
+  const uint32_t seed_index_values[] = {0u, 1u, 2u, 0u, 2u, 3u};
+  for (size_t i = 0; i < seed_indices; ++i) {
+    assert(terrain_like.indices[i] == seed_index_values[i]);
+  }
+  for (size_t i = 0; i < alone.indices.size(); ++i) {
+    assert(terrain_like.indices[seed_indices + i] ==
+           static_cast<uint32_t>(seed_vertices) + alone.indices[i]);
+    assert(terrain_like.indices[seed_indices + i] <
+           terrain_like.vertices.size());
+  }
+  for (size_t i = 0; i < alone.vertices.size(); ++i) {
+    assert(terrain_like.vertices[seed_vertices + i].position ==
+           alone.vertices[i].position);
+    assert(terrain_like.vertices[seed_vertices + i].normal ==
+           alone.vertices[i].normal);
+  }
+
+  SkeletalAnimator::append_blocky_mesh(terrain_like, pose,
+                                       glm::vec3(0.0f, 0.0f, 10.0f), identity,
+                                       color);
+  const size_t second_base = seed_indices + alone.indices.size();
+  const size_t second_vertex_base = seed_vertices + alone.vertices.size();
+  assert(terrain_like.indices.size() == second_base + alone.indices.size());
+  const uint32_t second_expected_base =
+      static_cast<uint32_t>(second_vertex_base);
+  for (size_t i = 0; i < alone.indices.size(); ++i) {
+    const uint32_t expected = second_expected_base + alone.indices[i];
+    assert(terrain_like.indices[second_base + i] == expected);
+  }
+  for (size_t i = 0; i < alone.vertices.size(); ++i) {
+    assert(glm::length(terrain_like.vertices[second_vertex_base + i].position -
+                       (alone.vertices[i].position +
+                        glm::vec3(0.0f, 0.0f, 10.0f))) < 0.0001f);
+  }
+  assert(first_avatar_base == 0u);
+}
+
 } // namespace
 
 int main() {
@@ -2876,5 +3374,10 @@ int main() {
   test_vehicle_damage_model_impact();
   test_vehicle_damage_model_deterministic();
   test_vehicle_sandbox_scene_step();
+  test_debug_scene_builder_humanoid_thirdperson_without_overlays();
+  test_skeletal_animator_append_blocky_mesh_geometry();
+  test_skeletal_animator_animation_alters_positions_and_translation();
+  test_blocky_mesh_rigid_transform_covariance();
+  test_blocky_mesh_destination_index_offsets();
   return 0;
 }

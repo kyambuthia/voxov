@@ -5,6 +5,12 @@
 #include <glm/glm.hpp>
 
 RenderMesh build_debug_capsule_mesh(glm::vec3 feet_position, float radius, float height, glm::vec3 color);
+// Same capsule but standing along `surface_up` instead of world +Y — for
+// spherical planets where radial up varies by position.
+RenderMesh build_debug_capsule_mesh_oriented(glm::vec3 feet_position,
+                                             glm::vec3 surface_up,
+                                             float radius, float height,
+                                             glm::vec3 color);
 RenderMesh build_debug_sphere_mesh(glm::vec3 center, float radius, glm::vec3 color);
 RenderMesh build_debug_aabb_mesh(glm::vec3 bmin, glm::vec3 bmax, glm::vec3 color);
 RenderMesh build_debug_line_mesh(glm::vec3 start, glm::vec3 end, float thickness, glm::vec3 color);

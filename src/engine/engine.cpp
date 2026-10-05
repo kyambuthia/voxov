@@ -238,15 +238,33 @@ void enqueue_animation_runtime_events(EventBus &events,
 RenderMesh build_local_player_debug_mesh(
     const PlayerEntity &player,
     const PlayerAnimationRuntime &animation_runtime,
-    bool devhud_enabled) {
-  if (!devhud_enabled) {
-    return RenderMesh{};
-  }
+    bool devhud_enabled,
+    bool render_local_avatar,
+    RuntimeDebugSceneSnapshot::AvatarStyle avatar_style,
+    bool spherical_planet) {
   RuntimeDebugSceneSnapshot snapshot{};
+  // Planet-local player coordinates are centered on the active body.
+  snapshot.spherical_planet = spherical_planet;
+  snapshot.spherical_planet_center = glm::vec3(0.0f);
   snapshot.devhud_enabled = devhud_enabled;
+  snapshot.render_local_avatar = render_local_avatar;
+  snapshot.avatar_style = avatar_style;
   snapshot.local_player = &player;
   snapshot.local_player_animation = &animation_runtime;
   return DebugSceneBuilder{}.build(snapshot);
+}
+
+RuntimeDebugSceneSnapshot::AvatarStyle avatar_style_from_character(
+    GuiMenu::Character character) {
+  switch (character) {
+  case GuiMenu::Character::Humanoid:
+    return RuntimeDebugSceneSnapshot::AvatarStyle::Humanoid;
+  case GuiMenu::Character::Skeleton:
+    return RuntimeDebugSceneSnapshot::AvatarStyle::Skeleton;
+  case GuiMenu::Character::Capsule:
+    break;
+  }
+  return RuntimeDebugSceneSnapshot::AvatarStyle::Capsule;
 }
 } // namespace
 
@@ -258,7 +276,9 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   runtime_options.platform_services = nullptr;
   session_state_.gameplay_started = true;
   session_state_.menu_open = false;
-  session_state_.selected_character = GuiMenu::Character::Capsule;
+  session_state_.selected_character = GuiMenu::Character::Humanoid;
+  third_person_camera_initialized_ = false;
+  third_person_distance_ = 4.5f;
 
   game_session.reset();
   event_bus_.clear();
@@ -401,11 +421,13 @@ bool Engine::init(const EngineRuntimeOptions &options) {
         equator_col, 2.0);
     local_player.controller.capsuleRadius = 0.7f;
   }
-  local_player.camera_rig.pitch = -45.0f;   // steeper angle to see terrain height variation
-  local_player.camera_rig.distance = 0.0f;   // first-person: no orbit distance
-  local_player.camera_rig.maxDistance = 0.0f;
-  local_player.camera_rig.minDistance = 0.0f;
-  local_player.camera_rig.pivotHeight = 0.0f;
+  local_player.camera_rig.pitch = -20.0f;
+  // Third-person orbit rig: distance 0 would be first-person; start in
+  // third-person so the new avatar is immediately visible.
+  local_player.camera_rig.distance = 4.5f;
+  local_player.camera_rig.maxDistance = 12.0f;
+  local_player.camera_rig.minDistance = 1.2f;
+  local_player.camera_rig.pivotHeight = 1.35f;
   local_player.locomotion_tuning.flight_speed =
       kPlayablePlanetConfig.debug_flight_speed_mps;
   local_player.locomotion_tuning.flight_sprint_base_speed =
@@ -426,7 +448,10 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   update_first_person_camera(local_player, camera);
 
   scene.debug_world = build_local_player_debug_mesh(
-      local_player, local_player_animation, session_state_.devhud_enabled);
+      local_player, local_player_animation, session_state_.devhud_enabled,
+      /*render_local_avatar=*/true,
+      avatar_style_from_character(session_state_.selected_character),
+      collision_world.has_planet_surface_collider());
   refresh_overlay_text();
 
     // Start with fly mode OFF — gravity walks on the sphere surface.
@@ -524,9 +549,11 @@ bool Engine::init(const EngineRuntimeOptions &options) {
         const glm::dvec3 east = glm::normalize(glm::cross(world_ref, surface_normal));
         const glm::dvec3 north = glm::normalize(glm::cross(surface_normal, east));
 
-        // Build quaternion from local tangent frame:
-        // right = east, up = surface_normal, forward = north
-        const glm::dmat3 rot(east, surface_normal, north);
+        // Build quaternion from local tangent frame: up = surface_normal,
+        // forward = north. Column 0 must be up x forward for a proper
+        // (det +1) rotation; (east, up, north) would be a reflection.
+        const glm::dmat3 rot(glm::cross(surface_normal, north),
+                             surface_normal, north);
         flight_vehicle_.state().position = vehicle_pos;
         flight_vehicle_.state().orientation = glm::quat_cast(rot);
         flight_vehicle_.state().forward = north;
@@ -657,6 +684,20 @@ void Engine::tick(double frame_dt,
     last_hud_message_ = sky_navigation_mode_
         ? "Sky navigation ON — arrows select, ENTER locks"
         : "Sky navigation OFF";
+  }
+
+  if (gameplay_input.camera_toggle_pressed &&
+      session_state_.gameplay_started && !session_state_.menu_open) {
+    CameraRig &rig = local_player.camera_rig;
+    third_person_camera_initialized_ = false;
+    if (rig.distance > 0.0f) {
+      third_person_distance_ = rig.distance;
+      rig.distance = 0.0f;
+      last_hud_message_ = "First-person view";
+    } else {
+      rig.distance = third_person_distance_;
+      last_hud_message_ = "Third-person view — mouse wheel zooms";
+    }
   }
 
   if (sky_navigation_mode_) {
@@ -966,7 +1007,7 @@ void Engine::tick(double frame_dt,
   }
   // First-person camera from player eye position.
   update_first_person_camera(local_player, local_player.transform.position,
-                              camera);
+                              camera, static_cast<float>(frame_dt));
 
   // Preserve precision near blocks while allowing the whole compact planet
   // to fit in the frustum during debug flight.
@@ -1839,8 +1880,17 @@ void Engine::tick(double frame_dt,
       const glm::dvec3 player_world(state.x, state.y, state.z);
       const glm::vec3 player_relative =
           camera_relative_position(player_world, scene.camera_origin);
-      RenderMesh player_mesh = build_debug_sphere_mesh(
-          player_relative, 1.0f, player_color_from_network_id(player_id));
+      // Capsule avatar matching the local player's body, feet planted by
+      // offsetting half the body height along the radial surface up.
+      constexpr float k_remote_body_height = 1.8f;
+      const glm::vec3 surface_up =
+          glm::length(player_world) > 0.001
+              ? glm::vec3(glm::normalize(player_world))
+              : glm::vec3(0.0f, 1.0f, 0.0f);
+      RenderMesh player_mesh = build_debug_capsule_mesh_oriented(
+          player_relative - surface_up * (k_remote_body_height * 0.5f),
+          surface_up, 0.4f, k_remote_body_height,
+          player_color_from_network_id(player_id));
       player_mesh.mesh_id = 0;
       player_mesh.world_origin = scene.camera_origin.world_origin;
       scene.opaque_meshes.push_back(std::move(player_mesh));
@@ -1922,7 +1972,10 @@ void Engine::tick(double frame_dt,
   render_stats.total_indices = opaque_idxs;
 
   scene.debug_world = build_local_player_debug_mesh(
-      local_player, local_player_animation, session_state_.devhud_enabled);
+      local_player, local_player_animation, session_state_.devhud_enabled,
+      local_player.camera_rig.distance > 0.1f,
+      avatar_style_from_character(session_state_.selected_character),
+      collision_world.has_planet_surface_collider());
   refresh_overlay_text();
   renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
 
@@ -2116,7 +2169,7 @@ void Engine::sync_network_state(uint32_t sim_tick,
 void Engine::reset_camera() {
   local_player.camera_rig.yaw = 180.0f;
   local_player.camera_rig.pitch = -10.0f;
-  local_player.camera_rig.distance = 0.0f;
+  third_person_camera_initialized_ = false;
 }
 
 GuiMenu::Character Engine::preferred_character() const {
@@ -2166,6 +2219,7 @@ void Engine::switch_active_planet(int32_t body_index) {
       });
 
   active_body_index_ = body_index;
+  third_person_camera_initialized_ = false;
   if (net_client_.is_connected()) {
     NetChunkInterest interest{};
     interest.body_id = static_cast<uint32_t>(body_index);
@@ -2271,6 +2325,7 @@ void Engine::load_persistent_game() {
     switch_active_planet(state.active_body_index);
   }
   local_player.transform.position = glm::vec3(state.player_local_position);
+  third_person_camera_initialized_ = false;
   local_player_prev_position = local_player.transform.position;
   camera_snap_origin_ = state.player_local_position;
   snap_origin_dirty_ = true;
@@ -2295,13 +2350,13 @@ bool Engine::save_persistent_game() {
 }
 
 void Engine::update_first_person_camera(PlayerEntity &player,
-                                        Camera &out_camera) {
-  update_first_person_camera(player, player.transform.position, out_camera);
+                                        Camera &out_camera, float dt) {
+  update_first_person_camera(player, player.transform.position, out_camera, dt);
 }
 
 void Engine::update_first_person_camera(PlayerEntity &player,
                                          const glm::vec3 &render_position,
-                                         Camera &out_camera) {
+                                         Camera &out_camera, float dt) {
   // WHY use view override: The Camera class computes view from
   // yawPitchRoll which assumes world-Y-up. On a sphere planet the local "up"
   // varies by position. We compute the view matrix directly with glm::lookAt
@@ -2322,26 +2377,92 @@ void Engine::update_first_person_camera(PlayerEntity &player,
   const float yaw_rad = glm::radians(player.camera_rig.yaw);
   const float pitch_rad = glm::radians(player.camera_rig.pitch);
 
-  // Camera at player eye position: 1.6m above feet along radial up.
-  constexpr float k_eye_height = 1.6f;
-  const glm::vec3 eye_pos = render_position + local_up * k_eye_height;
-
   // View direction: yaw rotates in tangent plane, pitch tilts up/down.
   // Positive pitch = look up (away from surface), negative = look down.
   const glm::vec3 view_dir = glm::normalize(
       std::cos(pitch_rad) * (std::sin(yaw_rad) * east + std::cos(yaw_rad) * north)
       + std::sin(pitch_rad) * local_up);
 
+  // Camera at player eye position: 1.6m above feet along radial up.
+  // In third-person (distance > 0) the eye orbits backwards along -view_dir
+  // around a pivot at pivotHeight above the feet.
+  constexpr float k_eye_height = 1.6f;
+  const bool third_person = player.camera_rig.distance > 0.0f;
+  const float pivot_height =
+      third_person ? player.camera_rig.pivotHeight : k_eye_height;
+  const glm::vec3 pivot = render_position + local_up * pivot_height;
+  glm::vec3 orbit_origin = pivot;
+  float orbit_distance = player.camera_rig.distance;
+  if (third_person) {
+    constexpr float k_position_alpha = 12.0f;
+    constexpr float k_distance_alpha = 7.0f;
+    if (!third_person_camera_initialized_) {
+      third_person_pivot_ = pivot;
+      third_person_smoothed_distance_ = orbit_distance;
+      third_person_camera_initialized_ = true;
+    } else {
+      const float position_alpha =
+          1.0f - std::exp(-k_position_alpha * std::max(dt, 0.0f));
+      const float distance_alpha =
+          1.0f - std::exp(-k_distance_alpha * std::max(dt, 0.0f));
+      third_person_pivot_ += (pivot - third_person_pivot_) * position_alpha;
+      third_person_smoothed_distance_ +=
+          (player.camera_rig.distance - third_person_smoothed_distance_) *
+          distance_alpha;
+    }
+    orbit_origin = third_person_pivot_;
+    orbit_distance = third_person_smoothed_distance_;
+  }
+  glm::vec3 eye_pos = orbit_origin - view_dir * orbit_distance;
+
+  if (third_person && collision_world.has_planet_surface_collider()) {
+    const float k_padding = out_camera.z_near + 0.08f;
+    constexpr int k_ray_count = 5;
+    const glm::vec3 to_camera = -view_dir;
+    const glm::vec3 side = glm::normalize(
+        std::fabs(glm::dot(to_camera, local_up)) < 0.98f
+            ? glm::cross(to_camera, local_up)
+            : glm::cross(to_camera, glm::vec3(0.0f, 1.0f, 0.0f)));
+    const glm::vec3 vertical = glm::normalize(glm::cross(side, to_camera));
+    float best_hit = orbit_distance;
+    for (int i = 0; i < k_ray_count; ++i) {
+      const bool center = i == 0;
+      const float ring = center ? 0.0f : 0.32f;
+      const float angle = 1.5707964f * static_cast<float>(i - 1);
+      const glm::vec3 offset = center
+          ? glm::vec3(0.0f)
+          : glm::normalize(side * std::cos(angle) +
+                           vertical * std::sin(angle)) * ring;
+      const glm::vec3 ray_origin = pivot + offset;
+      const glm::vec3 ray_direction =
+          glm::normalize(to_camera + offset * 0.5f);
+      const float max_range = orbit_distance + glm::length(offset);
+      float hit_distance = 0.0f;
+      if (collision_world.raycast(ray_origin, ray_direction, max_range,
+                                  hit_distance)) {
+        best_hit = std::min(best_hit, hit_distance - glm::length(offset));
+      }
+    }
+    // Pull the camera in front of any terrain between the pivot and the
+    // desired eye so it never clips into voxels behind the player.
+    if (best_hit < orbit_distance) {
+      orbit_distance = std::max(0.0f, best_hit - k_padding);
+      eye_pos = orbit_origin - view_dir * orbit_distance;
+      third_person_smoothed_distance_ = orbit_distance;
+    }
+  }
+  const glm::vec3 camera_position = eye_pos;
+
   // Build view matrix from local tangent frame using glm::lookAt.
   // This correctly handles any position on the sphere — camera up is
   // always the local radial direction.
   const glm::mat4 view_matrix = glm::lookAt(
-      glm::vec3(eye_pos),
-      glm::vec3(eye_pos + view_dir),
+      glm::vec3(camera_position),
+      glm::vec3(camera_position + view_dir),
       glm::vec3(local_up));
 
   out_camera.set_view_override(view_matrix);
-  out_camera.transform.position = eye_pos;
+  out_camera.transform.position = camera_position;
   // euler_radians unused when view override is active, but keep in sync
   // for any debug display that reads them.
   out_camera.transform.euler_radians.y = std::atan2(view_dir.x, -view_dir.z);

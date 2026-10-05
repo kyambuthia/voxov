@@ -33,7 +33,7 @@ enum class PlatformKey : uint16_t {
     W, A, S, D,
     I, J, K, L,
     Q, R, E, F, T,
-    C,
+    C, V,
     Space,
     LeftShift,  RightShift,
     LeftControl, RightControl,

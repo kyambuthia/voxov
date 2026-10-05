@@ -181,6 +181,44 @@ void apply_crawl(SkeletonPose &pose, float phase) {
     pose.local_joints[J(SkeletonJoint::Head)].x -= 0.038f * s;
 }
 
+glm::mat3 block_frame(const glm::vec3 &a, const glm::vec3 &b) {
+    const glm::vec3 delta = b - a;
+    if (glm::dot(delta, delta) < 0.000001f) {
+        return glm::mat3(1.0f);
+    }
+    const glm::vec3 up = glm::normalize(delta);
+    const glm::vec3 reference = std::fabs(up.z) < 0.95f
+        ? glm::vec3(0.0f, 0.0f, 1.0f) : glm::vec3(1.0f, 0.0f, 0.0f);
+    const glm::vec3 right = glm::normalize(glm::cross(up, reference));
+    return glm::mat3(right, up, glm::cross(right, up));
+}
+
+void append_block(RenderMesh &dst, const glm::vec3 &center,
+                  const glm::vec3 &half, const glm::mat3 &frame,
+                  const glm::vec3 &color) {
+    const glm::vec3 corners[8] = {
+        {-half.x, -half.y, -half.z}, {half.x, -half.y, -half.z},
+        {-half.x, half.y, -half.z}, {half.x, half.y, -half.z},
+        {-half.x, -half.y, half.z}, {half.x, -half.y, half.z},
+        {-half.x, half.y, half.z}, {half.x, half.y, half.z}
+    };
+    constexpr uint32_t faces[6][4] = {
+        {0, 2, 3, 1}, {4, 5, 7, 6}, {0, 4, 6, 2},
+        {1, 3, 7, 5}, {2, 6, 7, 3}, {0, 1, 5, 4}
+    };
+    for (const auto &face : faces) {
+        const glm::vec3 normal = glm::normalize(frame * glm::cross(
+            corners[face[1]] - corners[face[0]],
+            corners[face[2]] - corners[face[0]]));
+        const uint32_t base = static_cast<uint32_t>(dst.vertices.size());
+        for (uint32_t index : face) {
+            dst.vertices.push_back({center + frame * corners[index], color, normal});
+        }
+        dst.indices.insert(dst.indices.end(),
+                           {base, base + 1, base + 2, base, base + 2, base + 3});
+    }
+}
+
 void append_bone(RenderMesh &dst, const glm::vec3 &a, const glm::vec3 &b, const glm::vec3 &color, float thickness) {
     append_mesh(dst, build_debug_line_mesh(a, b, thickness, color));
 }
@@ -220,6 +258,75 @@ SkeletonPose SkeletalAnimator::sample_pose(PlayerAnimState state, float phase, f
     }
 
     return pose;
+}
+
+void SkeletalAnimator::append_blocky_mesh(
+    RenderMesh &dst,
+    const SkeletonPose &pose,
+    const glm::vec3 &feet_position,
+    const glm::quat &orientation,
+    const glm::vec3 &color) {
+    const glm::mat3 frame = glm::mat3_cast(orientation);
+    const auto world = [&](SkeletonJoint joint) {
+        return feet_position + frame * pose.local_joints[J(joint)];
+    };
+    const glm::vec3 forward = frame * glm::vec3(0.0f, 0.0f, 1.0f);
+    const glm::vec3 up_axis = frame * glm::vec3(0.0f, 1.0f, 0.0f);
+
+    const glm::vec3 base = color * glm::vec3(0.92f, 0.94f, 0.96f);
+    const glm::vec3 accent = color * glm::vec3(1.0f, 0.82f, 0.42f);
+    const glm::vec3 dark = color * glm::vec3(0.26f, 0.30f, 0.55f);
+
+    const glm::vec3 pelvis = world(SkeletonJoint::Pelvis);
+    const glm::vec3 chest = world(SkeletonJoint::Chest);
+    const glm::vec3 head = world(SkeletonJoint::Head);
+    const glm::vec3 spine_mid = 0.5f * (pelvis + chest);
+
+    const glm::vec3 shoulder_l = world(SkeletonJoint::ShoulderL);
+    const glm::vec3 elbow_l = world(SkeletonJoint::ElbowL);
+    const glm::vec3 hand_l = world(SkeletonJoint::HandL);
+    const glm::vec3 shoulder_r = world(SkeletonJoint::ShoulderR);
+    const glm::vec3 elbow_r = world(SkeletonJoint::ElbowR);
+    const glm::vec3 hand_r = world(SkeletonJoint::HandR);
+    const glm::vec3 hip_l = world(SkeletonJoint::HipL);
+    const glm::vec3 knee_l = world(SkeletonJoint::KneeL);
+    const glm::vec3 foot_l = world(SkeletonJoint::FootL);
+    const glm::vec3 hip_r = world(SkeletonJoint::HipR);
+    const glm::vec3 knee_r = world(SkeletonJoint::KneeR);
+    const glm::vec3 foot_r = world(SkeletonJoint::FootR);
+
+    append_block(dst, pelvis, glm::vec3(0.20f, 0.12f, 0.13f), frame, base);
+    append_block(dst, spine_mid, glm::vec3(0.21f, 0.28f, 0.14f), frame, base);
+    append_block(dst, chest, glm::vec3(0.24f, 0.21f, 0.16f), frame, base);
+    append_block(dst, head, glm::vec3(0.13f, 0.16f, 0.14f), frame, base);
+    append_block(dst, head + forward * 0.155f, glm::vec3(0.10f, 0.065f, 0.045f), frame, dark);
+
+    const glm::vec3 pack_center = chest - forward * 0.17f + up_axis * 0.02f;
+    append_block(dst, pack_center, glm::vec3(0.15f, 0.20f, 0.07f), frame, accent);
+
+    const auto append_limb = [&](const glm::vec3 &a, const glm::vec3 &b,
+                                 float thickness, const glm::vec3 &limb_color) {
+        const glm::mat3 limb_frame = block_frame(a, b);
+        const glm::vec3 mid = 0.5f * (a + b);
+        const glm::vec3 half(thickness, 0.5f * glm::length(b - a) + 0.02f, thickness);
+        append_block(dst, mid, half, limb_frame, limb_color);
+    };
+
+    append_limb(shoulder_l, elbow_l, 0.055f, base);
+    append_limb(elbow_l, hand_l, 0.048f, base);
+    append_block(dst, hand_l, glm::vec3(0.062f), block_frame(elbow_l, hand_l), accent);
+    append_limb(shoulder_r, elbow_r, 0.055f, base);
+    append_limb(elbow_r, hand_r, 0.048f, base);
+    append_block(dst, hand_r, glm::vec3(0.062f), block_frame(elbow_r, hand_r), accent);
+
+    append_limb(hip_l, knee_l, 0.07f, base);
+    append_limb(knee_l, foot_l, 0.062f, base);
+    append_block(dst, foot_l + up_axis * 0.045f - forward * 0.02f,
+                 glm::vec3(0.085f, 0.05f, 0.125f), frame, dark);
+    append_limb(hip_r, knee_r, 0.07f, base);
+    append_limb(knee_r, foot_r, 0.062f, base);
+    append_block(dst, foot_r + up_axis * 0.045f - forward * 0.02f,
+                 glm::vec3(0.085f, 0.05f, 0.125f), frame, dark);
 }
 
 void SkeletalAnimator::append_debug_skeleton(

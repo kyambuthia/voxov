@@ -165,6 +165,10 @@ InputState DesktopInputBackend::poll() {
     out.engine_toggle_pressed = t_down && !prev_t_down;
     prev_t_down = t_down;
 
+    const bool v_down = k(PlatformKey::V);
+    out.camera_toggle_pressed = v_down && !prev_v_down;
+    prev_v_down = v_down;
+
     const bool f12_down = k(PlatformKey::F12);
     out.screenshot_requested = f12_down && !prev_f12_down;
     prev_f12_down = f12_down;

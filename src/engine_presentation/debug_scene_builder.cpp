@@ -65,6 +65,26 @@ glm::vec3 player_color_from_id(uint32_t player_id) {
   return player_color_from_network_id(player_id);
 }
 
+// Keeps the body's heading from `rotation` but stands it along `up`. The
+// simulated rotation can lag the surface frame (spawn, save load, idle), which
+// otherwise lays the avatar flat on a spherical planet.
+glm::quat upright_orientation(const glm::quat &rotation, const glm::vec3 &up) {
+  glm::vec3 forward = rotation * glm::vec3(0.0f, 0.0f, 1.0f);
+  forward -= up * glm::dot(forward, up);
+  if (glm::dot(forward, forward) < 1.0e-6f) {
+    forward = rotation * glm::vec3(0.0f, 1.0f, 0.0f);
+    forward -= up * glm::dot(forward, up);
+    if (glm::dot(forward, forward) < 1.0e-6f) {
+      return rotation;
+    }
+  }
+  forward = glm::normalize(forward);
+  // Right-handed basis (local +X = up x forward) so quat_cast sees a proper
+  // rotation; a reflected basis would also flip triangle winding.
+  const glm::vec3 side = glm::normalize(glm::cross(up, forward));
+  return glm::quat_cast(glm::mat3(side, up, glm::cross(side, up)));
+}
+
 glm::vec3 minigame_color(MiniGameType type) {
   switch (type) {
   case MiniGameType::Snake:
@@ -226,7 +246,12 @@ void append_player_debug(RenderMesh &mesh, const PlayerEntity &player,
                          const glm::vec3 &target_color,
                          const glm::vec3 &skeleton_color,
                          float skeleton_thickness,
-                         float target_radius);
+                         float target_radius,
+                         bool render_avatar_always = false,
+                         bool avatar_with_head = false,
+                         RuntimeDebugSceneSnapshot::AvatarStyle avatar_style =
+                             RuntimeDebugSceneSnapshot::AvatarStyle::Capsule,
+                         const glm::vec3 *planet_center = nullptr);
 void append_player_orientation_debug(RenderMesh &mesh,
                                      const PlayerEntity &player,
                                      float axis_length = 2.0f,
@@ -238,7 +263,8 @@ void append_remote_player_debug(RenderMesh &mesh,
                                 const RuntimeDebugSceneSnapshot &snapshot,
                                 const PlayerEntity &local_player,
                                 const SkinnedModel *selected_player_model,
-                                bool render_skinned_avatar);
+                                bool render_skinned_avatar,
+                                RuntimeDebugSceneSnapshot::AvatarStyle avatar_style);
 
 void append_vehicle_and_aircraft_debug(
     RenderMesh &mesh, const RuntimeDebugSceneSnapshot &snapshot) {
@@ -594,38 +620,88 @@ void append_player_debug(RenderMesh &mesh, const PlayerEntity &player,
                          const glm::vec3 &target_color,
                          const glm::vec3 &skeleton_color,
                          float skeleton_thickness,
-                         float target_radius) {
+                         float target_radius,
+                         bool render_avatar_always,
+                         bool avatar_with_head,
+                         RuntimeDebugSceneSnapshot::AvatarStyle avatar_style,
+                         const glm::vec3 *planet_center) {
+  // On a spherical planet the avatar stands along the radial up at its
+  // position; flat worlds keep world +Y.
+  glm::vec3 surface_up(0.0f, 1.0f, 0.0f);
+  if (planet_center != nullptr) {
+    const glm::vec3 radial = player.transform.position - *planet_center;
+    if (glm::dot(radial, radial) > 1.0e-6f) {
+      surface_up = glm::normalize(radial);
+    }
+  }
+  const glm::quat body_orientation =
+      upright_orientation(player.transform.rotation, surface_up);
   const AnimatedCapsuleShape shape = animated_shape(
       static_cast<uint8_t>(player.anim_state), player.anim_phase,
       player.anim_blend, player.controller.capsuleRadius,
       player.controller.capsuleHeight, player.camera_rig.pivotHeight);
-  const RenderMesh player_capsule = build_debug_capsule_mesh(
-      player.transform.position, shape.radius, shape.height,
+  const RenderMesh player_capsule = build_debug_capsule_mesh_oriented(
+      player.transform.position, surface_up, shape.radius, shape.height,
       player_color_from_id(player.network_id));
   const RenderMesh feet_marker = build_debug_sphere_mesh(
       player.transform.position, std::max(0.22f, shape.radius * 0.45f),
       glm::vec3(1.0f, 0.92f, 0.05f));
   const RenderMesh target_marker = build_debug_sphere_mesh(
-      player.transform.position + glm::vec3(0.0f, shape.pivot_height, 0.0f),
+      player.transform.position + surface_up * shape.pivot_height,
       target_radius, target_color);
 
-  if ((!render_skinned_avatar && !render_skeleton_only) || collision_debug_enabled ||
-      devhud_enabled) {
-    append_mesh(mesh, player_capsule);
+  // The always-on avatar body renders without the devhud so the player has a
+  // visible character in third-person. Feet/target markers stay devhud-only.
+  const bool humanoid_style =
+      avatar_style == RuntimeDebugSceneSnapshot::AvatarStyle::Humanoid;
+  // The pivot/feet markers are debug aids; the always-on gameplay avatar
+  // must not drag them into normal play.
+  const bool render_markers =
+      collision_debug_enabled || devhud_enabled ||
+      (!render_avatar_always && !render_skinned_avatar &&
+       !render_skeleton_only);
+  // A loaded GLB avatar replaces the procedural body; the capsule only joins
+  // it as a debug overlay.
+  const bool render_body =
+      render_markers || (render_avatar_always && !render_skinned_avatar);
+  if (render_body) {
+    if (humanoid_style) {
+      const SkeletonPose pose = SkeletalAnimator::sample_pose(
+          player.anim_state, player.anim_phase, player.anim_blend);
+      SkeletalAnimator::append_blocky_mesh(
+          mesh, pose, player.transform.position, body_orientation,
+          player_color_from_id(player.network_id));
+    } else {
+      append_mesh(mesh, player_capsule);
+      if (avatar_with_head) {
+        // Simple humanoid silhouette: head sphere above the capsule along the
+        // radial surface up so it stays upright anywhere on the planet.
+        const glm::vec3 head_center =
+            player.transform.position +
+            surface_up * (shape.height + shape.radius * 0.6f);
+        append_mesh(mesh, build_debug_sphere_mesh(
+                              head_center, shape.radius * 0.75f,
+                              player_color_from_id(player.network_id)));
+      }
+    }
+  }
+  if (render_markers && !humanoid_style) {
     append_mesh(mesh, feet_marker);
+  }
+  if (render_markers) {
     append_mesh(mesh, target_marker);
   }
   if (render_skinned_avatar && selected_player_model != nullptr) {
     append_mesh(mesh, selected_player_model->build_render_mesh(
                           animation, player.transform.position,
-                          player.transform.rotation,
+                          body_orientation,
                           player_color_from_id(player.network_id)));
   }
   if (render_skeleton_only ||
       (render_skinned_avatar && (collision_debug_enabled || devhud_enabled))) {
     if (render_skinned_avatar && selected_player_model != nullptr) {
       selected_player_model->append_debug_skeleton(
-          mesh, animation, player.transform.position, player.transform.rotation,
+          mesh, animation, player.transform.position, body_orientation,
           skeleton_color, skeleton_thickness);
     } else {
       const SkeletonPose pose = SkeletalAnimator::sample_pose(
@@ -704,12 +780,15 @@ void append_remote_player_debug(RenderMesh &mesh,
                                 const RuntimeDebugSceneSnapshot &snapshot,
                                 const PlayerEntity &local_player,
                                 const SkinnedModel *selected_player_model,
-                                bool render_skinned_avatar) {
+                                bool render_skinned_avatar,
+                                RuntimeDebugSceneSnapshot::AvatarStyle avatar_style) {
   if (snapshot.debug_collision_only || snapshot.collision_world == nullptr) {
     return;
   }
 
   const VoxelCollisionWorld &collision_world = *snapshot.collision_world;
+  const bool humanoid_style =
+      avatar_style == RuntimeDebugSceneSnapshot::AvatarStyle::Humanoid;
   for (const auto &render_player : snapshot.remote_players) {
     const float remote_y =
         std::isfinite(render_player.position.y)
@@ -725,6 +804,24 @@ void append_remote_player_debug(RenderMesh &mesh,
         local_player.controller.capsuleHeight, local_player.camera_rig.pivotHeight);
     const glm::vec3 remote_base(render_player.position.x, remote_y,
                                 render_player.position.z);
+    if (humanoid_style) {
+      if (render_player.animation_runtime != nullptr) {
+        const SkeletonPose pose = SkeletalAnimator::sample_pose(
+            render_player.animation_runtime->state(),
+            render_player.animation_runtime->phase_radians(),
+            render_player.animation_runtime->transition_alpha());
+        SkeletalAnimator::append_blocky_mesh(
+            mesh, pose, remote_base, render_player.orientation,
+            player_color_from_id(render_player.player_id) *
+                glm::vec3(1.08f, 1.08f, 1.08f));
+      } else {
+        append_mesh(mesh,
+                    build_debug_capsule_mesh(
+                        remote_base, remote_shape.radius, remote_shape.height,
+                        player_color_from_id(render_player.player_id)));
+      }
+      continue;
+    }
     if (!render_skinned_avatar || snapshot.collision_debug_enabled ||
         snapshot.devhud_enabled) {
       append_mesh(mesh,
@@ -750,23 +847,40 @@ RenderMesh DebugSceneBuilder::build(
   if (snapshot.local_player == nullptr || snapshot.local_player_animation == nullptr) {
     return RenderMesh{};
   }
+  // Without the devhud the scene degenerates to just the local avatar body.
+  if (!snapshot.devhud_enabled && !snapshot.render_local_avatar) {
+    return RenderMesh{};
+  }
 
   RenderMesh debug_world{};
-  const bool render_skeleton_only = snapshot.render_skeleton_only;
+  const bool avatar_skeleton = snapshot.render_local_avatar &&
+      snapshot.avatar_style ==
+          RuntimeDebugSceneSnapshot::AvatarStyle::Skeleton;
+  const bool render_skeleton_only =
+      snapshot.render_skeleton_only || avatar_skeleton;
   const SkinnedModel *selected_player_model = snapshot.selected_player_model;
   const bool render_skinned_avatar =
       !render_skeleton_only && selected_player_model != nullptr;
   const PlayerEntity &local_player = *snapshot.local_player;
 
-  append_vehicle_and_aircraft_debug(debug_world, snapshot);
-  append_world_feature_debug(debug_world, snapshot, local_player);
+  if (snapshot.devhud_enabled) {
+    append_vehicle_and_aircraft_debug(debug_world, snapshot);
+    append_world_feature_debug(debug_world, snapshot, local_player);
+  }
 
   if (!snapshot.debug_collision_only) {
     append_player_debug(debug_world, local_player, *snapshot.local_player_animation,
                         selected_player_model, render_skinned_avatar,
                         render_skeleton_only, snapshot.collision_debug_enabled,
                         snapshot.devhud_enabled, glm::vec3(0.2f, 0.85f, 1.0f),
-                        glm::vec3(0.95f, 0.97f, 1.0f), 0.012f, 0.12f);
+                        glm::vec3(0.95f, 0.97f, 1.0f), 0.012f, 0.12f,
+                        snapshot.render_local_avatar,
+                        snapshot.avatar_style ==
+                            RuntimeDebugSceneSnapshot::AvatarStyle::Humanoid,
+                        snapshot.avatar_style,
+                        snapshot.spherical_planet
+                            ? &snapshot.spherical_planet_center
+                            : nullptr);
 
     // Always show player orientation axes when devhud is enabled.
     // WHY: On a spherical planet, visualizing the player's local frame
@@ -776,19 +890,22 @@ RenderMesh DebugSceneBuilder::build(
     }
   }
 
-  if (snapshot.splitscreen && snapshot.local_player_secondary != nullptr &&
-      snapshot.local_player_secondary_animation != nullptr &&
-      !snapshot.debug_collision_only) {
-    append_player_debug(debug_world, *snapshot.local_player_secondary,
-                        *snapshot.local_player_secondary_animation,
-                        selected_player_model, render_skinned_avatar,
-                        render_skeleton_only, snapshot.collision_debug_enabled,
-                        snapshot.devhud_enabled, glm::vec3(0.6f, 0.85f, 1.0f),
-                        glm::vec3(0.86f, 0.92f, 1.0f), 0.010f, 0.10f);
-  }
+  if (snapshot.devhud_enabled) {
+    if (snapshot.splitscreen && snapshot.local_player_secondary != nullptr &&
+        snapshot.local_player_secondary_animation != nullptr &&
+        !snapshot.debug_collision_only) {
+      append_player_debug(debug_world, *snapshot.local_player_secondary,
+                          *snapshot.local_player_secondary_animation,
+                          selected_player_model, render_skinned_avatar,
+                          render_skeleton_only, snapshot.collision_debug_enabled,
+                          snapshot.devhud_enabled, glm::vec3(0.6f, 0.85f, 1.0f),
+                          glm::vec3(0.86f, 0.92f, 1.0f), 0.010f, 0.10f);
+    }
 
-  append_collision_debug(debug_world, snapshot, local_player);
-  append_remote_player_debug(debug_world, snapshot, local_player,
-                             selected_player_model, render_skinned_avatar);
+    append_collision_debug(debug_world, snapshot, local_player);
+    append_remote_player_debug(debug_world, snapshot, local_player,
+                               selected_player_model, render_skinned_avatar,
+                               snapshot.avatar_style);
+  }
   return debug_world;
 }

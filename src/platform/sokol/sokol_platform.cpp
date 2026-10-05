@@ -25,6 +25,7 @@ static PlatformKey map_sokol_key(int sokol_key) {
     case SAPP_KEYCODE_F:            return PlatformKey::F;
     case SAPP_KEYCODE_T:            return PlatformKey::T;
     case SAPP_KEYCODE_C:            return PlatformKey::C;
+    case SAPP_KEYCODE_V:            return PlatformKey::V;
     case SAPP_KEYCODE_SPACE:        return PlatformKey::Space;
     case SAPP_KEYCODE_ESCAPE:       return PlatformKey::Escape;
     case SAPP_KEYCODE_ENTER:        return PlatformKey::Enter;
@@ -186,6 +187,7 @@ bool DesktopPlatform::is_key_down(int key_code) const {
         case 70:  return PlatformKey::F;
         case 84:  return PlatformKey::T;
         case 67:  return PlatformKey::C;
+        case 86:  return PlatformKey::V;
         case 32:  return PlatformKey::Space;
         case 256: return PlatformKey::Escape;
         case 257: return PlatformKey::Enter;

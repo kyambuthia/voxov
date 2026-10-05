@@ -1,7 +1,9 @@
 #include "engine_render/debug_draw/debug_draw.hpp"
 
 #include <cmath>
+#include <algorithm>
 #include <glm/glm.hpp>
+#include <glm/gtc/matrix_transform.hpp>
 
 namespace {
 void append_tri(RenderMesh &mesh, const RenderVertex &a, const RenderVertex &b, const RenderVertex &c) {
@@ -149,5 +151,39 @@ RenderMesh build_debug_capsule_mesh(glm::vec3 feet_position, float radius, float
     append_mesh(mesh, bottom);
     append_mesh(mesh, top);
 
+    return mesh;
+}
+
+RenderMesh build_debug_capsule_mesh_oriented(glm::vec3 feet_position,
+                                             glm::vec3 surface_up,
+                                             float radius, float height,
+                                             glm::vec3 color) {
+    if (glm::length(surface_up) < 0.001f) {
+        return build_debug_capsule_mesh(feet_position, radius, height, color);
+    }
+    const glm::vec3 up = glm::normalize(surface_up);
+    const float up_dot = glm::dot(up, glm::vec3(0.0f, 1.0f, 0.0f));
+    if (up_dot > 0.9999f) {
+        return build_debug_capsule_mesh(feet_position, radius, height, color);
+    }
+    // Build the capsule world-Y-up at the feet, then rotate every vertex so
+    // +Y maps onto the local radial up, keeping the feet pinned in place.
+    RenderMesh mesh =
+        build_debug_capsule_mesh(feet_position, radius, height, color);
+    // Antiparallel up (south pole): any horizontal axis gives the half turn.
+    const glm::vec3 axis = up_dot < -0.9999f
+        ? glm::vec3(1.0f, 0.0f, 0.0f)
+        : glm::cross(glm::vec3(0.0f, 1.0f, 0.0f), up);
+    const float angle =
+        std::acos(std::clamp(glm::dot(glm::vec3(0.0f, 1.0f, 0.0f), up),
+                             -1.0f, 1.0f));
+    const glm::mat3 rotation =
+        glm::mat3(glm::rotate(glm::identity<glm::mat4>(), angle,
+                              glm::normalize(axis)));
+    for (RenderVertex &vertex : mesh.vertices) {
+        vertex.position =
+            feet_position + rotation * (vertex.position - feet_position);
+        vertex.normal = rotation * vertex.normal;
+    }
     return mesh;
 }

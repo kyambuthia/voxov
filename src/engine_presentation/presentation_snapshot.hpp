@@ -72,12 +72,18 @@ struct RuntimeAircraftDebugSnapshot {
 };
 
 struct RuntimeDebugSceneSnapshot {
+    // Procedural avatar style for the always-on local player body in
+    // third-person view (no GLB asset required).
+    enum class AvatarStyle : uint8_t { Capsule = 0, Humanoid, Skeleton };
+
     bool collision_debug_enabled = false;
     bool debug_collision_only = false;
     bool devhud_enabled = false;
     bool splitscreen = false;
     bool spherical_planet = false;
     bool render_skeleton_only = false;
+    bool render_local_avatar = false;
+    AvatarStyle avatar_style = AvatarStyle::Humanoid;
     const SkinnedModel *selected_player_model = nullptr;
     const VoxelCollisionWorld *collision_world = nullptr;
     const PlayerEntity *local_player = nullptr;

@@ -51,7 +51,7 @@ struct EngineSessionState {
   bool gameplay_started = false;
   bool menu_open = true;
   bool devhud_enabled = false;
-  GuiMenu::Character selected_character = GuiMenu::Character::Capsule;
+  GuiMenu::Character selected_character = GuiMenu::Character::Humanoid;
   GuiMenuView menu_view{};
 };
 
@@ -84,10 +84,11 @@ public:
   bool capture_screenshot(const char *filepath, int width, int height);
 
 private:
-  void update_first_person_camera(PlayerEntity &player, Camera &out_camera);
+  void update_first_person_camera(PlayerEntity &player, Camera &out_camera,
+                                  float dt = 0.0f);
   void update_first_person_camera(PlayerEntity &player,
                                   const glm::vec3 &render_position,
-                                  Camera &out_camera);
+                                  Camera &out_camera, float dt);
   void rebuild_global_planet_surface();
   void refresh_overlay_text();
   void switch_active_planet(int32_t body_index);
@@ -151,6 +152,10 @@ private:
   uint64_t last_chunk_center_hash_ = 0;        // detect player movement
 
   bool debug_fly_mode_ = false; // false = surface walking (gravity toward planet center, capsule collision with voxel terrain)
+  float third_person_distance_ = 4.5f; // saved orbit distance while in first-person
+  bool third_person_camera_initialized_ = false;
+  glm::vec3 third_person_pivot_{0.0f};
+  float third_person_smoothed_distance_ = 4.5f;
   bool touch_controls_visible_ = false;
   RenderStats render_stats;
   EngineSessionState session_state_{};

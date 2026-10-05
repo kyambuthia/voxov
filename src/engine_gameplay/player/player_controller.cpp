@@ -78,9 +78,11 @@ glm::vec3 tangent_or_fallback(glm::vec3 value, glm::vec3 up, glm::vec3 fallback)
 glm::quat orientation_from_frame(glm::vec3 forward, glm::vec3 up) {
     up = glm::normalize(up);
     forward = tangent_or_fallback(forward, up, glm::vec3(0.0f, 0.0f, 1.0f));
-    const glm::vec3 right = glm::normalize(glm::cross(forward, up));
-    forward = glm::normalize(glm::cross(up, right));
-    return glm::quat_cast(glm::mat3(right, up, forward));
+    // Local +X must be up x forward for a right-handed (det +1) basis;
+    // quat_cast of a reflected basis yields a meaningless rotation.
+    const glm::vec3 side = glm::normalize(glm::cross(up, forward));
+    forward = glm::normalize(glm::cross(side, up));
+    return glm::quat_cast(glm::mat3(side, up, forward));
 }
 
 float move_direction_deg(glm::vec2 move_axis) {
@@ -441,10 +443,15 @@ void PlayerControllerSystem::update_camera_rig(PlayerEntity &player, const Input
     player.camera_rig.pitch -= input.look_delta.y * sensitivity;
 
     player.camera_rig.pitch = std::clamp(player.camera_rig.pitch, player.camera_rig.pitchMinDeg, player.camera_rig.pitchMaxDeg);
-    player.camera_rig.distance = std::clamp(
-        player.camera_rig.distance - input.zoom_delta,
-        player.camera_rig.minDistance,
-        player.camera_rig.maxDistance);
+    // Zoom only applies when already orbiting, or when zooming out (negative
+    // delta) — so a stray zoom-in can't push a first-person camera (distance
+    // 0) into third-person.
+    if (player.camera_rig.distance > 0.0f || input.zoom_delta < 0.0f) {
+        player.camera_rig.distance = std::clamp(
+            player.camera_rig.distance - input.zoom_delta,
+            player.camera_rig.minDistance,
+            player.camera_rig.maxDistance);
+    }
 }
 
 PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(

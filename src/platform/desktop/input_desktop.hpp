@@ -29,6 +29,7 @@ private:
     bool prev_f6_down = false;
     bool prev_f12_down = false;
     bool prev_t_down = false;
+    bool prev_v_down = false;
     bool prev_rmb_down = false;
     bool prev_lmb_down = false;
     bool prev_left_down = false;

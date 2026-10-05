@@ -109,6 +109,6 @@ private:
     bool is_open = false;
     int selected_item = 0;
     MenuPage page = MenuPage::Main;
-    Character selected_character = Character::Capsule;
+    Character selected_character = Character::Humanoid;
     PlayerPreferences preferences_{};
 };

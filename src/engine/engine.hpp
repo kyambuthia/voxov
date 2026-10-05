@@ -1,6 +1,7 @@
 #pragma once
 
 #include "engine_gameplay/animation/animation_runtime.hpp"
+#include "engine_gameplay/player/remote_avatar.hpp"
 #include "engine_gameplay/player/player_components.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_gameplay/objectives/expedition_mission.hpp"
@@ -30,6 +31,7 @@
 #include "engine_world/solar_system.hpp"
 #include "platform/platform_services.hpp"
 
+#include <unordered_map>
 #include <string>
 #include <optional>
 #include <vector>
@@ -126,6 +128,8 @@ private:
   void update_coordinate_frames(double frame_dt);
   // Rebuilds transient sphere meshes for the non-active celestial bodies.
   void append_celestial_meshes();
+  // Smoothed, animated blocky avatars for every replicated player.
+  void append_remote_player_meshes();
   void update_render_stats(const ProfilingSnapshot &profiling_sample,
                            const TerrainStreamTimings &terrain_timings,
                            double gpu_upload_ms);
@@ -269,6 +273,7 @@ private:
     // ── Block interaction (first-person pick/break/place) ─────────────────
   // Targeted block from camera center raycast.
   size_t hotbar_slot_ = 0; // index into kBlockHotbar
+  std::unordered_map<uint32_t, RemoteAvatarState> remote_avatars_;
   bool persistence_dirty_ = false;
   double seconds_since_save_ = 0.0;
   glm::dvec3 targeted_hit_pos_ = glm::dvec3(0.0);

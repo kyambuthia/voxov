@@ -7,6 +7,7 @@
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_gameplay/player/block_hotbar.hpp"
 #include "engine_gameplay/player/player_visuals.hpp"
+#include "engine_gameplay/player/remote_avatar.hpp"
 #include "engine_gameplay/player/surface_orientation.hpp"
 #include "engine_presentation/debug_scene_builder.hpp"
 #include "engine_world/block_picking.hpp"
@@ -3442,6 +3443,48 @@ void test_block_hotbar_materials_are_unique_and_persistable() {
   assert(decoded.block_edits.front().material == VoxelMaterial::Snow);
 }
 
+
+void test_remote_avatar_smooths_snaps_and_faces_motion() {
+  const glm::dvec3 center(0.0);
+  RemoteAvatarState avatar{};
+  const glm::dvec3 start(50.0, 0.0, 0.0);
+  update_remote_avatar(avatar, start, glm::vec3(0.0f), center, 0.016f);
+  assert(avatar.initialized);
+  assert(glm::length(avatar.feet - start) < 1.0e-9);
+
+  // Small corrections are smoothed, not applied instantly.
+  const glm::dvec3 nudged = start + glm::dvec3(0.0, 0.0, 1.0);
+  update_remote_avatar(avatar, nudged, glm::vec3(0.0f), center, 0.016f);
+  const double remaining = glm::length(avatar.feet - nudged);
+  assert(remaining > 0.1 && remaining < 1.0);
+  for (int i = 0; i < 120; ++i) {
+    update_remote_avatar(avatar, nudged, glm::vec3(0.0f), center, 0.016f);
+  }
+  assert(glm::length(avatar.feet - nudged) < 1.0e-3);
+
+  // Large corrections (respawn/teleport) snap.
+  const glm::dvec3 far(0.0, 50.0, 0.0);
+  update_remote_avatar(avatar, far, glm::vec3(0.0f), center, 0.016f);
+  assert(glm::length(avatar.feet - far) < 1.0e-9);
+
+  // Walking along +x on the north pole turns the avatar to face +x, and the
+  // radial component of velocity (jumping) doesn't tilt the heading.
+  for (int i = 0; i < 120; ++i) {
+    update_remote_avatar(avatar, far, glm::vec3(3.0f, 5.0f, 0.0f), center,
+                         0.016f);
+  }
+  assert(glm::dot(avatar.forward, glm::vec3(1.0f, 0.0f, 0.0f)) > 0.99f);
+  // Standing still keeps the heading.
+  update_remote_avatar(avatar, far, glm::vec3(0.0f), center, 0.016f);
+  assert(glm::dot(avatar.forward, glm::vec3(1.0f, 0.0f, 0.0f)) > 0.99f);
+
+  const glm::mat3 basis = glm::mat3_cast(
+      remote_avatar_orientation(avatar, center));
+  assert(glm::dot(basis[1], glm::vec3(0.0f, 1.0f, 0.0f)) > 0.999f);
+  assert(glm::dot(basis[2], glm::vec3(1.0f, 0.0f, 0.0f)) > 0.99f);
+  assert(glm::determinant(basis) > 0.99f);
+}
+
 } // namespace
 
 int main() {
@@ -3559,5 +3602,6 @@ int main() {
   test_chunks_touching_block_covers_boundary_neighbours();
   test_voxel_chunk_stores_every_building_material_at_full_height();
   test_block_hotbar_materials_are_unique_and_persistable();
+  test_remote_avatar_smooths_snaps_and_faces_motion();
   return 0;
 }

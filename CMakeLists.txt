@@ -324,6 +324,7 @@ add_library(engine_gameplay STATIC
     src/engine_gameplay/objectives/expedition_mission.cpp
     src/engine_gameplay/player/player_controller.cpp
     src/engine_gameplay/player/player_visuals.cpp
+    src/engine_gameplay/player/remote_avatar.cpp
 )
 target_include_directories(engine_gameplay PUBLIC src)
 target_link_libraries(engine_gameplay PUBLIC engine_render_core engine_world engine_math glm::glm)

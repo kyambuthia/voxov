@@ -1,5 +1,7 @@
 #include "engine/engine.hpp"
+#include "engine_gameplay/animation/skeletal_animator.hpp"
 #include "engine_gameplay/player/block_hotbar.hpp"
+#include "engine_gameplay/player/remote_avatar.hpp"
 #include "engine_world/block_picking.hpp"
 #include "engine/planet_gameplay_config.hpp"
 
@@ -1826,31 +1828,42 @@ void Engine::append_celestial_meshes() {
       ++last_celestial_mesh_count_;
     }
 
-    // Replicated clients use the same camera-relative coordinate path as
-    // planetary terrain, preserving precision at two-million-metre radii.
-    for (const auto &[player_id, state] : net_client_.player_states()) {
-      if (player_id == 0 || player_id == net_client_.local_player_id()) {
-        continue;
-      }
-      const glm::dvec3 player_world(state.x, state.y, state.z);
-      const glm::vec3 player_relative =
-          camera_relative_position(player_world, scene.camera_origin);
-      // Capsule avatar matching the local player's body, feet planted by
-      // offsetting half the body height along the radial surface up.
-      constexpr float k_remote_body_height = 1.8f;
-      const glm::vec3 surface_up =
-          glm::length(player_world) > 0.001
-              ? glm::vec3(glm::normalize(player_world))
-              : glm::vec3(0.0f, 1.0f, 0.0f);
-      RenderMesh player_mesh = build_debug_capsule_mesh_oriented(
-          player_relative - surface_up * (k_remote_body_height * 0.5f),
-          surface_up, 0.4f, k_remote_body_height,
-          player_color_from_network_id(player_id));
-      player_mesh.mesh_id = 0;
-      player_mesh.world_origin = scene.camera_origin.world_origin;
-      scene.opaque_meshes.push_back(std::move(player_mesh));
-    }
+    append_remote_player_meshes();
   }
+}
+
+void Engine::append_remote_player_meshes() {
+  // Replicated clients use the same camera-relative coordinate path as
+  // planetary terrain, preserving precision at two-million-metre radii.
+  // Snapshot positions are the players' feet.
+  const glm::dvec3 planet_center = block_world_.planet().center;
+  const float dt = static_cast<float>(std::clamp(last_frame_dt, 0.0, 0.1));
+  std::unordered_set<uint32_t> present;
+  for (const auto &[player_id, state] : net_client_.player_states()) {
+    if (player_id == 0 || player_id == net_client_.local_player_id()) {
+      continue;
+    }
+    present.insert(player_id);
+    RemoteAvatarState &avatar = remote_avatars_[player_id];
+    update_remote_avatar(avatar, glm::dvec3(state.x, state.y, state.z),
+                         glm::vec3(state.vx, state.vy, state.vz),
+                         planet_center, dt);
+    const SkeletonPose pose = SkeletalAnimator::sample_pose(
+        static_cast<PlayerAnimState>(state.anim_state), state.anim_phase,
+        state.anim_blend);
+    RenderMesh player_mesh{};
+    SkeletalAnimator::append_blocky_mesh(
+        player_mesh, pose,
+        camera_relative_position(avatar.feet, scene.camera_origin),
+        remote_avatar_orientation(avatar, planet_center),
+        player_color_from_network_id(player_id));
+    player_mesh.mesh_id = 0;
+    player_mesh.world_origin = scene.camera_origin.world_origin;
+    scene.opaque_meshes.push_back(std::move(player_mesh));
+  }
+  std::erase_if(remote_avatars_, [&present](const auto &entry) {
+    return present.count(entry.first) == 0;
+  });
 }
 
 void Engine::update_render_stats(const ProfilingSnapshot &profiling_sample,

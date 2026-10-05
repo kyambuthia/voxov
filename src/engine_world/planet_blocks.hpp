@@ -182,7 +182,7 @@ public:
 
     // ── Cube net ───────────────────────────────────────────────────────
     static const CubeEdgePairing &edge_pairing(PlanetFace from, CubeEdge edge);
-    static const std::array<CubeEdgePairing, 12> &all_edge_pairings();
+    static const std::array<CubeEdgePairing, 24> &all_edge_pairings();
 
 private:
     // ── Internal helpers ───────────────────────────────────────────────

@@ -3485,6 +3485,127 @@ void test_remote_avatar_smooths_snaps_and_faces_motion() {
   assert(glm::determinant(basis) > 0.99f);
 }
 
+
+glm::dvec3 chunk_center_world(const BlockWorld &world,
+                              const BlockAddress &chunk) {
+  BlockAddress center = chunk;
+  const int32_t half = world.config().chunk_size / 2;
+  center.block = glm::ivec3(half, 0, half);
+  return world.world_from_address(center);
+}
+
+void test_block_neighbors_are_adjacent_across_every_face_edge() {
+  BlockWorld world = make_picking_world();
+  const int32_t shell = world.shell_count() - 1;
+  const int32_t res = world.shell_config(shell).horizontal_res;
+  const int32_t cs = world.config().chunk_size;
+  const BlockDir horizontal[] = {BlockDir::Left, BlockDir::Right,
+                                 BlockDir::Back, BlockDir::Front};
+  int checked = 0;
+  for (int face = 0; face < 6; ++face) {
+    for (int32_t i = 0; i < res; i += 7) {
+      const glm::ivec2 columns[] = {{0, i}, {res - 1, i}, {i, 0}, {i, res - 1}};
+      for (const glm::ivec2 &column : columns) {
+        BlockAddress addr{};
+        addr.sector = static_cast<PlanetFace>(face);
+        addr.shell = shell;
+        addr.chunk = glm::ivec3(column.x / cs, 0, column.y / cs);
+        addr.block = glm::ivec3(column.x % cs, 2, column.y % cs);
+        const glm::dvec3 center = world.world_from_address(addr);
+        for (BlockDir dir : horizontal) {
+          const std::vector<BlockNeighbor> neighbors =
+              world.neighbors(addr, dir);
+          assert(neighbors.size() == 1);
+          const BlockAddress &nb = neighbors.front().address;
+          const double distance =
+              glm::length(world.world_from_address(nb) - center);
+          // Face-edge blocks are ~0.75 m wide; a wrong seam mapping lands
+          // tens of metres away.
+          assert(distance > 0.2 && distance < 1.6);
+          // Some horizontal step from the neighbour leads back.
+          bool returns = false;
+          for (BlockDir back : horizontal) {
+            for (const BlockNeighbor &candidate : world.neighbors(nb, back)) {
+              returns = returns || candidate.address == addr;
+            }
+          }
+          // Cube-corner cells touch three faces, so their four-neighbour
+          // relation can't be symmetric; every other seam cell must be.
+          const bool cube_corner =
+              (column.x == 0 || column.x == res - 1) &&
+              (column.y == 0 || column.y == res - 1);
+          assert(returns || cube_corner);
+          ++checked;
+        }
+      }
+    }
+  }
+  assert(checked > 0);
+}
+
+void test_cube_edge_pairing_table_covers_every_directed_edge() {
+  const auto &pairings = BlockWorld::all_edge_pairings();
+  for (int face = 0; face < 6; ++face) {
+    for (int edge = 0; edge < 4; ++edge) {
+      const CubeEdgePairing &pairing = BlockWorld::edge_pairing(
+          static_cast<PlanetFace>(face), static_cast<CubeEdge>(edge));
+      assert(&pairing == &pairings[static_cast<size_t>(face * 4 + edge)]);
+      assert(pairing.from_face == static_cast<PlanetFace>(face));
+      assert(pairing.from_edge == static_cast<CubeEdge>(edge));
+      assert(pairing.to_face != pairing.from_face);
+      // Crossing back over the destination edge returns to the source.
+      const CubeEdgePairing &back =
+          BlockWorld::edge_pairing(pairing.to_face, pairing.to_edge);
+      assert(back.to_face == pairing.from_face);
+      assert(back.to_edge == pairing.from_edge);
+    }
+  }
+}
+
+void test_offset_chunk_address_walks_straight_across_face_edges() {
+  BlockWorld world = make_picking_world();
+  const int32_t shell = world.shell_count() - 1;
+  const int32_t res = world.shell_config(shell).horizontal_res;
+  const int32_t hc = (res + world.config().chunk_size - 1) /
+                     world.config().chunk_size;
+  const double chunk_width =
+      glm::length(chunk_center_world(world, BlockAddress{
+                      PlanetFace::PosX, shell, glm::ivec3(hc / 2, 0, hc / 2)}) -
+                  chunk_center_world(world, BlockAddress{
+                      PlanetFace::PosX, shell,
+                      glm::ivec3(hc / 2 + 1, 0, hc / 2)}));
+  const glm::ivec2 steps[] = {{1, 0}, {-1, 0}, {0, 1}, {0, -1}};
+  for (int face = 0; face < 6; ++face) {
+    for (int32_t along = 0; along < hc; ++along) {
+      const glm::ivec2 starts[] = {{0, along}, {hc - 1, along},
+                                   {along, 0}, {along, hc - 1}};
+      for (const glm::ivec2 &start : starts) {
+        const BlockAddress origin{static_cast<PlanetFace>(face), shell,
+                                  glm::ivec3(start.x, 0, start.y)};
+        for (const glm::ivec2 &step : steps) {
+          glm::dvec3 previous = chunk_center_world(world, origin);
+          double previous_reach = 0.0;
+          for (int32_t k = 1; k <= 4; ++k) {
+            BlockAddress walked{};
+            assert(world.offset_chunk_address(origin, step.x * k, 0,
+                                              step.y * k, walked));
+            const glm::dvec3 center = chunk_center_world(world, walked);
+            // Each extra step moves about one chunk...
+            const double stride = glm::length(center - previous);
+            assert(stride > 0.4 * chunk_width && stride < 1.6 * chunk_width);
+            // ...and keeps moving away from the start (no doubling back).
+            const double reach =
+                glm::length(center - chunk_center_world(world, origin));
+            assert(reach > previous_reach);
+            previous = center;
+            previous_reach = reach;
+          }
+        }
+      }
+    }
+  }
+}
+
 } // namespace
 
 int main() {
@@ -3603,5 +3724,8 @@ int main() {
   test_voxel_chunk_stores_every_building_material_at_full_height();
   test_block_hotbar_materials_are_unique_and_persistable();
   test_remote_avatar_smooths_snaps_and_faces_motion();
+  test_block_neighbors_are_adjacent_across_every_face_edge();
+  test_cube_edge_pairing_table_covers_every_directed_edge();
+  test_offset_chunk_address_walks_straight_across_face_edges();
   return 0;
 }

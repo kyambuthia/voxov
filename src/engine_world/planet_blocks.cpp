@@ -70,52 +70,50 @@ size_t BlockAddressHash::operator()(const BlockAddress &a) const noexcept {
 }
 
 // ============================================================================
-// Cube net — 12 edge pairings between 6 cube faces
+// Cube net — 24 directed edge pairings between the 6 cube faces
 // ============================================================================
 
-static const CubeEdgePairing k_edge_pairings[12] = {
-    {PlanetFace::PosX, CubeEdge::Left,   PlanetFace::NegZ, CubeEdge::Left,  false, false, false},
-    {PlanetFace::PosX, CubeEdge::Right,  PlanetFace::PosZ, CubeEdge::Right, false, false, false},
-    {PlanetFace::PosX, CubeEdge::Top,    PlanetFace::PosY, CubeEdge::Right, true,  false, false},
-    {PlanetFace::PosX, CubeEdge::Bottom, PlanetFace::NegY, CubeEdge::Right, true,  true,  true },
-
-    {PlanetFace::NegX, CubeEdge::Left,   PlanetFace::PosZ, CubeEdge::Left,  false, false, false},
-    {PlanetFace::NegX, CubeEdge::Right,  PlanetFace::NegZ, CubeEdge::Right, false, false, false},
-    {PlanetFace::NegX, CubeEdge::Top,    PlanetFace::PosY, CubeEdge::Left,  true,  true,  true },
-    {PlanetFace::NegX, CubeEdge::Bottom, PlanetFace::NegY, CubeEdge::Left,  true,  false, false},
-
-    {PlanetFace::PosY, CubeEdge::Top,    PlanetFace::PosZ, CubeEdge::Top,   false, false, false},
-    {PlanetFace::PosY, CubeEdge::Bottom, PlanetFace::NegZ, CubeEdge::Top,   false, true,  true },
-    {PlanetFace::PosY, CubeEdge::Left,   PlanetFace::NegX, CubeEdge::Top,   true,  true,  true },
-    {PlanetFace::PosY, CubeEdge::Right,  PlanetFace::PosX, CubeEdge::Top,   true,  false, false},
-};
+// All 24 directed face edges, indexed [face * 4 + edge] (CubeEdge order Left,
+// Right, Top, Bottom). Derived from face_uv_to_direction() so that walking
+// off any edge lands on the physically adjacent cell; seam tests in
+// test_main.cpp verify every entry against the projection. An earlier
+// 12-entry table listed two edges twice and omitted NegY<->PosZ/NegZ, and its
+// lookup fell back to a function-local static that kept the arguments of its
+// first miss, so crossings there landed on the far side of the next face.
+static const std::array<CubeEdgePairing, 24> k_edge_pairings = {{
+    {PlanetFace::PosX, CubeEdge::Left,   PlanetFace::NegZ, CubeEdge::Left,   false, false, false},
+    {PlanetFace::PosX, CubeEdge::Right,  PlanetFace::PosZ, CubeEdge::Right,  false, false, false},
+    {PlanetFace::PosX, CubeEdge::Top,    PlanetFace::PosY, CubeEdge::Right,  true,  false, false},
+    {PlanetFace::PosX, CubeEdge::Bottom, PlanetFace::NegY, CubeEdge::Right,  true,  true,  true},
+    {PlanetFace::NegX, CubeEdge::Left,   PlanetFace::PosZ, CubeEdge::Left,   false, false, false},
+    {PlanetFace::NegX, CubeEdge::Right,  PlanetFace::NegZ, CubeEdge::Right,  false, false, false},
+    {PlanetFace::NegX, CubeEdge::Top,    PlanetFace::PosY, CubeEdge::Left,   true,  true,  true},
+    {PlanetFace::NegX, CubeEdge::Bottom, PlanetFace::NegY, CubeEdge::Left,   true,  false, false},
+    {PlanetFace::PosY, CubeEdge::Left,   PlanetFace::NegX, CubeEdge::Top,    true,  true,  true},
+    {PlanetFace::PosY, CubeEdge::Right,  PlanetFace::PosX, CubeEdge::Top,    true,  false, false},
+    {PlanetFace::PosY, CubeEdge::Top,    PlanetFace::PosZ, CubeEdge::Top,    false, false, false},
+    {PlanetFace::PosY, CubeEdge::Bottom, PlanetFace::NegZ, CubeEdge::Top,    false, true,  true},
+    {PlanetFace::NegY, CubeEdge::Left,   PlanetFace::NegX, CubeEdge::Bottom, true,  false, false},
+    {PlanetFace::NegY, CubeEdge::Right,  PlanetFace::PosX, CubeEdge::Bottom, true,  true,  true},
+    {PlanetFace::NegY, CubeEdge::Top,    PlanetFace::NegZ, CubeEdge::Bottom, false, true,  true},
+    {PlanetFace::NegY, CubeEdge::Bottom, PlanetFace::PosZ, CubeEdge::Bottom, false, false, false},
+    {PlanetFace::PosZ, CubeEdge::Left,   PlanetFace::NegX, CubeEdge::Left,   false, false, false},
+    {PlanetFace::PosZ, CubeEdge::Right,  PlanetFace::PosX, CubeEdge::Right,  false, false, false},
+    {PlanetFace::PosZ, CubeEdge::Top,    PlanetFace::PosY, CubeEdge::Top,    false, false, false},
+    {PlanetFace::PosZ, CubeEdge::Bottom, PlanetFace::NegY, CubeEdge::Bottom, false, false, false},
+    {PlanetFace::NegZ, CubeEdge::Left,   PlanetFace::PosX, CubeEdge::Left,   false, false, false},
+    {PlanetFace::NegZ, CubeEdge::Right,  PlanetFace::NegX, CubeEdge::Right,  false, false, false},
+    {PlanetFace::NegZ, CubeEdge::Top,    PlanetFace::PosY, CubeEdge::Bottom, false, true,  true},
+    {PlanetFace::NegZ, CubeEdge::Bottom, PlanetFace::NegY, CubeEdge::Top,    false, true,  true},
+}};
 
 const CubeEdgePairing &BlockWorld::edge_pairing(PlanetFace from, CubeEdge edge) {
-    for (const auto &p : k_edge_pairings) {
-        if (p.from_face == from && p.from_edge == edge) return p;
-        if (p.to_face == from && p.to_edge == edge) {
-            static thread_local CubeEdgePairing rev;
-            rev.from_face = p.to_face;
-            rev.from_edge = p.to_edge;
-            rev.to_face = p.from_face;
-            rev.to_edge = p.from_edge;
-            rev.swap_uv = p.swap_uv;
-            rev.flip_u = p.swap_uv ? p.flip_v : p.flip_u;
-            rev.flip_v = p.swap_uv ? p.flip_u : p.flip_v;
-            return rev;
-        }
-    }
-    static const CubeEdgePairing fallback{from, edge, from, edge, false, false, false};
-    return fallback;
+    return k_edge_pairings[static_cast<size_t>(from) * 4u +
+                           static_cast<size_t>(edge)];
 }
 
-const std::array<CubeEdgePairing, 12> &BlockWorld::all_edge_pairings() {
-    static const std::array<CubeEdgePairing, 12> arr = {{
-        k_edge_pairings[0], k_edge_pairings[1], k_edge_pairings[2], k_edge_pairings[3],
-        k_edge_pairings[4], k_edge_pairings[5], k_edge_pairings[6], k_edge_pairings[7],
-        k_edge_pairings[8], k_edge_pairings[9], k_edge_pairings[10], k_edge_pairings[11],
-    }};
-    return arr;
+const std::array<CubeEdgePairing, 24> &BlockWorld::all_edge_pairings() {
+    return k_edge_pairings;
 }
 
 // ============================================================================
@@ -516,40 +514,67 @@ bool BlockWorld::offset_chunk_address(const BlockAddress &origin,
         return false;
     }
 
-    // Walk one chunk at a time so multi-step crossings stay consistent with
-    // neighbors() edge pairings (Bowerbyte cube-net seam rules).
-    auto step_axis = [&](int32_t &coord, int32_t delta,
-                         CubeEdge neg_edge, CubeEdge pos_edge) -> bool {
+    // Walk one chunk at a time. The origin face's +x/+z axes are carried
+    // across every edge with the same swap/flip map as positions; without
+    // that, steps after a crossing kept the old face's axis and sign and
+    // drifted sideways or doubled back on rotated faces.
+    glm::ivec2 axis_x(1, 0);
+    glm::ivec2 axis_z(0, 1);
+    // The along-edge component maps like positions (swap/flip); the
+    // across-edge component turns from "outward through from_edge" into
+    // "inward from to_edge", whatever the two faces' axis conventions are.
+    auto transform_axis = [](const CubeEdgePairing &p, glm::ivec2 axis) {
+        const bool from_u = p.from_edge == CubeEdge::Left ||
+                            p.from_edge == CubeEdge::Right;
+        const int32_t from_out = (p.from_edge == CubeEdge::Right ||
+                                  p.from_edge == CubeEdge::Top) ? 1 : -1;
+        const int32_t outward = (from_u ? axis.x : axis.y) * from_out;
+        glm::ivec2 along = from_u ? glm::ivec2(0, axis.y)
+                                  : glm::ivec2(axis.x, 0);
+        if (p.swap_uv) std::swap(along.x, along.y);
+        if (p.flip_u) along.x = -along.x;
+        if (p.flip_v) along.y = -along.y;
+        const bool to_u = p.to_edge == CubeEdge::Left ||
+                          p.to_edge == CubeEdge::Right;
+        const int32_t to_in = (p.to_edge == CubeEdge::Left ||
+                               p.to_edge == CubeEdge::Bottom) ? 1 : -1;
+        glm::ivec2 result = along;
+        if (to_u) {
+            result.x = outward * to_in;
+        } else {
+            result.y = outward * to_in;
+        }
+        return result;
+    };
+    auto walk = [&](int32_t delta, bool along_x) {
         const int32_t steps = std::abs(delta);
-        const int32_t dir = (delta > 0) ? 1 : -1;
+        const int32_t sign = delta > 0 ? 1 : -1;
         for (int32_t s = 0; s < steps; ++s) {
-            const int32_t next = coord + dir;
-            if (next >= 0 && next < hc) {
-                coord = next;
+            const glm::ivec2 dir = (along_x ? axis_x : axis_z) * sign;
+            const int32_t nx = cx + dir.x;
+            const int32_t nz = cz + dir.y;
+            if (nx >= 0 && nx < hc && nz >= 0 && nz < hc) {
+                cx = nx;
+                cz = nz;
                 continue;
             }
-
-            const CubeEdge edge = (dir > 0) ? pos_edge : neg_edge;
-            const auto &p = edge_pairing(sector, edge);
-            sector = p.to_face;
-
-            int32_t tcx = next;
-            int32_t tcz = cz;
+            const CubeEdge edge = nx < 0 ? CubeEdge::Left
+                : nx >= hc ? CubeEdge::Right
+                : nz < 0 ? CubeEdge::Bottom
+                : CubeEdge::Top;
+            const CubeEdgePairing &p = edge_pairing(sector, edge);
+            int32_t tcx = nx;
+            int32_t tcz = nz;
             map_cross_face_coordinate(p, tcx, tcz, hc);
-            tcx = std::clamp(tcx, 0, hc - 1);
-            tcz = std::clamp(tcz, 0, hc - 1);
-            coord = tcx;
-            cz = tcz;
+            sector = p.to_face;
+            cx = std::clamp(tcx, 0, hc - 1);
+            cz = std::clamp(tcz, 0, hc - 1);
+            axis_x = transform_axis(p, axis_x);
+            axis_z = transform_axis(p, axis_z);
         }
-        return true;
     };
-
-    if (!step_axis(cx, dcx, CubeEdge::Left, CubeEdge::Right)) {
-        return false;
-    }
-    if (!step_axis(cz, dcz, CubeEdge::Bottom, CubeEdge::Top)) {
-        return false;
-    }
+    walk(dcx, true);
+    walk(dcz, false);
 
     out = origin;
     out.sector = sector;

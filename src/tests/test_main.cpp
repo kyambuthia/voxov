@@ -8,6 +8,7 @@
 #include "engine_gameplay/player/player_visuals.hpp"
 #include "engine_gameplay/player/surface_orientation.hpp"
 #include "engine_presentation/debug_scene_builder.hpp"
+#include "engine_world/block_picking.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net_proto/net_protocol_helpers.hpp"
 #include "engine_net_proto/net_packet_codec.hpp"
@@ -3268,6 +3269,128 @@ void test_blocky_mesh_destination_index_offsets() {
   assert(first_avatar_base == 0u);
 }
 
+
+BlockWorld make_picking_world() {
+  BlockWorldConfig cfg{};
+  cfg.planet.radius = 50.0;
+  cfg.planet.center = glm::dvec3(0.0);
+  cfg.surface_shells = 4;
+  cfg.block_size = 1.0;
+  cfg.chunk_size = 16;
+  cfg.seed = 42;
+  BlockWorld world{};
+  world.init(cfg);
+  return world;
+}
+
+// Generates every chunk a vertical probe through `direction` touches.
+void generate_column(BlockWorld &world, const glm::dvec3 &direction,
+                     double from_radius, double to_radius) {
+  for (double r = from_radius; r >= to_radius; r -= 0.5) {
+    world.get_or_generate_chunk(world.address_from_world(direction * r));
+  }
+}
+
+bool picking_block_solid(const BlockWorld &world, const BlockAddress &addr) {
+  const VoxelChunk *chunk = world.find_chunk(addr);
+  return chunk != nullptr &&
+         chunk->solid(addr.block.x, addr.block.y, addr.block.z) &&
+         chunk->material(addr.block.x, addr.block.y, addr.block.z) !=
+             VoxelMaterial::Air;
+}
+
+void test_pick_block_places_on_the_crossed_face() {
+  BlockWorld world = make_picking_world();
+  const glm::dvec3 up = glm::normalize(glm::dvec3(1.0, 0.13, -0.07));
+  const double surface = world.surface_radial_distance(up);
+  generate_column(world, up, surface + 6.0, surface - 4.0);
+
+  const glm::vec3 origin(up * (surface + 3.0));
+  const BlockPick pick = pick_block(world, origin, glm::vec3(-up), origin,
+                                    8.0f, 8.0f);
+  assert(pick.hit.has_value());
+  assert(pick.place.has_value());
+  assert(picking_block_solid(world, *pick.hit));
+  assert(!picking_block_solid(world, *pick.place));
+  const glm::dvec3 hit_center = world.world_from_address(*pick.hit);
+  const glm::dvec3 place_center = world.world_from_address(*pick.place);
+  // Looking straight down, the placement cell sits on top of the hit block.
+  assert(glm::length(place_center) > glm::length(hit_center));
+  assert(glm::length(place_center - hit_center) < 1.5);
+  assert(glm::dot(glm::dvec3(pick.face_normal), up) > 0.7);
+
+  // The same ray with too little reach from the eye selects nothing.
+  const BlockPick short_reach = pick_block(world, origin, glm::vec3(-up),
+                                           origin, 1.0f, 8.0f);
+  assert(!short_reach.hit.has_value());
+
+  // Reach is measured from the eye, not the ray origin: a camera 4 m behind
+  // the eye still reaches the same block.
+  const glm::vec3 camera = origin + glm::vec3(up) * 4.0f;
+  const BlockPick orbit = pick_block(world, camera, glm::vec3(-up), origin,
+                                     8.0f, 12.0f);
+  assert(orbit.hit.has_value() && *orbit.hit == *pick.hit);
+}
+
+void test_pick_block_ignores_unloaded_chunks() {
+  BlockWorld world = make_picking_world();
+  const glm::dvec3 up(1.0, 0.0, 0.0);
+  const glm::vec3 origin(up * (world.surface_radial_distance(up) + 3.0));
+  const BlockPick pick = pick_block(world, origin, glm::vec3(-up), origin,
+                                    8.0f, 8.0f);
+  assert(!pick.hit.has_value());
+  assert(!pick.place.has_value());
+}
+
+void test_block_overlaps_capsule_rejects_body_cells_only() {
+  BlockWorld world = make_picking_world();
+  const glm::dvec3 up = glm::normalize(glm::dvec3(1.0, 0.2, 0.1));
+  const double surface = world.surface_radial_distance(up);
+  const glm::dvec3 feet = up * surface;
+  const double radius = 0.35;
+  const double height = 1.8;
+  const auto cell_at = [&](const glm::dvec3 &position) {
+    return world.address_from_world(position);
+  };
+  // Chest height: inside the body.
+  assert(block_overlaps_capsule(world, cell_at(feet + up * 1.0), feet, radius,
+                                height));
+  // Directly under the feet: allowed (building a pillar under yourself).
+  assert(!block_overlaps_capsule(world, cell_at(feet - up * 0.5), feet,
+                                 radius, height));
+  // Two blocks to the side: allowed.
+  glm::dvec3 side = glm::normalize(glm::cross(up, glm::dvec3(0.0, 0.0, 1.0)));
+  assert(!block_overlaps_capsule(world, cell_at(feet + up * 1.0 + side * 2.0),
+                                 feet, radius, height));
+}
+
+void test_chunks_touching_block_covers_boundary_neighbours() {
+  BlockWorld world = make_picking_world();
+  BlockAddress interior = world.address_from_world(
+      glm::dvec3(world.surface_radial_distance(glm::dvec3(1, 0, 0)), 0, 0));
+  interior.block = glm::ivec3(5, 5, 5);
+  assert(chunks_touching_block(world, interior).size() == 1);
+
+  BlockAddress face = interior;
+  face.block = glm::ivec3(0, 5, 5);
+  const std::vector<BlockAddress> face_chunks =
+      chunks_touching_block(world, face);
+  assert(face_chunks.size() == 2);
+  BlockAddress own = face;
+  own.block = glm::ivec3(0);
+  assert(face_chunks.front() == own);
+  assert(!(face_chunks.back() == own));
+
+  BlockAddress corner = interior;
+  corner.block = glm::ivec3(15, 15, 15);
+  const std::vector<BlockAddress> corner_chunks =
+      chunks_touching_block(world, corner);
+  assert(corner_chunks.size() >= 4 && corner_chunks.size() <= 8);
+  for (const BlockAddress &chunk : corner_chunks) {
+    assert(chunk.block == glm::ivec3(0));
+  }
+}
+
 } // namespace
 
 int main() {
@@ -3379,5 +3502,9 @@ int main() {
   test_skeletal_animator_animation_alters_positions_and_translation();
   test_blocky_mesh_rigid_transform_covariance();
   test_blocky_mesh_destination_index_offsets();
+  test_pick_block_places_on_the_crossed_face();
+  test_pick_block_ignores_unloaded_chunks();
+  test_block_overlaps_capsule_rejects_body_cells_only();
+  test_chunks_touching_block_covers_boundary_neighbours();
   return 0;
 }

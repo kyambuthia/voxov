@@ -97,6 +97,14 @@ private:
                          VoxelMaterial material, bool solid);
   void load_persistent_game();
   bool save_persistent_game();
+  // Marks the save dirty; flush_pending_save() writes it at most every
+  // kSaveDebounceSeconds so block edits never hit the disk every click.
+  void request_save();
+  void flush_pending_save(double frame_dt);
+  void update_block_interaction(const InputState &input);
+  // Drops the chunk mesh holding `addr` plus any neighbour chunk sharing the
+  // block's faces, so cross-chunk face culling is rebuilt next frame.
+  void invalidate_block_meshes(const BlockAddress &addr);
   void sync_network_state(uint32_t sim_tick, const InputState &input);
   void start_local_server(uint16_t port, bool loopback_only);
   void stop_client_session();
@@ -225,6 +233,8 @@ private:
 
     // ── Block interaction (first-person pick/break/place) ─────────────────
   // Targeted block from camera center raycast.
+  bool persistence_dirty_ = false;
+  double seconds_since_save_ = 0.0;
   glm::dvec3 targeted_hit_pos_ = glm::dvec3(0.0);
   glm::vec3 targeted_face_normal_ = glm::vec3(0.0f);
   std::optional<BlockAddress> targeted_addr_;

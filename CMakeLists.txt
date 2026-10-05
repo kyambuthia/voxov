@@ -171,6 +171,7 @@ endif()
 
 add_library(engine_world STATIC
     src/engine_world/atmosphere.cpp
+    src/engine_world/block_picking.cpp
     src/engine_world/coordinate_frames.cpp
     src/engine_world/planet.cpp
     src/engine_world/planet_blocks.cpp

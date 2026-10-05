@@ -1,4 +1,5 @@
 #include "engine/engine.hpp"
+#include "engine_world/block_picking.hpp"
 #include "engine/planet_gameplay_config.hpp"
 
 #include "engine_core/memory.hpp"
@@ -1045,132 +1046,9 @@ void Engine::tick(double frame_dt,
   camera.fov_y_radians = glm::mix(
       camera.fov_y_radians, glm::radians(70.0f + speed_fov), camera_ease);
 
-  // ── Block interaction (raycast pick, break/place) ─────────────────────
-  // Raycast from camera center forward to find targeted block.
-  // Left click: break block (set to Air). Right click: place block.
-  {
-    constexpr float k_pick_range = 10.0f;
-    const glm::vec3 ray_origin = camera.transform.position;
-    const glm::vec3 ray_dir = camera.forward();
+  update_block_interaction(input_frame.primary);
+  flush_pending_save(frame_dt);
 
-    // Step along ray in 0.5m increments (half block size), check block occupancy.
-    // Convert each test point to BlockAddress and test if solid.
-    glm::dvec3 hit_block_world = glm::dvec3(0.0);
-    bool hit_found = false;
-    float hit_dist = 0.0f;
-    constexpr float k_step = 0.3f;  // sub-block step for reliable thin-wall detection
-    for (float d = k_step; d <= k_pick_range; d += k_step) {
-      const glm::vec3 test_pos = ray_origin + ray_dir * d;
-      // Reject samples far from the planet's editable surface shell. The old
-      // fixed 2 km limit silently disabled interaction on the 2,000 km planet.
-      const double radial_distance = glm::length(
-          glm::dvec3(test_pos) - block_world_.planet().center);
-      const double surface_band = block_world_.max_surface_height_above_base()
-                                + static_cast<double>(k_pick_range) + 32.0;
-      if (std::abs(radial_distance - block_world_.planet().radius) > surface_band) continue;
-      const BlockAddress addr = block_world_.address_from_world(glm::dvec3(test_pos));
-      const VoxelChunk *chunk = block_world_.find_chunk(addr);
-      if (chunk == nullptr) continue;
-      if (chunk->solid(addr.block.x, addr.block.y, addr.block.z) &&
-          chunk->material(addr.block.x, addr.block.y, addr.block.z) != VoxelMaterial::Air) {
-        hit_block_world = block_world_.world_from_address(addr);
-        hit_dist = d;
-        hit_found = true;
-        break;
-      }
-    }
-
-    // Store targeted block info for highlight and interaction.
-    targeted_hit_pos_ = hit_block_world;
-    targeted_addr_ = hit_found ? std::optional<BlockAddress>(block_world_.address_from_world(hit_block_world)) : std::nullopt;
-    targeted_face_normal_ = glm::vec3(0.0f);
-
-    if (hit_found && targeted_addr_.has_value()) {
-      // Compute face normal by stepping back along the ray to find which
-      // axis the ray crossed to enter the solid block. This is simpler and
-      // more reliable than computing from the hit position relative to block center.
-      const BlockAddress &addr = *targeted_addr_;
-      glm::vec3 face_normal(0.0f);
-      if (hit_dist > k_step) {
-        const glm::vec3 prev_pos = ray_origin + ray_dir * (hit_dist - k_step);
-        const BlockAddress prev_addr = block_world_.address_from_world(glm::dvec3(prev_pos));
-        const glm::ivec3 diff = addr.block - prev_addr.block;
-        // The axis with the largest absolute component is the face we entered through.
-        // Use the sign to get the outward normal.
-        if (addr.sector == prev_addr.sector && addr.shell == prev_addr.shell &&
-            addr.chunk == prev_addr.chunk) {
-          // Same chunk: diff directly tells us which block axis changed.
-          const float ax = std::abs(static_cast<float>(diff.x));
-          const float ay = std::abs(static_cast<float>(diff.y));
-          const float az = std::abs(static_cast<float>(diff.z));
-          if (ax >= ay && ax >= az && ax > 0.5f)
-            face_normal = glm::vec3(static_cast<float>(diff.x), 0.0f, 0.0f);
-          else if (ay >= ax && ay >= az && ay > 0.5f)
-            face_normal = glm::vec3(0.0f, static_cast<float>(diff.y), 0.0f);
-          else if (az > 0.5f)
-            face_normal = glm::vec3(0.0f, 0.0f, static_cast<float>(diff.z));
-        }
-      }
-      // Fallback: if step-back didn't produce a normal, use the radial up
-      // direction (place block above the hit block on the sphere surface).
-      if (glm::length(face_normal) < 0.1f) {
-        face_normal = glm::normalize(local_player.transform.position);
-      }
-      targeted_face_normal_ = face_normal;
-
-      // Handle left-click (break)
-      if (input_frame.primary.left_click_pressed) {
-        VoxelChunk &chunk = block_world_.get_or_generate_chunk(addr);
-        chunk.set_material(addr.block.x, addr.block.y, addr.block.z, VoxelMaterial::Air);
-        chunk.set_solid(addr.block.x, addr.block.y, addr.block.z, false);
-        expedition_mission_.on_block_removed(active_body_index_);
-        record_block_edit(active_body_index_, addr, VoxelMaterial::Air, false);
-        (void)save_persistent_game();
-        // Remove stale mesh from scene so it will be rebuilt next frame.
-        const uint64_t mid = BlockWorld::chunk_mesh_id(addr);
-        const uint64_t vegetation_mid = vegetation::mesh_id(addr);
-        scene.opaque_meshes.erase(
-            std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-                           [mid, vegetation_mid](const RenderMesh &m) {
-                             return m.mesh_id == mid ||
-                                    m.mesh_id == vegetation_mid;
-                           }),
-            scene.opaque_meshes.end());
-      }
-
-      // Handle right-click (place)
-      if (input_frame.primary.right_click_pressed) {
-        // Place block at the neighbor position in the face normal direction.
-        // Compute the world-space position adjacent to the hit face.
-        const glm::dvec3 place_world = glm::dvec3(hit_block_world) +
-            glm::dvec3(targeted_face_normal_) * block_world_.config().block_size;
-        BlockAddress place_addr = block_world_.address_from_world(place_world);
-        // Don't place inside the hit block itself.
-        if (place_addr != addr) {
-          VoxelChunk *place_chunk = &block_world_.get_or_generate_chunk(place_addr);
-          if (place_chunk != nullptr &&
-              place_chunk->material(place_addr.block.x, place_addr.block.y, place_addr.block.z) == VoxelMaterial::Air) {
-            place_chunk->set_material(place_addr.block.x, place_addr.block.y, place_addr.block.z, VoxelMaterial::Stone);
-            place_chunk->set_solid(place_addr.block.x, place_addr.block.y, place_addr.block.z, true);
-            expedition_mission_.on_block_placed(active_body_index_);
-            record_block_edit(active_body_index_, place_addr,
-                              VoxelMaterial::Stone, true);
-            (void)save_persistent_game();
-            // Remove stale mesh for the affected chunk.
-            const uint64_t mid = BlockWorld::chunk_mesh_id(place_addr);
-            const uint64_t vegetation_mid = vegetation::mesh_id(place_addr);
-            scene.opaque_meshes.erase(
-                std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-                               [mid, vegetation_mid](const RenderMesh &m) {
-                                 return m.mesh_id == mid ||
-                                        m.mesh_id == vegetation_mid;
-                               }),
-                scene.opaque_meshes.end());
-          }
-        }
-      }
-    }
-  }
   // ── Camera-relative rendering origin ─────────────────────────────────
   // Every retained mesh owns the double-precision origin used to build its
   // float vertices. The camera can therefore rebase every frame without
@@ -2293,6 +2171,95 @@ void Engine::load_persistent_game() {
   spdlog::info("Loaded save: body={}, edits={}, expedition={}",
                active_body_index_, persistent_block_edits_.size(),
                static_cast<int>(expedition_mission_.stage()));
+}
+
+void Engine::request_save() {
+  persistence_dirty_ = true;
+}
+
+void Engine::flush_pending_save(double frame_dt) {
+  constexpr double kSaveDebounceSeconds = 2.0;
+  seconds_since_save_ += std::max(0.0, frame_dt);
+  if (!persistence_dirty_ || seconds_since_save_ < kSaveDebounceSeconds) {
+    return;
+  }
+  if (save_persistent_game()) {
+    persistence_dirty_ = false;
+  }
+  seconds_since_save_ = 0.0;
+}
+
+void Engine::invalidate_block_meshes(const BlockAddress &addr) {
+  std::unordered_set<uint64_t> stale;
+  for (const BlockAddress &chunk : chunks_touching_block(block_world_, addr)) {
+    stale.insert(BlockWorld::chunk_mesh_id(chunk));
+    stale.insert(vegetation::mesh_id(chunk));
+  }
+  scene.opaque_meshes.erase(
+      std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+                     [&stale](const RenderMesh &mesh) {
+                       return stale.count(mesh.mesh_id) != 0;
+                     }),
+      scene.opaque_meshes.end());
+}
+
+void Engine::update_block_interaction(const InputState &input) {
+  // Pick along the crosshair ray, but measure reach from the player's eye so
+  // the third-person orbit distance neither extends nor shortens it.
+  constexpr float k_reach = 7.0f;
+  constexpr float k_eye_height = 1.6f;
+  const glm::vec3 feet = local_player.transform.position;
+  const glm::vec3 player_up = glm::dot(feet, feet) > 1.0e-6f
+                                  ? glm::normalize(feet)
+                                  : glm::vec3(0.0f, 1.0f, 0.0f);
+  const glm::vec3 eye = feet + player_up * k_eye_height;
+  const glm::vec3 ray_origin = camera.transform.position;
+  const BlockPick pick = pick_block(
+      block_world_, ray_origin, camera.forward(), eye, k_reach,
+      glm::length(eye - ray_origin) + k_reach);
+
+  targeted_addr_ = pick.hit;
+  targeted_hit_pos_ = pick.hit.has_value()
+                          ? block_world_.world_from_address(*pick.hit)
+                          : glm::dvec3(0.0);
+  targeted_face_normal_ = pick.face_normal;
+  if (!pick.hit.has_value()) {
+    return;
+  }
+
+  if (input.left_click_pressed) {
+    const BlockAddress addr = *pick.hit;
+    VoxelChunk &chunk = block_world_.get_or_generate_chunk(addr);
+    chunk.set_material(addr.block.x, addr.block.y, addr.block.z,
+                       VoxelMaterial::Air);
+    chunk.set_solid(addr.block.x, addr.block.y, addr.block.z, false);
+    expedition_mission_.on_block_removed(active_body_index_);
+    record_block_edit(active_body_index_, addr, VoxelMaterial::Air, false);
+    request_save();
+    invalidate_block_meshes(addr);
+    return;
+  }
+
+  if (!input.right_click_pressed || !pick.place.has_value() ||
+      block_overlaps_capsule(block_world_, *pick.place,
+                             glm::dvec3(local_player.transform.position),
+                             local_player.controller.capsuleRadius,
+                             local_player.controller.capsuleHeight)) {
+    return;
+  }
+  const BlockAddress place = *pick.place;
+  VoxelChunk &chunk = block_world_.get_or_generate_chunk(place);
+  if (chunk.material(place.block.x, place.block.y, place.block.z) !=
+      VoxelMaterial::Air) {
+    return;
+  }
+  chunk.set_material(place.block.x, place.block.y, place.block.z,
+                     VoxelMaterial::Stone);
+  chunk.set_solid(place.block.x, place.block.y, place.block.z, true);
+  expedition_mission_.on_block_placed(active_body_index_);
+  record_block_edit(active_body_index_, place, VoxelMaterial::Stone, true);
+  request_save();
+  invalidate_block_meshes(place);
 }
 
 bool Engine::save_persistent_game() {

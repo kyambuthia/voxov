@@ -117,6 +117,9 @@ public:
     // ── Queries ────────────────────────────────────────────────────────
     BlockAddress address_from_world(const glm::dvec3 &world_pos) const;
     glm::dvec3   world_from_address(const BlockAddress &addr) const;
+    // Corners of the block's full cell on the curved shell. Index bits:
+    // bit 0 = +u (x), bit 1 = +v (z), bit 2 = outer radius (y).
+    std::array<glm::dvec3, 8> block_corners(const BlockAddress &addr) const;
 
     std::vector<BlockNeighbor> neighbors(const BlockAddress &addr,
                                          BlockDir dir) const;

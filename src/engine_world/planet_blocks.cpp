@@ -295,6 +295,29 @@ glm::dvec3 BlockWorld::world_from_address(const BlockAddress &addr) const {
     return block_world_center(addr.sector, addr.shell, cx, cz, ly);
 }
 
+std::array<glm::dvec3, 8> BlockWorld::block_corners(
+    const BlockAddress &addr) const {
+    const ShellConfig &sh = shell_config(addr.shell);
+    const double res = static_cast<double>(sh.horizontal_res);
+    const double layers = static_cast<double>(sh.vertical_layers);
+    const double gx = static_cast<double>(addr.chunk.x * config_.chunk_size +
+                                          addr.block.x);
+    const double gz = static_cast<double>(addr.chunk.z * config_.chunk_size +
+                                          addr.block.z);
+    const double gy = static_cast<double>(addr.chunk.y * config_.chunk_size +
+                                          addr.block.y);
+    std::array<glm::dvec3, 8> corners{};
+    for (int i = 0; i < 8; ++i) {
+        const double u = -1.0 + (gx + (i & 1)) / res * 2.0;
+        const double v = -1.0 + (gz + ((i >> 1) & 1)) / res * 2.0;
+        const double r = sh.inner_radius + (sh.outer_radius - sh.inner_radius) *
+                                               ((gy + ((i >> 2) & 1)) / layers);
+        corners[static_cast<size_t>(i)] =
+            config_.planet.center + face_uv_to_direction(addr.sector, u, v) * r;
+    }
+    return corners;
+}
+
 glm::dvec3 BlockWorld::block_world_center(PlanetFace face, int32_t shell_idx,
                                           int32_t col_x, int32_t col_z,
                                           int32_t layer_y) const {

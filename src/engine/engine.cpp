@@ -785,6 +785,7 @@ void Engine::tick(double frame_dt,
       local_player.camera_rig.distance > 0.1f,
       avatar_style_from_character(session_state_.selected_character),
       collision_world.has_planet_surface_collider());
+  append_target_outline(scene.debug_world);
   refresh_overlay_text();
   renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
 
@@ -2278,6 +2279,30 @@ void Engine::load_persistent_game() {
                static_cast<int>(expedition_mission_.stage()));
 }
 
+void Engine::append_target_outline(RenderMesh &mesh) const {
+  if (!targeted_addr_.has_value() || session_state_.menu_open ||
+      sky_navigation_mode_) {
+    return;
+  }
+  const std::array<glm::dvec3, 8> corners =
+      block_world_.block_corners(*targeted_addr_);
+  glm::dvec3 center(0.0);
+  for (const glm::dvec3 &corner : corners) {
+    center += corner * 0.125;
+  }
+  // Push the edges slightly outward so they aren't z-fighting the faces.
+  constexpr double kInflate = 1.02;
+  constexpr int kEdges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7},
+                                 {0, 2}, {1, 3}, {4, 6}, {5, 7},
+                                 {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+  const glm::vec3 color(0.06f, 0.07f, 0.08f);
+  for (const auto &edge : kEdges) {
+    const glm::vec3 a(center + (corners[edge[0]] - center) * kInflate);
+    const glm::vec3 b(center + (corners[edge[1]] - center) * kInflate);
+    append_mesh(mesh, build_debug_line_mesh(a, b, 0.018f, color));
+  }
+}
+
 void Engine::request_save() {
   persistence_dirty_ = true;
 }
@@ -2423,7 +2448,26 @@ void Engine::update_first_person_camera(PlayerEntity &player,
   const bool third_person = player.camera_rig.distance > 0.0f;
   const float pivot_height =
       third_person ? player.camera_rig.pivotHeight : k_eye_height;
-  const glm::vec3 pivot = render_position + local_up * pivot_height;
+  glm::vec3 pivot = render_position + local_up * pivot_height;
+  if (third_person) {
+    // Over-the-right-shoulder framing keeps the crosshair (and the pick ray)
+    // off the avatar's back. The offset shrinks when zoomed in and stops
+    // short of any wall beside the player.
+    constexpr float k_shoulder_offset = 0.65f;
+    const glm::vec3 right = glm::cross(view_dir, local_up);
+    if (glm::dot(right, right) > 1.0e-6f) {
+      const glm::vec3 right_dir = glm::normalize(right);
+      float offset = k_shoulder_offset *
+                     std::clamp(player.camera_rig.distance / 2.5f, 0.0f, 1.0f);
+      float hit_distance = 0.0f;
+      if (collision_world.has_planet_surface_collider() &&
+          collision_world.raycast(pivot, right_dir, offset + 0.3f,
+                                  hit_distance)) {
+        offset = std::clamp(hit_distance - 0.3f, 0.0f, offset);
+      }
+      pivot += right_dir * offset;
+    }
+  }
   glm::vec3 orbit_origin = pivot;
   float orbit_distance = player.camera_rig.distance;
   if (third_person) {

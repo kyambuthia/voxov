@@ -102,6 +102,8 @@ private:
   void request_save();
   void flush_pending_save(double frame_dt);
   void update_block_interaction(const InputState &input);
+  // Dark wire box around the block under the crosshair.
+  void append_target_outline(RenderMesh &mesh) const;
   // Frame phases of tick(), in call order.
   void apply_session_input(InputState &gameplay_input,
                            const RenderSurface &surface);

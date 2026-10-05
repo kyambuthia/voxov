@@ -102,6 +102,39 @@ private:
   void request_save();
   void flush_pending_save(double frame_dt);
   void update_block_interaction(const InputState &input);
+  // Frame phases of tick(), in call order.
+  void apply_session_input(InputState &gameplay_input,
+                           const RenderSurface &surface);
+  void apply_sky_navigation_assist(InputState &gameplay_input,
+                                   double frame_dt);
+  // Runs the fixed-step simulation callbacks and drains frame events.
+  void simulate_frame(InputState &gameplay_input, EngineInputFrame &input_frame,
+                      double frame_dt, ProfilingSnapshot &profiling_sample);
+  struct TerrainStreamTimings {
+    double chunk_gen_ms = 0.0;
+    double mesh_build_ms = 0.0;
+  };
+  // Generates, meshes, and evicts surface chunks around the player.
+  TerrainStreamTimings stream_block_terrain(double camera_altitude,
+                                            const RenderSurface &surface);
+  void rebuild_wireframe_overlays();
+  // Advances orbits and builds the sky-navigation markers.
+  void update_solar_system(double frame_dt);
+  // Picks the active coordinate frame and handles SOI transitions.
+  void update_coordinate_frames(double frame_dt);
+  // Rebuilds transient sphere meshes for the non-active celestial bodies.
+  void append_celestial_meshes();
+  void update_render_stats(const ProfilingSnapshot &profiling_sample,
+                           const TerrainStreamTimings &terrain_timings,
+                           double gpu_upload_ms);
+  // Computes the clear/sky colour for the current view.
+  void update_sky_color(double camera_altitude);
+  // Builds the per-frame render context; advances frame_index.
+  RenderFrameContext build_render_context(double frame_dt,
+                                          const RenderSurface &surface);
+  // Updates view, clip planes, and FOV; returns the camera altitude above
+  // the active planet's base radius.
+  double update_camera(double frame_dt, const RenderSurface &surface);
   // Drops the chunk mesh holding `addr` plus any neighbour chunk sharing the
   // block's faces, so cross-chunk face culling is rebuilt next frame.
   void invalidate_block_meshes(const BlockAddress &addr);

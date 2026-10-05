@@ -670,6 +670,101 @@ void Engine::tick(double frame_dt,
   });
 
   InputState gameplay_input = input_frame.primary;
+  apply_session_input(gameplay_input, surface);
+
+  apply_sky_navigation_assist(gameplay_input, frame_dt);
+  touch_controls_visible_ = input_frame.touch_mode;
+
+  PlayerControllerSystem::update_camera_rig(
+      local_player, gameplay_input, input_frame.touch_mode,
+      static_cast<float>(frame_dt));
+
+  ProfilingSnapshot profiling_sample{};
+  simulate_frame(gameplay_input, input_frame, frame_dt, profiling_sample);
+
+  const double camera_altitude = update_camera(frame_dt, surface);
+
+  update_block_interaction(input_frame.primary);
+  flush_pending_save(frame_dt);
+
+  // ── Camera-relative rendering origin ─────────────────────────────────
+  // Every retained mesh owns the double-precision origin used to build its
+  // float vertices. The camera can therefore rebase every frame without
+  // invalidating chunks or causing a visible streaming reset.
+  {
+    const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
+    camera_snap_origin_ = cam_pos;
+  }
+  // Camera origin must be the snap origin so the GPU shader can compute
+  // correct camera-relative positions for lighting.
+  scene.camera_origin.world_origin = camera_snap_origin_;
+
+  // Periodic frame summary for headless/automated diagnosis. Enable with
+  // SPDLOG_LEVEL=debug.
+  if (frame_index % 120 == 0 && spdlog::should_log(spdlog::level::debug)) {
+    spdlog::debug(
+        "Frame {} | cam=({:.0f},{:.0f},{:.0f}) pitch={:.0f} yaw={:.0f} "
+        "alt={:.0f}m | grounded={} vel={:.1f}m/s | fps={:.0f} dt={:.1f}ms | "
+        "draws={} verts={} tris={} | lod={}/{}/{}/{} chunks={} opaques={} | "
+        "gen={:.1f} mesh={:.1f} upload={:.1f}ms",
+        frame_index, camera.transform.position.x, camera.transform.position.y,
+        camera.transform.position.z, local_player.camera_rig.pitch,
+        local_player.camera_rig.yaw,
+        glm::length(local_player.transform.position) -
+            block_world_.planet().radius,
+        local_player.controller.grounded,
+        glm::length(local_player.controller.velocity), render_stats.fps,
+        render_stats.frame_ms, render_stats.draw_call_count,
+        render_stats.total_vertices, render_stats.total_indices / 3,
+        render_stats.lod_chunk_count[0], render_stats.lod_chunk_count[1],
+        render_stats.lod_chunk_count[2], render_stats.lod_chunk_count[3],
+        block_world_.chunk_count(), scene.opaque_meshes.size(),
+        render_stats.chunk_gen_ms, render_stats.mesh_build_ms,
+        render_stats.gpu_upload_ms);
+  }
+
+  const TerrainStreamTimings terrain_timings =
+      stream_block_terrain(camera_altitude, surface);
+
+  rebuild_wireframe_overlays();
+
+  update_solar_system(frame_dt);
+
+  update_coordinate_frames(frame_dt);
+
+  append_celestial_meshes();
+
+  // ── Frame profiler: time GPU upload (buffer creation/update) ──
+  const PerfClock::time_point gpu_upload_start = PerfClock::now();
+  renderer.upload_scene(scene);
+  const double gpu_upload_ms = elapsed_ms(gpu_upload_start, PerfClock::now());
+
+  update_render_stats(profiling_sample, terrain_timings, gpu_upload_ms);
+
+  scene.debug_world = build_local_player_debug_mesh(
+      local_player, local_player_animation, session_state_.devhud_enabled,
+      local_player.camera_rig.distance > 0.1f,
+      avatar_style_from_character(session_state_.selected_character),
+      collision_world.has_planet_surface_collider());
+  refresh_overlay_text();
+  renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
+
+  update_sky_color(camera_altitude);
+
+  const RenderFrameContext ctx = build_render_context(frame_dt, surface);
+
+  const PerfClock::time_point render_cpu_start = PerfClock::now();
+  renderer.render_frame(ctx, render_stats, surface);
+
+  const double render_cpu_ms = elapsed_ms(render_cpu_start, PerfClock::now());
+  const double frame_cpu_ms = elapsed_ms(frame_cpu_start, PerfClock::now());
+  render_stats.render_cpu_ms =
+      smooth_metric(render_stats.render_cpu_ms, render_cpu_ms, 0.25);
+  render_stats.cpu_ms = smooth_metric(render_stats.cpu_ms, frame_cpu_ms, 0.25);
+}
+
+void Engine::apply_session_input(InputState &gameplay_input,
+                                 const RenderSurface &surface) {
   if (surface.width > 0 && surface.height > 0) {
     sky_navigation_cursor_ndc_ = glm::vec2(
         gameplay_input.cursor_position.x /
@@ -778,7 +873,10 @@ void Engine::tick(double frame_dt,
     disable_gameplay_actions(gameplay_input);
     gameplay_input.look_delta = glm::vec2(0.0f);
   }
+}
 
+void Engine::apply_sky_navigation_assist(InputState &gameplay_input,
+                                         double frame_dt) {
   // Holding W after locking a destination engages a readable flight assist:
   // the camera slews onto the dashed route, propulsion follows that route,
   // and arrival hands control to the destination's resident terrain runtime.
@@ -843,13 +941,63 @@ void Engine::tick(double frame_dt,
           local_player.camera_rig.pitch, target_pitch, steer);
     }
   }
-  touch_controls_visible_ = input_frame.touch_mode;
+}
 
-  PlayerControllerSystem::update_camera_rig(
-      local_player, gameplay_input, input_frame.touch_mode,
-      static_cast<float>(frame_dt));
+double Engine::update_camera(double frame_dt, const RenderSurface &surface) {
+  // First-person camera from player eye position.
+  update_first_person_camera(local_player, local_player.transform.position,
+                              camera, static_cast<float>(frame_dt));
 
-  ProfilingSnapshot profiling_sample{};
+  // Preserve precision near blocks while allowing the whole compact planet
+  // to fit in the frustum during debug flight.
+  const double camera_altitude = std::max(
+      0.0, glm::length(glm::dvec3(camera.transform.position) -
+                       block_world_.planet().center) -
+               block_world_.planet().radius);
+  const float target_near = camera_altitude > 10'000.0
+                                ? static_cast<float>(std::clamp(
+                                      camera_altitude / 100'000.0,
+                                      2.0, 100.0))
+                                : 0.25f;
+  const float target_far = static_cast<float>(std::max(
+      512.0, std::min(block_world_.planet().radius * 12.0,
+                      (block_world_.planet().radius + camera_altitude) * 4.0)));
+  const float camera_ease = 1.0f - std::exp(
+      -6.0f * static_cast<float>(std::clamp(frame_dt, 0.0, 0.1)));
+  camera.z_near = glm::mix(camera.z_near, target_near, camera_ease);
+  camera.z_far = target_far > camera.z_far
+                     ? target_far
+                     : glm::mix(camera.z_far, target_far, camera_ease);
+  const float flight_speed = glm::length(local_player.controller.velocity);
+  sky_navigation_aspect_ratio_ = static_cast<float>(surface.width) /
+                                 static_cast<float>(std::max(1, surface.height));
+  if (sky_navigation_mode_) {
+    // Keep the star and distant planetary markers in the navigation frustum.
+    camera.z_far = std::max(camera.z_far, 250'000'000.0f);
+  }
+  const float flight_fov_speed = std::max(
+      1.0f, kPlayablePlanetConfig.debug_flight_sprint_max_mps);
+  const float speed_fov = debug_fly_mode_
+                              ? std::clamp(flight_speed / flight_fov_speed,
+                                           0.0f, 1.0f) * 12.0f
+                              : 0.0f;
+  camera.fov_y_radians = glm::mix(
+      camera.fov_y_radians, glm::radians(70.0f + speed_fov), camera_ease);
+  return camera_altitude;
+}
+
+void Engine::simulate_frame(InputState &gameplay_input,
+                            EngineInputFrame &input_frame, double frame_dt,
+                            ProfilingSnapshot &profiling_sample) {
+  const FixedStep &fixed = game_session.fixed_step();
+  // Toggle the vehicle engine once per frame. Inside the fixed step a frame
+  // with two steps toggled it twice, silently cancelling the key press.
+  if (flight_vehicle_spawned_ && gameplay_input.engine_toggle_pressed) {
+    flight_vehicle_.state().engine_active =
+        !flight_vehicle_.state().engine_active;
+    last_hud_message_ = flight_vehicle_.state().engine_active
+        ? "Vehicle engine ON" : "Vehicle engine OFF";
+  }
   bool jump_consumed = false;
   const RuntimeGameSessionCallbacks callbacks{
       .pump_server = [this]() {
@@ -882,14 +1030,6 @@ void Engine::tick(double frame_dt,
             // deterministic integration, independent of render framerate.
             if (flight_vehicle_spawned_ &&
                 flight_vehicle_.state().engine_active) {
-              // Toggle engine with T key (consumed once per press).
-              if (gameplay_input.engine_toggle_pressed) {
-                flight_vehicle_.state().engine_active =
-                    !flight_vehicle_.state().engine_active;
-                last_hud_message_ = flight_vehicle_.state().engine_active
-                    ? "Vehicle engine ON" : "Vehicle engine OFF";
-              }
-
               // Throttle: Shift increases, Ctrl decreases.
               double throttle = flight_vehicle_.state().throttle;
               if (gameplay_input.sprint_held) {
@@ -934,12 +1074,6 @@ void Engine::tick(double frame_dt,
                   : k_sea_level_density;
 
               flight_vehicle_.update(step.dt, air_density, gravity);
-            } else if (flight_vehicle_spawned_ &&
-                       gameplay_input.engine_toggle_pressed) {
-              flight_vehicle_.state().engine_active =
-                  !flight_vehicle_.state().engine_active;
-              last_hud_message_ = flight_vehicle_.state().engine_active
-                  ? "Vehicle engine ON" : "Vehicle engine OFF";
             }
             {
               ScopedCPUTimer timer(profiling_sample.animation_cpu_ms);
@@ -1006,85 +1140,10 @@ void Engine::tick(double frame_dt,
         .alpha = alpha,
     });
   }
-  // First-person camera from player eye position.
-  update_first_person_camera(local_player, local_player.transform.position,
-                              camera, static_cast<float>(frame_dt));
+}
 
-  // Preserve precision near blocks while allowing the whole compact planet
-  // to fit in the frustum during debug flight.
-  const double camera_altitude = std::max(
-      0.0, glm::length(glm::dvec3(camera.transform.position) -
-                       block_world_.planet().center) -
-               block_world_.planet().radius);
-  const float target_near = camera_altitude > 10'000.0
-                                ? static_cast<float>(std::clamp(
-                                      camera_altitude / 100'000.0,
-                                      2.0, 100.0))
-                                : 0.25f;
-  const float target_far = static_cast<float>(std::max(
-      512.0, std::min(block_world_.planet().radius * 12.0,
-                      (block_world_.planet().radius + camera_altitude) * 4.0)));
-  const float camera_ease = 1.0f - std::exp(
-      -6.0f * static_cast<float>(std::clamp(frame_dt, 0.0, 0.1)));
-  camera.z_near = glm::mix(camera.z_near, target_near, camera_ease);
-  camera.z_far = target_far > camera.z_far
-                     ? target_far
-                     : glm::mix(camera.z_far, target_far, camera_ease);
-  const float flight_speed = glm::length(local_player.controller.velocity);
-  sky_navigation_aspect_ratio_ = static_cast<float>(surface.width) /
-                                 static_cast<float>(std::max(1, surface.height));
-  if (sky_navigation_mode_) {
-    // Keep the star and distant planetary markers in the navigation frustum.
-    camera.z_far = std::max(camera.z_far, 250'000'000.0f);
-  }
-  const float flight_fov_speed = std::max(
-      1.0f, kPlayablePlanetConfig.debug_flight_sprint_max_mps);
-  const float speed_fov = debug_fly_mode_
-                              ? std::clamp(flight_speed / flight_fov_speed,
-                                           0.0f, 1.0f) * 12.0f
-                              : 0.0f;
-  camera.fov_y_radians = glm::mix(
-      camera.fov_y_radians, glm::radians(70.0f + speed_fov), camera_ease);
-
-  update_block_interaction(input_frame.primary);
-  flush_pending_save(frame_dt);
-
-  // ── Camera-relative rendering origin ─────────────────────────────────
-  // Every retained mesh owns the double-precision origin used to build its
-  // float vertices. The camera can therefore rebase every frame without
-  // invalidating chunks or causing a visible streaming reset.
-  {
-    const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
-    camera_snap_origin_ = cam_pos;
-  }
-  // Camera origin must be the snap origin so the GPU shader can compute
-  // correct camera-relative positions for lighting.
-  scene.camera_origin.world_origin = camera_snap_origin_;
-
-  // Periodic frame summary for headless/automated diagnosis. Enable with
-  // SPDLOG_LEVEL=debug.
-  if (frame_index % 120 == 0 && spdlog::should_log(spdlog::level::debug)) {
-    spdlog::debug(
-        "Frame {} | cam=({:.0f},{:.0f},{:.0f}) pitch={:.0f} yaw={:.0f} "
-        "alt={:.0f}m | grounded={} vel={:.1f}m/s | fps={:.0f} dt={:.1f}ms | "
-        "draws={} verts={} tris={} | lod={}/{}/{}/{} chunks={} opaques={} | "
-        "gen={:.1f} mesh={:.1f} upload={:.1f}ms",
-        frame_index, camera.transform.position.x, camera.transform.position.y,
-        camera.transform.position.z, local_player.camera_rig.pitch,
-        local_player.camera_rig.yaw,
-        glm::length(local_player.transform.position) -
-            block_world_.planet().radius,
-        local_player.controller.grounded,
-        glm::length(local_player.controller.velocity), render_stats.fps,
-        render_stats.frame_ms, render_stats.draw_call_count,
-        render_stats.total_vertices, render_stats.total_indices / 3,
-        render_stats.lod_chunk_count[0], render_stats.lod_chunk_count[1],
-        render_stats.lod_chunk_count[2], render_stats.lod_chunk_count[3],
-        block_world_.chunk_count(), scene.opaque_meshes.size(),
-        render_stats.chunk_gen_ms, render_stats.mesh_build_ms,
-        render_stats.gpu_upload_ms);
-  }
-
+Engine::TerrainStreamTimings Engine::stream_block_terrain(
+    double camera_altitude, const RenderSurface &surface) {
   // ── Block world chunk streaming ─────────────────────────────────────
   // Load surface chunks in a radius around the player using the cube-sphere
   // shell architecture (6 sectors, radial shells doubling horizontal res,
@@ -1482,7 +1541,11 @@ void Engine::tick(double frame_dt,
     snap_origin_dirty_ = false;
     last_chunk_center_hash_ = 0;
   }
+  return TerrainStreamTimings{.chunk_gen_ms = chunk_gen_ms,
+                              .mesh_build_ms = mesh_build_ms};
+}
 
+void Engine::rebuild_wireframe_overlays() {
   // Wireframe overlay — regenerate when dirty. Only show when devhud enabled.
   // WHY: the wireframe planet mesh (colored lines per cube face) overlays
   // the voxel terrain and creates confusing grid patterns. Disable for
@@ -1499,7 +1562,9 @@ void Engine::tick(double frame_dt,
   if (kPlayablePlanetConfig.atmosphere_preview_enabled) {
     scene.wireframe_meshes.push_back(atmosphere_wireframe_mesh_);
   }
+}
 
+void Engine::update_solar_system(double frame_dt) {
   // ── Solar system update ──────────────────────────────────────────────
   // Advance orbital simulation with frame time and build celestial body
   // meshes BEFORE upload_scene so they are uploaded to GPU this frame.
@@ -1550,7 +1615,9 @@ void Engine::tick(double frame_dt,
     navigation_mesh.content_hash = frame_index + 1;
     scene.wireframe_meshes.push_back(std::move(navigation_mesh));
   }
+}
 
+void Engine::update_coordinate_frames(double frame_dt) {
   // ── Coordinate frame update ─────────────────────────────────────────
   // Sync frame transforms from solar system orbital positions.
   // Then determine active frame based on vehicle/player altitude.
@@ -1663,7 +1730,9 @@ void Engine::tick(double frame_dt,
     const glm::dvec3 sun_dir = glm::normalize(sun_planet_centric - cam_world);
     atmosphere_.set_sun_direction(sun_dir);
   }
+}
 
+void Engine::append_celestial_meshes() {
   // ── Celestial body rendering ────────────────────────────────────────
   // Strip previous frame's celestial meshes from the end of opaque_meshes,
   // then append new camera-relative sphere meshes for the current frame.
@@ -1735,12 +1804,11 @@ void Engine::tick(double frame_dt,
       scene.opaque_meshes.push_back(std::move(player_mesh));
     }
   }
+}
 
-  // ── Frame profiler: time GPU upload (buffer creation/update) ──
-  const PerfClock::time_point gpu_upload_start = PerfClock::now();
-  renderer.upload_scene(scene);
-  const double gpu_upload_ms = elapsed_ms(gpu_upload_start, PerfClock::now());
-
+void Engine::update_render_stats(const ProfilingSnapshot &profiling_sample,
+                                 const TerrainStreamTimings &terrain_timings,
+                                 double gpu_upload_ms) {
   render_stats.frame_ms =
       smooth_metric(render_stats.frame_ms, last_frame_dt * 1000.0, 0.20);
   if (last_frame_dt > 0.0) {
@@ -1789,9 +1857,10 @@ void Engine::tick(double frame_dt,
   // bottleneck identification in the dev HUD (F2). Smoothing prevents
   // flickering numbers from frame-to-frame variance.
   render_stats.chunk_gen_ms =
-      smooth_metric(render_stats.chunk_gen_ms, chunk_gen_ms);
+      smooth_metric(render_stats.chunk_gen_ms, terrain_timings.chunk_gen_ms);
   render_stats.mesh_build_ms =
-      smooth_metric(render_stats.mesh_build_ms, mesh_build_ms);
+      smooth_metric(render_stats.mesh_build_ms,
+                    terrain_timings.mesh_build_ms);
   render_stats.gpu_upload_ms =
       smooth_metric(render_stats.gpu_upload_ms, gpu_upload_ms);
 
@@ -1809,15 +1878,9 @@ void Engine::tick(double frame_dt,
   }
   render_stats.total_vertices = opaque_verts;
   render_stats.total_indices = opaque_idxs;
+}
 
-  scene.debug_world = build_local_player_debug_mesh(
-      local_player, local_player_animation, session_state_.devhud_enabled,
-      local_player.camera_rig.distance > 0.1f,
-      avatar_style_from_character(session_state_.selected_character),
-      collision_world.has_planet_surface_collider());
-  refresh_overlay_text();
-  renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
-
+void Engine::update_sky_color(double camera_altitude) {
   // ── Atmosphere computation ──────────────────────────────────────────
   // Compute sky color for the camera view direction.  This is used as the
   // clear color (background sky).  The fragment shader applies aerial
@@ -1844,7 +1907,11 @@ void Engine::tick(double frame_dt,
         physical_sky, daylight_sky,
         0.72f * inside_atmosphere);
   }
+}
 
+RenderFrameContext Engine::build_render_context(double frame_dt,
+                                                const RenderSurface &surface) {
+  const FixedStep &fixed = game_session.fixed_step();
   RenderFrameContext ctx{};
   ctx.frame_index = frame_index++;
   ctx.alpha = fixed.accumulator / fixed.fixed_dt;
@@ -1893,15 +1960,7 @@ void Engine::tick(double frame_dt,
     }
     ctx.atmosphere.sky_color = glm::vec4(tm, 1.0f);
   }
-
-  const PerfClock::time_point render_cpu_start = PerfClock::now();
-  renderer.render_frame(ctx, render_stats, surface);
-
-  const double render_cpu_ms = elapsed_ms(render_cpu_start, PerfClock::now());
-  const double frame_cpu_ms = elapsed_ms(frame_cpu_start, PerfClock::now());
-  render_stats.render_cpu_ms =
-      smooth_metric(render_stats.render_cpu_ms, render_cpu_ms, 0.25);
-  render_stats.cpu_ms = smooth_metric(render_stats.cpu_ms, frame_cpu_ms, 0.25);
+  return ctx;
 }
 
 const RenderStats &Engine::stats() const { return render_stats; }

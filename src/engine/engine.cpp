@@ -169,9 +169,9 @@ void append_dashed_ring(RenderMesh &mesh, const glm::dvec3 &center,
   }
 }
 
-bool is_sky_navigation_target(int32_t body_index) {
-  // Body 1 is the local voxel planet and is not a destination in its own sky.
-  return body_index != 1;
+bool is_sky_navigation_target(int32_t body_index, int32_t active_body_index) {
+  // The body you're standing on is not a destination in its own sky.
+  return body_index != active_body_index;
 }
 
 std::string uppercase_ascii(std::string value) {
@@ -400,25 +400,10 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   bw_cfg.seed = k_voxov_flat_world_seed;
   block_world_.init(bw_cfg);
 
-  // Build the nearby companion's terrain runtime up front. It shares the
-  // generator contract with Voxov but has its own radius, seed, chunk cache,
-  // and collision surface so an arrival can become a real landing rather than
-  // stopping at a rendered sphere.
-  {
-    BlockWorldConfig aster_cfg = bw_cfg;
-    aster_cfg.planet.radius = 32.0;
-    aster_cfg.planet.seed = k_voxov_flat_world_seed ^ 0xa57e'c0deull;
-    aster_cfg.seed = aster_cfg.planet.seed;
-    aster_block_world_.init(aster_cfg);
-    aster_collision_world.set_planet_surface_collider(
-        glm::vec3(0.0f), static_cast<float>(aster_cfg.planet.radius),
-        static_cast<float>(aster_block_world_.max_surface_height_above_base()),
-        [this](glm::vec3 direction) -> float {
-          return static_cast<float>(
-              aster_block_world_.surface_height_above_base(
-                  glm::dvec3(direction)));
-        });
-  }
+  // Other bodies' terrain runtimes are created on demand from this base
+  // profile (see terrain_config_for_body).
+  base_terrain_config_ = bw_cfg;
+  parked_planets_.clear();
   chunk_generation_budget_ = kChunkGenerationBudget;
   mesh_build_budget_ = kChunkMeshBudget;
 
@@ -842,7 +827,7 @@ void Engine::apply_session_input(InputState &gameplay_input,
     const int32_t body_count = solar_system_.body_count();
     auto valid_target = [&](int32_t index) {
       return index >= 0 && index < body_count &&
-             is_sky_navigation_target(index);
+             is_sky_navigation_target(index, active_body_index_);
     };
     if (!valid_target(sky_navigation_target_index_)) {
       sky_navigation_target_index_ = body_count > 0 ? 0 : -1;
@@ -944,7 +929,7 @@ void Engine::apply_sky_navigation_assist(InputState &gameplay_input,
     const double distance = glm::length(to_target);
 
     if (distance <= target.orbital.radius + 4.0 &&
-        sky_navigation_target_index_ == 3) {
+        has_terrain_runtime(sky_navigation_target_index_)) {
       const glm::dvec3 approach = glm::length(glm::dvec3(
           local_player.transform.position) - target_local) > 1.0e-6
           ? glm::normalize(glm::dvec3(local_player.transform.position) -
@@ -1632,7 +1617,7 @@ void Engine::update_solar_system(double frame_dt) {
         glm::dvec3(local_player.transform.position);
 
     for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
-      if (!is_sky_navigation_target(i)) continue;
+      if (!is_sky_navigation_target(i, active_body_index_)) continue;
       const CelestialBody &body = solar_system_.bodies()[static_cast<size_t>(i)];
       const glm::dvec3 body_world = body.position - planet_orbit_pos;
       const double distance = glm::length(body_world - player_world);
@@ -2139,8 +2124,7 @@ void Engine::switch_active_planet(int32_t body_index) {
   if (body_index == active_body_index_) {
     return;
   }
-  if (!((active_body_index_ == 1 && body_index == 3) ||
-        (active_body_index_ == 3 && body_index == 1))) {
+  if (!has_terrain_runtime(body_index)) {
     last_hud_message_ = "Terrain runtime unavailable for destination";
     return;
   }
@@ -2148,23 +2132,14 @@ void Engine::switch_active_planet(int32_t body_index) {
   // Swap complete body-local runtimes, including resident chunks. This keeps
   // edits and collision data alive on both planets without pretending that a
   // single global voxel cache can represent two different surfaces.
-  std::swap(block_world_, aster_block_world_);
-  std::swap(collision_world, aster_collision_world);
-
-  collision_world.set_planet_surface_collider(
-      glm::vec3(0.0f), static_cast<float>(block_world_.planet().radius),
-      static_cast<float>(block_world_.max_surface_height_above_base()),
-      [this](glm::vec3 direction) -> float {
-        return static_cast<float>(
-            block_world_.surface_height_above_base(glm::dvec3(direction)));
-      });
-  aster_collision_world.set_planet_surface_collider(
-      glm::vec3(0.0f), static_cast<float>(aster_block_world_.planet().radius),
-      static_cast<float>(aster_block_world_.max_surface_height_above_base()),
-      [this](glm::vec3 direction) -> float {
-        return static_cast<float>(aster_block_world_.surface_height_above_base(
-            glm::dvec3(direction)));
-      });
+  PlanetTerrainRuntime &incoming = parked_runtime(body_index);
+  std::swap(block_world_, incoming.world);
+  std::swap(collision_world, incoming.collision);
+  // `incoming` now holds the departing body's runtime; re-key it.
+  PlanetTerrainRuntime departing = std::move(incoming);
+  parked_planets_.erase(body_index);
+  parked_planets_[active_body_index_] = std::move(departing);
+  install_active_surface_collider();
 
   active_body_index_ = body_index;
   third_person_camera_initialized_ = false;
@@ -2195,11 +2170,53 @@ BlockWorld *Engine::world_for_body(int32_t body_index) {
   if (body_index == active_body_index_) {
     return &block_world_;
   }
-  if ((active_body_index_ == 1 && body_index == 3) ||
-      (active_body_index_ == 3 && body_index == 1)) {
-    return &aster_block_world_;
+  if (!has_terrain_runtime(body_index)) {
+    return nullptr;
   }
-  return nullptr;
+  return &parked_runtime(body_index).world;
+}
+
+bool Engine::has_terrain_runtime(int32_t body_index) const {
+  if (body_index < 0 || body_index >= solar_system_.body_count()) {
+    return false;
+  }
+  return !solar_system_.bodies()[static_cast<size_t>(body_index)].is_star;
+}
+
+BlockWorldConfig Engine::terrain_config_for_body(int32_t body_index) const {
+  BlockWorldConfig config = base_terrain_config_;
+  if (body_index == kVoxovBodyIndex) {
+    return config;
+  }
+  config.planet.radius = solar_system_.bodies()[static_cast<size_t>(
+                             body_index)].orbital.radius;
+  // Aster keeps its original seed so existing saves regenerate the same
+  // terrain under their recorded edits.
+  config.planet.seed = body_index == kAsterBodyIndex
+      ? (k_voxov_flat_world_seed ^ 0xa57e'c0deull)
+      : (k_voxov_flat_world_seed ^
+         (0x9e37'79b9'7f4a'7c15ull * static_cast<uint64_t>(body_index)));
+  config.seed = config.planet.seed;
+  return config;
+}
+
+Engine::PlanetTerrainRuntime &Engine::parked_runtime(int32_t body_index) {
+  auto it = parked_planets_.find(body_index);
+  if (it == parked_planets_.end()) {
+    it = parked_planets_.emplace(body_index, PlanetTerrainRuntime{}).first;
+    it->second.world.init(terrain_config_for_body(body_index));
+  }
+  return it->second;
+}
+
+void Engine::install_active_surface_collider() {
+  collision_world.set_planet_surface_collider(
+      glm::vec3(0.0f), static_cast<float>(block_world_.planet().radius),
+      static_cast<float>(block_world_.max_surface_height_above_base()),
+      [this](glm::vec3 direction) -> float {
+        return static_cast<float>(
+            block_world_.surface_height_above_base(glm::dvec3(direction)));
+      });
 }
 
 void Engine::record_block_edit(int32_t body_index,
@@ -2622,7 +2639,7 @@ void Engine::refresh_overlay_text() {
     const glm::dvec3 player_world =
         glm::dvec3(local_player.transform.position);
     for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
-      if (!is_sky_navigation_target(i)) continue;
+      if (!is_sky_navigation_target(i, active_body_index_)) continue;
       const CelestialBody &body = solar_system_.bodies()[static_cast<size_t>(i)];
       const glm::dvec3 body_world = body.position - planet_orbit_pos;
       glm::vec4 clip = vp * glm::vec4(glm::vec3(body_world), 1.0f);

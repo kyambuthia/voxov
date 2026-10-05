@@ -14,6 +14,12 @@
 // integration, avoiding drift and enabling arbitrarily long simulation
 // times.  The standard 6-element set (a, e, i, Ω, ω, M₀) plus period
 // defines any elliptical orbit.
+// Catalog indices of the current hand-authored system (SolarSystem::init).
+inline constexpr int32_t kSunBodyIndex = 0;
+inline constexpr int32_t kVoxovBodyIndex = 1;
+inline constexpr int32_t kLunaBodyIndex = 2;
+inline constexpr int32_t kAsterBodyIndex = 3;
+
 struct OrbitalElements {
     double semi_major_axis = 0.0;          // meters from parent
     double eccentricity = 0.0;             // 0 = circle, 0 < e < 1 = ellipse

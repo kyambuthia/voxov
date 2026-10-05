@@ -75,7 +75,8 @@ bool read_f64(const std::vector<uint8_t> &bytes, size_t &offset, double &out) {
 }
 
 bool supported_body(int32_t body_index) {
-    return body_index == 1 || body_index == 3;
+    // Voxov, Luna, and Aster all have terrain runtimes; the star does not.
+    return body_index >= 1 && body_index <= 3;
 }
 
 bool valid_edit(const PersistentBlockEdit &edit) {

@@ -86,6 +86,10 @@ public:
   bool capture_screenshot(const char *filepath, int width, int height);
 
 private:
+  struct PlanetTerrainRuntime {
+    BlockWorld world;
+    VoxelCollisionWorld collision{nullptr};
+  };
   void update_first_person_camera(PlayerEntity &player, Camera &out_camera,
                                   float dt = 0.0f);
   void update_first_person_camera(PlayerEntity &player,
@@ -94,6 +98,11 @@ private:
   void rebuild_global_planet_surface();
   void refresh_overlay_text();
   void switch_active_planet(int32_t body_index);
+  // Every non-star body can host a voxel surface.
+  bool has_terrain_runtime(int32_t body_index) const;
+  BlockWorldConfig terrain_config_for_body(int32_t body_index) const;
+  PlanetTerrainRuntime &parked_runtime(int32_t body_index);
+  void install_active_surface_collider();
   BlockWorld *world_for_body(int32_t body_index);
   void record_block_edit(int32_t body_index, const BlockAddress &address,
                          VoxelMaterial material, bool solid);
@@ -186,11 +195,12 @@ private:
   // 3D noise on sphere for seamless terrain, gravity-aligned block
   // meshing with cross-face neighbor culling via cube net.
   BlockWorld block_world_;
-  // Aster is kept as a resident procedural runtime so a landing can swap
-  // body-local terrain/collision state without destroying Voxov edits. This
-  // becomes a cache of PlanetRuntime instances as the catalog grows.
-  BlockWorld aster_block_world_;
-  VoxelCollisionWorld aster_collision_world{nullptr};
+  // Terrain runtimes of bodies other than the active one, created on demand
+  // from the body's catalog entry. Switching bodies swaps the active
+  // block_world_/collision_world with a parked runtime, so edits and resident
+  // chunks survive round trips.
+  std::unordered_map<int32_t, PlanetTerrainRuntime> parked_planets_;
+  BlockWorldConfig base_terrain_config_{};
   PlanetLODSystem lod_system_;
   std::vector<BlockAddress> loaded_chunks_;    // currently resident chunks
   uint64_t block_mesh_revision_ = 0;

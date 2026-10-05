@@ -8,6 +8,7 @@
 #include "engine_gameplay/player/block_hotbar.hpp"
 #include "engine_gameplay/player/player_visuals.hpp"
 #include "engine_gameplay/player/remote_avatar.hpp"
+#include "engine_gameplay/vehicles/spaceship.hpp"
 #include "engine_gameplay/player/surface_orientation.hpp"
 #include "engine_presentation/debug_scene_builder.hpp"
 #include "engine_world/block_picking.hpp"
@@ -3633,6 +3634,130 @@ void test_every_orbiting_body_has_a_detectable_soi() {
   assert(frames.detect_soi(glm::dvec3(1.0e12, 0.0, 0.0), solar_system) == -1);
 }
 
+
+SpaceshipEnvironment make_test_ship_environment() {
+  SpaceshipEnvironment environment{};
+  environment.body_center = glm::dvec3(0.0);
+  environment.body_radius = 64.0;
+  environment.surface_gravity = 9.81;
+  environment.atmosphere_height = 32.0;
+  environment.ground_radius = [](const glm::dvec3 &) { return 68.0; };
+  return environment;
+}
+
+void test_spaceship_stays_parked_and_lifts_off() {
+  const SpaceshipTuning tuning{};
+  const SpaceshipEnvironment environment = make_test_ship_environment();
+  SpaceshipState ship = make_landed_spaceship(
+      glm::dvec3(0.0, 68.0, 0.0), environment.body_center,
+      glm::dvec3(0.0, 0.0, 1.0), tuning);
+  assert(ship.landed);
+  assert(std::fabs(ship.position.y - (68.0 + tuning.hull_clearance)) < 1e-9);
+  assert(glm::dot(spaceship_up(ship), glm::dvec3(0.0, 1.0, 0.0)) > 0.999);
+  assert(glm::dot(spaceship_forward(ship), glm::dvec3(0.0, 0.0, 1.0)) > 0.999);
+
+  const glm::dvec3 parked = ship.position;
+  for (int i = 0; i < 120; ++i) {
+    step_spaceship(ship, SpaceshipInput{}, environment, tuning, 1.0 / 60.0);
+  }
+  assert(ship.landed);
+  assert(glm::length(ship.position - parked) < 1e-9);
+
+  SpaceshipInput lift{};
+  lift.lift = true;
+  for (int i = 0; i < 120; ++i) {
+    step_spaceship(ship, lift, environment, tuning, 1.0 / 60.0);
+  }
+  assert(!ship.landed);
+  assert(spaceship_altitude(ship, environment) > 5.0);
+  assert(ship.thrust_level > 0.1f);
+}
+
+void test_spaceship_thrusts_along_nose_and_lands_softly() {
+  const SpaceshipTuning tuning{};
+  const SpaceshipEnvironment environment = make_test_ship_environment();
+  SpaceshipState ship = make_landed_spaceship(
+      glm::dvec3(0.0, 68.0, 0.0), environment.body_center,
+      glm::dvec3(0.0, 0.0, 1.0), tuning);
+  ship.position.y += 20.0;
+  ship.landed = false;
+
+  SpaceshipInput thrust{};
+  thrust.thrust_axis = 1.0f;
+  for (int i = 0; i < 30; ++i) {
+    step_spaceship(ship, thrust, environment, tuning, 1.0 / 60.0);
+  }
+  assert(ship.velocity.z > 5.0);
+  assert(std::fabs(ship.velocity.x) < 1e-6);
+
+  // Coasting: drag bleeds speed, gravity brings it down, and the ground
+  // contact settles it into a landed state without sinking.
+  for (int i = 0; i < 60 * 30 && !ship.landed; ++i) {
+    step_spaceship(ship, SpaceshipInput{}, environment, tuning, 1.0 / 60.0);
+    assert(spaceship_altitude(ship, environment) >=
+           tuning.hull_clearance - 1e-6);
+  }
+  assert(ship.landed);
+  assert(glm::length(ship.velocity) == 0.0);
+  const glm::dvec3 up = glm::normalize(ship.position);
+  assert(glm::dot(spaceship_up(ship), up) > 0.999);
+}
+
+void test_spaceship_steering_is_signed_and_locked_when_landed() {
+  const SpaceshipTuning tuning{};
+  const SpaceshipEnvironment environment = make_test_ship_environment();
+  SpaceshipState ship = make_landed_spaceship(
+      glm::dvec3(0.0, 68.0, 0.0), environment.body_center,
+      glm::dvec3(0.0, 0.0, 1.0), tuning);
+
+  // Landed: pitch and roll are ignored, yaw turns about the radial up.
+  SpaceshipInput turn{};
+  turn.pitch_delta = 0.5f;
+  turn.roll_axis = 1.0f;
+  turn.yaw_delta = 0.3f;
+  steer_spaceship(ship, turn, tuning, 0.1);
+  assert(glm::dot(spaceship_up(ship), glm::dvec3(0.0, 1.0, 0.0)) > 0.999);
+  // Pilot's right is -X (local +X = up x forward points left).
+  assert(spaceship_forward(ship).x < -0.2);
+
+  ship = make_landed_spaceship(glm::dvec3(0.0, 68.0, 0.0),
+                               environment.body_center,
+                               glm::dvec3(0.0, 0.0, 1.0), tuning);
+  ship.landed = false;
+  SpaceshipInput pitch{};
+  pitch.pitch_delta = 0.4f;
+  steer_spaceship(ship, pitch, tuning, 0.016);
+  assert(spaceship_forward(ship).y > 0.3);
+  SpaceshipInput roll{};
+  roll.roll_axis = 1.0f;
+  steer_spaceship(ship, roll, tuning, 0.2);
+  // Rolling right dips the roof toward the pilot's right (-X).
+  assert(spaceship_up(ship).x < -0.1);
+  assert(std::fabs(glm::length(ship.orientation) - 1.0) < 1e-9);
+}
+
+void test_spaceship_mesh_is_closed_and_relative_to_origin() {
+  SpaceshipState ship = make_landed_spaceship(
+      glm::dvec3(0.0, 68.0, 0.0), glm::dvec3(0.0),
+      glm::dvec3(0.0, 0.0, 1.0), SpaceshipTuning{});
+  const glm::dvec3 origin(0.0, 60.0, 0.0);
+  const RenderMesh mesh = build_spaceship_mesh(ship, origin);
+  assert(!mesh.vertices.empty());
+  assert(mesh.indices.size() % 3 == 0);
+  glm::vec3 low(1e9f);
+  glm::vec3 high(-1e9f);
+  for (const RenderVertex &vertex : mesh.vertices) {
+    low = glm::min(low, vertex.position);
+    high = glm::max(high, vertex.position);
+    assert(std::fabs(glm::length(vertex.normal) - 1.0f) < 1e-4f);
+  }
+  // Skids touch the ground (y = 68 -> 8 relative to origin); about 7 m long
+  // and 6.4 m across the wings.
+  assert(std::fabs(low.y - 8.0f) < 1e-3f);
+  assert(high.z - low.z > 6.5f);
+  assert(high.x - low.x > 6.0f);
+}
+
 } // namespace
 
 int main() {
@@ -3755,5 +3880,9 @@ int main() {
   test_cube_edge_pairing_table_covers_every_directed_edge();
   test_offset_chunk_address_walks_straight_across_face_edges();
   test_every_orbiting_body_has_a_detectable_soi();
+  test_spaceship_stays_parked_and_lifts_off();
+  test_spaceship_thrusts_along_nose_and_lands_softly();
+  test_spaceship_steering_is_signed_and_locked_when_landed();
+  test_spaceship_mesh_is_closed_and_relative_to_origin();
   return 0;
 }

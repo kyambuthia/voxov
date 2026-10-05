@@ -266,6 +266,7 @@ private:
 
     // ── Block interaction (first-person pick/break/place) ─────────────────
   // Targeted block from camera center raycast.
+  size_t hotbar_slot_ = 0; // index into kBlockHotbar
   bool persistence_dirty_ = false;
   double seconds_since_save_ = 0.0;
   glm::dvec3 targeted_hit_pos_ = glm::dvec3(0.0);

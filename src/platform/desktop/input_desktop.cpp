@@ -47,6 +47,9 @@ InputState DesktopInputBackend::poll() {
         }
     }
 
+    // The click that captures the pointer only enters look mode; it must not
+    // also break or place the block under a cursor the player can't see yet.
+    const bool clicks_reach_gameplay = look_capture_enabled;
     if (!sky_navigation_mode && (rmb_pressed || any_mouse_down)) {
         look_capture_enabled = true;
     }
@@ -56,8 +59,8 @@ InputState DesktopInputBackend::poll() {
     set_pointer_lock(active_look_mode);
     out.look_mode = active_look_mode;
     out.rmb_down = rmb_down;
-    out.left_click_pressed = lmb_pressed;
-    out.right_click_pressed = rmb_pressed;
+    out.left_click_pressed = lmb_pressed && clicks_reach_gameplay;
+    out.right_click_pressed = rmb_pressed && clicks_reach_gameplay;
     out.pointer_locked = pointer_locked;
     out.look_enabled = active_look_mode;
 
@@ -168,6 +171,19 @@ InputState DesktopInputBackend::poll() {
     const bool v_down = k(PlatformKey::V);
     out.camera_toggle_pressed = v_down && !prev_v_down;
     prev_v_down = v_down;
+
+    constexpr PlatformKey kNumberKeys[] = {
+        PlatformKey::Num1, PlatformKey::Num2, PlatformKey::Num3,
+        PlatformKey::Num4, PlatformKey::Num5, PlatformKey::Num6,
+        PlatformKey::Num7, PlatformKey::Num8, PlatformKey::Num9,
+    };
+    for (size_t i = 0; i < prev_number_down.size(); ++i) {
+        const bool down = k(kNumberKeys[i]);
+        if (down && !prev_number_down[i] && out.hotbar_slot_pressed < 0) {
+            out.hotbar_slot_pressed = static_cast<int>(i);
+        }
+        prev_number_down[i] = down;
+    }
 
     const bool f12_down = k(PlatformKey::F12);
     out.screenshot_requested = f12_down && !prev_f12_down;

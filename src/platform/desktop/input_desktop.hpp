@@ -2,6 +2,8 @@
 
 #include "engine_input/input_state.hpp"
 
+#include <array>
+
 class DesktopPlatform;
 
 class DesktopInputBackend : public IInputBackend {
@@ -30,6 +32,7 @@ private:
     bool prev_f12_down = false;
     bool prev_t_down = false;
     bool prev_v_down = false;
+    std::array<bool, 9> prev_number_down{};
     bool prev_rmb_down = false;
     bool prev_lmb_down = false;
     bool prev_left_down = false;

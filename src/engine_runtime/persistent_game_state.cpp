@@ -83,7 +83,7 @@ bool valid_edit(const PersistentBlockEdit &edit) {
     const int32_t material = static_cast<int32_t>(edit.material);
     return supported_body(edit.body_index) && sector >= 0 && sector < 6 &&
         edit.address.shell >= 0 && material >= 0 &&
-        material <= static_cast<int32_t>(VoxelMaterial::Stone);
+        material <= static_cast<int32_t>(kLastVoxelMaterial);
 }
 } // namespace
 

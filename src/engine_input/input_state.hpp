@@ -31,6 +31,7 @@ struct InputState {
     bool debug_freeze_toggle_pressed = false;
     bool debug_reconcile_toggle_pressed = false;
     bool camera_toggle_pressed = false;    // V key — first/third-person camera
+    int hotbar_slot_pressed = -1;          // 1-9 keys, zero-based; -1 = none
     bool engine_toggle_pressed = false;        // T key — flight vehicle engine on/off
     bool sky_navigation_toggle_pressed = false; // F6 — sky navigation mode
     bool sky_navigation_next_pressed = false;   // right/down arrow

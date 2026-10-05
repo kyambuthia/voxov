@@ -1,4 +1,5 @@
 #include "engine/engine.hpp"
+#include "engine_gameplay/player/block_hotbar.hpp"
 #include "engine_world/block_picking.hpp"
 #include "engine/planet_gameplay_config.hpp"
 
@@ -185,6 +186,40 @@ void append_touch_button_hint(RenderMesh &dst, float x0, float y0, float x1,
   append_screen_label(dst, label, x0 + 0.025f, y0 - 0.045f, 0.0048f);
 }
 
+// Bottom-right block palette: one swatch per slot with its number key,
+// the selected slot outlined and named above the bar.
+void append_block_hotbar(RenderMesh &dst, size_t selected, float aspect) {
+  constexpr float kSlot = 0.062f;
+  constexpr float kGap = 0.014f;
+  constexpr float kRight = 0.94f;
+  constexpr float kTop = -0.66f;
+  // NDC x spans the wider screen axis; scale heights so swatches are square.
+  const float slot_height = kSlot * std::max(aspect, 0.1f);
+  const float left = kRight - static_cast<float>(kBlockHotbarSize) * kSlot -
+                     static_cast<float>(kBlockHotbarSize - 1) * kGap;
+  append_screen_rect(dst, left - 0.02f, kTop + 0.11f, kRight + 0.02f,
+                     kTop - slot_height - 0.075f,
+                     glm::vec3(0.04f, 0.07f, 0.10f));
+  for (size_t i = 0; i < kBlockHotbarSize; ++i) {
+    const float x0 = left + static_cast<float>(i) * (kSlot + kGap);
+    const float x1 = x0 + kSlot;
+    const bool active = i == selected;
+    if (active) {
+      append_screen_rect(dst, x0 - 0.008f, kTop + 0.008f * aspect,
+                         x1 + 0.008f, kTop - slot_height - 0.008f * aspect,
+                         glm::vec3(1.0f, 0.86f, 0.32f));
+    }
+    append_screen_rect(dst, x0, kTop, x1, kTop - slot_height,
+                       kBlockHotbar[i].swatch);
+    append_screen_label(dst, std::to_string(i + 1), x0 + 0.004f,
+                        kTop - slot_height - 0.022f, 0.0036f,
+                        active ? glm::vec3(1.0f, 0.90f, 0.45f)
+                               : glm::vec3(0.70f, 0.78f, 0.86f));
+  }
+  append_screen_label(dst, kBlockHotbar[selected].label, left,
+                      kTop + 0.065f, 0.0042f, glm::vec3(0.95f, 0.97f, 1.0f));
+}
+
 void disable_gameplay_actions(InputState &input) {
   input.move = glm::vec2(0.0f);
   input.jump_pressed = false;
@@ -192,7 +227,10 @@ void disable_gameplay_actions(InputState &input) {
   input.interact_pressed = false;
   input.sprint_held = false;
   input.crouch_held = false;
-} // namespace
+  input.left_click_pressed = false;
+  input.right_click_pressed = false;
+  input.hotbar_slot_pressed = -1;
+}
 
 void sync_local_animation_runtime(PlayerEntity &player,
                                   PlayerAnimationRuntime &runtime, float dt) {
@@ -684,7 +722,8 @@ void Engine::tick(double frame_dt,
 
   const double camera_altitude = update_camera(frame_dt, surface);
 
-  update_block_interaction(input_frame.primary);
+  // gameplay_input has clicks cleared while a menu or sky navigation is open.
+  update_block_interaction(gameplay_input);
   flush_pending_save(frame_dt);
 
   // ── Camera-relative rendering origin ─────────────────────────────────
@@ -872,6 +911,13 @@ void Engine::apply_session_input(InputState &gameplay_input,
   if (session_state_.menu_open || !session_state_.gameplay_started) {
     disable_gameplay_actions(gameplay_input);
     gameplay_input.look_delta = glm::vec2(0.0f);
+  }
+  if (gameplay_input.hotbar_slot_pressed >= 0 &&
+      static_cast<size_t>(gameplay_input.hotbar_slot_pressed) <
+          kBlockHotbarSize) {
+    hotbar_slot_ = static_cast<size_t>(gameplay_input.hotbar_slot_pressed);
+    last_hud_message_ =
+        std::string("Placing ") + kBlockHotbar[hotbar_slot_].label;
   }
 }
 
@@ -2312,11 +2358,11 @@ void Engine::update_block_interaction(const InputState &input) {
       VoxelMaterial::Air) {
     return;
   }
-  chunk.set_material(place.block.x, place.block.y, place.block.z,
-                     VoxelMaterial::Stone);
+  const VoxelMaterial material = kBlockHotbar[hotbar_slot_].material;
+  chunk.set_material(place.block.x, place.block.y, place.block.z, material);
   chunk.set_solid(place.block.x, place.block.y, place.block.z, true);
   expedition_mission_.on_block_placed(active_body_index_);
-  record_block_edit(active_body_index_, place, VoxelMaterial::Stone, true);
+  record_block_edit(active_body_index_, place, material, true);
   request_save();
   invalidate_block_meshes(place);
 }
@@ -2589,6 +2635,9 @@ void Engine::refresh_overlay_text() {
   append_screen_label(scene.debug_screen,
                       std::string(expedition_mission_.hint()), -0.90f,
                       -0.78f, 0.0040f, glm::vec3(0.75f, 0.84f, 0.92f));
+
+  append_block_hotbar(scene.debug_screen, hotbar_slot_,
+                      sky_navigation_aspect_ratio_);
 
   if (!session_state_.devhud_enabled) {
     // ── Crosshair ────────────────────────────────────────────────────

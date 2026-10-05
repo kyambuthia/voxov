@@ -47,6 +47,15 @@ static PlatformKey map_sokol_key(int sokol_key) {
     case SAPP_KEYCODE_LEFT_CONTROL: return PlatformKey::LeftControl;
     case SAPP_KEYCODE_RIGHT_CONTROL:return PlatformKey::RightControl;
     case SAPP_KEYCODE_SLASH:        return PlatformKey::Slash;
+    case SAPP_KEYCODE_1:            return PlatformKey::Num1;
+    case SAPP_KEYCODE_2:            return PlatformKey::Num2;
+    case SAPP_KEYCODE_3:            return PlatformKey::Num3;
+    case SAPP_KEYCODE_4:            return PlatformKey::Num4;
+    case SAPP_KEYCODE_5:            return PlatformKey::Num5;
+    case SAPP_KEYCODE_6:            return PlatformKey::Num6;
+    case SAPP_KEYCODE_7:            return PlatformKey::Num7;
+    case SAPP_KEYCODE_8:            return PlatformKey::Num8;
+    case SAPP_KEYCODE_9:            return PlatformKey::Num9;
     default: return PlatformKey::Unknown;
     }
 }
@@ -205,6 +214,15 @@ bool DesktopPlatform::is_key_down(int key_code) const {
         case 340: return PlatformKey::LeftShift;
         case 341: return PlatformKey::LeftControl;
         case 47:  return PlatformKey::Slash;
+        case 49:  return PlatformKey::Num1;
+        case 50:  return PlatformKey::Num2;
+        case 51:  return PlatformKey::Num3;
+        case 52:  return PlatformKey::Num4;
+        case 53:  return PlatformKey::Num5;
+        case 54:  return PlatformKey::Num6;
+        case 55:  return PlatformKey::Num7;
+        case 56:  return PlatformKey::Num8;
+        case 57:  return PlatformKey::Num9;
         default:  return PlatformKey::Unknown;
         }
     };

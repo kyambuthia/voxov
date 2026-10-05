@@ -11,14 +11,23 @@ enum class VoxelMaterial : uint8_t {
   Dirt = 1,
   Grass = 2,
   Stone = 3,
+  // Building materials, placeable from the hotbar. Values are persisted, so
+  // only append.
+  Sand = 4,
+  Planks = 5,
+  Brick = 6,
+  Snow = 7,
 };
+
+inline constexpr VoxelMaterial kLastVoxelMaterial = VoxelMaterial::Snow;
 
 class VoxelChunk {
 public:
   static constexpr int CHUNK_X = 64;
   static constexpr int CHUNK_Y = 32;
   static constexpr int CHUNK_Z = 64;
-  // Sub-voxel height uses 6 bits in the voxel byte (0 = empty, 63 = full block).
+  // Sub-voxel height range exposed by block_height() (0 = empty, 63 = full).
+  // Storage quantizes it to 16 levels so the voxel byte can hold 16 materials.
   static constexpr uint8_t kMaxBlockHeight = 63;
 
   void generate_heightmap_terrain();
@@ -28,13 +37,16 @@ public:
   void generate_flat_ground(int ground_y);
   VoxelMaterial material(int x, int y, int z) const;
   bool solid(int x, int y, int z) const;
-  /// Returns sub-voxel height (0-63) encoded in bits [6:2].
+  /// Returns sub-voxel height (0-63), stored as one of 16 levels.
   /// 0 means the block has zero height (air-like), 63 means full block height.
   uint8_t block_height(int x, int y, int z) const;
   void set_material(int x, int y, int z, VoxelMaterial material);
   /// Set material with sub-voxel height (0-63) for Ephilem-style terrain variation.
-  /// Height is clamped to [0, 63] and stored in bits [6:2].
+  /// Height is clamped to [0, 63] and quantized to 16 levels (non-zero stays
+  /// non-zero).
   void set_material(int x, int y, int z, VoxelMaterial material, uint8_t height);
+  /// true: full-height block keeping its material (Dirt if it was air);
+  /// false: air.
   void set_solid(int x, int y, int z, bool value);
   void refresh_surface_materials();
 

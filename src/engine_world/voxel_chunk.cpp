@@ -72,6 +72,16 @@ glm::vec3 VoxelChunk::material_color(VoxelMaterial material, bool top_face,
         0.44f + height_t * 0.08f,
         0.46f + height_t * 0.08f,
         0.48f + height_t * 0.08f);
+  // Building materials are fully textured; the vertex colour only adds a
+  // light tint, so keep these near neutral with a small height variation.
+  case VoxelMaterial::Sand:
+    return glm::vec3(0.86f, 0.78f, 0.56f) + glm::vec3(height_t * 0.04f);
+  case VoxelMaterial::Planks:
+    return glm::vec3(0.70f, 0.52f, 0.34f);
+  case VoxelMaterial::Brick:
+    return glm::vec3(0.72f, 0.36f, 0.30f);
+  case VoxelMaterial::Snow:
+    return glm::vec3(0.94f, 0.96f, 1.0f);
   case VoxelMaterial::Dirt:
   default:
     // Dirt with height variation: lighter at higher elevations.
@@ -192,50 +202,89 @@ void VoxelChunk::generate_flat_ground(int ground_y) {
   refresh_surface_materials();
 }
 
+namespace {
+// Voxel byte layout: bits [3:0] material (16 materials), bits [7:4] a height
+// level 0-15 that block_height() expands to the 0-63 sub-voxel range.
+constexpr uint8_t kMaterialMask = 0x0Fu;
+constexpr uint8_t kHeightShift = 4u;
+constexpr uint8_t kMaxHeightLevel = 15u;
+
+uint8_t height_level_from_height(uint8_t height) {
+  const uint32_t clamped = std::min(height, VoxelChunk::kMaxBlockHeight);
+  if (clamped == 0u) {
+    return 0u;
+  }
+  // Round to the nearest level but never collapse a non-zero height to air.
+  const uint32_t level =
+      (clamped * kMaxHeightLevel + VoxelChunk::kMaxBlockHeight / 2u) /
+      VoxelChunk::kMaxBlockHeight;
+  return static_cast<uint8_t>(std::max<uint32_t>(level, 1u));
+}
+
+uint8_t encode_voxel(VoxelMaterial material, uint8_t height_level) {
+  if (material == VoxelMaterial::Air) {
+    return 0u;
+  }
+  return static_cast<uint8_t>(
+      (static_cast<uint8_t>(material) & kMaterialMask) |
+      (std::min<uint8_t>(height_level, kMaxHeightLevel) << kHeightShift));
+}
+} // namespace
+
 VoxelMaterial VoxelChunk::material(int x, int y, int z) const {
   if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
     return VoxelMaterial::Air;
   }
-  // Bits [1:0] encode the material; upper bits encode sub-voxel height.
-  return static_cast<VoxelMaterial>(voxels[index(x, y, z)] & 0x03u);
+  return static_cast<VoxelMaterial>(voxels[index(x, y, z)] & kMaterialMask);
 }
 
 bool VoxelChunk::solid(int x, int y, int z) const {
   if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
     return false;
   }
-  // Block is solid if material (lower 2 bits) is not Air.
-  return (voxels[index(x, y, z)] & 0x03u) != 0u;
+  return (voxels[index(x, y, z)] & kMaterialMask) != 0u;
 }
 
 uint8_t VoxelChunk::block_height(int x, int y, int z) const {
   if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
     return 0;
   }
-  // Bits [6:2] encode sub-voxel height (0-63, shifted by 2).
-  return voxels[index(x, y, z)] >> 2u;
+  const uint32_t level = voxels[index(x, y, z)] >> kHeightShift;
+  return static_cast<uint8_t>(level * kMaxBlockHeight / kMaxHeightLevel);
 }
 
 void VoxelChunk::set_material(int x, int y, int z, VoxelMaterial material_value) {
   if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
     return;
   }
-  // Preserve height bits, clear material bits, then set new material.
-  const uint8_t height_bits = voxels[index(x, y, z)] & 0xFCu;
-  voxels[index(x, y, z)] = height_bits | (static_cast<uint8_t>(material_value) & 0x03u);
+  // Keep an existing partial height; turning air into a material makes a
+  // full block (a zero-height solid would be invisible to the mesher).
+  uint8_t level = voxels[index(x, y, z)] >> kHeightShift;
+  if (level == 0u) {
+    level = kMaxHeightLevel;
+  }
+  voxels[index(x, y, z)] = encode_voxel(material_value, level);
 }
 
 void VoxelChunk::set_material(int x, int y, int z, VoxelMaterial material_value, uint8_t height) {
   if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
     return;
   }
-  // Encode: lower 2 bits = material, bits [6:2] = height clamped to [0, 63].
-  const uint8_t clamped_h = std::min(height, VoxelChunk::kMaxBlockHeight);
-  voxels[index(x, y, z)] = (static_cast<uint8_t>(material_value) & 0x03u) | (clamped_h << 2u);
+  voxels[index(x, y, z)] =
+      encode_voxel(material_value, height_level_from_height(height));
 }
 
 void VoxelChunk::set_solid(int x, int y, int z, bool value) {
-  set_material(x, y, z, value ? VoxelMaterial::Dirt : VoxelMaterial::Air, 15);
+  if (!value) {
+    set_material(x, y, z, VoxelMaterial::Air, 0);
+    return;
+  }
+  // Keep the block's material if it already has one. This previously forced
+  // Dirt at a quarter height, so every placed block became a dirt slab.
+  const VoxelMaterial existing = material(x, y, z);
+  set_material(x, y, z,
+               existing == VoxelMaterial::Air ? VoxelMaterial::Dirt : existing,
+               kMaxBlockHeight);
 }
 
 void VoxelChunk::refresh_surface_materials() {

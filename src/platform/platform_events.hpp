@@ -49,6 +49,9 @@ enum class PlatformKey : uint16_t {
     // Misc
     Slash,
 
+    // Number row (hotbar)
+    Num1, Num2, Num3, Num4, Num5, Num6, Num7, Num8, Num9,
+
     Count  // sentinel — keep last
 };
 

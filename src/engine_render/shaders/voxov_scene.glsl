@@ -187,7 +187,8 @@ void main() {
     } else if (v_texcoord.z >= 0.0) {
         vec2 tiled_uv = fract(v_texcoord.xy);
         vec3 texel;
-        if (v_texcoord.z >= 2.5) {
+        // Layer 3 is the composite grass side: dirt with a turf lip.
+        if (v_texcoord.z >= 2.5 && v_texcoord.z < 3.5) {
             vec3 soil = texture(
                 sampler2DArray(voxel_texture, voxel_sampler),
                 vec3(tiled_uv, 1.0)).rgb;

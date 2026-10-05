@@ -5,6 +5,7 @@
 #include "engine_gameplay/minigames/minigames.hpp"
 #include "engine_gameplay/objectives/expedition_mission.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
+#include "engine_gameplay/player/block_hotbar.hpp"
 #include "engine_gameplay/player/player_visuals.hpp"
 #include "engine_gameplay/player/surface_orientation.hpp"
 #include "engine_presentation/debug_scene_builder.hpp"
@@ -3391,6 +3392,56 @@ void test_chunks_touching_block_covers_boundary_neighbours() {
   }
 }
 
+
+void test_voxel_chunk_stores_every_building_material_at_full_height() {
+  VoxelChunk chunk;
+  chunk.generate_flat_ground(0);
+  for (size_t i = 0; i < kBlockHotbarSize; ++i) {
+    const int x = static_cast<int>(i);
+    // Same sequence the game uses to place a block.
+    chunk.set_material(x, 5, 3, kBlockHotbar[i].material);
+    chunk.set_solid(x, 5, 3, true);
+    assert(chunk.material(x, 5, 3) == kBlockHotbar[i].material);
+    assert(chunk.solid(x, 5, 3));
+    assert(chunk.block_height(x, 5, 3) == VoxelChunk::kMaxBlockHeight);
+  }
+  // set_solid on air produces a full dirt block, never a partial slab.
+  chunk.set_solid(9, 6, 3, true);
+  assert(chunk.material(9, 6, 3) == VoxelMaterial::Dirt);
+  assert(chunk.block_height(9, 6, 3) == VoxelChunk::kMaxBlockHeight);
+  chunk.set_solid(9, 6, 3, false);
+  assert(chunk.material(9, 6, 3) == VoxelMaterial::Air);
+  assert(!chunk.solid(9, 6, 3));
+  assert(chunk.block_height(9, 6, 3) == 0);
+  // Partial heights quantize but never collapse to zero.
+  chunk.set_material(10, 6, 3, VoxelMaterial::Sand, 1);
+  assert(chunk.block_height(10, 6, 3) > 0);
+  assert(chunk.material(10, 6, 3) == VoxelMaterial::Sand);
+  chunk.set_material(10, 6, 3, VoxelMaterial::Brick);
+  assert(chunk.material(10, 6, 3) == VoxelMaterial::Brick);
+  assert(chunk.block_height(10, 6, 3) > 0 &&
+         chunk.block_height(10, 6, 3) < VoxelChunk::kMaxBlockHeight);
+}
+
+void test_block_hotbar_materials_are_unique_and_persistable() {
+  for (size_t i = 0; i < kBlockHotbarSize; ++i) {
+    assert(kBlockHotbar[i].material != VoxelMaterial::Air);
+    assert(static_cast<int>(kBlockHotbar[i].material) <=
+           static_cast<int>(kLastVoxelMaterial));
+    for (size_t j = i + 1; j < kBlockHotbarSize; ++j) {
+      assert(kBlockHotbar[i].material != kBlockHotbar[j].material);
+    }
+  }
+  PersistentGameState state = make_test_persistent_state();
+  state.block_edits.front().material = VoxelMaterial::Snow;
+  std::vector<uint8_t> bytes;
+  std::string error;
+  assert(encode_persistent_game_state(state, bytes, error));
+  PersistentGameState decoded{};
+  assert(decode_persistent_game_state(bytes, decoded, error));
+  assert(decoded.block_edits.front().material == VoxelMaterial::Snow);
+}
+
 } // namespace
 
 int main() {
@@ -3506,5 +3557,7 @@ int main() {
   test_pick_block_ignores_unloaded_chunks();
   test_block_overlaps_capsule_rejects_body_cells_only();
   test_chunks_touching_block_covers_boundary_neighbours();
+  test_voxel_chunk_stores_every_building_material_at_full_height();
+  test_block_hotbar_materials_are_unique_and_persistable();
   return 0;
 }

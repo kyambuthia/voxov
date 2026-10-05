@@ -79,7 +79,11 @@ The current refactor direction is to deepen the `GameRuntime` contract and conti
 ## Controls
 
 - `WASD`: move; mouse: look; `Space`: jump; `Shift`: sprint.
-- Left mouse breaks a targeted block; right mouse places a stone block.
+- Left mouse breaks a targeted block; right mouse places the selected block.
+- `1`-`7`: choose the block to place (stone, dirt, grass, sand, planks, brick,
+  snow).
+- `V`: toggle first/third-person camera; mouse wheel zooms the third-person
+  orbit.
 - `F6`: sky navigation; point at a destination, press `Enter` to lock it,
   then hold `W` to engage flight assist.
 - `Esc`: menu; `F11`: fullscreen; `F12`: screenshot.

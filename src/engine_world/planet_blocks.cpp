@@ -856,6 +856,11 @@ RenderMesh BlockWorld::build_chunk_mesh(
         if (material == VoxelMaterial::Grass && top_face) return 0.0f;
         if (material == VoxelMaterial::Grass) return 3.0f;
         if (material == VoxelMaterial::Stone) return 2.0f;
+        // Layer 3 is the shader's composite grass-side sentinel.
+        if (material == VoxelMaterial::Sand) return 4.0f;
+        if (material == VoxelMaterial::Planks) return 5.0f;
+        if (material == VoxelMaterial::Brick) return 6.0f;
+        if (material == VoxelMaterial::Snow) return 7.0f;
         return 1.0f;
     };
 

@@ -273,6 +273,7 @@ private:
     // ── Block interaction (first-person pick/break/place) ─────────────────
   // Targeted block from camera center raycast.
   size_t hotbar_slot_ = 0; // index into kBlockHotbar
+  int32_t soi_body_index_ = -1; // innermost SOI containing the player
   std::unordered_map<uint32_t, RemoteAvatarState> remote_avatars_;
   bool persistence_dirty_ = false;
   double seconds_since_save_ = 0.0;

@@ -1739,30 +1739,20 @@ void Engine::update_coordinate_frames(double frame_dt) {
         entity_pos, active_frame_, CoordinateFrame::Solar, active_body_index_);
     const int32_t soi_body = frame_manager_.detect_soi(solar_pos, solar_system_);
 
-    // If SOI detection finds a different body and cooldown expired, switch.
-    if (soi_body >= 0 && soi_body != active_body_index_ &&
-        frame_transition_cooldown_ <= 0.0) {
-      const auto& body = solar_system_.bodies()[static_cast<size_t>(soi_body)];
-      // Entering a body's SOI is not by itself a landing. Keep the current
-      // body-local terrain frame until the explicit approach solver has a
-      // resident runtime and can atomically swap position, collision, and
-      // streamed chunks together.
-      if (soi_body != 3 || active_body_index_ != 1) {
-        spdlog::info("SOI transition: entering {} SOI (body_index={})",
-                     body.name, soi_body);
-        active_body_index_ = soi_body;
-        frame_transition_cooldown_ = k_frame_transition_hysteresis;
-        // When entering a body's SOI, switch to its Orbital/Planet frame.
-        if (altitude < atm_height) {
-          active_frame_ = CoordinateFrame::Planet;
-          active_frame_label_ = "Planet";
-        } else {
-          active_frame_ = CoordinateFrame::Orbital;
-          active_frame_label_ = "Orbital";
-        }
+    // SOI membership is advisory. Re-targeting active_body_index_ here used
+    // to move the rendering origin to the new body while the player,
+    // collision, and resident voxels stayed in the old body's frame (and
+    // bodies without a terrain runtime, like Luna, have no voxels at all).
+    // Body switches go through switch_active_planet(), which re-bases
+    // everything atomically.
+    if (soi_body != soi_body_index_) {
+      soi_body_index_ = soi_body;
+      if (soi_body >= 0) {
+        spdlog::info("SOI: inside {} (body_index={})",
+                     solar_system_.bodies()[static_cast<size_t>(soi_body)].name,
+                     soi_body);
       }
     }
-
 
   }
 

@@ -3606,6 +3606,33 @@ void test_offset_chunk_address_walks_straight_across_face_edges() {
   }
 }
 
+
+void test_every_orbiting_body_has_a_detectable_soi() {
+  SolarSystem solar_system;
+  solar_system.init(64.0);
+  solar_system.update(123.0);
+  CoordinateFrameManager frames;
+  frames.init();
+  frames.update(solar_system);
+  for (int32_t i = 0; i < solar_system.body_count(); ++i) {
+    const CelestialBody &body = solar_system.bodies()[static_cast<size_t>(i)];
+    if (body.is_star) {
+      continue;
+    }
+    const CelestialBody &parent =
+        solar_system.bodies()[static_cast<size_t>(body.parent_index)];
+    const double soi = CoordinateFrameManager::compute_soi_radius(
+        body.orbital.semi_major_axis, body.orbital.mass, parent.orbital.mass);
+    assert(soi > body.orbital.radius);
+    // Standing just above a body's surface resolves to that body, even when
+    // its SOI is nested inside its parent's.
+    const glm::dvec3 surface =
+        body.position + glm::dvec3(0.0, body.orbital.radius * 1.05, 0.0);
+    assert(frames.detect_soi(surface, solar_system) == i);
+  }
+  assert(frames.detect_soi(glm::dvec3(1.0e12, 0.0, 0.0), solar_system) == -1);
+}
+
 } // namespace
 
 int main() {
@@ -3727,5 +3754,6 @@ int main() {
   test_block_neighbors_are_adjacent_across_every_face_edge();
   test_cube_edge_pairing_table_covers_every_directed_edge();
   test_offset_chunk_address_walks_straight_across_face_edges();
+  test_every_orbiting_body_has_a_detectable_soi();
   return 0;
 }

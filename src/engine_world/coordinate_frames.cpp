@@ -146,8 +146,10 @@ int32_t CoordinateFrameManager::detect_soi(
         if (soi <= 0.0) continue;
 
         const double dist = glm::length(position - body.position);
-        if (dist <= soi && dist < best_distance) {
-            best_distance = dist;
+        // Nested SOIs (a moon inside its planet's) resolve to the innermost,
+        // i.e. the smallest sphere that contains the position.
+        if (dist <= soi && soi < best_distance) {
+            best_distance = soi;
             best_body = i;
         }
     }

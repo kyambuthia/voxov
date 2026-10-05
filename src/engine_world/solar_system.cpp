@@ -16,6 +16,9 @@ CelestialBody make_sun() {
     sun.is_star = true;
     sun.parent_index = -1;
     sun.orbital.radius = 10'000'000.0;   // stylized macro-scale star
+    // SOI radii scale with (m_body / m_parent)^0.4; a massless sun gave the
+    // planets orbiting it a zero SOI, so they could never be detected.
+    sun.orbital.mass = 2.0e30;
     sun.color = glm::vec3(1.0f, 0.95f, 0.2f);  // warm yellow
     return sun;
 }

@@ -460,11 +460,10 @@ VoxelChunk &BlockWorld::get_or_generate_chunk(const BlockAddress &addr) {
     auto it = chunks_.find(key);
     if (it != chunks_.end()) return it->second;
 
-    VoxelChunk chunk{};
-    for (int32_t z = 0; z < config_.chunk_size; ++z)
-        for (int32_t y = 0; y < config_.chunk_size; ++y)
-            for (int32_t x = 0; x < config_.chunk_size; ++x)
-                chunk.set_material(x, y, z, VoxelMaterial::Air);
+    // Sized to chunk_size^3 (4 KB at 16^3) rather than the legacy 64x32x64
+    // flat-world chunk (128 KB), which wasted 97% of every resident chunk.
+    VoxelChunk chunk(config_.chunk_size, config_.chunk_size,
+                     config_.chunk_size);
     generate_chunk(addr, chunk);
     auto [ins, _] = chunks_.emplace(key, std::move(chunk));
     return ins->second;

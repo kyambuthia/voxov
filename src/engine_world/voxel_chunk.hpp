@@ -1,6 +1,7 @@
 #pragma once
 
 #include <array>
+#include <vector>
 #include <cstdint>
 #include <functional>
 
@@ -26,6 +27,14 @@ public:
   static constexpr int CHUNK_X = 64;
   static constexpr int CHUNK_Y = 32;
   static constexpr int CHUNK_Z = 64;
+  // Default (legacy flat-world) dimensions. Planet block chunks are sized to
+  // the BlockWorld chunk_size instead; use size_x()/size_y()/size_z().
+  VoxelChunk();
+  VoxelChunk(int size_x, int size_y, int size_z);
+  int size_x() const { return size_x_; }
+  int size_y() const { return size_y_; }
+  int size_z() const { return size_z_; }
+
   // Sub-voxel height range exposed by block_height() (0 = empty, 63 = full).
   // Storage quantizes it to 16 levels so the voxel byte can hold 16 materials.
   static constexpr uint8_t kMaxBlockHeight = 63;
@@ -66,7 +75,10 @@ public:
 
 private:
   size_t index(int x, int y, int z) const;
-  std::array<uint8_t, CHUNK_X * CHUNK_Y * CHUNK_Z> voxels{};
+  int size_x_ = CHUNK_X;
+  int size_y_ = CHUNK_Y;
+  int size_z_ = CHUNK_Z;
+  std::vector<uint8_t> voxels;
   bool spherical_surface_mode = false;
   glm::vec3 spherical_surface_center = glm::vec3(0.0f);
 };

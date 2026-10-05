@@ -92,8 +92,17 @@ glm::vec3 VoxelChunk::material_color(VoxelMaterial material, bool top_face,
   }
 }
 
+VoxelChunk::VoxelChunk() : VoxelChunk(CHUNK_X, CHUNK_Y, CHUNK_Z) {}
+
+VoxelChunk::VoxelChunk(int size_x, int size_y, int size_z)
+    : size_x_(std::max(1, size_x)), size_y_(std::max(1, size_y)),
+      size_z_(std::max(1, size_z)),
+      voxels(static_cast<size_t>(size_x_) * static_cast<size_t>(size_y_) *
+                 static_cast<size_t>(size_z_),
+             static_cast<uint8_t>(VoxelMaterial::Air)) {}
+
 size_t VoxelChunk::index(int x, int y, int z) const {
-  return static_cast<size_t>((z * CHUNK_Y * CHUNK_X) + (y * CHUNK_X) + x);
+  return static_cast<size_t>((z * size_y_ * size_x_) + (y * size_x_) + x);
 }
 
 void VoxelChunk::generate_heightmap_terrain() {
@@ -103,13 +112,14 @@ void VoxelChunk::generate_heightmap_terrain() {
 void VoxelChunk::generate_heightmap_terrain_seeded(uint64_t world_seed,
                                                    int32_t chunk_x,
                                                    int32_t chunk_z) {
-  voxels.fill(static_cast<uint8_t>(VoxelMaterial::Air));
-  const int32_t world_base_x = chunk_x * CHUNK_X;
-  const int32_t world_base_z = chunk_z * CHUNK_Z;
+  std::fill(voxels.begin(), voxels.end(),
+            static_cast<uint8_t>(VoxelMaterial::Air));
+  const int32_t world_base_x = chunk_x * size_x_;
+  const int32_t world_base_z = chunk_z * size_z_;
   const WorldGenerator generator(world_seed);
 
-  for (int z = 0; z < CHUNK_Z; ++z) {
-    for (int x = 0; x < CHUNK_X; ++x) {
+  for (int z = 0; z < size_z_; ++z) {
+    for (int x = 0; x < size_x_; ++x) {
       const float world_x = static_cast<float>(world_base_x + x);
       const float world_z = static_cast<float>(world_base_z + z);
       const TerrainColumnSample sample =
@@ -118,8 +128,8 @@ void VoxelChunk::generate_heightmap_terrain_seeded(uint64_t world_seed,
       if (max_y < 1) {
         max_y = 1;
       }
-      if (max_y >= CHUNK_Y) {
-        max_y = CHUNK_Y - 1;
+      if (max_y >= size_y_) {
+        max_y = size_y_ - 1;
       }
       for (int y = 0; y <= max_y; ++y) {
         // Full-height blocks for flat terrain generation.
@@ -132,19 +142,20 @@ void VoxelChunk::generate_heightmap_terrain_seeded(uint64_t world_seed,
 }
 
 void VoxelChunk::generate_spherical_planet_seeded(uint64_t world_seed) {
-  voxels.fill(static_cast<uint8_t>(VoxelMaterial::Air));
+  std::fill(voxels.begin(), voxels.end(),
+            static_cast<uint8_t>(VoxelMaterial::Air));
   const WorldGenerator generator(world_seed);
 
-  const float cx = static_cast<float>(CHUNK_X - 1) * 0.5f;
-  const float cy = static_cast<float>(CHUNK_Y - 1) * 0.42f;
-  const float cz = static_cast<float>(CHUNK_Z - 1) * 0.5f;
+  const float cx = static_cast<float>(size_x_ - 1) * 0.5f;
+  const float cy = static_cast<float>(size_y_ - 1) * 0.42f;
+  const float cz = static_cast<float>(size_z_ - 1) * 0.5f;
   const float base_radius =
-      static_cast<float>(std::min({CHUNK_X, CHUNK_Y, CHUNK_Z})) * 0.34f;
+      static_cast<float>(std::min({size_x_, size_y_, size_z_})) * 0.34f;
   const float shell_min = base_radius * 0.24f;
 
-  for (int z = 0; z < CHUNK_Z; ++z) {
-    for (int y = 0; y < CHUNK_Y; ++y) {
-      for (int x = 0; x < CHUNK_X; ++x) {
+  for (int z = 0; z < size_z_; ++z) {
+    for (int y = 0; y < size_y_; ++y) {
+      for (int x = 0; x < size_x_; ++x) {
         const float dx = static_cast<float>(x) - cx;
         const float dy = static_cast<float>(y) - cy;
         const float dz = static_cast<float>(z) - cz;
@@ -172,14 +183,14 @@ void VoxelChunk::generate_spherical_planet_seeded(uint64_t world_seed) {
 
   // Ensure a stable spawnable cap near the top hemisphere.
   const int spawn_cap_y = std::clamp(
-      static_cast<int>(std::floor(cy + base_radius - 1.5f)), 1, CHUNK_Y - 2);
+      static_cast<int>(std::floor(cy + base_radius - 1.5f)), 1, size_y_ - 2);
   for (int z = static_cast<int>(cz) - 3; z <= static_cast<int>(cz) + 3; ++z) {
     for (int x = static_cast<int>(cx) - 3; x <= static_cast<int>(cx) + 3; ++x) {
-      if (x < 1 || z < 1 || x >= CHUNK_X - 1 || z >= CHUNK_Z - 1) {
+      if (x < 1 || z < 1 || x >= size_x_ - 1 || z >= size_z_ - 1) {
         continue;
       }
       set_material(x, spawn_cap_y, z, VoxelMaterial::Dirt, 15);
-      for (int y = spawn_cap_y + 1; y < CHUNK_Y; ++y) {
+      for (int y = spawn_cap_y + 1; y < size_y_; ++y) {
         set_material(x, y, z, VoxelMaterial::Air, 0);
       }
     }
@@ -189,10 +200,11 @@ void VoxelChunk::generate_spherical_planet_seeded(uint64_t world_seed) {
 }
 
 void VoxelChunk::generate_flat_ground(int ground_y) {
-  voxels.fill(static_cast<uint8_t>(VoxelMaterial::Air));
-  const int max_y = std::clamp(ground_y, 0, CHUNK_Y - 1);
-  for (int z = 0; z < CHUNK_Z; ++z) {
-    for (int x = 0; x < CHUNK_X; ++x) {
+  std::fill(voxels.begin(), voxels.end(),
+            static_cast<uint8_t>(VoxelMaterial::Air));
+  const int max_y = std::clamp(ground_y, 0, size_y_ - 1);
+  for (int z = 0; z < size_z_; ++z) {
+    for (int x = 0; x < size_x_; ++x) {
       for (int y = 0; y <= max_y; ++y) {
         set_material(x, y, z, VoxelMaterial::Dirt, 15);
       }
@@ -232,21 +244,21 @@ uint8_t encode_voxel(VoxelMaterial material, uint8_t height_level) {
 } // namespace
 
 VoxelMaterial VoxelChunk::material(int x, int y, int z) const {
-  if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
+  if (x < 0 || y < 0 || z < 0 || x >= size_x_ || y >= size_y_ || z >= size_z_) {
     return VoxelMaterial::Air;
   }
   return static_cast<VoxelMaterial>(voxels[index(x, y, z)] & kMaterialMask);
 }
 
 bool VoxelChunk::solid(int x, int y, int z) const {
-  if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
+  if (x < 0 || y < 0 || z < 0 || x >= size_x_ || y >= size_y_ || z >= size_z_) {
     return false;
   }
   return (voxels[index(x, y, z)] & kMaterialMask) != 0u;
 }
 
 uint8_t VoxelChunk::block_height(int x, int y, int z) const {
-  if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
+  if (x < 0 || y < 0 || z < 0 || x >= size_x_ || y >= size_y_ || z >= size_z_) {
     return 0;
   }
   const uint32_t level = voxels[index(x, y, z)] >> kHeightShift;
@@ -254,7 +266,7 @@ uint8_t VoxelChunk::block_height(int x, int y, int z) const {
 }
 
 void VoxelChunk::set_material(int x, int y, int z, VoxelMaterial material_value) {
-  if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
+  if (x < 0 || y < 0 || z < 0 || x >= size_x_ || y >= size_y_ || z >= size_z_) {
     return;
   }
   // Keep an existing partial height; turning air into a material makes a
@@ -267,7 +279,7 @@ void VoxelChunk::set_material(int x, int y, int z, VoxelMaterial material_value)
 }
 
 void VoxelChunk::set_material(int x, int y, int z, VoxelMaterial material_value, uint8_t height) {
-  if (x < 0 || y < 0 || z < 0 || x >= CHUNK_X || y >= CHUNK_Y || z >= CHUNK_Z) {
+  if (x < 0 || y < 0 || z < 0 || x >= size_x_ || y >= size_y_ || z >= size_z_) {
     return;
   }
   voxels[index(x, y, z)] =
@@ -288,10 +300,10 @@ void VoxelChunk::set_solid(int x, int y, int z, bool value) {
 }
 
 void VoxelChunk::refresh_surface_materials() {
-  for (int z = 0; z < CHUNK_Z; ++z) {
-    for (int x = 0; x < CHUNK_X; ++x) {
+  for (int z = 0; z < size_z_; ++z) {
+    for (int x = 0; x < size_x_; ++x) {
       bool surface_found = false;
-      for (int y = CHUNK_Y - 1; y >= 0; --y) {
+      for (int y = size_y_ - 1; y >= 0; --y) {
         VoxelMaterial mat = material(x, y, z);
         if (mat == VoxelMaterial::Air) {
           continue;
@@ -313,11 +325,11 @@ void VoxelChunk::refresh_surface_materials() {
 RenderMesh VoxelChunk::build_greedy_mesh(const glm::vec3 &origin,
                                          float voxel_scale) const {
   RenderMesh mesh;
-  constexpr int dims[3] = {CHUNK_X, CHUNK_Y, CHUNK_Z};
+  const int dims[3] = {size_x_, size_y_, size_z_};
   constexpr int axis_u[3] = {1, 2, 0};
   constexpr int axis_v[3] = {2, 0, 1};
   const size_t max_mask_size = static_cast<size_t>(
-      std::max({CHUNK_X * CHUNK_Y, CHUNK_Y * CHUNK_Z, CHUNK_X * CHUNK_Z}));
+      std::max({size_x_ * size_y_, size_y_ * size_z_, size_x_ * size_z_}));
   std::vector<int16_t> mask(max_mask_size, 0);
 
   // Track per-material quad counts to determine the primary material.
@@ -399,7 +411,7 @@ RenderMesh VoxelChunk::build_greedy_mesh(const glm::vec3 &origin,
           const float surface_y =
               static_cast<float>(std::max(0, positive_face ? x[d] - 1 : x[d]));
           const float height_t =
-              std::clamp(surface_y / static_cast<float>(CHUNK_Y), 0.0f, 1.0f);
+              std::clamp(surface_y / static_cast<float>(size_y_), 0.0f, 1.0f);
           const bool top_face = d == 1 && positive_face;
           const glm::vec3 color =
               VoxelChunk::material_color(face_material, top_face, height_t);
@@ -439,11 +451,11 @@ RenderMesh VoxelChunk::build_greedy_mesh(
     int32_t world_base_z,
     const std::function<bool(int, int, int)> &world_solid_at) const {
   RenderMesh mesh;
-  constexpr int dims[3] = {CHUNK_X, CHUNK_Y, CHUNK_Z};
+  const int dims[3] = {size_x_, size_y_, size_z_};
   constexpr int axis_u[3] = {1, 2, 0};
   constexpr int axis_v[3] = {2, 0, 1};
   const size_t max_mask_size = static_cast<size_t>(
-      std::max({CHUNK_X * CHUNK_Y, CHUNK_Y * CHUNK_Z, CHUNK_X * CHUNK_Z}));
+      std::max({size_x_ * size_y_, size_y_ * size_z_, size_x_ * size_z_}));
   std::vector<int16_t> mask(max_mask_size, 0);
 
   uint32_t material_quads[4] = {0, 0, 0, 0};
@@ -542,7 +554,7 @@ RenderMesh VoxelChunk::build_greedy_mesh(
           const float surface_y =
               static_cast<float>(std::max(0, positive_face ? x[d] - 1 : x[d]));
           const float height_t =
-              std::clamp(surface_y / static_cast<float>(CHUNK_Y), 0.0f, 1.0f);
+              std::clamp(surface_y / static_cast<float>(size_y_), 0.0f, 1.0f);
           const bool top_face = d == 1 && positive_face;
           const glm::vec3 color =
               VoxelChunk::material_color(face_material, top_face, height_t);

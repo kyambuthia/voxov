@@ -2,6 +2,7 @@
 
 #include "engine_gameplay/animation/animation_runtime.hpp"
 #include "engine_gameplay/player/remote_avatar.hpp"
+#include "engine_gameplay/vehicles/spaceship.hpp"
 #include "engine_gameplay/player/player_components.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_gameplay/objectives/expedition_mission.hpp"
@@ -113,6 +114,23 @@ private:
   void request_save();
   void flush_pending_save(double frame_dt);
   void update_block_interaction(const InputState &input);
+  // ── Spaceship ──
+  // Parks the ship beside the player on the active body.
+  void place_ship_near_player();
+  SpaceshipEnvironment ship_environment() const;
+  // Boarding/exiting and per-frame steering. While piloting, consumes the
+  // movement/look input so the on-foot controller and camera rig stay idle.
+  void update_ship_controls(InputState &gameplay_input, double frame_dt);
+  void step_ship(double dt);
+  // Re-bases ship and player into another body's frame when the ship
+  // enters that body's sphere of influence.
+  void transfer_ship_between_bodies();
+  void update_ship_camera(double frame_dt);
+  void append_ship_mesh();
+  bool player_near_ship() const;
+  void append_ship_hud();
+  // Scripted pilot for VOXOV_CAPTURE_SHIP captures.
+  SpaceshipInput autopilot_input(int32_t target_body) const;
   // Dark wire box around the block under the crosshair.
   void append_target_outline(RenderMesh &mesh) const;
   // Frame phases of tick(), in call order.
@@ -283,6 +301,14 @@ private:
     // ── Block interaction (first-person pick/break/place) ─────────────────
   // Targeted block from camera center raycast.
   size_t hotbar_slot_ = 0; // index into kBlockHotbar
+  SpaceshipState ship_{};
+  SpaceshipTuning ship_tuning_{};
+  SpaceshipInput ship_input_{};
+  int32_t ship_body_index_ = kVoxovBodyIndex;
+  bool piloting_ship_ = false;
+  bool ship_camera_initialized_ = false;
+  glm::dvec3 ship_camera_eye_{0.0};
+  double ship_transfer_cooldown_ = 0.0;
   int32_t soi_body_index_ = -1; // innermost SOI containing the player
   std::unordered_map<uint32_t, RemoteAvatarState> remote_avatars_;
   bool persistence_dirty_ = false;

@@ -604,6 +604,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   rebuild_global_planet_surface();
   load_persistent_game();
   update_first_person_camera(local_player, camera);
+  place_ship_near_player();
 
   if (!renderer.init(RendererCreateInfo{
       .backend = runtime_options.render_backend,
@@ -698,6 +699,7 @@ void Engine::tick(double frame_dt,
   apply_session_input(gameplay_input, surface);
 
   apply_sky_navigation_assist(gameplay_input, frame_dt);
+  update_ship_controls(gameplay_input, frame_dt);
   touch_controls_visible_ = input_frame.touch_mode;
 
   PlayerControllerSystem::update_camera_rig(
@@ -706,6 +708,7 @@ void Engine::tick(double frame_dt,
 
   ProfilingSnapshot profiling_sample{};
   simulate_frame(gameplay_input, input_frame, frame_dt, profiling_sample);
+  transfer_ship_between_bodies();
 
   const double camera_altitude = update_camera(frame_dt, surface);
 
@@ -759,6 +762,7 @@ void Engine::tick(double frame_dt,
   update_coordinate_frames(frame_dt);
 
   append_celestial_meshes();
+  append_ship_mesh();
 
   // ── Frame profiler: time GPU upload (buffer creation/update) ──
   const PerfClock::time_point gpu_upload_start = PerfClock::now();
@@ -769,7 +773,7 @@ void Engine::tick(double frame_dt,
 
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled,
-      local_player.camera_rig.distance > 0.1f,
+      local_player.camera_rig.distance > 0.1f && !piloting_ship_,
       avatar_style_from_character(session_state_.selected_character),
       collision_world.has_planet_surface_collider());
   append_target_outline(scene.debug_world);
@@ -978,9 +982,12 @@ void Engine::apply_sky_navigation_assist(InputState &gameplay_input,
 }
 
 double Engine::update_camera(double frame_dt, const RenderSurface &surface) {
-  // First-person camera from player eye position.
-  update_first_person_camera(local_player, local_player.transform.position,
-                              camera, static_cast<float>(frame_dt));
+  if (piloting_ship_) {
+    update_ship_camera(frame_dt);
+  } else {
+    update_first_person_camera(local_player, local_player.transform.position,
+                               camera, static_cast<float>(frame_dt));
+  }
 
   // Preserve precision near blocks while allowing the whole compact planet
   // to fit in the frustum during debug flight.
@@ -1011,7 +1018,7 @@ double Engine::update_camera(double frame_dt, const RenderSurface &surface) {
   }
   const float flight_fov_speed = std::max(
       1.0f, kPlayablePlanetConfig.debug_flight_sprint_max_mps);
-  const float speed_fov = debug_fly_mode_
+  const float speed_fov = (debug_fly_mode_ || piloting_ship_)
                               ? std::clamp(flight_speed / flight_fov_speed,
                                            0.0f, 1.0f) * 12.0f
                               : 0.0f;
@@ -1053,9 +1060,13 @@ void Engine::simulate_frame(InputState &gameplay_input,
             PlayerCollisionDebug collision_debug{};
             {
               ScopedCPUTimer timer(profiling_sample.gameplay_cpu_ms);
-              collision_debug = PlayerControllerSystem::simulate_fixed(
-                  local_player, step_input, collision_world, step.dt,
-                  debug_fly_mode_);
+              if (piloting_ship_) {
+                step_ship(step.dt);
+              } else {
+                collision_debug = PlayerControllerSystem::simulate_fixed(
+                    local_player, step_input, collision_world, step.dt,
+                    debug_fly_mode_);
+              }
             }
 
             // ── Flight vehicle physics ──────────────────────────────────
@@ -2118,6 +2129,15 @@ void Engine::rebuild_global_planet_surface() {
   // chunk is being generated. Render both faces so oblique approach rays can
   // never look through a missing chunk into the sky.
   global_planet_surface_mesh_.double_sided = true;
+  // append_celestial_meshes() only inserts the globe when it is missing, so
+  // drop the scene's copy; otherwise the previous body's globe survived a
+  // planet switch and enclosed the new, smaller body in a green shell.
+  scene.opaque_meshes.erase(
+      std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+                     [](const RenderMesh &mesh) {
+                       return mesh.mesh_id == kGlobalPlanetSurfaceMeshId;
+                     }),
+      scene.opaque_meshes.end());
 }
 
 void Engine::switch_active_planet(int32_t body_index) {
@@ -2323,6 +2343,269 @@ void Engine::append_target_outline(RenderMesh &mesh) const {
   }
 }
 
+SpaceshipEnvironment Engine::ship_environment() const {
+  SpaceshipEnvironment environment{};
+  environment.body_center = block_world_.planet().center;
+  environment.body_radius = block_world_.planet().radius;
+  environment.surface_gravity = 9.81;
+  environment.atmosphere_height = kPlayablePlanetConfig.atmosphere_height_m;
+  environment.ground_radius = [this](const glm::dvec3 &direction) {
+    return block_world_.surface_radial_distance(direction);
+  };
+  return environment;
+}
+
+void Engine::place_ship_near_player() {
+  const glm::dvec3 center = block_world_.planet().center;
+  const glm::dvec3 feet(local_player.transform.position);
+  glm::dvec3 up = feet - center;
+  up = glm::dot(up, up) > 1.0e-9 ? glm::normalize(up)
+                                 : glm::dvec3(0.0, 1.0, 0.0);
+  glm::dvec3 heading(camera.forward());
+  heading -= up * glm::dot(heading, up);
+  if (glm::dot(heading, heading) < 1.0e-9) {
+    heading = glm::abs(up.y) < 0.99 ? glm::dvec3(0.0, 1.0, 0.0)
+                                     : glm::dvec3(0.0, 0.0, 1.0);
+    heading -= up * glm::dot(heading, up);
+  }
+  heading = glm::normalize(heading);
+  // Park it ahead and to the right of the player, facing the same way.
+  const glm::dvec3 right = glm::normalize(glm::cross(heading, up));
+  const glm::dvec3 spot = glm::normalize(feet + heading * 7.0 + right * 6.0 -
+                                         center);
+  const glm::dvec3 ground =
+      center + spot * block_world_.surface_radial_distance(spot);
+  ship_ = make_landed_spaceship(ground, center, heading, ship_tuning_);
+  ship_body_index_ = active_body_index_;
+  piloting_ship_ = false;
+}
+
+bool Engine::player_near_ship() const {
+  if (ship_body_index_ != active_body_index_) {
+    return false;
+  }
+  constexpr double kBoardingRange = 5.0;
+  return glm::length(glm::dvec3(local_player.transform.position) -
+                     ship_.position) < kBoardingRange;
+}
+
+void Engine::update_ship_controls(InputState &gameplay_input,
+                                  double frame_dt) {
+  ship_transfer_cooldown_ = std::max(0.0, ship_transfer_cooldown_ - frame_dt);
+  // Automated capture: VOXOV_CAPTURE_SHIP=<body index> boards the ship and
+  // flies it toward that body so takeoff, frame transfer, and arrival can be
+  // screenshot without a pilot.
+  static const char *capture_target_env = std::getenv("VOXOV_CAPTURE_SHIP");
+  const int32_t capture_target =
+      capture_target_env != nullptr ? std::atoi(capture_target_env) : -1;
+  if (capture_target >= 0 && !piloting_ship_ && frame_index > 10 &&
+      ship_body_index_ == active_body_index_) {
+    piloting_ship_ = true;
+    ship_camera_initialized_ = false;
+  }
+  if (!piloting_ship_) {
+    if (gameplay_input.interact_pressed && player_near_ship()) {
+      piloting_ship_ = true;
+      ship_camera_initialized_ = false;
+      gameplay_input.interact_pressed = false;
+      last_hud_message_ = "Ship: W/S thrust, mouse steer, SPACE lift, E exit";
+    }
+    return;
+  }
+
+  // Exit only when parked or nearly so, onto the ground beside the hatch.
+  if (gameplay_input.interact_pressed) {
+    const double altitude = spaceship_altitude(ship_, ship_environment());
+    if (ship_.landed ||
+        (altitude < ship_tuning_.hull_clearance + 2.0 &&
+         glm::length(ship_.velocity) < 3.0)) {
+      const glm::dvec3 center = block_world_.planet().center;
+      const glm::dvec3 up = glm::normalize(ship_.position - center);
+      const glm::dvec3 side = glm::normalize(
+          glm::cross(up, spaceship_forward(ship_)));
+      const glm::dvec3 spot =
+          glm::normalize(ship_.position + side * 3.5 - center);
+      local_player.transform.position = glm::vec3(
+          center + spot * (block_world_.surface_radial_distance(spot) + 0.3));
+      local_player.controller.velocity = glm::vec3(0.0f);
+      local_player.locomotion.vertical_velocity = 0.0f;
+      local_player_prev_position = local_player.transform.position;
+      piloting_ship_ = false;
+      third_person_camera_initialized_ = false;
+      last_hud_message_ = "Left the ship";
+    } else {
+      last_hud_message_ = "Land before leaving the ship";
+    }
+    gameplay_input.interact_pressed = false;
+    if (!piloting_ship_) {
+      return;
+    }
+  }
+
+  const float sensitivity =
+      glm::radians(local_player.camera_rig.sensitivityMouse);
+  ship_input_ = SpaceshipInput{};
+  ship_input_.pitch_delta = -gameplay_input.look_delta.y * sensitivity;
+  ship_input_.yaw_delta = gameplay_input.look_delta.x * sensitivity;
+  ship_input_.roll_axis = gameplay_input.move.x;
+  ship_input_.thrust_axis = gameplay_input.move.y;
+  ship_input_.lift = gameplay_input.jump_held;
+  ship_input_.descend = gameplay_input.crouch_held;
+  ship_input_.boost = gameplay_input.sprint_held;
+  if (capture_target >= 0 && capture_target < solar_system_.body_count()) {
+    ship_input_ = autopilot_input(capture_target);
+  }
+  steer_spaceship(ship_, ship_input_, ship_tuning_, frame_dt);
+
+  // The pilot's body rides along; nothing else reacts to flight input.
+  disable_gameplay_actions(gameplay_input);
+  gameplay_input.look_delta = glm::vec2(0.0f);
+  gameplay_input.zoom_delta = 0.0f;
+}
+
+void Engine::step_ship(double dt) {
+  const bool was_landed = ship_.landed;
+  step_spaceship(ship_, ship_input_, ship_environment(), ship_tuning_, dt);
+  local_player.transform.position = glm::vec3(ship_.position);
+  local_player.controller.velocity = glm::vec3(ship_.velocity);
+  local_player.controller.grounded = ship_.landed;
+  if (ship_.landed && !was_landed) {
+    // Flying there counts as plotting the course for the expedition.
+    expedition_mission_.on_course_locked(active_body_index_);
+    expedition_mission_.on_landed(active_body_index_);
+    request_save();
+    last_hud_message_ = "Landed on " +
+        solar_system_.bodies()[static_cast<size_t>(active_body_index_)].name;
+  }
+}
+
+SpaceshipInput Engine::autopilot_input(int32_t target_body) const {
+  // Velocity-matching approach: aim the nose along (desired - current)
+  // velocity, where the desired velocity heads for the target's surface at a
+  // speed that can still be braked away. Cancels sideways drift too.
+  SpaceshipInput input{};
+  const SpaceshipEnvironment environment = ship_environment();
+  const double altitude = spaceship_altitude(ship_, environment);
+  const CelestialBody &target =
+      solar_system_.bodies()[static_cast<size_t>(target_body)];
+  const glm::dvec3 target_center =
+      target_body == active_body_index_
+          ? environment.body_center
+          : target.position - solar_system_.body_position(active_body_index_);
+  const glm::dvec3 to_target = target_center - ship_.position;
+  const double range = std::max(
+      0.0, glm::length(to_target) - target.orbital.radius - 12.0);
+  const double brake_accel =
+      ship_tuning_.thrust_accel * ship_tuning_.boost_multiplier * 0.5;
+  const double approach_speed = std::min(
+      ship_tuning_.max_speed * 0.9, std::sqrt(2.0 * brake_accel * range));
+  const glm::dvec3 desired = glm::normalize(to_target) * approach_speed;
+  const glm::dvec3 error = desired - ship_.velocity;
+  const double error_speed = glm::length(error);
+
+  if (target_body == active_body_index_ && range < 1.0 &&
+      glm::length(ship_.velocity) < 4.0) {
+    input.descend = altitude > 3.0; // settle onto the surface
+    return input;
+  }
+  const glm::dvec3 aim = error_speed > 0.5 ? error / error_speed
+                                           : glm::normalize(to_target);
+  const glm::dvec3 local = glm::inverse(ship_.orientation) * aim;
+  // Pilot's right is local -X; nose up is local +Y.
+  constexpr float kTurnGain = 0.12f;
+  input.yaw_delta = std::clamp(
+      static_cast<float>(std::atan2(-local.x, local.z)) * kTurnGain, -0.06f,
+      0.06f);
+  input.pitch_delta = std::clamp(
+      static_cast<float>(std::atan2(local.y, std::hypot(local.x, local.z))) *
+          kTurnGain,
+      -0.06f, 0.06f);
+  input.lift = ship_.landed || (altitude < 10.0 && target_body != active_body_index_);
+  input.thrust_axis = local.z > 0.8
+      ? static_cast<float>(std::clamp(error_speed / 20.0, 0.0, 1.0))
+      : 0.0f;
+  input.boost = error_speed > 25.0;
+  return input;
+}
+
+void Engine::transfer_ship_between_bodies() {
+  if (!piloting_ship_ || ship_transfer_cooldown_ > 0.0) {
+    return;
+  }
+  const glm::dvec3 solar_position =
+      ship_.position + solar_system_.body_position(active_body_index_);
+  const int32_t soi = frame_manager_.detect_soi(solar_position, solar_system_);
+  if (soi < 0 || soi == active_body_index_ || !has_terrain_runtime(soi)) {
+    return;
+  }
+  const int32_t from = active_body_index_;
+  const CelestialBody &from_body =
+      solar_system_.bodies()[static_cast<size_t>(from)];
+  const CelestialBody &to_body =
+      solar_system_.bodies()[static_cast<size_t>(soi)];
+  const glm::dvec3 offset = from_body.position - to_body.position;
+  const glm::dvec3 relative_velocity = from_body.velocity - to_body.velocity;
+
+  switch_active_planet(soi);
+  if (active_body_index_ != soi) {
+    return;
+  }
+  ship_.position += offset;
+  ship_.velocity += relative_velocity;
+  ship_body_index_ = soi;
+  ship_camera_eye_ += offset;
+  local_player.transform.position = glm::vec3(ship_.position);
+  local_player_prev_position = local_player.transform.position;
+  ship_transfer_cooldown_ = 2.0;
+  last_hud_message_ = "Entering " + to_body.name + " space";
+  spdlog::info("Ship transfer: {} -> {}", from_body.name, to_body.name);
+}
+
+void Engine::update_ship_camera(double frame_dt) {
+  const glm::dvec3 forward = spaceship_forward(ship_);
+  const glm::dvec3 roof = spaceship_up(ship_);
+  const double speed = glm::length(ship_.velocity);
+  // Pull back a little as speed builds so the planet stays readable.
+  const double distance = 13.0 + std::min(speed * 0.05, 8.0);
+  glm::dvec3 desired = ship_.position - forward * distance + roof * 4.0;
+  const glm::dvec3 center = block_world_.planet().center;
+  const glm::dvec3 desired_dir = glm::normalize(desired - center);
+  const double floor =
+      block_world_.surface_radial_distance(desired_dir) + 1.5;
+  if (glm::length(desired - center) < floor) {
+    desired = center + desired_dir * floor;
+  }
+  if (!ship_camera_initialized_) {
+    ship_camera_eye_ = desired;
+    ship_camera_initialized_ = true;
+  } else {
+    const double alpha = 1.0 - std::exp(-7.0 * std::max(frame_dt, 0.0));
+    ship_camera_eye_ += (desired - ship_camera_eye_) * alpha;
+  }
+  const glm::dvec3 target = ship_.position + forward * 8.0 + roof * 1.5;
+  const glm::dvec3 view_dir = glm::normalize(target - ship_camera_eye_);
+  const glm::mat4 view = glm::lookAt(glm::vec3(ship_camera_eye_),
+                                     glm::vec3(target), glm::vec3(roof));
+  camera.set_view_override(view);
+  camera.transform.position = glm::vec3(ship_camera_eye_);
+  camera.transform.euler_radians.y =
+      static_cast<float>(std::atan2(view_dir.x, -view_dir.z));
+  camera.transform.euler_radians.x =
+      static_cast<float>(-std::asin(std::clamp(view_dir.y, -1.0, 1.0)));
+  camera.transform.euler_radians.z = 0.0f;
+}
+
+void Engine::append_ship_mesh() {
+  if (ship_body_index_ != active_body_index_) {
+    return;
+  }
+  RenderMesh mesh =
+      build_spaceship_mesh(ship_, scene.camera_origin.world_origin);
+  mesh.mesh_id = 0; // transient: rebuilt every frame
+  mesh.world_origin = scene.camera_origin.world_origin;
+  scene.opaque_meshes.push_back(std::move(mesh));
+}
+
 void Engine::request_save() {
   persistence_dirty_ = true;
 }
@@ -2354,6 +2637,10 @@ void Engine::invalidate_block_meshes(const BlockAddress &addr) {
 }
 
 void Engine::update_block_interaction(const InputState &input) {
+  if (piloting_ship_) {
+    targeted_addr_.reset();
+    return;
+  }
   // Pick along the crosshair ray, but measure reach from the player's eye so
   // the third-person orbit distance neither extends nor shortens it.
   constexpr float k_reach = 7.0f;
@@ -2568,6 +2855,85 @@ void Engine::update_first_person_camera(PlayerEntity &player,
   out_camera.transform.euler_radians.z = 0.0f;
 }
 
+void Engine::append_ship_hud() {
+  const SpaceshipEnvironment environment = ship_environment();
+  const CelestialBody &here =
+      solar_system_.bodies()[static_cast<size_t>(active_body_index_)];
+  const auto metres = [](double value) {
+    return value >= 1000.0
+        ? std::to_string(static_cast<int>(value / 100.0) / 10) + "." +
+              std::to_string(static_cast<int>(value / 100.0) % 10) + "KM"
+        : std::to_string(static_cast<int>(value)) + "M";
+  };
+  append_screen_rect(scene.debug_screen, 0.40f, -0.60f, 0.96f, -0.94f,
+                     glm::vec3(0.04f, 0.07f, 0.10f));
+  append_screen_label(scene.debug_screen, "SHIP  " + uppercase_ascii(here.name),
+                      0.44f, -0.66f, 0.0048f, glm::vec3(1.0f, 0.86f, 0.40f));
+  append_screen_label(
+      scene.debug_screen,
+      "SPEED " + std::to_string(static_cast<int>(glm::length(ship_.velocity))) +
+          " M/S   ALT " +
+          metres(std::max(0.0, spaceship_altitude(ship_, environment))),
+      0.44f, -0.74f, 0.0042f, glm::vec3(0.92f, 0.96f, 1.0f));
+  append_screen_label(scene.debug_screen,
+                      ship_.landed ? "LANDED  SPACE LIFT  E EXIT"
+                                   : "W/S THRUST  MOUSE STEER  A/D ROLL",
+                      0.44f, -0.82f, 0.0036f, glm::vec3(0.70f, 0.80f, 0.90f));
+  append_screen_label(scene.debug_screen,
+                      "SPACE/CTRL LIFT  SHIFT BOOST",
+                      0.44f, -0.89f, 0.0036f, glm::vec3(0.70f, 0.80f, 0.90f));
+
+  // Destination markers: every other non-star body, labelled with range.
+  const glm::mat4 vp = camera.projection(sky_navigation_aspect_ratio_) *
+                       camera.view();
+  const glm::dvec3 origin = solar_system_.body_position(active_body_index_);
+  std::vector<glm::vec2> placed_labels;
+  for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
+    const CelestialBody &body = solar_system_.bodies()[static_cast<size_t>(i)];
+    if (i == active_body_index_ || body.is_star) {
+      continue;
+    }
+    const glm::dvec3 relative = body.position - origin;
+    glm::vec4 clip = vp * glm::vec4(glm::vec3(relative), 1.0f);
+    const bool behind = clip.w <= 0.0f;
+    if (behind) {
+      // Mirror targets behind the camera so their marker pins to the edge
+      // on the side you'd turn toward.
+      clip = glm::vec4(-clip.x, -clip.y, clip.z, std::max(0.001f, -clip.w));
+    }
+    glm::vec2 marker(clip.x / clip.w, clip.y / clip.w);
+    if (behind || std::fabs(marker.x) > 0.9f || marker.y > 0.9f ||
+        marker.y < -0.5f) {
+      const float scale = std::max(
+          {std::fabs(marker.x) / 0.9f, marker.y / 0.9f, -marker.y / 0.5f,
+           1.0f});
+      marker /= scale;
+    }
+    const float x = marker.x;
+    float y = marker.y;
+    // Stack labels that would overlap (bodies in nearly the same direction).
+    for (bool moved = true; moved;) {
+      moved = false;
+      for (const glm::vec2 &other : placed_labels) {
+        if (std::fabs(other.x - x) < 0.3f && std::fabs(other.y - y) < 0.05f) {
+          y -= 0.06f;
+          moved = true;
+        }
+      }
+    }
+    placed_labels.push_back(glm::vec2(x, y));
+    const double range =
+        std::max(0.0, glm::length(relative - ship_.position) -
+                          body.orbital.radius);
+    append_screen_cursor(scene.debug_screen, glm::vec2(x, y),
+                         glm::vec3(0.40f, 1.0f, 0.86f));
+    append_screen_label(scene.debug_screen,
+                        uppercase_ascii(body.name) + " " + metres(range),
+                        x + 0.02f, y - 0.03f, 0.0040f,
+                        glm::vec3(0.40f, 1.0f, 0.86f));
+  }
+}
+
 void Engine::refresh_overlay_text() {
   scene.debug_screen = RenderMesh{};
   scene.debug_screen.content_hash = frame_index + 1;
@@ -2700,8 +3066,16 @@ void Engine::refresh_overlay_text() {
                       std::string(expedition_mission_.hint()), -0.90f,
                       -0.78f, 0.0040f, glm::vec3(0.75f, 0.84f, 0.92f));
 
-  append_block_hotbar(scene.debug_screen, hotbar_slot_,
-                      sky_navigation_aspect_ratio_);
+  if (piloting_ship_) {
+    append_ship_hud();
+  } else {
+    append_block_hotbar(scene.debug_screen, hotbar_slot_,
+                        sky_navigation_aspect_ratio_);
+    if (player_near_ship()) {
+      append_screen_label(scene.debug_screen, "E  BOARD SHIP", -0.10f, -0.22f,
+                          0.0050f, glm::vec3(1.0f, 0.88f, 0.45f));
+    }
+  }
 
   if (!session_state_.devhud_enabled) {
     // ── Crosshair ────────────────────────────────────────────────────

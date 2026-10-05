@@ -107,31 +107,21 @@ void SolarSystem::update(double time_seconds) {
             continue;
         }
 
-        // Mean anomaly at current time.
-        // WHY mod 2π: keeps the value numerically bounded for very long
-        // simulations; sin/cos are periodic so wrapping is harmless.
-        double M = oe.mean_anomaly_epoch + k_two_pi * time_seconds / oe.orbital_period;
-        M = std::fmod(M, k_two_pi);
+        // Position in the parent body's reference frame, plus the parent's
+        // world position (parents precede children in bodies_).
+        const glm::dvec3 local_pos = local_orbit_position(oe, time_seconds);
+        const CelestialBody &parent = bodies_[body.parent_index];
+        body.position = parent.position + local_pos;
 
-        // Solve Kepler's equation for eccentric anomaly E.
-        const double E = solve_kepler(M, oe.eccentricity);
-
-        // True anomaly ν.
-        const double nu = true_anomaly_from_eccentric(E, oe.eccentricity);
-
-        // Position in the parent body's reference frame.
-        const glm::dvec3 local_pos = orbital_to_cartesian(oe, nu);
-
-        // World position = parent world position + local offset.
-        const glm::dvec3 parent_pos = bodies_[body.parent_index].position;
-        body.position = parent_pos + local_pos;
-
-        // Velocity = position delta / dt  (simple finite-difference).
-        // We don't need high-fidelity velocity here; orbital speed is only
-        // used for information / future physics.
-        const double orbital_speed =
-            k_two_pi * oe.semi_major_axis / oe.orbital_period;
-        body.velocity = glm::dvec3(0.0, orbital_speed, 0.0); // placeholder
+        // Central difference of the analytic orbit. Ships crossing between
+        // body frames add the relative velocity, so this has to be real.
+        constexpr double kVelocityStep = 0.05;
+        const glm::dvec3 ahead =
+            local_orbit_position(oe, time_seconds + kVelocityStep);
+        const glm::dvec3 behind =
+            local_orbit_position(oe, time_seconds - kVelocityStep);
+        body.velocity = parent.velocity +
+                        (ahead - behind) / (2.0 * kVelocityStep);
     }
 }
 
@@ -162,6 +152,17 @@ glm::dvec3 SolarSystem::sun_direction_from(const glm::dvec3& position) const {
 }
 
 // ── Orbital mechanics (private) ────────────────────────────────────────────
+
+glm::dvec3 SolarSystem::local_orbit_position(const OrbitalElements &oe,
+                                             double time_seconds) {
+    // Mean anomaly, wrapped to keep long sessions numerically bounded.
+    double M = oe.mean_anomaly_epoch +
+               k_two_pi * time_seconds / oe.orbital_period;
+    M = std::fmod(M, k_two_pi);
+    const double E = solve_kepler(M, oe.eccentricity);
+    const double nu = true_anomaly_from_eccentric(E, oe.eccentricity);
+    return orbital_to_cartesian(oe, nu);
+}
 
 double SolarSystem::solve_kepler(double M, double e) {
     // Newton–Raphson:  E_{n+1} = E_n − (E_n − e·sin(E_n) − M) / (1 − e·cos(E_n))

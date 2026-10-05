@@ -80,6 +80,8 @@ private:
     // Solve Kepler's equation  M = E − e·sin(E)  for E using
     // Newton–Raphson iteration.  Converges to machine precision in
     // ≤ 6 iterations for typical eccentricities.
+    static glm::dvec3 local_orbit_position(const OrbitalElements& oe,
+                                           double time_seconds);
     static double solve_kepler(double mean_anomaly, double eccentricity);
 
     // Convert orbital elements + true anomaly to a 3-D Cartesian

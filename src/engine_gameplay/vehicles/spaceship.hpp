@@ -48,6 +48,7 @@ struct SpaceshipTuning {
   double hull_clearance = 1.1;  // hull centre height above the ground
   double safe_landing_speed = 7.0;
   double level_rate = 3.0;      // 1/s auto-levelling toward radial up
+  double max_speed = 250.0;     // m/s cap so the ship can always be stopped
 };
 
 // Applies steering for one rendered frame. Pitch and roll are locked while

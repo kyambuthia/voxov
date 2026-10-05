@@ -141,9 +141,9 @@ void step_spaceship(SpaceshipState &ship, const SpaceshipInput &input,
                          (environment.body_radius / distance);
 
   const double boost = input.boost ? tuning.boost_multiplier : 1.0;
-  const double thrust_scale = input.thrust_axis >= 0.0f ? 1.0 : 0.5;
+  // Reverse thrust is full power so a pilot can always stop.
   glm::dvec3 acceleration =
-      forward * (static_cast<double>(input.thrust_axis) * thrust_scale *
+      forward * (static_cast<double>(input.thrust_axis) *
                  tuning.thrust_accel * boost);
   if (input.lift) {
     acceleration += up * tuning.lift_accel;
@@ -161,6 +161,10 @@ void step_spaceship(SpaceshipState &ship, const SpaceshipInput &input,
                       (tuning.atmosphere_drag - tuning.space_drag) *
                           in_atmosphere;
   ship.velocity *= std::exp(-drag * dt);
+  const double speed = glm::length(ship.velocity);
+  if (speed > tuning.max_speed) {
+    ship.velocity *= tuning.max_speed / speed;
+  }
   ship.position += ship.velocity * dt;
 
   // Inside the atmosphere with no roll input, ease the wings back to level

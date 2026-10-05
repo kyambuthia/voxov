@@ -84,6 +84,11 @@ The current refactor direction is to deepen the `GameRuntime` contract and conti
   snow).
 - `V`: toggle first/third-person camera; mouse wheel zooms the third-person
   orbit.
+- Spaceship: walk up to the ship parked near spawn and press `E` to board.
+  `W`/`S` thrust and brake, mouse steers, `A`/`D` roll, `Space`/`Ctrl` lift
+  and descend, `Shift` boost, `E` to exit once landed. Fly to Aster or Luna
+  (markers show their range); entering a body's sphere of influence hands
+  the ship over to that body, and you can land and build there.
 - `F6`: sky navigation; point at a destination, press `Enter` to lock it,
   then hold `W` to engage flight assist.
 - `Esc`: menu; `F11`: fullscreen; `F12`: screenshot.

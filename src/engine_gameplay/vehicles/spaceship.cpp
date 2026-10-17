@@ -17,7 +17,7 @@ const VoxelModel &ship_model() {
     const char *name = std::getenv("VOXOV_SHIP");
     const std::string path = std::string("assets/models/ships/") +
                              (name && *name ? name : "shrike") + ".vox";
-    return load_voxel_model(path);
+    return load_voxel_model(path, kShipVoxelSizeMeters);
   }();
   return model;
 }

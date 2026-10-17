@@ -8,7 +8,8 @@
 
 // A ship hull loaded from a MagicaVoxel .vox file, reduced at load time to the
 // quads that actually face air. Ships are authored by
-// tools/generate_ship_voxels.py on the same one-metre grid as the world.
+// tools/generate_ship_voxels.py; the caller picks the voxel edge length
+// (see kShipVoxelSizeMeters).
 //
 // Model space matches SpaceshipState: +Z nose, +Y roof, +X right, origin at the
 // centre of the hull's bounding box so the craft rotates about itself.

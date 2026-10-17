@@ -1,7 +1,8 @@
 #!/usr/bin/env python3
 """Generate the voxel spaceship models in assets/models/ships.
 
-Ships are authored on a one-metre grid with hollow interiors. The runtime
+Ships are authored on a voxel grid with hollow interiors and drawn in game at
+VOXEL_SIZE_METERS per voxel (kShipVoxelSizeMeters in spaceship.hpp). The runtime
 currently renders their exposed faces and uses hull bounds for interaction
 and clearance. Walkable interiors, per-voxel ship collision, and block editing
 aboard a ship are future work; the mount points are authoring metadata.
@@ -23,6 +24,9 @@ import struct
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
+
+# Must match kShipVoxelSizeMeters in src/engine_gameplay/vehicles/spaceship.hpp.
+VOXEL_SIZE_METERS = 0.25
 OUT_DIR = ROOT / "assets" / "models" / "ships"
 
 # Palette. Index 0 is empty in .vox, so materials start at 1. Colours match the
@@ -106,7 +110,7 @@ def mirrored(cells, axis: int) -> set:
 
 
 def build_courier():
-    """Two-crew interplanetary hauler, 19 x 10 x 28 voxels (metres).
+    """Two-crew interplanetary hauler, 19 x 10 x 28 voxels (4.75 x 2.5 x 7 m).
 
     Proportions follow assets/references/spaceships/courier: long fuselage,
     raked canopy standing proud of the spine a quarter back from the nose,
@@ -184,7 +188,7 @@ def build_courier():
 
 
 def build_shrike():
-    """Single-seat manta interceptor, 51 x 15 x 60 voxels (metres).
+    """Single-seat manta interceptor, 51 x 10 x 60 voxels (12.75 x 2.5 x 15 m).
 
     Proportions follow assets/references/spaceships/shrike, which in turn
     reinterprets the supplied concept art. Built at 60 voxels rather than the
@@ -394,7 +398,7 @@ def main() -> int:
 
         sidecar = {
             "name": name,
-            "voxel_size_meters": 1.0,
+            "voxel_size_meters": VOXEL_SIZE_METERS,
             "axes": "+Z nose, +Y roof, +X right; origin at the minimum corner",
             "size_voxels": {"x": size[0], "y": size[2], "z": size[1]},
             "mounts": mounts,
@@ -412,7 +416,7 @@ def main() -> int:
               f"{len(grid.cells)} voxels")
         print("    " + "  ".join(f"{m} {counts[m]}"
                                  for m in sorted(counts, key=lambda m: -counts[m])))
-        print(f"    cabin {enclosed} m3 enclosed, {breaches} hull breaches, "
+        print(f"    cabin {enclosed} voxels ({enclosed * VOXEL_SIZE_METERS ** 3:.1f} m3) enclosed, {breaches} hull breaches, "
               f"{loose} detached voxels")
         if breaches or loose:
             failed = True

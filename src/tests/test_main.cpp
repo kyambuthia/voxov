@@ -3934,14 +3934,19 @@ void test_authored_ship_models_and_boarding_bounds() {
   const auto &scaled = load_voxel_model(courier_path, 0.5f);
   assert(scaled.valid && scaled.size_meters == courier.size_meters * 0.5f);
   assert(!load_voxel_model("assets/models/ships/missing-test-ship.vox").valid);
+  // In game the hull is drawn at ship scale, not one metre per voxel.
+  const glm::vec3 hull = spaceship_hull_extents();
+  assert(hull == shrike.size_meters * kShipVoxelSizeMeters ||
+         hull == courier.size_meters * kShipVoxelSizeMeters);
+  assert(hull.z <= 16.0f && hull.y <= 4.0f);
 
   SpaceshipTuning tuning;
   tuning.hull_clearance = spaceship_hull_extents().y * 0.5 + 0.6;
   const glm::dvec3 ground(0, 68, 0);
   SpaceshipState ship = make_landed_spaceship(
       ground, glm::dvec3(0), glm::dvec3(0, 0, 1), tuning);
-  // Feet underneath a tall hull can board even when its centre is >5m away.
-  assert(glm::distance(ground, ship.position) > 5.0);
+  // Feet underneath the hull board by distance to its bounds, not its centre.
+  assert(glm::distance(ground, ship.position) > spaceship_hull_extents().y * 0.5);
   assert(std::abs(spaceship_hull_distance(ship, ground) - 0.6) < 1e-5);
   const double half_width = spaceship_hull_extents().x * 0.5;
   for (double yaw : {0.0, 1.2}) {

@@ -1,6 +1,6 @@
 {
   "name": "courier",
-  "voxel_size_meters": 1.0,
+  "voxel_size_meters": 0.25,
   "axes": "+Z nose, +Y roof, +X right; origin at the minimum corner",
   "size_voxels": {
     "x": 19,

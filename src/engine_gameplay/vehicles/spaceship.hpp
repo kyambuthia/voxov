@@ -78,6 +78,11 @@ SpaceshipState make_landed_spaceship(const glm::dvec3 &ground_point,
                                      const glm::dvec3 &heading,
                                      const SpaceshipTuning &tuning);
 
+// Edge length of one ship voxel. Ships are authored on a coarse grid for
+// editing, then drawn at this scale so a hull sits beside a ~1.8 m player and
+// a 64 m planet at believable size (Shrike ~15 m long, Courier ~7 m).
+inline constexpr float kShipVoxelSizeMeters = 0.25f;
+
 // Hull mesh built from the ship's voxel model. Vertices are relative to
 // `origin` (pass the camera origin for camera-relative rendering).
 RenderMesh build_spaceship_mesh(const SpaceshipState &ship,

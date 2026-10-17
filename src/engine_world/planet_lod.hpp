@@ -14,6 +14,12 @@
 
 #include <glm/glm.hpp>
 
+// Select one watertight cube-sphere grid for the entire distant globe.
+// FOV is vertical, in radians. Previous grid enables a 25% hysteresis band.
+int32_t planet_globe_subdivisions(double radius, double camera_distance,
+    float screen_height_pixels, float fov_y_radians,
+    int32_t previous_subdivisions = 0);
+
 // ── LOD result ──────────────────────────────────────────────────────────────
 
 struct ChunkLOD {

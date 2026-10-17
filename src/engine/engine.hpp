@@ -96,7 +96,7 @@ private:
   void update_first_person_camera(PlayerEntity &player,
                                   const glm::vec3 &render_position,
                                   Camera &out_camera, float dt);
-  void rebuild_global_planet_surface();
+  void rebuild_global_planet_surface(int32_t subdivisions = 64);
   void refresh_overlay_text();
   void switch_active_planet(int32_t body_index);
   // Every non-star body can host a voxel surface.
@@ -153,8 +153,8 @@ private:
   void update_solar_system(double frame_dt);
   // Picks the active coordinate frame and handles SOI transitions.
   void update_coordinate_frames(double frame_dt);
-  // Rebuilds transient sphere meshes for the non-active celestial bodies.
-  void append_celestial_meshes();
+  // Updates cached terrain globes and orbital origins for celestial bodies.
+  void append_celestial_meshes(const RenderSurface &surface);
   // Smoothed, animated blocky avatars for every replicated player.
   void append_remote_player_meshes();
   void update_render_stats(const ProfilingSnapshot &profiling_sample,
@@ -248,6 +248,9 @@ private:
   // static, cached, and built from the same height sampler as editable chunks.
   // A small radial inset makes it a safe underlay for streamed chunk seams.
   RenderMesh global_planet_surface_mesh_{};
+  int32_t global_planet_subdivisions_ = 64;
+  std::unordered_map<int32_t, int32_t> celestial_subdivisions_;
+  std::unordered_map<int32_t, std::unordered_map<int32_t, RenderMesh>> globe_meshes_;
 
   // ── Wireframe debug overlay ─────────────────────────────────────────
   // Same PlanetDefinition as terrain, coarser grid (64 cells/face = ~62 km/cell).

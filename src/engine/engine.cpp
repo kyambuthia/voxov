@@ -761,7 +761,7 @@ void Engine::tick(double frame_dt,
 
   update_coordinate_frames(frame_dt);
 
-  append_celestial_meshes();
+  append_celestial_meshes(surface);
   append_ship_mesh();
 
   // ── Frame profiler: time GPU upload (buffer creation/update) ──
@@ -1040,6 +1040,9 @@ void Engine::simulate_frame(InputState &gameplay_input,
         ? "Vehicle engine ON" : "Vehicle engine OFF";
   }
   bool jump_consumed = false;
+  const bool observation_capture =
+      std::getenv("VOXOV_CAPTURE_ORBIT") != nullptr ||
+      std::getenv("VOXOV_CAPTURE_FLIGHT") != nullptr;
   const RuntimeGameSessionCallbacks callbacks{
       .pump_server = [this]() {
         if (local_server_running_) {
@@ -1048,7 +1051,7 @@ void Engine::simulate_frame(InputState &gameplay_input,
         net_client_.pump();
       },
       .simulate_step =
-          [this, &gameplay_input, &jump_consumed,
+          [this, &gameplay_input, &jump_consumed, observation_capture,
            &input_frame,
            &profiling_sample](const RuntimeGameSessionStepContext &step) {
             local_player_prev_position = local_player.transform.position;
@@ -1062,6 +1065,10 @@ void Engine::simulate_frame(InputState &gameplay_input,
               ScopedCPUTimer timer(profiling_sample.gameplay_cpu_ms);
               if (piloting_ship_) {
                 step_ship(step.dt);
+              } else if (observation_capture && debug_fly_mode_) {
+                // Hold diagnostic views while terrain settles. Normal debug
+                // flight intentionally descends under gravity without input.
+                local_player.controller.velocity = glm::vec3(0.0f);
               } else {
                 collision_debug = PlayerControllerSystem::simulate_fixed(
                     local_player, step_input, collision_world, step.dt,
@@ -1767,20 +1774,33 @@ void Engine::update_coordinate_frames(double frame_dt) {
   }
 }
 
-void Engine::append_celestial_meshes() {
+void Engine::append_celestial_meshes(const RenderSurface &surface) {
   // ── Celestial body rendering ────────────────────────────────────────
-  // Strip previous frame's celestial meshes from the end of opaque_meshes,
-  // then append new camera-relative sphere meshes for the current frame.
+  // Retain destination geometry while updating its orbital origin. Only the
+  // star and other transient scene objects need to be replaced each frame.
   {
     // Celestial meshes are transient (mesh_id == 0). Remove by ownership,
     // not vector position: streamed chunks may have been appended after them.
     // Positional removal deleted fresh terrain and leaked old spheres.
     scene.opaque_meshes.erase(
         std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-                       [](const RenderMesh &mesh) { return mesh.mesh_id == 0; }),
+                       [this](const RenderMesh &mesh) {
+                         return mesh.mesh_id == 0 ||
+                             ((mesh.mesh_id >> 32) == 0x43454c45u &&
+                              ((mesh.mesh_id >> 16) & 0xffffu) ==
+                                  static_cast<uint64_t>(active_body_index_));
+                       }),
         scene.opaque_meshes.end());
     last_celestial_mesh_count_ = 0;
 
+    const float screen_height = static_cast<float>(std::max(1, surface.height));
+    const int32_t globe_grid = planet_globe_subdivisions(
+        block_world_.planet().radius,
+        glm::distance(glm::dvec3(camera.transform.position), block_world_.planet().center),
+        screen_height, camera.fov_y_radians, global_planet_subdivisions_);
+    if (globe_grid != global_planet_subdivisions_) {
+      rebuild_global_planet_surface(globe_grid);
+    }
     // Keep the complete terrain globe resident at every altitude. Its radial
     // bias places it behind the detailed voxel surface, and it closes holes
     // while chunks are being generated or evicted.
@@ -1807,6 +1827,47 @@ void Engine::append_celestial_meshes() {
           body_world, scene.camera_origin);
 
       const float radius = static_cast<float>(body.orbital.radius);
+      if (!body.is_star) {
+        // Distant destinations use the same deterministic height source as
+        // their landing runtime. Only the double-precision origin moves as
+        // they orbit; retained GPU geometry is uploaded on a LOD change.
+        int32_t &previous_grid = celestial_subdivisions_[i];
+        const int32_t grid = planet_globe_subdivisions(
+            body.orbital.radius,
+            glm::distance(glm::dvec3(camera.transform.position), body_world),
+            screen_height, camera.fov_y_radians, previous_grid);
+        previous_grid = grid;
+        const uint64_t mesh_id = 0x43454c4500000000ull |
+            (static_cast<uint64_t>(i) << 16) | static_cast<uint64_t>(grid);
+        const auto resident = std::find_if(
+            scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+            [i](const RenderMesh &mesh) {
+              return (mesh.mesh_id >> 32) == 0x43454c45u &&
+                  ((mesh.mesh_id >> 16) & 0xffffu) == static_cast<uint64_t>(i);
+            });
+        if (resident != scene.opaque_meshes.end()) {
+          if (resident->mesh_id == mesh_id) {
+            resident->world_origin = body_world;
+            ++last_celestial_mesh_count_;
+            continue;
+          }
+          scene.opaque_meshes.erase(resident);
+        }
+        auto &levels = globe_meshes_[i];
+        auto it = levels.find(grid);
+        if (it == levels.end()) {
+          RenderMesh globe = build_compact_planet_surface_mesh(
+              *world_for_body(i), grid,
+              kPlayablePlanetConfig.global_surface_radial_bias_m);
+          it = levels.emplace(grid, std::move(globe)).first;
+        }
+        RenderMesh globe = it->second;
+        globe.mesh_id = mesh_id;
+        globe.world_origin = body_world;
+        scene.opaque_meshes.push_back(std::move(globe));
+        ++last_celestial_mesh_count_;
+        continue;
+      }
       RenderMesh sphere = build_debug_sphere_mesh(rel_pos, radius, body.color);
       sphere.mesh_id = 0; // transient — always re-upload
       sphere.world_origin = scene.camera_origin.world_origin;
@@ -2120,10 +2181,16 @@ GuiMenu::Character Engine::preferred_character() const {
   return session_state_.selected_character;
 }
 
-void Engine::rebuild_global_planet_surface() {
-  global_planet_surface_mesh_ = build_compact_planet_surface_mesh(
-      block_world_, kPlayablePlanetConfig.global_surface_subdivisions,
-      kPlayablePlanetConfig.global_surface_radial_bias_m);
+void Engine::rebuild_global_planet_surface(int32_t subdivisions) {
+  auto &levels = globe_meshes_[active_body_index_];
+  auto it = levels.find(subdivisions);
+  if (it == levels.end()) {
+    it = levels.emplace(subdivisions, build_compact_planet_surface_mesh(
+        block_world_, subdivisions,
+        kPlayablePlanetConfig.global_surface_radial_bias_m)).first;
+  }
+  global_planet_surface_mesh_ = it->second;
+  global_planet_subdivisions_ = subdivisions;
   global_planet_surface_mesh_.mesh_id = kGlobalPlanetSurfaceMeshId;
   // This is a recessed safety shell for the brief interval while a detailed
   // chunk is being generated. Render both faces so oblique approach rays can

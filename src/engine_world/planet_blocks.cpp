@@ -1452,8 +1452,11 @@ RenderMesh build_compact_planet_surface_mesh(
                     glm::vec3(direction * radial_distance),
                     color,
                     glm::vec3(direction),
-                    glm::vec3(static_cast<float>(x),
-                              static_cast<float>(z), 0.0f),
+                    glm::vec3(static_cast<float>(x) / grid *
+                                  world.shell_config(world.shell_count() - 1).horizontal_res,
+                              static_cast<float>(z) / grid *
+                                  world.shell_config(world.shell_count() - 1).horizontal_res,
+                              0.0f),
                 });
             }
         }

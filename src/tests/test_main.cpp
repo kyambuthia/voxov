@@ -21,6 +21,7 @@
 #include "engine_net_proto/net_types.hpp"
 #include "engine_world/net_chunk_state.hpp"
 #include "engine_world/planet.hpp"
+#include "engine_world/planet_lod.hpp"
 #include "engine_world/planet_blocks.hpp"
 #include "engine_world/solar_system.hpp"
 #include "engine_world/coordinate_frames.hpp"
@@ -1385,7 +1386,7 @@ void test_compact_planet_surface_is_complete_and_seamless() {
   BlockWorld world;
   world.init(config);
 
-  constexpr int32_t grid = 16;
+  for (const int32_t grid : {8, 16, 32, 64}) {
   constexpr double bias = 0.20;
   const RenderMesh mesh =
       build_compact_planet_surface_mesh(world, grid, bias);
@@ -1464,6 +1465,33 @@ void test_compact_planet_surface_is_complete_and_seamless() {
       assert(glm::distance(source.position, dest.position) < 1.0e-4f);
     }
   }
+  }
+}
+
+void test_planet_globe_lod_projection_and_hysteresis() {
+  constexpr double radius = 64.0;
+  const float fov = glm::radians(70.0f);
+  const double focal = 1080.0 / (2.0 * std::tan(fov * 0.5));
+  auto distance_for_diameter = [&](double pixels) {
+    const double tangent = 2.0 * radius * focal / pixels;
+    return std::sqrt(radius * radius + tangent * tangent);
+  };
+  auto select = [&](double diameter, int32_t previous = 0) {
+    return planet_globe_subdivisions(radius, distance_for_diameter(diameter),
+                                     1080.0f, fov, previous);
+  };
+  assert(select(60.0) == 8);
+  assert(select(120.0) == 16);
+  assert(select(240.0) == 32);
+  assert(select(960.0) == 64);
+  assert(select(210.0, 16) == 16); // no refine on small boundary motion
+  assert(select(250.0, 16) == 32);
+  assert(select(90.0, 16) == 16); // distinct coarsening boundary
+  assert(select(70.0, 16) == 8);
+  assert(planet_globe_subdivisions(radius, radius - 1.0, 1080.0f, fov) == 64);
+  const double distance = distance_for_diameter(120.0);
+  assert(planet_globe_subdivisions(radius, distance, 2160.0f, fov) == 32);
+  assert(planet_globe_subdivisions(radius, distance, 1080.0f, fov * 0.5f) == 32);
 }
 
 void test_planet_flight_clipmap_is_camera_relative_and_textured() {
@@ -3885,6 +3913,7 @@ int main() {
   test_planet_surface_flat_mesh_uses_local_plane();
   test_planet_impostor_is_complete_sphere_lod();
   test_compact_planet_surface_is_complete_and_seamless();
+  test_planet_globe_lod_projection_and_hysteresis();
   test_planet_flight_clipmap_is_camera_relative_and_textured();
   test_planet_streamer_returns_runtime_terrain_chunks();
   test_planet_streamer_refines_near_surface();

@@ -3,6 +3,27 @@
 #include <algorithm>
 #include <cmath>
 
+int32_t planet_globe_subdivisions(double radius, double camera_distance,
+    float screen_height_pixels, float fov_y_radians,
+    int32_t previous_subdivisions) {
+    if (radius <= 0.0 || screen_height_pixels <= 0.0f) return 8;
+    const double focal = screen_height_pixels /
+        (2.0 * std::tan(std::clamp(static_cast<double>(fov_y_radians),
+                                 0.1, 3.0) * 0.5));
+    // Tangent-cone projection stays conservative on a close approach.
+    const double distance = std::max(camera_distance, radius);
+    const double projected_diameter = 2.0 * radius * focal /
+        std::sqrt(std::max(distance * distance - radius * radius,
+                           radius * radius * 0.0001));
+    int32_t grid = previous_subdivisions;
+    const bool has_previous = grid == 8 || grid == 16 || grid == 32 || grid == 64;
+    if (!has_previous) grid = 8;
+    const double refine_threshold = has_previous ? 15.0 : 12.0;
+    while (grid < 64 && projected_diameter / grid > refine_threshold) grid *= 2;
+    while (grid > 8 && projected_diameter / (grid / 2) < 9.6) grid /= 2;
+    return grid;
+}
+
 // ============================================================================
 // PlanetLODSystem implementation
 // ============================================================================

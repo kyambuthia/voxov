@@ -39,6 +39,25 @@ ENetPacket *make_packet(NetMsgType type, uint32_t sequence, const T &payload,
   out_size = bytes.size();
   return enet_packet_create(bytes.data(), bytes.size(), flags);
 }
+
+// Encodes and queues one message. ENet only takes ownership of a packet when
+// enet_peer_send succeeds (it fails for peers that are disconnecting), so the
+// packet is freed here otherwise. Returns the bytes queued, or 0 if nothing
+// was sent.
+template <typename T>
+size_t send_message(ENetPeer *peer, NetChannel channel, NetMsgType type,
+                    uint32_t sequence, const T &payload, enet_uint32 flags) {
+  size_t packet_size = 0;
+  ENetPacket *packet = make_packet(type, sequence, payload, flags, packet_size);
+  if (packet == nullptr) {
+    return 0;
+  }
+  if (enet_peer_send(peer, static_cast<uint8_t>(channel), packet) < 0) {
+    enet_packet_destroy(packet);
+    return 0;
+  }
+  return packet_size;
+}
 } // namespace
 
 NetServer::NetServer() = default;
@@ -50,13 +69,10 @@ void NetServer::send_session_info(ENetPeer *peer) {
     return;
   }
   const NetSessionInfo info = session->make_session_info(local_only);
-  size_t packet_size = 0;
-  ENetPacket *out = make_packet(NetMsgType::SessionInfo,
-                                next_packet_sequence++, info,
-                                ENET_PACKET_FLAG_RELIABLE, packet_size);
-  if (out != nullptr) {
-    enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Reliable), out);
-    record_tx(packet_size);
+  if (const size_t sent = send_message(
+          peer, NetChannel::Reliable, NetMsgType::SessionInfo,
+          next_packet_sequence++, info, ENET_PACKET_FLAG_RELIABLE)) {
+    record_tx(sent);
   }
 }
 
@@ -79,13 +95,11 @@ void NetServer::send_chunk_state(ENetPeer *peer, ServerClientState &state,
 
   const NetChunkState chunk_state =
       net_make_spherical_chunk_state(coord, version);
-  size_t packet_size = 0;
-  ENetPacket *out = make_packet(NetMsgType::ChunkState,
-                                next_packet_sequence++, chunk_state,
-                                ENET_PACKET_FLAG_RELIABLE, packet_size);
-  if (out != nullptr) {
-    enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Reliable), out);
-    record_tx(packet_size);
+  // Only mark the chunk as sent once it is queued, so a failed send retries.
+  if (const size_t sent = send_message(
+          peer, NetChannel::Reliable, NetMsgType::ChunkState,
+          next_packet_sequence++, chunk_state, ENET_PACKET_FLAG_RELIABLE)) {
+    record_tx(sent);
     state.sent_chunks[coord] = version;
   }
 }
@@ -113,14 +127,10 @@ void NetServer::send_snapshots() {
     snapshot.vx = state.state.vx;
     snapshot.vy = state.state.vy;
     snapshot.vz = state.state.vz;
-    size_t packet_size = 0;
-    ENetPacket *out = make_packet(NetMsgType::Snapshot,
-                                  next_packet_sequence++, snapshot, 0,
-                                  packet_size);
-    if (out != nullptr) {
-      enet_peer_send(peer_ptr, static_cast<uint8_t>(NetChannel::Unreliable),
-                     out);
-      record_tx(packet_size);
+    if (const size_t sent = send_message(
+            peer_ptr, NetChannel::Unreliable, NetMsgType::Snapshot,
+            next_packet_sequence++, snapshot, 0)) {
+      record_tx(sent);
       debug_counters.snapshots_sent_window += 1;
     }
   }
@@ -146,14 +156,10 @@ void NetServer::broadcast_player_states() {
       }
       NetPlayerState player_state = subject.state;
       player_state.sequence = state_sequence;
-      size_t packet_size = 0;
-      ENetPacket *out = make_packet(NetMsgType::PlayerState,
-                                    next_packet_sequence++, player_state, 0,
-                                    packet_size);
-      if (out != nullptr) {
-        enet_peer_send(observer_peer,
-                       static_cast<uint8_t>(NetChannel::Unreliable), out);
-        record_tx(packet_size);
+      if (const size_t sent = send_message(
+              observer_peer, NetChannel::Unreliable, NetMsgType::PlayerState,
+              next_packet_sequence++, player_state, 0)) {
+        record_tx(sent);
         debug_counters.player_state_broadcasts_window += 1;
       }
     }
@@ -340,15 +346,10 @@ void NetServer::pump() {
 
       NetAssignPlayer assignment{};
       assignment.player_id = state.player_id;
-      size_t assignment_size = 0;
-      ENetPacket *out = make_packet(NetMsgType::AssignPlayer,
-                                    next_packet_sequence++, assignment,
-                                    ENET_PACKET_FLAG_RELIABLE,
-                                    assignment_size);
-      if (out != nullptr) {
-        enet_peer_send(event.peer,
-                       static_cast<uint8_t>(NetChannel::Reliable), out);
-        record_tx(assignment_size);
+      if (const size_t sent = send_message(
+              event.peer, NetChannel::Reliable, NetMsgType::AssignPlayer,
+              next_packet_sequence++, assignment, ENET_PACKET_FLAG_RELIABLE)) {
+        record_tx(sent);
       }
 
       NetProtocolInfo protocol{};
@@ -357,15 +358,10 @@ void NetServer::pump() {
           net_feature(NetFeatureFlags::InterestFilteredReplication) |
           net_feature(NetFeatureFlags::ChunkStreaming);
       protocol.server_tick_hz = 60;
-      size_t protocol_size = 0;
-      ENetPacket *proto_packet = make_packet(
-          NetMsgType::ProtocolInfo, next_packet_sequence++, protocol,
-          ENET_PACKET_FLAG_RELIABLE, protocol_size);
-      if (proto_packet != nullptr) {
-        enet_peer_send(event.peer,
-                       static_cast<uint8_t>(NetChannel::Reliable),
-                       proto_packet);
-        record_tx(protocol_size);
+      if (const size_t sent = send_message(
+              event.peer, NetChannel::Reliable, NetMsgType::ProtocolInfo,
+              next_packet_sequence++, protocol, ENET_PACKET_FLAG_RELIABLE)) {
+        record_tx(sent);
       }
       broadcast_session_info();
       break;

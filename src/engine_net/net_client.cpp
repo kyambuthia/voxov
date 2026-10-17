@@ -35,6 +35,25 @@ ENetPacket *make_packet(NetMsgType type, uint32_t sequence, const T &payload,
     out_size = bytes.size();
     return enet_packet_create(bytes.data(), bytes.size(), flags);
 }
+
+// Encodes and queues one message. ENet only takes ownership of a packet when
+// enet_peer_send succeeds, so the packet is freed here otherwise. Returns the
+// bytes queued, or 0 if nothing was sent.
+template <typename T>
+size_t send_message(ENetPeer *peer, NetChannel channel, NetMsgType type,
+                    uint32_t sequence, const T &payload, enet_uint32 flags) {
+    size_t packet_size = 0;
+    ENetPacket *packet =
+        make_packet(type, sequence, payload, flags, packet_size);
+    if (packet == nullptr) {
+        return 0;
+    }
+    if (enet_peer_send(peer, static_cast<uint8_t>(channel), packet) < 0) {
+        enet_packet_destroy(packet);
+        return 0;
+    }
+    return packet_size;
+}
 }
 
 void NetClient::record_tx(size_t bytes) {
@@ -203,17 +222,13 @@ void NetClient::pump() {
                 static_cast<int>((addr.host >> 24) & 0xFF),
                 static_cast<int>(addr.port));
             if (has_pending_interest && peer) {
-                size_t packet_size = 0;
-                ENetPacket *net_packet = make_packet(
-                    NetMsgType::ChunkInterest, next_packet_sequence++,
-                    pending_interest, ENET_PACKET_FLAG_RELIABLE, packet_size);
-                if (net_packet != nullptr) {
-                    enet_peer_send(peer,
-                                   static_cast<uint8_t>(NetChannel::Reliable),
-                                   net_packet);
-                    record_tx(packet_size);
+                if (const size_t sent = send_message(
+                        peer, NetChannel::Reliable, NetMsgType::ChunkInterest,
+                        next_packet_sequence++, pending_interest,
+                        ENET_PACKET_FLAG_RELIABLE)) {
+                    record_tx(sent);
+                    has_pending_interest = false;
                 }
-                has_pending_interest = false;
             }
             continue;
         }
@@ -352,14 +367,10 @@ void NetClient::send_input(const NetTickInput &input) {
         return;
     }
 
-    size_t packet_size = 0;
-    ENetPacket *net_packet = make_packet(NetMsgType::Input,
-                                         next_packet_sequence++, input, 0,
-                                         packet_size);
-    if (net_packet != nullptr) {
-        enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Unreliable),
-                       net_packet);
-        record_tx(packet_size);
+    if (const size_t sent = send_message(
+            peer, NetChannel::Unreliable, NetMsgType::Input,
+            next_packet_sequence++, input, 0)) {
+        record_tx(sent);
     }
 }
 
@@ -373,14 +384,11 @@ void NetClient::set_chunk_interest(const NetChunkInterest &interest) {
         return;
     }
 
-    size_t packet_size = 0;
-    ENetPacket *net_packet = make_packet(
-        NetMsgType::ChunkInterest, next_packet_sequence++, pending_interest,
-        ENET_PACKET_FLAG_RELIABLE, packet_size);
-    if (net_packet != nullptr) {
-        enet_peer_send(peer, static_cast<uint8_t>(NetChannel::Reliable),
-                       net_packet);
-        record_tx(packet_size);
+    if (const size_t sent = send_message(
+            peer, NetChannel::Reliable, NetMsgType::ChunkInterest,
+            next_packet_sequence++, pending_interest,
+            ENET_PACKET_FLAG_RELIABLE)) {
+        record_tx(sent);
         has_pending_interest = false;
     }
 }

@@ -1,6 +1,7 @@
 #include "platform/platform_services.hpp"
 
 #include <array>
+#include <cstdlib>
 #include <fstream>
 #include <system_error>
 #include <unordered_set>
@@ -15,6 +16,56 @@
 
 namespace {
 namespace fs = std::filesystem;
+
+constexpr const char *kSessionStateFile = "voxov_session_state.bin";
+
+fs::path env_path(const char *name) {
+    const char *value = std::getenv(name);
+    return (value != nullptr && *value != '\0') ? fs::path(value) : fs::path();
+}
+
+// Desktop saves live in the user's data directory, not beside the executable:
+// the executable sits in build/, which scripts/clean_build.sh deletes.
+// VOXOV_SAVE_DIR overrides the location (useful for tests and profiling runs).
+fs::path desktop_save_root(const fs::path &exe_dir, bool &is_override) {
+    is_override = false;
+    if (fs::path dir = env_path("VOXOV_SAVE_DIR"); !dir.empty()) {
+        is_override = true;
+        return dir;
+    }
+#if defined(_WIN32)
+    if (const fs::path appdata = env_path("APPDATA"); !appdata.empty()) {
+        return appdata / "voxov";
+    }
+#elif defined(__APPLE__)
+    if (const fs::path home = env_path("HOME"); !home.empty()) {
+        return home / "Library" / "Application Support" / "voxov";
+    }
+#elif !defined(__EMSCRIPTEN__)
+    if (const fs::path xdg = env_path("XDG_DATA_HOME");
+        !xdg.empty() && xdg.is_absolute()) {
+        return xdg / "voxov";
+    }
+    if (const fs::path home = env_path("HOME"); !home.empty()) {
+        return home / ".local" / "share" / "voxov";
+    }
+#endif
+    return exe_dir / "save";
+}
+
+// Earlier builds saved beside the executable. Copy that save across once so
+// existing progress carries over; the old file is left in place.
+void migrate_legacy_save(const fs::path &legacy_root, const fs::path &save_root) {
+    std::error_code ec;
+    const fs::path legacy = legacy_root / kSessionStateFile;
+    const fs::path target = save_root / kSessionStateFile;
+    if (legacy_root.lexically_normal() == save_root.lexically_normal() ||
+        fs::exists(target, ec) || !fs::exists(legacy, ec)) {
+        return;
+    }
+    fs::create_directories(save_root, ec);
+    fs::copy_file(legacy, target, ec);
+}
 
 fs::path executable_directory() {
 #if defined(_WIN32)
@@ -94,8 +145,14 @@ PlatformServices PlatformServices::desktop_default() {
     const fs::path exe_dir = executable_directory();
     append_root_with_parents(asset_roots, exe_dir, 6);
 
+    bool is_override = false;
+    const fs::path save_root = desktop_save_root(exe_dir, is_override);
+    if (!is_override) {
+        migrate_legacy_save(exe_dir / "save", save_root);
+    }
+
     return PlatformServices(
-        exe_dir / "save",
+        save_root,
         exe_dir / "tmp",
         std::move(asset_roots));
 }
@@ -137,7 +194,7 @@ PlatformServices PlatformServices::for_testing(const fs::path &data_root) {
 }
 
 fs::path PlatformServices::session_state_path() const {
-    return save_root_ / "voxov_session_state.bin";
+    return save_root_ / kSessionStateFile;
 }
 
 std::vector<std::string> PlatformServices::candidate_asset_paths(

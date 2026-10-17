@@ -52,7 +52,9 @@
 #include <cstdint>
 #include <cstdio>
 #include <cstring>
+#include <cstdlib>
 #include <filesystem>
+#include <optional>
 #include <limits>
 #include <vector>
 
@@ -177,6 +179,52 @@ void test_persistent_game_state_atomic_file_round_trip() {
   std::error_code cleanup_error;
   fs::remove_all(root, cleanup_error);
   assert(!cleanup_error);
+}
+
+void set_test_env(const char *name, const char *value) {
+#if defined(_WIN32)
+  _putenv_s(name, value ? value : "");
+#else
+  if (value) {
+    setenv(name, value, 1);
+  } else {
+    unsetenv(name);
+  }
+#endif
+}
+
+void test_desktop_saves_live_outside_the_build_tree() {
+  namespace fs = std::filesystem;
+  // Point every save-location variable at a temp dir so the test never
+  // touches the real user data directory.
+  const char *names[] = {"VOXOV_SAVE_DIR", "XDG_DATA_HOME", "APPDATA"};
+  std::vector<std::pair<std::string, std::optional<std::string>>> saved;
+  for (const char *name : names) {
+    const char *value = std::getenv(name);
+    saved.emplace_back(name, value ? std::optional<std::string>(value)
+                                   : std::nullopt);
+  }
+  const fs::path root = fs::temp_directory_path() / "voxov-save-dir-test";
+
+  set_test_env("VOXOV_SAVE_DIR", (root / "override").string().c_str());
+  assert(PlatformServices::desktop_default().session_state_path() ==
+         root / "override" / "voxov_session_state.bin");
+
+  // Without an override the save goes to the user data directory, not
+  // beside the executable (which lives in build/ and a clean build deletes).
+  set_test_env("VOXOV_SAVE_DIR", nullptr);
+  set_test_env("XDG_DATA_HOME", root.string().c_str());
+  set_test_env("APPDATA", root.string().c_str());
+#if !defined(__APPLE__)
+  assert(PlatformServices::desktop_default().session_state_path() ==
+         root / "voxov" / "voxov_session_state.bin");
+#endif
+
+  for (const auto &[name, value] : saved) {
+    set_test_env(name.c_str(), value ? value->c_str() : nullptr);
+  }
+  std::error_code ec;
+  fs::remove_all(root, ec);
 }
 
 void test_cvar_register_and_find() {
@@ -3998,6 +4046,7 @@ int main() {
   test_player_preferences_are_changed_from_settings_menu();
   test_character_selection_is_retained_by_menu();
   test_persistent_game_state_round_trip_and_corruption_detection();
+  test_desktop_saves_live_outside_the_build_tree();
   test_persistent_game_state_atomic_file_round_trip();
   test_string_id_compile_time_hash();
   test_cvar_register_and_find();

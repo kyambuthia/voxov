@@ -32,6 +32,8 @@ struct SokolGpuMesh {
 };
 
 struct SokolPipelines {
+    sg_shader sky_shader{};
+    sg_pipeline sky{};
     sg_shader scene_shader{};
     sg_pipeline opaque{};
     sg_pipeline opaque_u16{};

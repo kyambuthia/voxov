@@ -121,6 +121,19 @@ static_assert(sizeof(atm_params_t) == 80);
 // ---------------------------------------------------------------------------
 
 bool SokolRenderer::setup_pipelines() {
+    const sg_shader_desc *sky_shader_desc =
+        voxov_scene_blocky_sky_shader_desc(sg_query_backend());
+    if (sky_shader_desc == nullptr) return false;
+    pipelines_.sky_shader = sg_make_shader(sky_shader_desc);
+    sg_pipeline_desc sky_desc{};
+    sky_desc.shader = pipelines_.sky_shader;
+    sky_desc.depth.compare = SG_COMPAREFUNC_ALWAYS;
+    sky_desc.depth.write_enabled = false;
+    sky_desc.label = "voxov-blocky-sky";
+    pipelines_.sky = sg_make_pipeline(&sky_desc);
+    if (sg_query_pipeline_state(pipelines_.sky) != SG_RESOURCESTATE_VALID) {
+        return false;
+    }
     const sg_shader_desc *shader_desc =
         voxov_scene_voxov_scene_shader_desc(sg_query_backend());
     if (shader_desc == nullptr) {
@@ -370,6 +383,8 @@ void SokolRenderer::shutdown() {
     vegetation_texture_view_ = {};
     vegetation_texture_ = {};
 
+    if (pipelines_.sky.id) sg_destroy_pipeline(pipelines_.sky);
+    if (pipelines_.sky_shader.id) sg_destroy_shader(pipelines_.sky_shader);
     if (pipelines_.scene_shader.id) sg_destroy_shader(pipelines_.scene_shader);
     if (pipelines_.opaque.id) sg_destroy_pipeline(pipelines_.opaque);
     if (pipelines_.opaque_u16.id) sg_destroy_pipeline(pipelines_.opaque_u16);
@@ -801,6 +816,36 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
         const glm::mat4 vp = p * view.camera.view();
         const glm::mat4 model = glm::mat4(1.0f);
         const glm::vec3 camera_pos = view.camera.transform.position;
+        if (ctx.blocky_sky) {
+            // Translation-free view reconstruction preserves ray precision
+            // even when the camera is thousands of kilometres from a body.
+            glm::mat4 rotation_view = view.camera.view();
+            rotation_view[3] = glm::vec4(0, 0, 0, 1);
+            const glm::mat4 inverse_projection = glm::inverse(p * rotation_view);
+            const sg_range sky_vs_range = SG_RANGE(inverse_projection);
+            struct SkyParams {
+                glm::vec4 camera_radius;
+                glm::vec4 sun_height;
+                glm::vec4 style;
+            } sky_params{
+                glm::vec4(glm::vec3(glm::dvec3(camera_pos) -
+                    glm::dvec3(atm_uniforms_.planet_center_radius)),
+                    atm_uniforms_.planet_center_radius.w),
+                glm::vec4(glm::vec3(atm_uniforms_.sun_dir_intensity),
+                    atm_uniforms_.atm_params_1.x),
+                glm::vec4(ctx.grayscale_view ? 1.0f : 0.0f,
+                    vegetation_time_, 0.0f, 0.0f),
+            };
+            static_assert(sizeof(SkyParams) == 48);
+            const sg_range sky_fs_range = SG_RANGE(sky_params);
+            sg_apply_pipeline(pipelines_.sky);
+            sg_bindings sky_bindings{};
+            sg_apply_bindings(&sky_bindings);
+            sg_apply_uniforms(0, &sky_vs_range);
+            sg_apply_uniforms(1, &sky_fs_range);
+            sg_draw(0, 3, 1);
+            ++draw_calls;
+        }
         auto mesh_vp = [&](const SokolGpuMesh &mesh) {
             if (view.camera.has_view_override()) {
                 return vp * glm::translate(

@@ -22,6 +22,7 @@
 #include "engine_world/net_chunk_state.hpp"
 #include "engine_world/planet.hpp"
 #include "engine_world/planet_lod.hpp"
+#include "engine_world/atmosphere.hpp"
 #include "engine_world/planet_blocks.hpp"
 #include "engine_world/solar_system.hpp"
 #include "engine_world/coordinate_frames.hpp"
@@ -1492,6 +1493,33 @@ void test_planet_globe_lod_projection_and_hysteresis() {
   const double distance = distance_for_diameter(120.0);
   assert(planet_globe_subdivisions(radius, distance, 2160.0f, fov) == 32);
   assert(planet_globe_subdivisions(radius, distance, 1080.0f, fov * 0.5f) == 32);
+}
+
+void test_compact_atmosphere_scale_shadow_and_vacuum() {
+  AtmosphereRenderer atmosphere;
+  atmosphere.init(compact_planet_atmosphere(64.0, 32.0));
+  const glm::dvec3 origin(0.0, 66.0, 0.0);
+  const glm::dvec3 up(0.0, 1.0, 0.0);
+  const auto daylight = atmosphere.compute_sky_color(origin, up);
+  assert(vector_is_finite(daylight.sky_color));
+  assert(daylight.sky_color.b > daylight.sky_color.r);
+  assert(glm::length(daylight.sky_color) > 0.01f);
+  atmosphere.set_sun_direction(-up * 100.0); // direction is normalized
+  const auto night = atmosphere.compute_sky_color(origin, up);
+  assert(glm::length(night.sky_color) < 1e-6f);
+  assert(glm::length(atmosphere.compute_sky_color(origin, up, 0.0).sky_color) == 0.0f);
+  assert(vector_is_finite(atmosphere.compute_sky_color(origin, glm::dvec3(0.0)).sky_color));
+
+  const glm::dvec3 target(20.0, 70.0, 0.0);
+  const glm::dvec3 transmission = atmosphere.compute_transmittance(origin, target);
+  assert(transmission.r > transmission.b && transmission.r < 1.0);
+  AtmosphereRenderer moon_atmosphere;
+  moon_atmosphere.init(compact_planet_atmosphere(16.0, 8.0));
+  const glm::dvec3 scaled = moon_atmosphere.compute_transmittance(origin * 0.25, target * 0.25);
+  assert(glm::length(transmission - scaled) < 1e-9);
+  assert(atmosphere.compute_transmittance(glm::dvec3(0, 120, 0),
+      glm::dvec3(1000, 120, 0)) == glm::dvec3(1.0));
+  assert(atmosphere.compute_transmittance(origin, -origin) == glm::dvec3(0.0));
 }
 
 void test_planet_flight_clipmap_is_camera_relative_and_textured() {
@@ -3937,6 +3965,7 @@ int main() {
   test_planet_impostor_is_complete_sphere_lod();
   test_compact_planet_surface_is_complete_and_seamless();
   test_planet_globe_lod_projection_and_hysteresis();
+  test_compact_atmosphere_scale_shadow_and_vacuum();
   test_planet_flight_clipmap_is_camera_relative_and_textured();
   test_planet_streamer_returns_runtime_terrain_chunks();
   test_planet_streamer_refines_near_surface();

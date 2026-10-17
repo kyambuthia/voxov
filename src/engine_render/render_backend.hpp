@@ -36,6 +36,7 @@ struct RenderFrameContext {
     uint32_t view_count = 1;
     bool debug_xray = false;
     bool grayscale_view = false;
+    bool blocky_sky = false;
 
     // ── Atmosphere parameters (packed for GPU std140 uniform block) ────
     // Set by Engine each frame.  Passed to fragment shader for aerial

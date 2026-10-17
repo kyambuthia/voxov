@@ -136,12 +136,26 @@ vec3 atmosphere_transmittance(vec3 start, vec3 end) {
     vec3 betaR = rayleigh_scatter_unused.xyz;
     float betaM = mie_scatter_pad.x;
 
-    float start_h = max(length(start - center) - R, 0.0);
-    float end_h = max(length(end - center) - R, 0.0);
-    float density_r = 0.5 * (exp(-start_h / Hr) + exp(-end_h / Hr));
-    float density_m = 0.5 * (exp(-start_h / Hm) + exp(-end_h / Hm));
-    vec3 optical_depth = betaR * dist * density_r +
-                         vec3(betaM * 1.1 * dist * density_m);
+    // Integrate only the segment inside the finite atmosphere. Endpoint
+    // averaging fogged empty space on long planet-to-planet sight lines.
+    vec3 direction = dir / dist;
+    vec3 origin = start - center;
+    float b = dot(origin, direction);
+    float outer_radius = R + atm_params_1.x;
+    float discriminant = b * b - dot(origin, origin) + outer_radius * outer_radius;
+    if (discriminant <= 0.0) return vec3(1.0);
+    float root = sqrt(discriminant);
+    float entry = max(0.0, -b - root);
+    float exit_atm = min(dist, -b + root);
+    if (exit_atm <= entry) return vec3(1.0);
+    float step_length = (exit_atm - entry) / 4.0;
+    vec3 optical_depth = vec3(0.0);
+    for (int i = 0; i < 4; ++i) {
+        float altitude = max(0.0, length(origin + direction *
+            (entry + (float(i) + 0.5) * step_length)) - R);
+        optical_depth += (betaR * exp(-altitude / max(Hr, 0.001)) +
+            vec3(betaM * 1.1 * exp(-altitude / max(Hm, 0.001)))) * step_length;
+    }
     return exp(-optical_depth);
 }
 
@@ -236,3 +250,113 @@ void main() {
 @end
 
 @program voxov_scene vs fs
+
+// A background triangle needs no vertex buffer and never writes terrain depth.
+@vs sky_vs
+layout(binding=0) uniform sky_vs_params {
+    mat4 inverse_view_projection;
+};
+out vec3 sky_ray;
+void main() {
+    vec2 corner = vec2((gl_VertexIndex & 1) != 0 ? 3.0 : -1.0,
+                       (gl_VertexIndex & 2) != 0 ? 3.0 : -1.0);
+    // An interior clip depth avoids w=0 when a very distant far plane rounds
+    // to infinity in the float projection (the sky-navigation view).
+    vec4 ray = inverse_view_projection * vec4(corner, 0.0, 1.0);
+    sky_ray = ray.xyz / ray.w;
+    gl_Position = vec4(corner, 0.5, 1.0);
+}
+@end
+
+@fs sky_fs
+layout(binding=1) uniform sky_fs_params {
+    vec4 sky_camera_radius; // xyz=planet-relative camera, w=radius
+    vec4 sky_sun_height;    // xyz=sun direction, w=atmosphere height
+    vec4 sky_style;         // x=grayscale, y=time
+};
+in vec3 sky_ray;
+out vec4 frag_color;
+
+float sky_hash(vec3 p) {
+    p = fract(p * 0.1031);
+    p += dot(p, p.yzx + 33.33);
+    return fract((p.x + p.y) * p.z);
+}
+
+vec2 sky_sphere(vec3 origin, vec3 direction, float radius) {
+    float b = dot(origin, direction);
+    float d = b * b - dot(origin, origin) + radius * radius;
+    if (d < 0.0) return vec2(-1.0);
+    float root = sqrt(d);
+    return vec2(-b - root, -b + root);
+}
+
+void main() {
+    vec3 ray = normalize(sky_ray);
+    // Angular cells are anchored in world space, so blocks and stars remain
+    // still when the camera moves or rolls around a cube-sphere face.
+    vec3 cell = floor(ray * 256.0 + 0.5);
+    vec3 block_ray = normalize(cell);
+    vec3 origin = sky_camera_radius.xyz;
+    float radius = sky_camera_radius.w;
+    float height = max(sky_sun_height.w, 0.001);
+    vec3 sun = normalize(sky_sun_height.xyz);
+    vec2 shell = sky_sphere(origin, block_ray, radius + height);
+    vec2 ground = sky_sphere(origin, block_ray, radius);
+    float entry = max(0.0, shell.x);
+    float exit_atm = shell.y;
+    if (ground.x > 0.0) exit_atm = min(exit_atm, ground.x);
+
+    vec3 scatter = vec3(0.0);
+    float optical_depth = 0.0;
+    float step_length = max(0.0, exit_atm - entry) / 8.0;
+    float mu = dot(block_ray, sun);
+    for (int i = 0; i < 8; ++i) {
+        vec3 point = origin + block_ray *
+            (entry + (float(i) + 0.5) * step_length);
+        float altitude = max(0.0, length(point) - radius);
+        float density = exp(-altitude / (height * 0.25));
+        float depth = density * step_length / height;
+        optical_depth += depth;
+        vec2 shadow = sky_sphere(point, sun, radius);
+        float lit = shadow.x > 0.001 ? 0.0 : 1.0;
+        float phase = 0.75 * (1.0 + mu * mu);
+        vec3 rayleigh = vec3(0.28, 0.65, 1.65) * phase;
+        vec3 haze = vec3(0.85, 0.68, 0.48) * pow(max(mu, 0.0), 16.0);
+        scatter += (rayleigh + haze) * lit * depth * exp(-optical_depth);
+    }
+
+    vec3 color = vec3(0.002, 0.003, 0.009);
+    float star = step(0.9985, sky_hash(cell));
+    color += vec3(0.7, 0.8, 1.0) * star;
+    // The sun is a square in its tangent plane, matching the voxel sky.
+    vec3 sun_right = normalize(cross(sun,
+        abs(sun.y) < 0.95 ? vec3(0, 1, 0) : vec3(0, 0, 1)));
+    vec3 sun_up = cross(sun_right, sun);
+    float sun_square = step(max(abs(dot(ray, sun_right)),
+                               abs(dot(ray, sun_up))), 0.014) * step(0.0, mu);
+    color += vec3(10.0, 7.0, 3.5) * sun_square;
+    color = color * exp(-optical_depth * 5.0) + scatter * 4.0;
+
+    // One world-anchored cloud shell, broken into cubical clusters. Sample
+    // the first forward intersection so clouds also read from orbit.
+    vec2 clouds = sky_sphere(origin, block_ray, radius + height * 0.55);
+    float cloud_t = clouds.x > 0.0 ? clouds.x : clouds.y;
+    if (cloud_t > 0.0 && (ground.x < 0.0 || cloud_t < ground.x)) {
+        vec3 cloud_point = origin + block_ray * cloud_t;
+        vec3 cloud_cell = floor((cloud_point +
+            vec3(sky_style.y * 0.12, 0.0, sky_style.y * 0.06)) /
+            max(height * 0.12, 0.5));
+        float cluster = sky_hash(floor(cloud_cell / 3.0));
+        float cloud = step(0.60, cluster) * step(0.22, sky_hash(cloud_cell));
+        float day = smoothstep(-0.15, 0.2, dot(normalize(cloud_point), sun));
+        vec3 cloud_color = mix(vec3(0.018, 0.025, 0.045),
+                              vec3(1.8, 1.7, 1.5), day);
+        color = mix(color, cloud_color, cloud * exp(-optical_depth * 0.4) * 0.85);
+    }
+    color = color / (vec3(1.0) + color);
+    if (sky_style.x > 0.5) color = vec3(dot(color, vec3(0.2126, 0.7152, 0.0722)));
+    frag_color = vec4(color, 1.0);
+}
+@end
+@program blocky_sky sky_vs sky_fs

@@ -37,6 +37,9 @@ struct AtmosphereState {
     bool enabled = true;
 };
 
+// Artistic compact-world profile; preserves optical thickness across sizes.
+AtmosphereParams compact_planet_atmosphere(double radius, double height);
+
 struct AtmosphereUniforms {
     // Packed for std140 layout in GPU uniform block.
     // WHY std140: sokol requires explicit GLSL uniform block layout.
@@ -79,7 +82,10 @@ public:
     const AtmosphereState& state() const { return state_; }
 
     // Update sun direction (e.g. from solar system orbital mechanics).
-    void set_sun_direction(const glm::dvec3& dir) { params_.sun_direction = dir; }
+    void set_sun_direction(const glm::dvec3& dir) {
+        params_.sun_direction = glm::dot(dir, dir) > 1e-12
+            ? glm::normalize(dir) : glm::dvec3(0.0, 1.0, 0.0);
+    }
 
 private:
     AtmosphereParams params_;

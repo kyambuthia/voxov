@@ -10,8 +10,25 @@ namespace {
     constexpr double kMiePhaseNorm = 3.0 / (8.0 * kPi);
 }
 
+AtmosphereParams compact_planet_atmosphere(double radius, double height) {
+    AtmosphereParams params{};
+    params.planet_radius = std::max(radius, 0.001);
+    params.atmosphere_height = std::max(height, 0.001);
+    params.rayleigh_scale_height = params.atmosphere_height * 0.25;
+    params.mie_scale_height = params.atmosphere_height * 0.10;
+    params.rayleigh_scattering = glm::dvec3(0.20, 0.47, 1.10) /
+                                 params.atmosphere_height;
+    params.mie_scattering = 0.12 / params.atmosphere_height;
+    params.view_ray_samples = 12;
+    params.light_ray_samples = 6;
+    return params;
+}
+
 void AtmosphereRenderer::init(const AtmosphereParams& params) {
     params_ = params;
+    params_.view_ray_samples = std::max(1, params_.view_ray_samples);
+    params_.light_ray_samples = std::max(1, params_.light_ray_samples);
+    set_sun_direction(params.sun_direction);
     state_ = AtmosphereState{};
 }
 
@@ -112,6 +129,11 @@ AtmosphereState AtmosphereRenderer::compute_sky_color(
     AtmosphereState result{};
     result.enabled = true;
 
+    if (glm::dot(direction, direction) < 1e-12 || max_dist == 0.0) {
+        result.sky_color = glm::vec3(0.0f);
+        result.sun_color = glm::vec3(0.0f);
+        return result;
+    }
     const glm::dvec3 dir_norm = glm::normalize(direction);
 
     // Compute cos(angle) between view direction and sun direction for phase functions.
@@ -125,6 +147,15 @@ AtmosphereState AtmosphereRenderer::compute_sky_color(
         result.sky_color = glm::vec3(0.0f);
         result.sun_color = glm::vec3(0.0f);
         return result;
+    }
+
+    // Clip at opaque ground; sparse samples can skip a small planet.
+    const double ground_b = glm::dot(origin, dir_norm);
+    const double ground_d = ground_b * ground_b - glm::dot(origin, origin) +
+                             params_.planet_radius * params_.planet_radius;
+    if (ground_d >= 0.0) {
+        const double ground_t = -ground_b - std::sqrt(ground_d);
+        if (ground_t >= 0.0) t_max = std::min(t_max, ground_t);
     }
 
     // Clamp max distance if specified (for terrain intersection).
@@ -184,15 +215,15 @@ AtmosphereState AtmosphereRenderer::compute_sky_color(
             if (t1_light > 0.0) {
                 const double light_segment = t1_light / static_cast<double>(light_samples);
                 double t_light = 0.0;
-                bool shadowed = false;
+                const double light_b = glm::dot(sample_pos, params_.sun_direction);
+                const double light_d = light_b * light_b - glm::dot(sample_pos, sample_pos) +
+                                         R_planet * R_planet;
+                const bool shadowed = light_b < 0.0 && light_d >= 0.0;
                 for (int j = 0; j < light_samples; ++j) {
                     const glm::dvec3 light_pos =
                         sample_pos + params_.sun_direction * (t_light + light_segment * 0.5);
                     const double h_light = glm::length(light_pos) - R_planet;
-                    if (h_light < 0.0) {
-                        shadowed = true;
-                        break; // Ray enters planet — shadowed.
-                    }
+                    if (shadowed || h_light < 0.0) break;
                     const double ldr = std::exp(-h_light / params_.rayleigh_scale_height) * light_segment;
                     const double ldm = std::exp(-h_light / params_.mie_scale_height) * light_segment;
                     light_depth_r += params_.rayleigh_scattering * ldr;
@@ -208,13 +239,12 @@ AtmosphereState AtmosphereRenderer::compute_sky_color(
                     const double total_m = optical_depth_m * 1.1 + light_depth_m * 1.1;
 
                     const glm::dvec3 attenuation(
-                        std::exp(-total_r.x),
-                        std::exp(-total_r.y),
-                        std::exp(-total_r.z));
-                    const double attenuation_m = std::exp(-total_m);
+                        std::exp(-total_r.x - total_m),
+                        std::exp(-total_r.y - total_m),
+                        std::exp(-total_r.z - total_m));
 
                     sum_r += attenuation * hr;
-                    sum_m += glm::dvec3(attenuation_m * hm);
+                    sum_m += attenuation * hm;
                 }
             }
         }
@@ -244,6 +274,16 @@ glm::dvec3 AtmosphereRenderer::compute_transmittance(
     }
 
     const glm::dvec3 step_dir = dir / dist;
+
+    const double ground_b = glm::dot(origin, step_dir);
+    const double ground_d = ground_b * ground_b - glm::dot(origin, origin) +
+                             params_.planet_radius * params_.planet_radius;
+    if (ground_d > 0.0) {
+        const double ground_t = -ground_b - std::sqrt(ground_d);
+        if (ground_t >= 0.0 && ground_t < dist - 1e-6) {
+            return glm::dvec3(0.0);
+        }
+    }
 
     // Check if ray goes through atmosphere at all.
     double t0, t1;

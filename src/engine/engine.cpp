@@ -526,20 +526,10 @@ bool Engine::init(const EngineRuntimeOptions &options) {
     // Keep the atmosphere in physical meters. This remains stable when the
     // local terrain streamer later becomes one body in a multi-body universe.
     {
-        AtmosphereParams atm_params{};
-        atm_params.planet_radius = planet_def.radius;
-        atm_params.atmosphere_height =
-            kPlayablePlanetConfig.atmosphere_height_m;
-        atm_params.rayleigh_scattering = glm::dvec3(5.8e-6, 13.5e-6, 33.1e-6);
-        atm_params.mie_scattering = 21.0e-5;
-        atm_params.rayleigh_scale_height = 8'000.0;
-        atm_params.mie_scale_height = 1'200.0;
-        atm_params.mie_asymmetry = 0.76;
-        // Sun direction: initialise from solar system (planet at orbital pos at t=0).
-        atm_params.sun_direction = solar_system_.sun_direction_from(glm::dvec3(0.0));
-        atm_params.sun_intensity = 20.0;
-        atm_params.view_ray_samples = 12;
-        atm_params.light_ray_samples = 6;
+        AtmosphereParams atm_params = compact_planet_atmosphere(
+            planet_def.radius, kPlayablePlanetConfig.atmosphere_height_m);
+        atm_params.sun_direction = solar_system_.sun_direction_from(
+            solar_system_.body_position(active_body_index_));
         atmosphere_.init(atm_params);
         atmosphere_enabled_ = kPlayablePlanetConfig.atmosphere_enabled;
     }
@@ -2044,6 +2034,7 @@ RenderFrameContext Engine::build_render_context(double frame_dt,
   ctx.views[0].viewport = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
   ctx.debug_xray = false;
   ctx.grayscale_view = sky_navigation_mode_;
+  ctx.blocky_sky = atmosphere_enabled_;
 
   // ── Atmosphere uniforms for GPU ─────────────────────────────────────
   // WHY camera-relative: terrain vertices are stored as offsets from
@@ -2259,8 +2250,13 @@ void Engine::switch_active_planet(int32_t body_index) {
       wireframe_planet_, kPlayablePlanetConfig.atmosphere_height_m);
   rebuild_global_planet_surface();
 
-  AtmosphereParams atmosphere_params = atmosphere_.params();
-  atmosphere_params.planet_radius = block_world_.planet().radius;
+  AtmosphereParams atmosphere_params = compact_planet_atmosphere(
+      block_world_.planet().radius,
+      std::max(kPlayablePlanetConfig.atmosphere_height_m *
+                   block_world_.planet().radius / kPlayablePlanetConfig.radius_m,
+               block_world_.max_surface_height_above_base() * 2.0 +
+                   block_world_.config().block_size));
+  atmosphere_params.sun_direction = atmosphere_.params().sun_direction;
   atmosphere_.init(atmosphere_params);
   last_chunk_center_hash_ = 0;
   snap_origin_dirty_ = true;
@@ -2428,7 +2424,7 @@ SpaceshipEnvironment Engine::ship_environment() const {
   environment.body_center = block_world_.planet().center;
   environment.body_radius = block_world_.planet().radius;
   environment.surface_gravity = 9.81;
-  environment.atmosphere_height = kPlayablePlanetConfig.atmosphere_height_m;
+  environment.atmosphere_height = atmosphere_.params().atmosphere_height;
   environment.ground_radius = [this](const glm::dvec3 &direction) {
     return block_world_.surface_radial_distance(direction);
   };

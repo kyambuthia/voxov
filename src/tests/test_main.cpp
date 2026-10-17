@@ -3736,6 +3736,72 @@ void test_spaceship_steering_is_signed_and_locked_when_landed() {
   assert(std::fabs(glm::length(ship.orientation) - 1.0) < 1e-9);
 }
 
+void test_spaceship_vacuum_coasting_and_orbit() {
+  SpaceshipEnvironment environment = make_test_ship_environment();
+  environment.atmosphere_height = 0.0;
+  environment.surface_gravity = 0.0;
+  SpaceshipTuning tuning{};
+  SpaceshipState ship{};
+  ship.landed = false;
+  ship.position = glm::dvec3(0.0, 100.0, 0.0);
+  ship.velocity = glm::dvec3(0.0, 0.0, 20.0);
+  for (int i = 0; i < 600; ++i) {
+    step_spaceship(ship, {}, environment, tuning, 1.0 / 60.0);
+  }
+  assert(glm::length(ship.velocity - glm::dvec3(0.0, 0.0, 20.0)) < 1e-9);
+  assert(glm::length(ship.position - glm::dvec3(0.0, 100.0, 200.0)) < 1e-8);
+
+  // Circular orbit: v = sqrt(mu/r), mu = surface_gravity * radius^2.
+  environment.surface_gravity = 9.81;
+  const double radius = 128.0;
+  const double mu = environment.surface_gravity * 64.0 * 64.0;
+  const double speed = std::sqrt(mu / radius);
+  ship.position = glm::dvec3(0.0, radius, 0.0);
+  ship.velocity = glm::dvec3(speed, 0.0, 0.0);
+  const double period = 2.0 * glm::pi<double>() * radius / speed;
+  const int steps = static_cast<int>(std::ceil(period * 60.0));
+  const double energy = 0.5 * speed * speed - mu / radius;
+  for (int i = 0; i < steps; ++i) {
+    step_spaceship(ship, {}, environment, tuning, period / steps);
+    assert(!ship.landed);
+    assert(std::fabs(glm::length(ship.position) - radius) < 0.2);
+  }
+  const double final_energy = 0.5 * glm::dot(ship.velocity, ship.velocity) -
+                              mu / glm::length(ship.position);
+  assert(std::fabs((final_energy - energy) / energy) < 0.001);
+}
+
+void test_spaceship_hard_contact_and_fast_moon_approach() {
+  SpaceshipEnvironment environment = make_test_ship_environment();
+  environment.body_center = glm::dvec3(500.0, -30.0, 10.0);
+  environment.body_radius = 2.0;
+  environment.atmosphere_height = 0.0;
+  environment.surface_gravity = 0.0;
+  environment.ground_radius = [](const glm::dvec3 &) { return 2.0; };
+  const SpaceshipTuning tuning{};
+  SpaceshipState ship{};
+  ship.landed = false;
+  ship.position = environment.body_center + glm::dvec3(0.0, 8.0, 0.0);
+  ship.velocity = glm::dvec3(0.0, -250.0, 0.0);
+  step_spaceship(ship, {}, environment, tuning, 0.1);
+  assert(!ship.landed);
+  assert(ship.velocity.y > 0.0);
+  assert(ship.position.y > environment.body_center.y + 2.0);
+
+  ship.position = environment.body_center +
+      glm::dvec3(0.0, 2.0 + tuning.hull_clearance + 0.001, 0.0);
+  ship.velocity = glm::dvec3(0.0, -2.0, 0.0);
+  step_spaceship(ship, {}, environment, tuning, 1.0 / 60.0);
+  assert(ship.landed);
+  assert(glm::length(ship.velocity) == 0.0);
+
+  const glm::dvec3 parked = ship.position;
+  SpaceshipInput lift{};
+  lift.lift = true;
+  step_spaceship(ship, lift, environment, tuning, 0.0);
+  assert(ship.landed && ship.position == parked);
+}
+
 void test_spaceship_mesh_is_closed_and_relative_to_origin() {
   SpaceshipState ship = make_landed_spaceship(
       glm::dvec3(0.0, 68.0, 0.0), glm::dvec3(0.0),
@@ -3751,11 +3817,18 @@ void test_spaceship_mesh_is_closed_and_relative_to_origin() {
     high = glm::max(high, vertex.position);
     assert(std::fabs(glm::length(vertex.normal) - 1.0f) < 1e-4f);
   }
-  // Skids touch the ground (y = 68 -> 8 relative to origin); about 7 m long
-  // and 6.4 m across the wings.
-  assert(std::fabs(low.y - 8.0f) < 1e-3f);
-  assert(high.z - low.z > 6.5f);
-  assert(high.x - low.x > 6.0f);
+  assert(glm::all(glm::greaterThan(high - low, glm::vec3(0.0f))));
+  for (const uint32_t index : mesh.indices) assert(index < mesh.vertices.size());
+  // Test the coordinate contract for any authored hull, rather than assuming
+  // the dimensions and skid placement of the original primitive model.
+  const glm::dvec3 shift(12.0, -8.0, 5.0);
+  const RenderMesh rebased = build_spaceship_mesh(ship, origin + shift);
+  assert(rebased.vertices.size() == mesh.vertices.size());
+  assert(rebased.indices == mesh.indices);
+  for (size_t i = 0; i < mesh.vertices.size(); ++i) {
+    assert(glm::length(rebased.vertices[i].position + glm::vec3(shift) -
+                       mesh.vertices[i].position) < 1e-4f);
+  }
 }
 
 } // namespace
@@ -3883,6 +3956,8 @@ int main() {
   test_spaceship_stays_parked_and_lifts_off();
   test_spaceship_thrusts_along_nose_and_lands_softly();
   test_spaceship_steering_is_signed_and_locked_when_landed();
+  test_spaceship_vacuum_coasting_and_orbit();
+  test_spaceship_hard_contact_and_fast_moon_approach();
   test_spaceship_mesh_is_closed_and_relative_to_origin();
   return 0;
 }

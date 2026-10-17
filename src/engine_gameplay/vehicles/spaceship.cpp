@@ -111,7 +111,7 @@ void steer_spaceship(SpaceshipState &ship, const SpaceshipInput &input,
       glm::angleAxis(roll, glm::dvec3(0.0, 0.0, 1.0)));
 }
 
-void step_spaceship(SpaceshipState &ship, const SpaceshipInput &input,
+static void integrate_spaceship(SpaceshipState &ship, const SpaceshipInput &input,
                     const SpaceshipEnvironment &environment,
                     const SpaceshipTuning &tuning, double dt) {
   dt = std::max(dt, 0.0);
@@ -156,7 +156,8 @@ void step_spaceship(SpaceshipState &ship, const SpaceshipInput &input,
   ship.velocity += acceleration * dt;
   const double altitude = distance - environment.body_radius;
   const double in_atmosphere = std::clamp(
-      1.0 - altitude / std::max(environment.atmosphere_height, 1.0), 0.0, 1.0);
+      environment.atmosphere_height > 0.0
+          ? 1.0 - altitude / environment.atmosphere_height : 0.0, 0.0, 1.0);
   const double drag = tuning.space_drag +
                       (tuning.atmosphere_drag - tuning.space_drag) *
                           in_atmosphere;
@@ -191,16 +192,40 @@ void step_spaceship(SpaceshipState &ship, const SpaceshipInput &input,
   if (glm::length(ship.position - environment.body_center) < floor) {
     ship.position = environment.body_center + new_up * floor;
     const double inward = glm::dot(ship.velocity, new_up);
+    const double impact_speed = std::max(0.0, -inward);
     if (inward < 0.0) {
       ship.velocity -= new_up * inward;
     }
-    ship.velocity *= 0.6; // skid friction
-    if (glm::length(ship.velocity) < tuning.safe_landing_speed &&
+    // Test the incoming normal speed before cancelling it. A fast vertical
+    // impact must not be reported as a safe, stationary touchdown.
+    ship.velocity *= std::exp(-30.0 * dt); // timestep-independent skid friction
+    if (impact_speed > tuning.safe_landing_speed) {
+      ship.velocity += new_up * (impact_speed * 0.2); // hard-contact rebound
+    }
+    if (impact_speed <= tuning.safe_landing_speed &&
+        glm::length(ship.velocity) < tuning.safe_landing_speed &&
         !input.lift) {
       ship.landed = true;
       ship.velocity = glm::dvec3(0.0);
       ship.orientation = upright(new_up, spaceship_forward(ship));
     }
+  }
+}
+
+void step_spaceship(SpaceshipState &ship, const SpaceshipInput &input,
+                    const SpaceshipEnvironment &environment,
+                    const SpaceshipTuning &tuning, double dt) {
+  if (!std::isfinite(dt) || dt <= 0.0) {
+    return;
+  }
+  // Resolve fast approaches against the heightfield before a step can pass
+  // through the small moons. Limit travel to half a voxel between contacts.
+  const double max_step = std::min(1.0 / 120.0,
+      0.5 / std::max({1.0, tuning.max_speed, glm::length(ship.velocity)}));
+  const int steps = static_cast<int>(std::ceil(dt / max_step));
+  const double step = dt / steps;
+  for (int i = 0; i < steps; ++i) {
+    integrate_spaceship(ship, input, environment, tuning, step);
   }
 }
 

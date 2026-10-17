@@ -2493,13 +2493,25 @@ SpaceshipInput Engine::autopilot_input(int32_t target_body) const {
           ? environment.body_center
           : target.position - solar_system_.body_position(active_body_index_);
   const glm::dvec3 to_target = target_center - ship_.position;
+  const double target_distance = glm::length(to_target);
+  const glm::dvec3 direction = target_distance > 1.0e-9
+      ? to_target / target_distance : -spaceship_up(ship_);
+  const glm::dvec3 target_velocity = target_body == active_body_index_
+      ? glm::dvec3(0.0)
+      : target.velocity - solar_system_.bodies()[
+            static_cast<size_t>(active_body_index_)].velocity;
+  const double landing_radius = target_body == active_body_index_
+      ? environment.ground_radius(-direction) + ship_tuning_.hull_clearance
+      : target.orbital.radius + 12.0;
   const double range = std::max(
-      0.0, glm::length(to_target) - target.orbital.radius - 12.0);
+      0.0, target_distance - landing_radius);
   const double brake_accel =
       ship_tuning_.thrust_accel * ship_tuning_.boost_multiplier * 0.5;
   const double approach_speed = std::min(
       ship_tuning_.max_speed * 0.9, std::sqrt(2.0 * brake_accel * range));
-  const glm::dvec3 desired = glm::normalize(to_target) * approach_speed;
+  // Match the destination's orbital velocity before entering its frame.
+  // Aiming only at its current position leaves a sideways arrival impulse.
+  const glm::dvec3 desired = target_velocity + direction * approach_speed;
   const glm::dvec3 error = desired - ship_.velocity;
   const double error_speed = glm::length(error);
 
@@ -2509,7 +2521,7 @@ SpaceshipInput Engine::autopilot_input(int32_t target_body) const {
     return input;
   }
   const glm::dvec3 aim = error_speed > 0.5 ? error / error_speed
-                                           : glm::normalize(to_target);
+                                           : direction;
   const glm::dvec3 local = glm::inverse(ship_.orientation) * aim;
   // Pilot's right is local -X; nose up is local +Y.
   constexpr float kTurnGain = 0.12f;

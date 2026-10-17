@@ -647,6 +647,16 @@ if(VOXOV_BUILD_TESTS)
     target_link_libraries(voxov_net_stress PRIVATE engine_net)
     add_test(NAME voxov_net_stress COMMAND voxov_net_stress)
 
+    # These tests use assert() both for checks and for setup calls. Keep them
+    # active in Release builds as well as Debug builds.
+    foreach(test_target voxov_tests voxov_event_bus_tests voxov_net_stress)
+        if(MSVC)
+            target_compile_options(${test_target} PRIVATE /UNDEBUG)
+        else()
+            target_compile_options(${test_target} PRIVATE -UNDEBUG)
+        endif()
+    endforeach()
+
     # ── Sokol smoke test ────────────────────────────────────────────────
     add_executable(voxov_sokol_smoke
         src/tests/sokol_smoke.cpp

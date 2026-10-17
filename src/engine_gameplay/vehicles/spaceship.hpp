@@ -44,7 +44,7 @@ struct SpaceshipTuning {
   double lift_accel = 22.0;     // m/s^2 along the roof
   double roll_rate = 2.2;       // rad/s at full roll input
   double atmosphere_drag = 0.8; // 1/s velocity damping at the surface
-  double space_drag = 0.05;     // 1/s velocity damping above the atmosphere
+  double space_drag = 0.0;      // vacuum preserves orbital momentum
   double hull_clearance = 1.1;  // hull centre height above the ground
   double safe_landing_speed = 7.0;
   double level_rate = 3.0;      // 1/s auto-levelling toward radial up

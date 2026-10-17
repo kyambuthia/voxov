@@ -90,7 +90,9 @@ The current refactor direction is to deepen the `GameRuntime` contract and conti
   (markers show their range); entering a body's sphere of influence hands
   the ship over to that body, and you can land and build there.
 - `F6`: sky navigation; point at a destination, press `Enter` to lock it,
-  then hold `W` to engage flight assist.
+  then hold `W` to engage flight assist. Aboard the ship, assist steers and
+  brakes with its thrusters, matches the destination's orbital motion, and
+  keeps the course locked through the body-frame transfer until touchdown.
 - `Esc`: menu; `F11`: fullscreen; `F12`: screenshot.
 
 The in-game expedition panel guides the first journey from Voxov to Aster.

@@ -130,7 +130,7 @@ private:
   bool player_near_ship() const;
   void append_ship_hud();
   // Scripted pilot for VOXOV_CAPTURE_SHIP captures.
-  SpaceshipInput autopilot_input(int32_t target_body) const;
+  SpaceshipInput autopilot_input(int32_t target_body, double dt) const;
   // Dark wire box around the block under the crosshair.
   void append_target_outline(RenderMesh &mesh) const;
   // Frame phases of tick(), in call order.

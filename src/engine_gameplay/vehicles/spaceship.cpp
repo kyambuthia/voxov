@@ -77,6 +77,31 @@ double spaceship_altitude(const SpaceshipState &ship,
          ground_radius(environment, up);
 }
 
+SpaceshipInput spaceship_velocity_guidance(const SpaceshipState &ship,
+    const glm::dvec3 &desired_velocity, double dt) {
+  SpaceshipInput input{};
+  const glm::dvec3 error = desired_velocity - ship.velocity;
+  const double speed = glm::length(error);
+  if (speed < 0.01 || !std::isfinite(dt) || dt <= 0.0) return input;
+  const glm::dvec3 local = glm::inverse(ship.orientation) * (error / speed);
+  const double thrust_sign = local.z < 0.0 ? -1.0 : 1.0;
+  const glm::dvec3 aim = local * thrust_sign;
+  const double gain = 1.0 - std::exp(-8.0 * dt);
+  const double turn = 3.6 * dt;
+  input.yaw_delta = static_cast<float>(std::clamp(
+      std::atan2(-aim.x, aim.z) * gain, -turn, turn));
+  input.pitch_delta = static_cast<float>(std::clamp(
+      std::atan2(aim.y, std::hypot(aim.x, aim.z)) * gain, -turn, turn));
+  // Choose either thrust direction without waiting for a half-turn. This
+  // keeps the nose steady while cancelling forward speed on final approach.
+  if (std::abs(local.z) > 0.8) {
+    input.thrust_axis = static_cast<float>(
+        thrust_sign * std::clamp(speed / 20.0, 0.0, 1.0));
+  }
+  input.boost = speed > 25.0;
+  return input;
+}
+
 SpaceshipState make_landed_spaceship(const glm::dvec3 &ground_point,
                                      const glm::dvec3 &body_center,
                                      const glm::dvec3 &heading,

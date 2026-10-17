@@ -66,6 +66,11 @@ glm::dvec3 spaceship_up(const SpaceshipState &ship);
 double spaceship_altitude(const SpaceshipState &ship,
                           const SpaceshipEnvironment &environment);
 
+// Frame-rate-independent steering and signed thrust toward a velocity in the
+// current body frame. The caller supplies lift and terrain approach policy.
+SpaceshipInput spaceship_velocity_guidance(const SpaceshipState &ship,
+    const glm::dvec3 &desired_velocity, double dt);
+
 // Upright, landed ship standing on the ground at `ground_point`, nose along
 // the tangential part of `heading`.
 SpaceshipState make_landed_spaceship(const glm::dvec3 &ground_point,

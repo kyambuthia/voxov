@@ -3830,6 +3830,29 @@ void test_spaceship_hard_contact_and_fast_moon_approach() {
   assert(ship.landed && ship.position == parked);
 }
 
+void test_spaceship_guidance_brakes_and_tracks_across_frame_rates() {
+  SpaceshipState ship{};
+  ship.landed = false;
+  ship.velocity = glm::dvec3(0, 0, 60);
+  const SpaceshipInput brake = spaceship_velocity_guidance(ship, glm::dvec3(0), 1.0 / 60.0);
+  assert(brake.thrust_axis < -0.9f && brake.boost);
+  ship.velocity = glm::dvec3(0);
+  const glm::dvec3 desired(20, 0, 0);
+  auto track = [&](int frames) {
+    SpaceshipState turning = ship;
+    for (int i = 0; i < frames; ++i) {
+      const double dt = 1.0 / frames;
+      const SpaceshipInput input = spaceship_velocity_guidance(turning, desired, dt);
+      steer_spaceship(turning, input, {}, dt);
+    }
+    return spaceship_forward(turning);
+  };
+  const glm::dvec3 at_30 = track(30);
+  const glm::dvec3 at_120 = track(120);
+  assert(at_30.x > 0.999 && at_120.x > 0.999);
+  assert(glm::distance(at_30, at_120) < 0.01);
+}
+
 void test_spaceship_mesh_is_closed_and_relative_to_origin() {
   SpaceshipState ship = make_landed_spaceship(
       glm::dvec3(0.0, 68.0, 0.0), glm::dvec3(0.0),
@@ -3987,6 +4010,7 @@ int main() {
   test_spaceship_steering_is_signed_and_locked_when_landed();
   test_spaceship_vacuum_coasting_and_orbit();
   test_spaceship_hard_contact_and_fast_moon_approach();
+  test_spaceship_guidance_brakes_and_tracks_across_frame_rates();
   test_spaceship_mesh_is_closed_and_relative_to_origin();
   return 0;
 }

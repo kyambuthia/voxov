@@ -831,10 +831,20 @@ void Engine::apply_session_input(InputState &gameplay_input,
     const int32_t body_count = solar_system_.body_count();
     auto valid_target = [&](int32_t index) {
       return index >= 0 && index < body_count &&
-             is_sky_navigation_target(index, active_body_index_);
+          (piloting_ship_
+              ? has_terrain_runtime(index) &&
+                    (index != active_body_index_ || sky_navigation_locked_)
+              : is_sky_navigation_target(index, active_body_index_));
     };
     if (!valid_target(sky_navigation_target_index_)) {
-      sky_navigation_target_index_ = body_count > 0 ? 0 : -1;
+      sky_navigation_locked_ = false;
+      sky_navigation_target_index_ = -1;
+      for (int32_t i = 0; i < body_count; ++i) {
+        if (valid_target(i)) {
+          sky_navigation_target_index_ = i;
+          break;
+        }
+      }
     }
 
     if (!sky_navigation_locked_ && body_count > 0 && surface.width > 0 &&
@@ -915,6 +925,9 @@ void Engine::apply_session_input(InputState &gameplay_input,
 
 void Engine::apply_sky_navigation_assist(InputState &gameplay_input,
                                          double frame_dt) {
+  // Aboard a ship, navigation drives its thrusters in update_ship_controls.
+  // The player-only assist must never teleport the pilot away from the hull.
+  if (piloting_ship_) return;
   // Holding W after locking a destination engages a readable flight assist:
   // the camera slews onto the dashed route, propulsion follows that route,
   // and arrival hands control to the destination's resident terrain runtime.
@@ -2520,7 +2533,12 @@ void Engine::update_ship_controls(InputState &gameplay_input,
   ship_input_.descend = gameplay_input.crouch_held;
   ship_input_.boost = gameplay_input.sprint_held;
   if (capture_target >= 0 && capture_target < solar_system_.body_count()) {
-    ship_input_ = autopilot_input(capture_target);
+    ship_input_ = autopilot_input(capture_target, frame_dt);
+  } else if (sky_navigation_mode_ && sky_navigation_locked_ &&
+             gameplay_input.key_w && session_state_.gameplay_started &&
+             !session_state_.menu_open &&
+             has_terrain_runtime(sky_navigation_target_index_)) {
+    ship_input_ = autopilot_input(sky_navigation_target_index_, frame_dt);
   }
   steer_spaceship(ship_, ship_input_, ship_tuning_, frame_dt);
 
@@ -2537,6 +2555,9 @@ void Engine::step_ship(double dt) {
   local_player.controller.velocity = glm::vec3(ship_.velocity);
   local_player.controller.grounded = ship_.landed;
   if (ship_.landed && !was_landed) {
+    if (sky_navigation_mode_ && sky_navigation_target_index_ == active_body_index_) {
+      sky_navigation_locked_ = false;
+    }
     // Flying there counts as plotting the course for the expedition.
     expedition_mission_.on_course_locked(active_body_index_);
     expedition_mission_.on_landed(active_body_index_);
@@ -2546,7 +2567,7 @@ void Engine::step_ship(double dt) {
   }
 }
 
-SpaceshipInput Engine::autopilot_input(int32_t target_body) const {
+SpaceshipInput Engine::autopilot_input(int32_t target_body, double dt) const {
   // Velocity-matching approach: aim the nose along (desired - current)
   // velocity, where the desired velocity heads for the target's surface at a
   // speed that can still be braked away. Cancels sideways drift too.
@@ -2579,31 +2600,14 @@ SpaceshipInput Engine::autopilot_input(int32_t target_body) const {
   // Match the destination's orbital velocity before entering its frame.
   // Aiming only at its current position leaves a sideways arrival impulse.
   const glm::dvec3 desired = target_velocity + direction * approach_speed;
-  const glm::dvec3 error = desired - ship_.velocity;
-  const double error_speed = glm::length(error);
 
   if (target_body == active_body_index_ && range < 1.0 &&
       glm::length(ship_.velocity) < 4.0) {
     input.descend = altitude > 3.0; // settle onto the surface
     return input;
   }
-  const glm::dvec3 aim = error_speed > 0.5 ? error / error_speed
-                                           : direction;
-  const glm::dvec3 local = glm::inverse(ship_.orientation) * aim;
-  // Pilot's right is local -X; nose up is local +Y.
-  constexpr float kTurnGain = 0.12f;
-  input.yaw_delta = std::clamp(
-      static_cast<float>(std::atan2(-local.x, local.z)) * kTurnGain, -0.06f,
-      0.06f);
-  input.pitch_delta = std::clamp(
-      static_cast<float>(std::atan2(local.y, std::hypot(local.x, local.z))) *
-          kTurnGain,
-      -0.06f, 0.06f);
+  input = spaceship_velocity_guidance(ship_, desired, dt);
   input.lift = ship_.landed || (altitude < 10.0 && target_body != active_body_index_);
-  input.thrust_axis = local.z > 0.8
-      ? static_cast<float>(std::clamp(error_speed / 20.0, 0.0, 1.0))
-      : 0.0f;
-  input.boost = error_speed > 25.0;
   return input;
 }
 

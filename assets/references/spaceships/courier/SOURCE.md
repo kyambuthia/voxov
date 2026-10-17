@@ -16,8 +16,9 @@ Notes:
   them; never try to derive voxel coordinates from them.
 - The shipped model is authored as voxel data by
   `tools/generate_ship_voxels.py`, which is the single source of truth for
-  `assets/models/ships/courier.vox`. Editing the art here does not change the
-  model.
+  `assets/models/ships/courier.vox` (19 x 10 x 28 voxels, drawn in game at
+  0.25 m per voxel: 4.75 x 2.5 x 7 m). Editing the art here does not change
+  the model.
 - Prompts used are recorded in the commit that added these files. The style
   preamble that produced a usable result was: strict isometric or orthographic
   view, MagicaVoxel style, flat shaded solid colour cubes, visible voxel

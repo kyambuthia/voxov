@@ -47,6 +47,3 @@ screenshots/
 # Local tool output
 .zcode/
 __pycache__/
-
-# Unlicensed concept art (private art direction only)
-assets/references/spaceships/*/concept/

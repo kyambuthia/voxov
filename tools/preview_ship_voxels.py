@@ -6,7 +6,7 @@ the three orthographic elevations so the silhouette can be compared directly
 against the reference art in assets/references/spaceships without opening
 Blender or MagicaVoxel. Writes <name>_preview.png next to the model.
 
-Usage: python3.13 tools/preview_ship_voxels.py
+Usage: python3 tools/preview_ship_voxels.py
 """
 
 from __future__ import annotations

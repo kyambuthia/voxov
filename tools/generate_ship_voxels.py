@@ -14,7 +14,7 @@ Each ship writes two files:
   <name>.vox   - voxel data, openable in MagicaVoxel for hand editing
   <name>.json  - mount points (.vox cannot carry them) and the palette legend
 
-Usage: python3.13 tools/generate_ship_voxels.py
+Usage: python3 tools/generate_ship_voxels.py
 """
 
 from __future__ import annotations
@@ -190,14 +190,13 @@ def build_courier():
 def build_shrike():
     """Single-seat manta interceptor, 51 x 10 x 60 voxels (12.75 x 2.5 x 15 m).
 
-    Proportions follow assets/references/spaceships/shrike, which in turn
-    reinterprets the supplied concept art. Built at 60 voxels rather than the
+    Proportions follow assets/references/spaceships/shrike. Built at 60 voxels rather than the
     courier's 28 because the character of the craft is in thin blade wings and
     a needle nose: at half this length both coarsen into stubs.
 
     The wing is the whole ship. It sweeps hard aft from a point near the nose
     out to tips that trail past the engines, drops in anhedral as it goes
-    outboard, then kicks the last few metres back up into winglets.
+    outboard, then kicks the last few voxels back up into winglets.
     """
     g = Grid()
     c = 25

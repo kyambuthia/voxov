@@ -36,6 +36,21 @@ using PerfClock = std::chrono::steady_clock;
 
 constexpr uint64_t kGlobalPlanetSurfaceMeshId =
     0x504c414e45544c4full; // "PLANETLO"
+constexpr uint64_t kShipMeshId = 0x5348495000000000ull; // "SHIP"
+// Celestial globes use "CELE" in the high 32 bits, then body index and LOD.
+constexpr uint32_t kCelestialMeshTag = 0x43454c45u;
+
+bool is_celestial_mesh_id(uint64_t mesh_id) {
+  return (mesh_id >> 32) == kCelestialMeshTag;
+}
+
+// Streamed terrain chunk and vegetation meshes use hashed IDs, so they are
+// recognised by exclusion: everything else in the scene is transient (0) or
+// one of the named retained meshes above.
+bool is_streamed_terrain_mesh(uint64_t mesh_id) {
+  return mesh_id != 0 && mesh_id != kGlobalPlanetSurfaceMeshId &&
+         mesh_id != kShipMeshId && !is_celestial_mesh_id(mesh_id);
+}
 #if defined(VOXOV_PLATFORM_ANDROID) || defined(VOXOV_PLATFORM_WEB)
 constexpr int32_t kSurfaceStreamRadiusChunks = 2;
 constexpr uint32_t kChunkGenerationBudget = 1;
@@ -315,6 +330,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
                           : PlatformServices::desktop_default();
   runtime_options = options;
   runtime_options.platform_services = nullptr;
+  load_spaceship_model(platform_services);
   session_state_.gameplay_started = true;
   session_state_.menu_open = false;
   session_state_.selected_character = GuiMenu::Character::Humanoid;
@@ -1567,8 +1583,7 @@ Engine::TerrainStreamTimings Engine::stream_block_terrain(
         meshes.erase(
             std::remove_if(meshes.begin(), meshes.end(),
                            [&resident_ids](const RenderMesh &m) {
-                             if (m.mesh_id == 0 ||
-                                 m.mesh_id == kGlobalPlanetSurfaceMeshId) {
+                             if (!is_streamed_terrain_mesh(m.mesh_id)) {
                                return false;
                              }
                              return resident_ids.find(m.mesh_id) ==
@@ -1586,8 +1601,7 @@ Engine::TerrainStreamTimings Engine::stream_block_terrain(
     scene.opaque_meshes.erase(
         std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
                        [](const RenderMesh &mesh) {
-                         return mesh.mesh_id != 0 &&
-                                mesh.mesh_id != kGlobalPlanetSurfaceMeshId;
+                         return is_streamed_terrain_mesh(mesh.mesh_id);
                        }),
         scene.opaque_meshes.end());
     for (int i = 0; i < 4; ++i) {
@@ -1789,7 +1803,7 @@ void Engine::append_celestial_meshes(const RenderSurface &surface) {
         std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
                        [this](const RenderMesh &mesh) {
                          return mesh.mesh_id == 0 ||
-                             ((mesh.mesh_id >> 32) == 0x43454c45u &&
+                             (is_celestial_mesh_id(mesh.mesh_id) &&
                               ((mesh.mesh_id >> 16) & 0xffffu) ==
                                   static_cast<uint64_t>(active_body_index_));
                        }),
@@ -1840,12 +1854,13 @@ void Engine::append_celestial_meshes(const RenderSurface &surface) {
             glm::distance(glm::dvec3(camera.transform.position), body_world),
             screen_height, camera.fov_y_radians, previous_grid);
         previous_grid = grid;
-        const uint64_t mesh_id = 0x43454c4500000000ull |
+        const uint64_t mesh_id =
+            (static_cast<uint64_t>(kCelestialMeshTag) << 32) |
             (static_cast<uint64_t>(i) << 16) | static_cast<uint64_t>(grid);
         const auto resident = std::find_if(
             scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
             [i](const RenderMesh &mesh) {
-              return (mesh.mesh_id >> 32) == 0x43454c45u &&
+              return is_celestial_mesh_id(mesh.mesh_id) &&
                   ((mesh.mesh_id >> 16) & 0xffffu) == static_cast<uint64_t>(i);
             });
         if (resident != scene.opaque_meshes.end()) {
@@ -2683,14 +2698,47 @@ void Engine::update_ship_camera(double frame_dt) {
 }
 
 void Engine::append_ship_mesh() {
+  const auto resident =
+      std::find_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+                   [](const RenderMesh &m) { return m.mesh_id == kShipMeshId; });
   if (ship_body_index_ != active_body_index_) {
+    if (resident != scene.opaque_meshes.end()) {
+      scene.opaque_meshes.erase(resident);
+    }
     return;
   }
-  RenderMesh mesh =
-      build_spaceship_mesh(ship_, scene.camera_origin.world_origin);
-  mesh.mesh_id = 0; // transient: rebuilt every frame
-  mesh.world_origin = scene.camera_origin.world_origin;
-  scene.opaque_meshes.push_back(std::move(mesh));
+
+  // The hull is built relative to the ship itself, so moving the ship or the
+  // camera only moves world_origin. It is rebuilt and re-uploaded only when
+  // the ship turns or its exhaust glow changes, so a parked ship costs
+  // nothing per frame. The glow is quantised so a fading exhaust settles.
+  SpaceshipState pose = ship_;
+  pose.thrust_level =
+      std::round(std::clamp(ship_.thrust_level, 0.0f, 1.0f) * 64.0f) / 64.0f;
+  uint64_t hash = 1469598103934665603ull;
+  const auto mix = [&hash](const void *data, size_t size) {
+    const auto *bytes = static_cast<const uint8_t *>(data);
+    for (size_t i = 0; i < size; ++i) {
+      hash = (hash ^ bytes[i]) * 1099511628211ull;
+    }
+  };
+  mix(&pose.orientation, sizeof(pose.orientation));
+  mix(&pose.thrust_level, sizeof(pose.thrust_level));
+  hash = hash == 0 ? 1 : hash;
+
+  if (resident != scene.opaque_meshes.end() && resident->content_hash == hash) {
+    resident->world_origin = ship_.position;
+    return;
+  }
+  RenderMesh mesh = build_spaceship_mesh(pose, ship_.position);
+  mesh.mesh_id = kShipMeshId;
+  mesh.content_hash = hash;
+  mesh.world_origin = ship_.position;
+  if (resident != scene.opaque_meshes.end()) {
+    *resident = std::move(mesh);
+  } else {
+    scene.opaque_meshes.push_back(std::move(mesh));
+  }
 }
 
 void Engine::request_save() {

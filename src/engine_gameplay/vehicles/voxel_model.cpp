@@ -147,7 +147,8 @@ VoxelModel parse_vox_model(const std::vector<uint8_t> &data,
   return model;
 }
 
-const VoxelModel &load_voxel_model(const std::string &relative_path,
+const VoxelModel &load_voxel_model(const PlatformServices &services,
+                                   const std::string &relative_path,
                                    float voxel_size_meters) {
   if (!std::isfinite(voxel_size_meters) || voxel_size_meters <= 0.0f) {
     static const VoxelModel invalid;
@@ -160,9 +161,7 @@ const VoxelModel &load_voxel_model(const std::string &relative_path,
     return cached->second;
   }
 
-  // Also search beside the executable so installed builds work from any cwd.
   std::vector<uint8_t> data;
-  const auto services = PlatformServices::desktop_default();
   for (const auto &candidate : services.candidate_asset_paths(relative_path)) {
     std::ifstream file(candidate, std::ios::binary);
     if (file) {
@@ -175,4 +174,10 @@ const VoxelModel &load_voxel_model(const std::string &relative_path,
   VoxelModel model =
       data.empty() ? VoxelModel{} : parse_vox_model(data, voxel_size_meters);
   return cache.emplace(key, std::move(model)).first->second;
+}
+
+const VoxelModel &load_voxel_model(const std::string &relative_path,
+                                   float voxel_size_meters) {
+  return load_voxel_model(PlatformServices::desktop_default(), relative_path,
+                          voxel_size_meters);
 }

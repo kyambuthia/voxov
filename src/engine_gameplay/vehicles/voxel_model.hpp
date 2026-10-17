@@ -6,6 +6,8 @@
 
 #include <glm/glm.hpp>
 
+class PlatformServices;
+
 // A ship hull loaded from a MagicaVoxel .vox file, reduced at load time to the
 // quads that actually face air. Ships are authored by
 // tools/generate_ship_voxels.py; the caller picks the voxel edge length
@@ -34,7 +36,12 @@ struct VoxelModel {
 VoxelModel parse_vox_model(const std::vector<uint8_t> &data,
                            float voxel_size_meters = 1.0f);
 
-// Uses PlatformServices asset roots, including the working directory and
-// executable directory. Parsed results are cached by path and voxel scale.
+// Searches the given asset roots. Parsed results are cached by path and voxel
+// scale.
+const VoxelModel &load_voxel_model(const PlatformServices &services,
+                                   const std::string &relative_path,
+                                   float voxel_size_meters = 1.0f);
+
+// Same, using the desktop asset roots (working and executable directories).
 const VoxelModel &load_voxel_model(const std::string &relative_path,
                                    float voxel_size_meters = 1.0f);

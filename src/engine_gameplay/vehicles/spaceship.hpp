@@ -6,6 +6,8 @@
 #include <glm/glm.hpp>
 #include <glm/gtc/quaternion.hpp>
 
+class PlatformServices;
+
 // Arcade spaceship for hopping between nearby bodies. All positions are in
 // the active body's frame (body centre at `SpaceshipEnvironment::body_center`).
 // Orientation maps local +Z to the nose, +Y to the cabin roof, and
@@ -82,6 +84,11 @@ SpaceshipState make_landed_spaceship(const glm::dvec3 &ground_point,
 // editing, then drawn at this scale so a hull sits beside a ~1.8 m player and
 // a 64 m planet at believable size (Shrike ~15 m long, Courier ~7 m).
 inline constexpr float kShipVoxelSizeMeters = 0.25f;
+
+// Loads the ship model through the platform's asset roots (web and Android
+// keep assets in different places from desktop). Call once at startup;
+// without it the model is loaded from the desktop asset roots on first use.
+void load_spaceship_model(const PlatformServices &services);
 
 // Hull mesh built from the ship's voxel model. Vertices are relative to
 // `origin` (pass the camera origin for camera-relative rendering).

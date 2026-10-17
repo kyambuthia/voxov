@@ -12,14 +12,19 @@ namespace {
 // Ships are authored by tools/generate_ship_voxels.py. VOXOV_SHIP picks one by
 // name. The hand-built boxes further down stay as a fallback so a missing or
 // malformed asset degrades to a flyable placeholder rather than an empty sky.
+std::string ship_model_path() {
+  const char *name = std::getenv("VOXOV_SHIP");
+  return std::string("assets/models/ships/") +
+         (name && *name ? name : "shrike") + ".vox";
+}
+
+const VoxelModel *g_ship_model = nullptr;
+
 const VoxelModel &ship_model() {
-  static const VoxelModel &model = []() -> const VoxelModel & {
-    const char *name = std::getenv("VOXOV_SHIP");
-    const std::string path = std::string("assets/models/ships/") +
-                             (name && *name ? name : "shrike") + ".vox";
-    return load_voxel_model(path, kShipVoxelSizeMeters);
-  }();
-  return model;
+  if (g_ship_model == nullptr) {
+    g_ship_model = &load_voxel_model(ship_model_path(), kShipVoxelSizeMeters);
+  }
+  return *g_ship_model;
 }
 
 glm::dvec3 radial_up(const glm::dvec3 &position, const glm::dvec3 &center) {
@@ -269,6 +274,11 @@ void step_spaceship(SpaceshipState &ship, const SpaceshipInput &input,
   for (int i = 0; i < steps; ++i) {
     integrate_spaceship(ship, input, environment, tuning, step);
   }
+}
+
+void load_spaceship_model(const PlatformServices &services) {
+  g_ship_model =
+      &load_voxel_model(services, ship_model_path(), kShipVoxelSizeMeters);
 }
 
 glm::vec3 spaceship_hull_extents() {

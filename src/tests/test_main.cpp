@@ -9,6 +9,7 @@
 #include "engine_gameplay/player/player_visuals.hpp"
 #include "engine_gameplay/player/remote_avatar.hpp"
 #include "engine_gameplay/vehicles/spaceship.hpp"
+#include "engine_gameplay/vehicles/voxel_model.hpp"
 #include "engine_gameplay/player/surface_orientation.hpp"
 #include "engine_presentation/debug_scene_builder.hpp"
 #include "engine_world/block_picking.hpp"
@@ -3881,6 +3882,79 @@ void test_spaceship_guidance_brakes_and_tracks_across_frame_rates() {
   assert(glm::distance(at_30, at_120) < 0.01);
 }
 
+void test_voxel_model_chunk_bounds_and_geometry() {
+  std::vector<uint8_t> data{'V', 'O', 'X', ' '};
+  const auto append_u32 = [&](uint32_t n) {
+    for (int shift = 0; shift < 32; shift += 8)
+      data.push_back(static_cast<uint8_t>(n >> shift));
+  };
+  const auto tag = [&](const char *name) {
+    data.insert(data.end(), name, name + 4);
+  };
+  append_u32(150);
+  tag("MAIN"); append_u32(0); append_u32(24 + 24 + 1036);
+  tag("SIZE"); append_u32(12); append_u32(0);
+  append_u32(2); append_u32(1); append_u32(1);
+  tag("XYZI"); append_u32(12); append_u32(0); append_u32(2);
+  data.insert(data.end(), {0, 0, 0, 1, 1, 0, 0, 1});
+  tag("RGBA"); append_u32(1024); append_u32(0);
+  data.insert(data.end(), {255, 0, 0, 255});
+  data.resize(data.size() + 1020, 0);
+
+  const VoxelModel model = parse_vox_model(data, 2.0f);
+  assert(model.valid && model.quads.size() == 10); // shared face is hidden
+  assert(model.size_meters == glm::vec3(4, 2, 2));
+  for (const VoxelQuad &quad : model.quads) {
+    assert(quad.color == glm::vec3(1, 0, 0));
+    assert(glm::dot(glm::cross(quad.corners[1] - quad.corners[0],
+                               quad.corners[2] - quad.corners[0]),
+                    quad.normal) > 0.0f);
+  }
+  auto malformed = data;
+  malformed[56] = 3; // XYZI count would read into the following RGBA chunk
+  assert(!parse_vox_model(malformed).valid);
+  malformed = data;
+  malformed[52] = 255; // child bytes extend past the end of the file
+  malformed[53] = 255;
+  assert(!parse_vox_model(malformed).valid);
+  malformed = data;
+  malformed.pop_back();
+  assert(!parse_vox_model(malformed).valid);
+  assert(!parse_vox_model(data, 0.0f).valid);
+  assert(!parse_vox_model(data, std::numeric_limits<float>::infinity()).valid);
+}
+
+void test_authored_ship_models_and_boarding_bounds() {
+  const std::string shrike_path = "assets/models/ships/shrike.vox";
+  const std::string courier_path = "assets/models/ships/courier.vox";
+  const auto &shrike = load_voxel_model(shrike_path);
+  const auto &courier = load_voxel_model(courier_path);
+  assert(shrike.valid && shrike.size_meters == glm::vec3(51, 10, 60));
+  assert(courier.valid && courier.size_meters == glm::vec3(19, 10, 28));
+  const auto &scaled = load_voxel_model(courier_path, 0.5f);
+  assert(scaled.valid && scaled.size_meters == courier.size_meters * 0.5f);
+  assert(!load_voxel_model("assets/models/ships/missing-test-ship.vox").valid);
+
+  SpaceshipTuning tuning;
+  tuning.hull_clearance = spaceship_hull_extents().y * 0.5 + 0.6;
+  const glm::dvec3 ground(0, 68, 0);
+  SpaceshipState ship = make_landed_spaceship(
+      ground, glm::dvec3(0), glm::dvec3(0, 0, 1), tuning);
+  // Feet underneath a tall hull can board even when its centre is >5m away.
+  assert(glm::distance(ground, ship.position) > 5.0);
+  assert(std::abs(spaceship_hull_distance(ship, ground) - 0.6) < 1e-5);
+  const double half_width = spaceship_hull_extents().x * 0.5;
+  for (double yaw : {0.0, 1.2}) {
+    ship.orientation = glm::angleAxis(yaw, glm::dvec3(0, 1, 0));
+    const auto near = ship.position + ship.orientation *
+        glm::dvec3(half_width + 4.0, 0, 0);
+    const auto far = ship.position + ship.orientation *
+        glm::dvec3(half_width + 6.0, 0, 0);
+    assert(std::abs(spaceship_hull_distance(ship, near) - 4.0) < 1e-5);
+    assert(std::abs(spaceship_hull_distance(ship, far) - 6.0) < 1e-5);
+  }
+}
+
 void test_spaceship_mesh_is_closed_and_relative_to_origin() {
   SpaceshipState ship = make_landed_spaceship(
       glm::dvec3(0.0, 68.0, 0.0), glm::dvec3(0.0),
@@ -3913,6 +3987,8 @@ void test_spaceship_mesh_is_closed_and_relative_to_origin() {
 } // namespace
 
 int main() {
+  test_voxel_model_chunk_bounds_and_geometry();
+  test_authored_ship_models_and_boarding_bounds();
   test_expedition_mission_requires_ordered_player_actions();
   test_player_preferences_are_changed_from_settings_menu();
   test_character_selection_is_retained_by_menu();

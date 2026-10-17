@@ -2451,6 +2451,8 @@ void Engine::place_ship_near_player() {
                                          center);
   const glm::dvec3 ground =
       center + spot * block_world_.surface_radial_distance(spot);
+  // Sit the hull on the ground rather than half inside it.
+  ship_tuning_.hull_clearance = double(spaceship_hull_extents().y) * 0.5 + 0.6;
   ship_ = make_landed_spaceship(ground, center, heading, ship_tuning_);
   ship_body_index_ = active_body_index_;
   piloting_ship_ = false;
@@ -2461,8 +2463,8 @@ bool Engine::player_near_ship() const {
     return false;
   }
   constexpr double kBoardingRange = 5.0;
-  return glm::length(glm::dvec3(local_player.transform.position) -
-                     ship_.position) < kBoardingRange;
+  return spaceship_hull_distance(
+             ship_, glm::dvec3(local_player.transform.position)) < kBoardingRange;
 }
 
 void Engine::update_ship_controls(InputState &gameplay_input,
@@ -2499,8 +2501,9 @@ void Engine::update_ship_controls(InputState &gameplay_input,
       const glm::dvec3 up = glm::normalize(ship_.position - center);
       const glm::dvec3 side = glm::normalize(
           glm::cross(up, spaceship_forward(ship_)));
+      const double exit_offset = double(spaceship_hull_extents().x) * 0.5 + 3.5;
       const glm::dvec3 spot =
-          glm::normalize(ship_.position + side * 3.5 - center);
+          glm::normalize(ship_.position + side * exit_offset - center);
       local_player.transform.position = glm::vec3(
           center + spot * (block_world_.surface_radial_distance(spot) + 0.3));
       local_player.controller.velocity = glm::vec3(0.0f);
@@ -2644,9 +2647,14 @@ void Engine::update_ship_camera(double frame_dt) {
   const glm::dvec3 forward = spaceship_forward(ship_);
   const glm::dvec3 roof = spaceship_up(ship_);
   const double speed = glm::length(ship_.velocity);
-  // Pull back a little as speed builds so the planet stays readable.
-  const double distance = 13.0 + std::min(speed * 0.05, 8.0);
-  glm::dvec3 desired = ship_.position - forward * distance + roof * 4.0;
+  // Frame the hull whatever its size, then pull back a little more as speed
+  // builds so the planet stays readable. A fixed 13 m sat inside anything
+  // larger than the original hand-built fuselage.
+  const glm::vec3 hull = spaceship_hull_extents();
+  const double distance =
+      double(hull.z) * 1.1 + 6.0 + std::min(speed * 0.05, 8.0);
+  glm::dvec3 desired =
+      ship_.position - forward * distance + roof * (double(hull.y) * 0.8 + 2.0);
   const glm::dvec3 center = block_world_.planet().center;
   const glm::dvec3 desired_dir = glm::normalize(desired - center);
   const double floor =

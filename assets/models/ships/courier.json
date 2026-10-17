@@ -1,0 +1,105 @@
+{
+  "name": "courier",
+  "voxel_size_meters": 1.0,
+  "axes": "+Z nose, +Y roof, +X right; origin at the minimum corner",
+  "size_voxels": {
+    "x": 19,
+    "y": 10,
+    "z": 28
+  },
+  "mounts": {
+    "pilot_seat": [
+      11,
+      4,
+      21
+    ],
+    "copilot_seat": [
+      9,
+      4,
+      21
+    ],
+    "airlock": [
+      6,
+      4,
+      13
+    ],
+    "cargo_hold": [
+      10,
+      4,
+      7
+    ],
+    "docking_port": [
+      10,
+      5,
+      27
+    ],
+    "thrusters": [
+      [
+        4,
+        6,
+        0
+      ],
+      [
+        16,
+        6,
+        0
+      ]
+    ]
+  },
+  "palette": {
+    "hull": {
+      "index": 1,
+      "rgb": [
+        200,
+        203,
+        208
+      ],
+      "role": "light grey outer plating (courier)"
+    },
+    "panel": {
+      "index": 2,
+      "rgb": [
+        74,
+        78,
+        85
+      ],
+      "role": "dark grey panel and greeble accents"
+    },
+    "glass": {
+      "index": 3,
+      "rgb": [
+        24,
+        78,
+        92
+      ],
+      "role": "dark teal canopy and viewports"
+    },
+    "thruster": {
+      "index": 4,
+      "rgb": [
+        232,
+        116,
+        30
+      ],
+      "role": "orange engine nozzle, drives exhaust glow"
+    },
+    "deck": {
+      "index": 5,
+      "rgb": [
+        110,
+        115,
+        123
+      ],
+      "role": "interior walkable floor"
+    },
+    "light": {
+      "index": 6,
+      "rgb": [
+        242,
+        226,
+        192
+      ],
+      "role": "warm interior lighting block"
+    }
+  }
+}

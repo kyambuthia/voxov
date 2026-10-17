@@ -1,9 +1,26 @@
 #include "engine_gameplay/vehicles/spaceship.hpp"
 
+#include "engine_gameplay/vehicles/voxel_model.hpp"
+
 #include <algorithm>
 #include <cmath>
+#include <cstdlib>
+#include <string>
 
 namespace {
+
+// Ships are authored by tools/generate_ship_voxels.py. VOXOV_SHIP picks one by
+// name. The hand-built boxes further down stay as a fallback so a missing or
+// malformed asset degrades to a flyable placeholder rather than an empty sky.
+const VoxelModel &ship_model() {
+  static const VoxelModel &model = []() -> const VoxelModel & {
+    const char *name = std::getenv("VOXOV_SHIP");
+    const std::string path = std::string("assets/models/ships/") +
+                             (name && *name ? name : "shrike") + ".vox";
+    return load_voxel_model(path);
+  }();
+  return model;
+}
 
 glm::dvec3 radial_up(const glm::dvec3 &position, const glm::dvec3 &center) {
   const glm::dvec3 radial = position - center;
@@ -254,10 +271,52 @@ void step_spaceship(SpaceshipState &ship, const SpaceshipInput &input,
   }
 }
 
+glm::vec3 spaceship_hull_extents() {
+  const VoxelModel &model = ship_model();
+  return model.valid ? model.size_meters : glm::vec3(6.2f, 2.9f, 6.9f);
+}
+
+double spaceship_hull_distance(const SpaceshipState &ship,
+                               const glm::dvec3 &point) {
+  const glm::dvec3 local = glm::conjugate(ship.orientation) *
+                           (point - ship.position);
+  const glm::dvec3 outside = glm::max(
+      glm::abs(local) - glm::dvec3(spaceship_hull_extents()) * 0.5,
+      glm::dvec3(0.0));
+  return glm::length(outside);
+}
+
 RenderMesh build_spaceship_mesh(const SpaceshipState &ship,
                                 const glm::dvec3 &origin) {
   RenderMesh mesh{};
   const glm::dmat3 frame = glm::mat3_cast(ship.orientation);
+  const float thrust = std::clamp(ship.thrust_level, 0.0f, 1.0f);
+  const glm::vec3 exhaust_glow = glm::mix(glm::vec3(0.35f, 0.12f, 0.08f),
+                                          glm::vec3(1.0f, 0.78f, 0.30f),
+                                          thrust);
+
+  const VoxelModel &model = ship_model();
+  if (model.valid) {
+    mesh.vertices.reserve(model.quads.size() * 4);
+    mesh.indices.reserve(model.quads.size() * 6);
+    for (const VoxelQuad &quad : model.quads) {
+      const glm::dvec3 normal = frame * glm::dvec3(quad.normal);
+      // The nozzle material doubles as the exhaust, so it tracks thrust.
+      const glm::vec3 color = quad.material == kVoxelThrusterMaterial
+                                  ? exhaust_glow
+                                  : quad.color;
+      const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+      for (const glm::vec3 &corner : quad.corners) {
+        const glm::dvec3 world = ship.position + frame * glm::dvec3(corner);
+        mesh.vertices.push_back(
+            {glm::vec3(world - origin), color, glm::vec3(normal)});
+      }
+      mesh.indices.insert(mesh.indices.end(),
+                          {base, base + 1, base + 2, base, base + 2, base + 3});
+    }
+    return mesh;
+  }
+
   const auto part = [&](const glm::dvec3 &local_center,
                         const glm::dvec3 &half, const glm::vec3 &color) {
     append_box(mesh, ship.position + frame * local_center, half, frame,
@@ -268,9 +327,8 @@ RenderMesh build_spaceship_mesh(const SpaceshipState &ship,
   const glm::vec3 glass(0.10f, 0.24f, 0.34f);
   const glm::vec3 accent(0.88f, 0.46f, 0.14f);
   const glm::vec3 dark(0.22f, 0.24f, 0.28f);
-  const float glow = std::clamp(ship.thrust_level, 0.0f, 1.0f);
-  const glm::vec3 exhaust = glm::mix(glm::vec3(0.35f, 0.12f, 0.08f),
-                                     glm::vec3(1.0f, 0.78f, 0.30f), glow);
+  const float glow = thrust;
+  const glm::vec3 exhaust = exhaust_glow;
 
   part({0.0, 0.0, 0.0}, {0.9, 0.55, 2.6}, hull);
   part({0.0, -0.05, 2.95}, {0.6, 0.4, 0.5}, nose);

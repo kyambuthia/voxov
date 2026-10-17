@@ -78,7 +78,16 @@ SpaceshipState make_landed_spaceship(const glm::dvec3 &ground_point,
                                      const glm::dvec3 &heading,
                                      const SpaceshipTuning &tuning);
 
-// Blocky hull mesh. Vertices are relative to `origin` (pass the camera
-// origin for camera-relative rendering).
+// Hull mesh built from the ship's voxel model. Vertices are relative to
+// `origin` (pass the camera origin for camera-relative rendering).
 RenderMesh build_spaceship_mesh(const SpaceshipState &ship,
                                 const glm::dvec3 &origin);
+
+// Hull bounding size in metres (x = span, y = height, z = length), read from
+// the loaded voxel model. The chase camera and ground clearance scale off
+// this instead of assuming the old hand-built proportions.
+glm::vec3 spaceship_hull_extents();
+
+// Distance to the oriented hull bounds, used for boarding ships of any size.
+double spaceship_hull_distance(const SpaceshipState &ship,
+                               const glm::dvec3 &point);

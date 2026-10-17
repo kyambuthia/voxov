@@ -1,0 +1,90 @@
+{
+  "name": "shrike",
+  "voxel_size_meters": 1.0,
+  "axes": "+Z nose, +Y roof, +X right; origin at the minimum corner",
+  "size_voxels": {
+    "x": 51,
+    "y": 10,
+    "z": 60
+  },
+  "mounts": {
+    "pilot_seat": [
+      25,
+      6,
+      43
+    ],
+    "docking_port": [
+      25,
+      7,
+      59
+    ],
+    "thrusters": [
+      [
+        18,
+        8,
+        8
+      ],
+      [
+        32,
+        8,
+        8
+      ]
+    ]
+  },
+  "palette": {
+    "panel": {
+      "index": 2,
+      "rgb": [
+        74,
+        78,
+        85
+      ],
+      "role": "dark grey panel and greeble accents"
+    },
+    "thruster": {
+      "index": 4,
+      "rgb": [
+        232,
+        116,
+        30
+      ],
+      "role": "orange engine nozzle, drives exhaust glow"
+    },
+    "deck": {
+      "index": 5,
+      "rgb": [
+        110,
+        115,
+        123
+      ],
+      "role": "interior walkable floor"
+    },
+    "light": {
+      "index": 6,
+      "rgb": [
+        242,
+        226,
+        192
+      ],
+      "role": "warm interior lighting block"
+    },
+    "bone": {
+      "index": 7,
+      "rgb": [
+        234,
+        230,
+        219
+      ],
+      "role": "bone white outer plating (shrike)"
+    },
+    "cyan": {
+      "index": 8,
+      "rgb": [
+        110,
+        216,
+        208
+      ],
+      "role": "pale cyan canopy glass (shrike)"
+    }
+  }
+}

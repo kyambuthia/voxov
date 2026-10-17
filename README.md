@@ -99,6 +99,15 @@ The in-game expedition panel guides the first journey from Voxov to Aster.
 
 ## Assets
 
+- Ships load from `assets/models/ships/`. Shrike is the default; run
+  `VOXOV_SHIP=courier ./build/desktop/main/bin/voxov` to select Courier.
+  Missing or malformed models use the primitive ship fallback.
+- `python3 tools/generate_ship_voxels.py` regenerates the `.vox` models and
+  mount-point JSON. `python3 tools/preview_ship_voxels.py` creates review
+  images (requires Pillow). The current integration renders the hull and
+  scales boarding bounds, exit placement, landing clearance, and the chase
+  camera. Walkable interiors, per-voxel ship collision, and mount-point
+  interactions are not implemented yet.
 - UI sounds live under `assets/audio/ui/`.
 - Audio provenance and licensing are documented in `assets/audio/ui/README.md`.
 

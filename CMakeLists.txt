@@ -315,6 +315,9 @@ add_library(engine_physics STATIC
 target_include_directories(engine_physics PUBLIC src)
 target_link_libraries(engine_physics PUBLIC fmt::fmt spdlog::spdlog glm::glm)
 
+add_library(engine_platform_services STATIC src/platform/platform_services.cpp)
+target_include_directories(engine_platform_services PUBLIC src)
+
 add_library(engine_gameplay STATIC
     src/engine_gameplay/animation/animation_runtime.cpp
     src/engine_gameplay/animation/player_animation_graph.cpp
@@ -326,9 +329,10 @@ add_library(engine_gameplay STATIC
     src/engine_gameplay/player/player_visuals.cpp
     src/engine_gameplay/player/remote_avatar.cpp
     src/engine_gameplay/vehicles/spaceship.cpp
+    src/engine_gameplay/vehicles/voxel_model.cpp
 )
 target_include_directories(engine_gameplay PUBLIC src)
-target_link_libraries(engine_gameplay PUBLIC engine_render_core engine_world engine_math glm::glm)
+target_link_libraries(engine_gameplay PUBLIC engine_render_core engine_world engine_math glm::glm PRIVATE engine_platform_services)
 
 add_library(engine_assets STATIC
     src/engine_assets/cgltf_impl.cpp
@@ -401,7 +405,6 @@ target_link_libraries(engine_net INTERFACE engine_net_discovery engine_net_trans
 # ── Engine umbrella library ────────────────────────────────────────────
 add_library(engine STATIC
     src/engine/engine.cpp
-    src/platform/platform_services.cpp
 )
 target_include_directories(engine PUBLIC src dependencies/cgltf)
 target_link_libraries(engine PUBLIC
@@ -615,6 +618,10 @@ endif()
 install(DIRECTORY assets/models/player/
     DESTINATION bin/assets/models/player
     FILES_MATCHING PATTERN "*.glb" PATTERN "*.md" PATTERN "LICENSE*"
+)
+install(DIRECTORY assets/models/ships/
+    DESTINATION bin/assets/models/ships
+    FILES_MATCHING PATTERN "*.vox" PATTERN "*.json"
 )
 install(DIRECTORY assets/fonts/
     DESTINATION bin/assets/fonts

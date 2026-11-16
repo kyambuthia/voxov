@@ -1,4 +1,5 @@
 #include "engine/engine.hpp"
+#include "engine_net/net_reconcile.hpp"
 #include "engine_gameplay/animation/skeletal_animator.hpp"
 #include "engine_gameplay/player/block_hotbar.hpp"
 #include "engine_gameplay/player/remote_avatar.hpp"
@@ -2165,6 +2166,13 @@ void Engine::sync_network_state(uint32_t sim_tick,
     tick_input.action_flags |= net_flag(NetInputFlags::CrouchHeld);
   }
   net_client_.send_input(tick_input);
+
+  NetSnapshot snapshot{};
+  if (net_client_.poll_snapshot(snapshot) &&
+      snapshot.world.body_id == static_cast<uint32_t>(active_body_index_) &&
+      !piloting_ship_ && !debug_fly_mode_) {
+    net_reconcile_player_snapshot(local_player, snapshot);
+  }
 }
 
 void Engine::reset_camera() {

@@ -1,3 +1,4 @@
+#include "engine_net/net_reconcile.hpp"
 #include "engine_core/cvar.hpp"
 #include "engine_core/string_id.hpp"
 #include "engine/planet_gameplay_config.hpp"
@@ -521,6 +522,28 @@ void test_chunk_runtime_helpers() {
   info.max_players = 8;
   info.flags = net_session_flag(NetSessionFlags::LanAdvertised);
   assert(net_session_status_line(info) == "LAN Session [2/8] WI-FI");
+
+  PlayerEntity predicted{};
+  predicted.transform.position = glm::vec3(10.0f, 65.0f, 0.0f);
+  NetSnapshot snap{};
+  snap.x = 10.05;
+  snap.y = 65.0;
+  snap.z = 0.0;
+  assert(net_reconcile_player_snapshot(predicted, snap) ==
+         SnapshotReconcileAction::None);
+
+  snap.x = 11.0;
+  assert(net_reconcile_player_snapshot(predicted, snap) ==
+         SnapshotReconcileAction::Blended);
+  assert(predicted.transform.position.x > 10.05f &&
+         predicted.transform.position.x < 11.0f);
+
+  snap.x = 25.0;
+  snap.vx = 3.0f;
+  assert(net_reconcile_player_snapshot(predicted, snap) ==
+         SnapshotReconcileAction::Snapped);
+  assert(std::abs(predicted.transform.position.x - 25.0f) < 1.0e-5f);
+  assert(std::abs(predicted.controller.velocity.x - 3.0f) < 1.0e-5f);
 }
 
 void test_planet_face_uv_to_direction_unit_vectors() {

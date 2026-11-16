@@ -33,7 +33,7 @@ before mixed-version public servers are safe.
 
 ### P0: finish unifying server and client world ownership
 
-`ServerSession` now owns Voxov and Aster `BlockWorld` instances, derives
+`ServerSession` now owns `voxov_world` and `aster_world` `BlockWorld` instances (while client `Engine` creates on-demand `parked_planets_` runtimes for every non-star body including `Luna`), derives
 body-scale spherical collision and spawn points from them, rejects
 client-authored transforms, and owns replicated player state from validated,
 sequenced inputs. However, detailed procedural terrain collision and world
@@ -70,12 +70,13 @@ unreliably.
 
 ### P1: terrain work still lives in the render frame
 
-`Engine::tick` creates and sorts several desired/resident/mesh-work containers,
-generates chunks, and builds meshes synchronously. It also owns simulation,
-networking, presentation, and streaming. Cache the stream plan until its current
-or predicted chunk changes, then move generation and meshing into bounded job
-queues with generation-version cancellation. The renderer should consume
-immutable upload batches.
+`Engine::tick` is now split into phase helpers, but `Engine::stream_block_terrain`
+still creates and sorts desired/resident/mesh-work containers, generates chunks,
+and builds meshes synchronously on the render frame. `Engine` also still owns
+simulation, networking, presentation, and streaming behind `GameRuntime`. Cache
+the stream plan until its current or predicted chunk changes, then move
+generation and meshing into bounded job queues with generation-version
+cancellation. The renderer should consume immutable upload batches.
 
 `BlockWorld::collect_stream_chunks` previously used a linear duplicate scan for
 every candidate; it now uses a hash set, changing that part from quadratic to

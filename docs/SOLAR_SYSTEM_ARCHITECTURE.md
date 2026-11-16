@@ -121,18 +121,24 @@ position += velocity * dt
 4. **Flight Vehicles** — Physics simulation
 5. **Inter-planetary Travel** — Coordinate frame transitions
 
-## 8. File Organization
+## 8. File Organization (Current Source)
 
 ```
 src/engine_world/
-  planet_lod.*       — LOD selection and chunk resolution
-  atmosphere.*       — Atmosphere rendering (Rayleigh + Mie)
-  solar_system.*     — Orbital mechanics, body management
-  
+  solar_system.*       — Orbital elements, Kepler solver, Sun/Voxov/Luna/Aster bodies
+  coordinate_frames.*  — Body-local / heliocentric coordinate frame transforms
+  planet.*             — Cube-sphere PlanetQuadtree, PlanetLODSelector, PlanetStreamer
+  planet_lod.*         — Screen-space ChunkLOD / PlanetLODSystem
+  planet_blocks.*      — BlockWorld spherical chunked voxel terrain
+  atmosphere.*         — Planetary atmosphere parameters and scattering helpers
+
 src/engine_physics/
-  flight_vehicle.*   — Aerodynamic physics model
-  orbital_mechanics.* — Kepler equation solver
-  
-src/engine_render/
-  atmosphere_shader.* — GPU atmosphere rendering
+  flight_vehicle.*     — Aerodynamic / flight vehicle physics model
+
+src/engine_gameplay/vehicles/
+  spaceship.*          — Pilotable spaceship controller, .vox hull integration, SOI transfer
+  voxel_model.*        — .vox voxel model loader
+
+src/engine_render/shaders/
+  voxov_scene.glsl     — Portable scene/atmosphere shader (sokol-shdc)
 ```

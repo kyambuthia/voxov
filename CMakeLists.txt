@@ -86,16 +86,45 @@ elseif(EMSCRIPTEN)
     # Sokol stays on the browser main thread. A dedicated pthread owns ENet's
     # blocking POSIX socket bridge to the native WebSocket gateway.
 elseif(NOT EMSCRIPTEN)
-    message(STATUS "Platform backend: sokol_app + sokol_gfx")
-    if(APPLE)
-        set(VOXOV_SOKOL_BACKEND SOKOL_METAL)
-    elseif(WIN32)
-        set(VOXOV_SOKOL_BACKEND SOKOL_D3D11)
-    else()
+    option(VOXOV_USE_SDL3 "Use SDL3 for desktop windowing and input" ON)
+    if(VOXOV_USE_SDL3)
+        message(STATUS "Platform backend: SDL3 + sokol_gfx (GLCore)")
+        find_package(SDL3 QUIET)
+        if(NOT SDL3_FOUND)
+            include(FetchContent)
+            set(SDL_SHARED OFF CACHE BOOL "" FORCE)
+            set(SDL_STATIC ON CACHE BOOL "" FORCE)
+            set(SDL_TEST_LIBRARY OFF CACHE BOOL "" FORCE)
+            set(SDL_EXAMPLES OFF CACHE BOOL "" FORCE)
+            set(SDL_AUDIO OFF CACHE BOOL "" FORCE)
+            set(SDL_CAMERA OFF CACHE BOOL "" FORCE)
+            set(SDL_HAPTIC OFF CACHE BOOL "" FORCE)
+            set(SDL_SENSOR OFF CACHE BOOL "" FORCE)
+            FetchContent_Declare(
+                SDL3
+                GIT_REPOSITORY https://github.com/libsdl-org/SDL.git
+                GIT_TAG release-3.2.10
+                GIT_SHALLOW TRUE
+            )
+            FetchContent_MakeAvailable(SDL3)
+        endif()
         set(VOXOV_SOKOL_BACKEND SOKOL_GLCORE)
-        find_package(OpenGL REQUIRED)
+        if(NOT WIN32 AND NOT APPLE)
+            find_package(OpenGL REQUIRED)
+        endif()
+        add_compile_definitions(${VOXOV_SOKOL_BACKEND} VOXOV_USE_SDL3=1)
+    else()
+        message(STATUS "Platform backend: sokol_app + sokol_gfx")
+        if(APPLE)
+            set(VOXOV_SOKOL_BACKEND SOKOL_METAL)
+        elseif(WIN32)
+            set(VOXOV_SOKOL_BACKEND SOKOL_D3D11)
+        else()
+            set(VOXOV_SOKOL_BACKEND SOKOL_GLCORE)
+            find_package(OpenGL REQUIRED)
+        endif()
+        add_compile_definitions(${VOXOV_SOKOL_BACKEND})
     endif()
-    add_compile_definitions(${VOXOV_SOKOL_BACKEND})
 endif()
 add_compile_definitions(VOXOV_HAS_RENDER_SOKOL=1)
 
@@ -112,12 +141,20 @@ elseif(EMSCRIPTEN)
 endif()
 
 if(NOT ANDROID)
-    # Platform library (sokol_app/audio/glue)
-    add_library(platform_desktop STATIC
-        src/platform/sokol/sokol_impl_desktop.cpp
-        src/platform/sokol/sokol_platform.cpp
-        src/platform/desktop/input_desktop.cpp
-    )
+    # Platform library (SDL3 or sokol_app + sokol_audio)
+    if(NOT EMSCRIPTEN AND VOXOV_USE_SDL3)
+        add_library(platform_desktop STATIC
+            src/platform/sokol/sokol_impl_desktop.cpp
+            src/platform/sdl3/sdl3_platform.cpp
+            src/platform/desktop/input_desktop.cpp
+        )
+    else()
+        add_library(platform_desktop STATIC
+            src/platform/sokol/sokol_impl_desktop.cpp
+            src/platform/sokol/sokol_platform.cpp
+            src/platform/desktop/input_desktop.cpp
+        )
+    endif()
     target_include_directories(platform_desktop PUBLIC
         src
         ${VOXOV_SOKOL_DIR}
@@ -126,13 +163,21 @@ if(NOT ANDROID)
     target_link_libraries(platform_desktop PUBLIC sokol_gfx_impl glm::glm)
     if(EMSCRIPTEN)
         target_compile_definitions(platform_desktop PUBLIC SOKOL_GLES3 VOXOV_PLATFORM_WEB=1)
-    endif()
-    if(WIN32)
-        target_link_libraries(platform_desktop PUBLIC d3d11 dxgi)
-    elseif(UNIX AND NOT APPLE AND NOT EMSCRIPTEN)
-        target_link_libraries(platform_desktop PUBLIC
-            OpenGL::GL X11 Xi Xcursor m dl asound
-        )
+    elseif(VOXOV_USE_SDL3)
+        target_link_libraries(platform_desktop PUBLIC SDL3::SDL3)
+        if(WIN32)
+            target_link_libraries(platform_desktop PUBLIC opengl32)
+        elseif(UNIX AND NOT APPLE)
+            target_link_libraries(platform_desktop PUBLIC OpenGL::GL m dl asound)
+        endif()
+    else()
+        if(WIN32)
+            target_link_libraries(platform_desktop PUBLIC d3d11 dxgi)
+        elseif(UNIX AND NOT APPLE)
+            target_link_libraries(platform_desktop PUBLIC
+                OpenGL::GL X11 Xi Xcursor m dl asound
+            )
+        endif()
     endif()
 endif()
 
@@ -546,9 +591,15 @@ if(VOXOV_PLATFORM_FUTURE_SOURCES)
 endif()
 
 # ── Main executable ────────────────────────────────────────────────────
-add_executable(voxov
-    src/game/main_sokol.cpp
-)
+if(VOXOV_USE_SDL3)
+    add_executable(voxov
+        src/game/main_sdl3.cpp
+    )
+else()
+    add_executable(voxov
+        src/game/main_sokol.cpp
+    )
+endif()
 target_include_directories(voxov PRIVATE
     src
     ${VOXOV_SOKOL_DIR}
@@ -680,7 +731,11 @@ if(VOXOV_BUILD_TESTS)
             "-framework AudioToolbox"
         )
     elseif(WIN32)
-        target_link_libraries(voxov_sokol_smoke PRIVATE d3d11 dxgi)
+        if(VOXOV_USE_SDL3)
+            target_link_libraries(voxov_sokol_smoke PRIVATE opengl32)
+        else()
+            target_link_libraries(voxov_sokol_smoke PRIVATE d3d11 dxgi)
+        endif()
     elseif(UNIX)
         target_link_libraries(voxov_sokol_smoke PRIVATE
             OpenGL::GL X11 Xi Xcursor m dl asound

@@ -26,6 +26,10 @@ public:
     /// sokol_app uses callbacks — the platform processes the event
     /// and stores derived state (keys, mouse, window flags).
     void process_event(const sapp_event &event);
+#if defined(VOXOV_USE_SDL3)
+    void poll_events();
+    void swap_buffers();
+#endif
     void on_frame();
 
     // ── PlatformRuntime interface ────────────────────────────────────
@@ -51,6 +55,10 @@ private:
     bool fullscreen_ = false;
     bool should_close_ = false;
     bool mouse_locked_ = false;
+#if defined(VOXOV_USE_SDL3)
+    void *window_ = nullptr;
+    void *gl_context_ = nullptr;
+#endif
 };
 
 /// Global accessor used by sokol_app callbacks (which are C function pointers

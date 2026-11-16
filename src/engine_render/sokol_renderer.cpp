@@ -4,8 +4,41 @@
 
 #include "sokol_gfx.h"
 #if !defined(VOXOV_PLATFORM_ANDROID)
+#if !defined(VOXOV_USE_SDL3)
 #include "sokol_app.h"
 #include "sokol_glue.h"
+#endif
+
+namespace {
+sg_environment voxov_sokol_environment() {
+#if defined(VOXOV_USE_SDL3)
+    sg_environment env{};
+    env.defaults.color_format = SG_PIXELFORMAT_RGBA8;
+    env.defaults.depth_format = SG_PIXELFORMAT_DEPTH_STENCIL;
+    env.defaults.sample_count = 1;
+    return env;
+#else
+    return sglue_environment();
+#endif
+}
+
+sg_swapchain voxov_sokol_swapchain(int width, int height) {
+#if defined(VOXOV_USE_SDL3)
+    sg_swapchain sc{};
+    sc.width = width > 0 ? width : 1;
+    sc.height = height > 0 ? height : 1;
+    sc.sample_count = 1;
+    sc.color_format = SG_PIXELFORMAT_RGBA8;
+    sc.depth_format = SG_PIXELFORMAT_DEPTH_STENCIL;
+    sc.gl.framebuffer = 0;
+    return sc;
+#else
+    (void)width;
+    (void)height;
+    return sglue_swapchain();
+#endif
+}
+} // namespace
 #endif
 #include "sokol_log.h"
 
@@ -284,7 +317,7 @@ bool SokolRenderer::init(const RenderDeviceDesc &desc) {
         desc.sample_count > 0 ? desc.sample_count : 1;
 #else
     (void)desc;
-    sgdesc.environment = sglue_environment();
+    sgdesc.environment = voxov_sokol_environment();
 #endif
     sgdesc.buffer_pool_size = 4096;
     sgdesc.logger.func = slog_func;
@@ -799,7 +832,7 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
     pass.swapchain.depth_format = SG_PIXELFORMAT_DEPTH_STENCIL;
     pass.swapchain.gl.framebuffer = 0;
 #else
-    pass.swapchain = sglue_swapchain();
+    pass.swapchain = voxov_sokol_swapchain(surface.width, surface.height);
 #endif
     sg_begin_pass(&pass);
 

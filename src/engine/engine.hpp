@@ -29,7 +29,9 @@
 #include "engine_world/planet_lod.hpp"
 #include "engine_world/atmosphere.hpp"
 #include "engine_world/coordinate_frames.hpp"
+#include "engine_core/jobs.hpp"
 #include "engine_world/solar_system.hpp"
+#include <unordered_set>
 #include "platform/platform_services.hpp"
 
 #include <unordered_map>
@@ -319,4 +321,15 @@ private:
   glm::dvec3 targeted_hit_pos_ = glm::dvec3(0.0);
   glm::vec3 targeted_face_normal_ = glm::vec3(0.0f);
   std::optional<BlockAddress> targeted_addr_;
+
+  struct CompletedChunkJob {
+    uint64_t epoch = 0;
+    BlockAddress addr{};
+    VoxelChunk chunk;
+  };
+  JobSystem chunk_jobs_;
+  std::mutex completed_chunks_mutex_;
+  std::vector<CompletedChunkJob> completed_chunk_jobs_;
+  std::unordered_set<BlockAddress, BlockAddressHash> pending_chunk_jobs_;
+  uint64_t terrain_job_epoch_ = 1;
 };

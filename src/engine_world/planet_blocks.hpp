@@ -155,6 +155,7 @@ public:
 
     // ── Streaming ──────────────────────────────────────────────────────
     VoxelChunk &get_or_generate_chunk(const BlockAddress &addr);
+    VoxelChunk &insert_generated_chunk(const BlockAddress &addr, VoxelChunk &&chunk);
     const VoxelChunk *find_chunk(const BlockAddress &addr) const;
     size_t chunk_count() const { return chunks_.size(); }
     size_t evict_chunks_except(const std::vector<BlockAddress> &resident);

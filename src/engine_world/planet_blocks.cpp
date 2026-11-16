@@ -469,6 +469,14 @@ VoxelChunk &BlockWorld::get_or_generate_chunk(const BlockAddress &addr) {
     return ins->second;
 }
 
+VoxelChunk &BlockWorld::insert_generated_chunk(const BlockAddress &addr,
+                                               VoxelChunk &&chunk) {
+    BlockAddress key = addr;
+    key.block = glm::ivec3(0);
+    auto [ins, _] = chunks_.emplace(key, std::move(chunk));
+    return ins->second;
+}
+
 const VoxelChunk *BlockWorld::find_chunk(const BlockAddress &addr) const {
     // Strip block index — chunks are keyed by sector+shell+chunk only.
     BlockAddress key = addr;

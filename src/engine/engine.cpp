@@ -398,6 +398,10 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   // profile (see terrain_config_for_body).
   base_terrain_config_ = bw_cfg;
   parked_planets_.clear();
+  const unsigned int hw_threads = std::thread::hardware_concurrency();
+  const uint32_t worker_count =
+      static_cast<uint32_t>(std::max(1u, std::min(4u, hw_threads > 1u ? hw_threads / 2u : 1u)));
+  chunk_jobs_.init(worker_count);
   chunk_generation_budget_ = kChunkGenerationBudget;
   mesh_build_budget_ = kChunkMeshBudget;
 
@@ -643,6 +647,13 @@ void Engine::stop_client_session() {
 }
 
 void Engine::shutdown() {
+  ++terrain_job_epoch_;
+  chunk_jobs_.shutdown();
+  {
+    std::lock_guard<std::mutex> lock(completed_chunks_mutex_);
+    completed_chunk_jobs_.clear();
+  }
+  pending_chunk_jobs_.clear();
   (void)save_persistent_game();
   lan_discovery_.stop();
   if (local_server_running_) {
@@ -1333,17 +1344,47 @@ Engine::TerrainStreamTimings Engine::stream_block_terrain(
 
     std::vector<BlockAddress> new_chunks;
     new_chunks.reserve(missing_chunks.size());
+    {
+      std::vector<CompletedChunkJob> ready;
+      {
+        std::lock_guard<std::mutex> lock(completed_chunks_mutex_);
+        ready.swap(completed_chunk_jobs_);
+      }
+      for (CompletedChunkJob &job : ready) {
+        pending_chunk_jobs_.erase(job.addr);
+        if (job.epoch != terrain_job_epoch_) {
+          continue;
+        }
+        if (block_world_.find_chunk(job.addr) == nullptr) {
+          block_world_.insert_generated_chunk(job.addr, std::move(job.chunk));
+          new_chunks.push_back(job.addr);
+        }
+      }
+    }
+
     const uint32_t active_generation_budget = std::min<uint32_t>(
         12u, chunk_generation_budget_ +
                  static_cast<uint32_t>(stream_speed / 96.0));
-    uint32_t gen_count = 0;
+    uint32_t scheduled_count = 0;
     for (const BlockAddress &addr : missing_chunks) {
-      if (gen_count >= active_generation_budget) {
+      if (scheduled_count >= active_generation_budget) {
         break;
       }
-      block_world_.get_or_generate_chunk(addr);
-      new_chunks.push_back(addr);
-      ++gen_count;
+      BlockAddress key = addr;
+      key.block = glm::ivec3(0);
+      if (!pending_chunk_jobs_.insert(key).second) {
+        continue;
+      }
+      const uint64_t job_epoch = terrain_job_epoch_;
+      const int32_t cs = block_world_.config().chunk_size;
+      chunk_jobs_.schedule([this, job_epoch, key, cs]() {
+        VoxelChunk chunk(cs, cs, cs);
+        block_world_.generate_chunk(key, chunk);
+        std::lock_guard<std::mutex> lock(completed_chunks_mutex_);
+        completed_chunk_jobs_.push_back(
+            CompletedChunkJob{job_epoch, key, std::move(chunk)});
+      });
+      ++scheduled_count;
     }
     chunk_gen_ms = elapsed_ms(chunk_gen_start, PerfClock::now());
 
@@ -2223,6 +2264,14 @@ void Engine::switch_active_planet(int32_t body_index) {
   // Swap complete body-local runtimes, including resident chunks. This keeps
   // edits and collision data alive on both planets without pretending that a
   // single global voxel cache can represent two different surfaces.
+  ++terrain_job_epoch_;
+  chunk_jobs_.wait_idle();
+  {
+    std::lock_guard<std::mutex> lock(completed_chunks_mutex_);
+    completed_chunk_jobs_.clear();
+  }
+  pending_chunk_jobs_.clear();
+
   PlanetTerrainRuntime &incoming = parked_runtime(body_index);
   std::swap(block_world_, incoming.world);
   std::swap(collision_world, incoming.collision);

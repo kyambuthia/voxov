@@ -1,12 +1,11 @@
 #pragma once
 
+#include "engine_events/event_bus.hpp"
 #include "engine_gameplay/animation/animation_runtime.hpp"
-#include "engine_gameplay/player/remote_avatar.hpp"
-#include "engine_gameplay/vehicles/spaceship.hpp"
+#include "engine_gameplay/objectives/expedition_mission.hpp"
 #include "engine_gameplay/player/player_components.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
-#include "engine_gameplay/objectives/expedition_mission.hpp"
-#include "engine_events/event_bus.hpp"
+#include "engine_gameplay/player/remote_avatar.hpp"
 #include "engine_input/input_state.hpp"
 #include "engine_math/camera.hpp"
 #include "engine_net/lan_discovery.hpp"
@@ -15,26 +14,21 @@
 #if defined(VOXOV_PLATFORM_WEB)
 #include "engine_net/web_net_client.hpp"
 #endif
-#include "engine_physics/flight_vehicle.hpp"
 #include "engine_physics/physics_solver.hpp"
 #include "engine_physics/physics_world.hpp"
 #include "engine_render/renderer.hpp"
-#include "engine_runtime/runtime_game_session.hpp"
 #include "engine_runtime/persistent_game_state.hpp"
+#include "engine_runtime/runtime_game_session.hpp"
 #include "engine_runtime/runtime_session_controller.hpp"
 #include "engine_ui/gui_menu.hpp"
+#include "engine_world/flat_world.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
-#include "engine_world/planet.hpp"
-#include "engine_world/planet_blocks.hpp"
-#include "engine_world/planet_lod.hpp"
-#include "engine_world/atmosphere.hpp"
-#include "engine_world/coordinate_frames.hpp"
-#include "engine_world/solar_system.hpp"
 #include "platform/platform_services.hpp"
 
-#include <unordered_map>
-#include <string>
 #include <optional>
+#include <string>
+#include <unordered_map>
+#include <unordered_set>
 #include <vector>
 
 struct EngineRuntimeOptions {
@@ -87,90 +81,40 @@ public:
   bool capture_screenshot(const char *filepath, int width, int height);
 
 private:
-  struct PlanetTerrainRuntime {
-    BlockWorld world;
-    VoxelCollisionWorld collision{nullptr};
+  struct TerrainStreamTimings {
+    double chunk_gen_ms = 0.0;
+    double mesh_build_ms = 0.0;
   };
+
   void update_first_person_camera(PlayerEntity &player, Camera &out_camera,
                                   float dt = 0.0f);
   void update_first_person_camera(PlayerEntity &player,
                                   const glm::vec3 &render_position,
                                   Camera &out_camera, float dt);
-  void rebuild_global_planet_surface(int32_t subdivisions = 64);
   void refresh_overlay_text();
-  void switch_active_planet(int32_t body_index);
-  // Every non-star body can host a voxel surface.
-  bool has_terrain_runtime(int32_t body_index) const;
-  BlockWorldConfig terrain_config_for_body(int32_t body_index) const;
-  PlanetTerrainRuntime &parked_runtime(int32_t body_index);
   void install_active_surface_collider();
-  BlockWorld *world_for_body(int32_t body_index);
-  void record_block_edit(int32_t body_index, const BlockAddress &address,
+  void record_block_edit(const FlatBlockAddress &address,
                          VoxelMaterial material, bool solid);
+  void apply_persistent_edits_to_chunk(VoxelChunkCoord2D coord);
   void load_persistent_game();
   bool save_persistent_game();
-  // Marks the save dirty; flush_pending_save() writes it at most every
-  // kSaveDebounceSeconds so block edits never hit the disk every click.
   void request_save();
   void flush_pending_save(double frame_dt);
   void update_block_interaction(const InputState &input);
-  // ── Spaceship ──
-  // Parks the ship beside the player on the active body.
-  void place_ship_near_player();
-  SpaceshipEnvironment ship_environment() const;
-  // Boarding/exiting and per-frame steering. While piloting, consumes the
-  // movement/look input so the on-foot controller and camera rig stay idle.
-  void update_ship_controls(InputState &gameplay_input, double frame_dt);
-  void step_ship(double dt);
-  // Re-bases ship and player into another body's frame when the ship
-  // enters that body's sphere of influence.
-  void transfer_ship_between_bodies();
-  void update_ship_camera(double frame_dt);
-  void append_ship_mesh();
-  bool player_near_ship() const;
-  void append_ship_hud();
-  // Scripted pilot for VOXOV_CAPTURE_SHIP captures.
-  SpaceshipInput autopilot_input(int32_t target_body, double dt) const;
-  // Dark wire box around the block under the crosshair.
   void append_target_outline(RenderMesh &mesh) const;
-  // Frame phases of tick(), in call order.
-  void apply_session_input(InputState &gameplay_input,
-                           const RenderSurface &surface);
-  void apply_sky_navigation_assist(InputState &gameplay_input,
-                                   double frame_dt);
-  // Runs the fixed-step simulation callbacks and drains frame events.
+  void apply_session_input(InputState &gameplay_input);
   void simulate_frame(InputState &gameplay_input, EngineInputFrame &input_frame,
                       double frame_dt, ProfilingSnapshot &profiling_sample);
-  struct TerrainStreamTimings {
-    double chunk_gen_ms = 0.0;
-    double mesh_build_ms = 0.0;
-  };
-  // Generates, meshes, and evicts surface chunks around the player.
-  TerrainStreamTimings stream_block_terrain(double camera_altitude,
-                                            const RenderSurface &surface);
-  void rebuild_wireframe_overlays();
-  // Advances orbits and builds the sky-navigation markers.
-  void update_solar_system(double frame_dt);
-  // Picks the active coordinate frame and handles SOI transitions.
-  void update_coordinate_frames(double frame_dt);
-  // Updates cached terrain globes and orbital origins for celestial bodies.
-  void append_celestial_meshes(const RenderSurface &surface);
-  // Smoothed, animated blocky avatars for every replicated player.
+  TerrainStreamTimings stream_flat_terrain();
   void append_remote_player_meshes();
   void update_render_stats(const ProfilingSnapshot &profiling_sample,
                            const TerrainStreamTimings &terrain_timings,
                            double gpu_upload_ms);
-  // Computes the clear/sky colour for the current view.
-  void update_sky_color(double camera_altitude);
-  // Builds the per-frame render context; advances frame_index.
   RenderFrameContext build_render_context(double frame_dt,
                                           const RenderSurface &surface);
-  // Updates view, clip planes, and FOV; returns the camera altitude above
-  // the active planet's base radius.
   double update_camera(double frame_dt, const RenderSurface &surface);
-  // Drops the chunk mesh holding `addr` plus any neighbour chunk sharing the
-  // block's faces, so cross-chunk face culling is rebuilt next frame.
-  void invalidate_block_meshes(const BlockAddress &addr);
+  void invalidate_chunk_mesh(VoxelChunkCoord2D coord);
+  void invalidate_block_meshes(const FlatBlockAddress &addr);
   void sync_network_state(uint32_t sim_tick, const InputState &input);
   void start_local_server(uint16_t port, bool loopback_only);
   void stop_client_session();
@@ -189,8 +133,6 @@ private:
   bool local_server_loopback_ = true;
   bool local_server_running_ = false;
   PhysicsWorld physics;
-  FlightVehicle flight_vehicle_;
-  bool flight_vehicle_spawned_ = false;
   uint64_t collision_count_ = 0;
   uint32_t net_events_seen_ = 0;
   std::string last_net_status_;
@@ -198,6 +140,9 @@ private:
       NetClientConnectionState::Disconnected;
 
   VoxelCollisionWorld collision_world{nullptr};
+  std::vector<VoxelCollisionChunk> active_collision_chunks_;
+  VoxelChunkCoord2D last_collision_center_{0, 0};
+  bool collision_chunks_dirty_ = true;
 
   Camera camera;
   PlayerEntity local_player;
@@ -208,26 +153,17 @@ private:
 
   RenderScene scene;
 
-  // ── Block-based voxel planet (Bowerbyte architecture) ───────────────
-  // 6 sectors → shells (doubling resolution) → 16³ chunks → blocks.
-  // 3D noise on sphere for seamless terrain, gravity-aligned block
-  // meshing with cross-face neighbor culling via cube net.
-  BlockWorld block_world_;
-  // Terrain runtimes of bodies other than the active one, created on demand
-  // from the body's catalog entry. Switching bodies swaps the active
-  // block_world_/collision_world with a parked runtime, so edits and resident
-  // chunks survive round trips.
-  std::unordered_map<int32_t, PlanetTerrainRuntime> parked_planets_;
-  BlockWorldConfig base_terrain_config_{};
-  PlanetLODSystem lod_system_;
-  std::vector<BlockAddress> loaded_chunks_;    // currently resident chunks
-  uint64_t block_mesh_revision_ = 0;
-  uint32_t chunk_generation_budget_ = 32;
-  uint32_t mesh_build_budget_ = 24;
-  uint64_t last_chunk_center_hash_ = 0;        // detect player movement
+  FlatWorld flat_world_;
+  std::unordered_set<VoxelChunkCoord2D, VoxelChunkCoord2DHash>
+      dirty_chunk_meshes_;
+  std::unordered_map<VoxelChunkCoord2D, uint64_t, VoxelChunkCoord2DHash>
+      chunk_mesh_revisions_;
+  uint64_t next_chunk_revision_ = 1;
+  uint32_t chunk_generation_budget_ = 4;
+  uint32_t mesh_build_budget_ = 4;
 
-  bool debug_fly_mode_ = false; // false = surface walking (gravity toward planet center, capsule collision with voxel terrain)
-  float third_person_distance_ = 4.5f; // saved orbit distance while in first-person
+  bool debug_fly_mode_ = false;
+  float third_person_distance_ = 4.5f;
   bool third_person_camera_initialized_ = false;
   glm::vec3 third_person_pivot_{0.0f};
   float third_person_smoothed_distance_ = 4.5f;
@@ -236,87 +172,21 @@ private:
   EngineSessionState session_state_{};
   EngineRuntimeOptions runtime_options{};
 
-  // ── Camera-relative rendering ────────────────────────────────────────
-  // Snap origin tracks the camera-relative float32 reference point.
-  // Mesh vertices are stored as offsets from this origin to preserve
-  // float32 precision at 2000 km planet scale. The snap threshold grows with
-  // altitude so fast flight does not constantly rebuild terrain meshes.
   glm::dvec3 camera_snap_origin_{0.0};
-  bool snap_origin_dirty_ = true;       // force initial mesh build
-
-  // Complete terrain-aware globe for compact-world flight and orbit. It is
-  // static, cached, and built from the same height sampler as editable chunks.
-  // A small radial inset makes it a safe underlay for streamed chunk seams.
-  RenderMesh global_planet_surface_mesh_{};
-  int32_t global_planet_subdivisions_ = 64;
-  std::unordered_map<int32_t, int32_t> celestial_subdivisions_;
-  std::unordered_map<int32_t, std::unordered_map<int32_t, RenderMesh>> globe_meshes_;
-
-  // ── Wireframe debug overlay ─────────────────────────────────────────
-  // Same PlanetDefinition as terrain, coarser grid (64 cells/face = ~62 km/cell).
-  // Rendered as colored lines per face (red=+X, blue=-X, green=+Y, etc.).
-  // Generated once at init; GPU buffer cached by mesh_id in sokol renderer.
-  PlanetDefinition wireframe_planet_{};
-  RenderMesh wireframe_planet_mesh_{};
-  RenderMesh atmosphere_wireframe_mesh_{};
-  bool wireframe_planet_dirty_ = true;
-
-  // ── Sky navigation mode ─────────────────────────────────────────────
-  // F6 desaturates the world and exposes celestial destinations as a simple
-  // selectable sky overlay. Enter locks the current target and draws a guide.
-  bool sky_navigation_mode_ = false;
-  bool sky_navigation_locked_ = false;
-  int32_t sky_navigation_target_index_ = 3; // Aster in the starter system
-  float sky_navigation_aspect_ratio_ = 16.0f / 9.0f;
-  glm::vec2 sky_navigation_cursor_ndc_{0.0f};
+  float viewport_aspect_ratio_ = 16.0f / 9.0f;
 
   uint64_t frame_index = 0;
   uint64_t presentation_frame_events_seen_ = 0;
   double last_frame_dt = 0.0;
   std::string last_hud_message_;
 
-    // ── Solar system ──────────────────────────────────────────────────
-    // Manages Sun, Planet, Moon with Keplerian orbital mechanics.
-    // Updated each frame with elapsed simulation time.
-    SolarSystem solar_system_;
-    double solar_system_time_ = 0.0;  // accumulated simulation time (seconds)
-    size_t last_celestial_mesh_count_ = 0; // meshes appended to opaque_meshes
+  glm::vec3 sky_color_ = glm::vec3(0.45f, 0.72f, 0.96f);
+  glm::vec3 sun_direction_ = glm::normalize(glm::vec3(0.45f, 0.80f, 0.35f));
 
-    // ── Coordinate frame manager ──────────────────────────────────────
-    // Handles frame transitions: Planet ↔ Orbital ↔ Solar.
-    // WHY: maintains float64 precision at solar scales by using
-    // hierarchical coordinate frames with relative positions.
-    CoordinateFrameManager frame_manager_;
-    CoordinateFrame active_frame_ = CoordinateFrame::Planet;
-    int32_t active_body_index_ = 1;  // 0=sun, 1=planet, 2=moon
-    const char* active_frame_label_ = "Planet";
-    // Hysteresis for frame transitions: prevent rapid toggling.
-    double frame_transition_cooldown_ = 0.0;
-    static constexpr double k_frame_transition_hysteresis = 2.0; // seconds
-
-    // ── Atmosphere rendering (Rayleigh + Mie scattering) ───────────────
-    // Computes sky color on CPU each frame; fragment shader applies
-    // aerial perspective (transmittance) for terrain fragments.
-    AtmosphereRenderer atmosphere_;
-    AtmosphereState atmosphere_state_{};
-    bool atmosphere_enabled_ = true;
-
-    // ── Block interaction (first-person pick/break/place) ─────────────────
-  // Targeted block from camera center raycast.
-  size_t hotbar_slot_ = 0; // index into kBlockHotbar
-  SpaceshipState ship_{};
-  SpaceshipTuning ship_tuning_{};
-  SpaceshipInput ship_input_{};
-  int32_t ship_body_index_ = kVoxovBodyIndex;
-  bool piloting_ship_ = false;
-  bool ship_camera_initialized_ = false;
-  glm::dvec3 ship_camera_eye_{0.0};
-  double ship_transfer_cooldown_ = 0.0;
-  int32_t soi_body_index_ = -1; // innermost SOI containing the player
+  size_t hotbar_slot_ = 0;
   std::unordered_map<uint32_t, RemoteAvatarState> remote_avatars_;
   bool persistence_dirty_ = false;
   double seconds_since_save_ = 0.0;
-  glm::dvec3 targeted_hit_pos_ = glm::dvec3(0.0);
   glm::vec3 targeted_face_normal_ = glm::vec3(0.0f);
-  std::optional<BlockAddress> targeted_addr_;
+  std::optional<FlatBlockAddress> targeted_addr_;
 };

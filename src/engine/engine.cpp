@@ -1,108 +1,48 @@
 #include "engine/engine.hpp"
-#include "engine_gameplay/animation/skeletal_animator.hpp"
-#include "engine_gameplay/player/block_hotbar.hpp"
-#include "engine_gameplay/player/remote_avatar.hpp"
-#include "engine_world/block_picking.hpp"
-#include "engine/planet_gameplay_config.hpp"
-
 #include "engine_core/memory.hpp"
 #include "engine_core/timing.hpp"
-#include "engine_presentation/debug_scene_builder.hpp"
+#include "engine_gameplay/animation/skeletal_animator.hpp"
+#include "engine_gameplay/player/block_hotbar.hpp"
 #include "engine_gameplay/player/player_visuals.hpp"
-#include "engine_gameplay/player/surface_orientation.hpp"
+#include "engine_gameplay/player/remote_avatar.hpp"
+#include "engine_presentation/debug_scene_builder.hpp"
 #include "engine_render/debug_draw/debug_draw.hpp"
 #include "engine_render/debug_text.hpp"
-#include "engine_world/wireframe_planet.hpp"
 #include "engine_world/world_gen.hpp"
-#include "engine_world/vegetation.hpp"
-#include "engine_world/planet.hpp"
+#include "platform/platform_services.hpp"
 
 #include <spdlog/spdlog.h>
 
 #include <algorithm>
-#include <cctype>
+#include <array>
 #include <chrono>
+#include <cmath>
 #include <cstdio>
 #include <cstdlib>
-#include <cmath>
 #include <filesystem>
-#include <limits>
-#include <numbers>
 #include <string>
 #include <unordered_set>
 
 namespace {
 using PerfClock = std::chrono::steady_clock;
 
-constexpr uint64_t kGlobalPlanetSurfaceMeshId =
-    0x504c414e45544c4full; // "PLANETLO"
-constexpr uint64_t kShipMeshId = 0x5348495000000000ull; // "SHIP"
-// Celestial globes use "CELE" in the high 32 bits, then body index and LOD.
-constexpr uint32_t kCelestialMeshTag = 0x43454c45u;
-
-bool is_celestial_mesh_id(uint64_t mesh_id) {
-  return (mesh_id >> 32) == kCelestialMeshTag;
-}
-
-// Streamed terrain chunk and vegetation meshes use hashed IDs, so they are
-// recognised by exclusion: everything else in the scene is transient (0) or
-// one of the named retained meshes above.
-bool is_streamed_terrain_mesh(uint64_t mesh_id) {
-  return mesh_id != 0 && mesh_id != kGlobalPlanetSurfaceMeshId &&
-         mesh_id != kShipMeshId && !is_celestial_mesh_id(mesh_id);
-}
 #if defined(VOXOV_PLATFORM_ANDROID) || defined(VOXOV_PLATFORM_WEB)
-constexpr int32_t kSurfaceStreamRadiusChunks = 2;
-constexpr uint32_t kChunkGenerationBudget = 1;
-constexpr uint32_t kChunkMeshBudget = 1;
-#else
-constexpr int32_t kSurfaceStreamRadiusChunks = 2;
+constexpr int32_t kFlatStreamRadiusChunks = 2;
+constexpr int32_t kFlatEvictRadiusChunks = 4;
 constexpr uint32_t kChunkGenerationBudget = 2;
 constexpr uint32_t kChunkMeshBudget = 2;
+#else
+constexpr int32_t kFlatStreamRadiusChunks = 3;
+constexpr int32_t kFlatEvictRadiusChunks = 5;
+constexpr uint32_t kChunkGenerationBudget = 4;
+constexpr uint32_t kChunkMeshBudget = 4;
 #endif
+
+constexpr double kSaveDebounceSeconds = 2.0;
 
 double elapsed_ms(const PerfClock::time_point &start,
                   const PerfClock::time_point &end) {
   return std::chrono::duration<double, std::milli>(end - start).count();
-}
-
-BlockAddress chunk_address_key(const BlockAddress &addr) {
-  BlockAddress key = addr;
-  key.block = glm::ivec3(0);
-  return key;
-}
-
-void collect_remesh_targets(const BlockWorld &world,
-                            const std::vector<BlockAddress> &new_chunks,
-                            const std::vector<BlockAddress> &desired,
-                            std::unordered_set<uint64_t> &out) {
-  std::unordered_set<uint64_t> desired_ids;
-  desired_ids.reserve(desired.size());
-  for (const BlockAddress &addr : desired) {
-    desired_ids.insert(BlockWorld::chunk_mesh_id(chunk_address_key(addr)));
-  }
-
-  for (const BlockAddress &nc : new_chunks) {
-    const BlockAddress base = chunk_address_key(nc);
-    out.insert(BlockWorld::chunk_mesh_id(base));
-    for (int32_t dcy = -1; dcy <= 1; ++dcy) {
-      for (int32_t dcz = -1; dcz <= 1; ++dcz) {
-        for (int32_t dcx = -1; dcx <= 1; ++dcx) {
-          if (dcx == 0 && dcy == 0 && dcz == 0) {
-            continue;
-          }
-          BlockAddress neighbor{};
-          if (!world.offset_chunk_address(base, dcx, dcy, dcz, neighbor)) {
-            continue;
-          }
-          const uint64_t mid = BlockWorld::chunk_mesh_id(neighbor);
-          if (desired_ids.find(mid) != desired_ids.end()) {
-            out.insert(mid);
-          }
-        }
-      }
-    }
-  }
 }
 
 double smooth_metric(double current, double sample, double alpha = 0.25) {
@@ -135,82 +75,17 @@ void append_screen_label(RenderMesh &dst, const std::string &text, float x,
   append_mesh(dst, build_screen_text_mesh(text, x, y, scale, color));
 }
 
-void append_screen_cursor(RenderMesh &dst, const glm::vec2 &position,
-                          const glm::vec3 &color) {
-  constexpr float kArm = 0.014f;
-  constexpr float kThickness = 0.0015f;
-  append_screen_rect(dst, position.x - kArm, position.y - kThickness,
-                     position.x + kArm, position.y + kThickness, color);
-  append_screen_rect(dst, position.x - kThickness, position.y - kArm,
-                     position.x + kThickness, position.y + kArm, color);
-}
-
-void append_wire_line(RenderMesh &mesh, const glm::dvec3 &a,
-                      const glm::dvec3 &b, const glm::vec3 &color) {
-  mesh.vertices.push_back(RenderVertex{glm::vec3(a), color, glm::vec3(0.0f)});
-  mesh.vertices.push_back(RenderVertex{glm::vec3(b), color, glm::vec3(0.0f)});
-  mesh.indices.push_back(static_cast<uint32_t>(mesh.vertices.size() - 2));
-  mesh.indices.push_back(static_cast<uint32_t>(mesh.vertices.size() - 1));
-}
-
-void append_dashed_line(RenderMesh &mesh, const glm::dvec3 &start,
-                        const glm::dvec3 &end, const glm::vec3 &color,
-                        int32_t segments) {
-  const int32_t count = std::max(4, segments);
-  for (int32_t i = 0; i < count; i += 2) {
-    const double t0 = static_cast<double>(i) / static_cast<double>(count);
-    const double t1 = static_cast<double>(i + 1) / static_cast<double>(count);
-    append_wire_line(mesh, glm::mix(start, end, t0),
-                     glm::mix(start, end, t1), color);
-  }
-}
-
-void append_dashed_ring(RenderMesh &mesh, const glm::dvec3 &center,
-                        const glm::dvec3 &right, const glm::dvec3 &up,
-                        double radius, double rotation,
-                        const glm::vec3 &color) {
-  constexpr int32_t kSegments = 32;
-  const double pi = std::numbers::pi_v<double>;
-  for (int32_t i = 0; i < kSegments; i += 2) {
-    const double a0 = rotation + 2.0 * pi * static_cast<double>(i) /
-                      static_cast<double>(kSegments);
-    const double a1 = rotation + 2.0 * pi * static_cast<double>(i + 1) /
-                      static_cast<double>(kSegments);
-    const glm::dvec3 p0 = center +
-        (right * std::cos(a0) + up * std::sin(a0)) * radius;
-    const glm::dvec3 p1 = center +
-        (right * std::cos(a1) + up * std::sin(a1)) * radius;
-    append_wire_line(mesh, p0, p1, color);
-  }
-}
-
-bool is_sky_navigation_target(int32_t body_index, int32_t active_body_index) {
-  // The body you're standing on is not a destination in its own sky.
-  return body_index != active_body_index;
-}
-
-std::string uppercase_ascii(std::string value) {
-  for (char &character : value) {
-    character = static_cast<char>(std::toupper(
-        static_cast<unsigned char>(character)));
-  }
-  return value;
-}
-
 void append_touch_button_hint(RenderMesh &dst, float x0, float y0, float x1,
                               float y1, const std::string &label) {
   append_screen_rect(dst, x0, y0, x1, y1, glm::vec3(0.05f, 0.07f, 0.09f));
   append_screen_label(dst, label, x0 + 0.025f, y0 - 0.045f, 0.0048f);
 }
 
-// Bottom-right block palette: one swatch per slot with its number key,
-// the selected slot outlined and named above the bar.
 void append_block_hotbar(RenderMesh &dst, size_t selected, float aspect) {
   constexpr float kSlot = 0.062f;
   constexpr float kGap = 0.014f;
   constexpr float kRight = 0.94f;
   constexpr float kTop = -0.66f;
-  // NDC x spans the wider screen axis; scale heights so swatches are square.
   const float slot_height = kSlot * std::max(aspect, 0.1f);
   const float left = kRight - static_cast<float>(kBlockHotbarSize) * kSlot -
                      static_cast<float>(kBlockHotbarSize - 1) * kGap;
@@ -296,11 +171,9 @@ RenderMesh build_local_player_debug_mesh(
     const PlayerAnimationRuntime &animation_runtime,
     bool devhud_enabled,
     bool render_local_avatar,
-    RuntimeDebugSceneSnapshot::AvatarStyle avatar_style,
-    bool spherical_planet) {
+    RuntimeDebugSceneSnapshot::AvatarStyle avatar_style) {
   RuntimeDebugSceneSnapshot snapshot{};
-  // Planet-local player coordinates are centered on the active body.
-  snapshot.spherical_planet = spherical_planet;
+  snapshot.spherical_planet = false;
   snapshot.spherical_planet_center = glm::vec3(0.0f);
   snapshot.devhud_enabled = devhud_enabled;
   snapshot.render_local_avatar = render_local_avatar;
@@ -322,6 +195,27 @@ RuntimeDebugSceneSnapshot::AvatarStyle avatar_style_from_character(
   }
   return RuntimeDebugSceneSnapshot::AvatarStyle::Capsule;
 }
+
+BlockAddress persistent_address_from_flat(const FlatBlockAddress &addr) {
+  VoxelChunkCoord2D coord{};
+  int lx = 0;
+  int lz = 0;
+  FlatWorld::world_to_local(addr.wx, addr.wz, coord, lx, lz);
+  return BlockAddress{
+      .sector = PlanetFace::PosY,
+      .shell = 0,
+      .chunk = glm::ivec3(coord.x, 0, coord.z),
+      .block = glm::ivec3(lx, addr.wy, lz),
+  };
+}
+
+FlatBlockAddress flat_address_from_persistent(const BlockAddress &addr) {
+  return FlatBlockAddress{
+      .wx = addr.chunk.x * VoxelChunk::CHUNK_X + addr.block.x,
+      .wy = addr.block.y,
+      .wz = addr.chunk.z * VoxelChunk::CHUNK_Z + addr.block.z,
+  };
+}
 } // namespace
 
 bool Engine::init(const EngineRuntimeOptions &options) {
@@ -330,7 +224,6 @@ bool Engine::init(const EngineRuntimeOptions &options) {
                           : PlatformServices::desktop_default();
   runtime_options = options;
   runtime_options.platform_services = nullptr;
-  load_spaceship_model(platform_services);
   session_state_.gameplay_started = true;
   session_state_.menu_open = false;
   session_state_.selected_character = GuiMenu::Character::Humanoid;
@@ -384,237 +277,71 @@ bool Engine::init(const EngineRuntimeOptions &options) {
 
   scene = RenderScene{};
   collision_world = VoxelCollisionWorld{nullptr};
+  active_collision_chunks_.clear();
+  dirty_chunk_meshes_.clear();
+  chunk_mesh_revisions_.clear();
+  next_chunk_revision_ = 1;
 
-  // ── Block-based voxel planet (Bowerbyte/Pec architecture) ───────────
-  // 6 cube-face sectors → shells (doubling resolution/axis) → 16³ chunks.
-  // 3D noise on sphere surface for seamless terrain.
-  PlanetDefinition planet_def{};
-  planet_def.center = glm::dvec3(0.0);
-  planet_def.radius = kPlayablePlanetConfig.radius_m;
-  planet_def.voxel_size = kPlayablePlanetConfig.voxel_size_m;
-  planet_def.chunks_per_face = 64;
-  planet_def.seed = k_voxov_flat_world_seed;
+  FlatWorldConfig fw_cfg{};
+  fw_cfg.seed = k_voxov_flat_world_seed;
+  fw_cfg.stream_radius_chunks = kFlatStreamRadiusChunks;
+  fw_cfg.evict_radius_chunks = kFlatEvictRadiusChunks;
+  fw_cfg.voxel_scale = 1.0f;
+  flat_world_.init(fw_cfg);
 
-  BlockWorldConfig bw_cfg{};
-  bw_cfg.planet = planet_def;
-  bw_cfg.surface_shells = kPlayablePlanetConfig.surface_shells;
-  bw_cfg.base_resolution = kPlayablePlanetConfig.base_resolution;
-  bw_cfg.block_size = kPlayablePlanetConfig.voxel_size_m;
-  bw_cfg.terrain_feature_size =
-      kPlayablePlanetConfig.terrain_feature_size_m;
-  bw_cfg.terrain_base_height =
-      kPlayablePlanetConfig.terrain_base_height_blocks;
-  bw_cfg.terrain_amplitude =
-      kPlayablePlanetConfig.terrain_amplitude_blocks;
-  bw_cfg.terrain_min_height =
-      kPlayablePlanetConfig.terrain_min_height_blocks;
-  bw_cfg.terrain_max_height =
-      kPlayablePlanetConfig.terrain_max_height_blocks;
-  bw_cfg.terrain_shell_margin =
-      kPlayablePlanetConfig.terrain_shell_margin_blocks;
-  bw_cfg.chunk_size = kPlayablePlanetConfig.chunk_size;
-  bw_cfg.seed = k_voxov_flat_world_seed;
-  block_world_.init(bw_cfg);
-
-  // Other bodies' terrain runtimes are created on demand from this base
-  // profile (see terrain_config_for_body).
-  base_terrain_config_ = bw_cfg;
-  parked_planets_.clear();
   chunk_generation_budget_ = kChunkGenerationBudget;
   mesh_build_budget_ = kChunkMeshBudget;
 
-  // ── LOD system ──────────────────────────────────────────────────────────
-  // WHY: distance-based chunk resolution reduces GPU vertex count for distant
-  // chunks. screen-space error metric with hysteresis prevents popping.
-  {
-    LODConfig lod_cfg{};
-    lod_cfg.error_threshold = 4.0f;      // pixels
-    lod_cfg.hysteresis_factor = 1.5f;    // dead zone to prevent oscillation
-    // A 64 m planet only keeps a small detailed patch. Coarsening those chunks
-    // saved little while introducing unstitched mixed-stride borders.
-    lod_cfg.max_lod_level = 0;
-    lod_system_.init(lod_cfg);
+  // Generate initial spawn patch around (32, 32) so spawn_player finds solid ground.
+  std::vector<VoxelChunkCoord2D> evicted;
+  const glm::dvec3 initial_anchor(32.0, 20.0, 32.0);
+  const auto initial_chunks =
+      flat_world_.stream_around(initial_anchor, 64, evicted);
+  for (const VoxelChunkCoord2D &c : initial_chunks) {
+    dirty_chunk_meshes_.insert(c);
   }
+  install_active_surface_collider();
 
-  // Wireframe debug overlay.
-  wireframe_planet_ = planet_def;
-  wireframe_planet_.chunks_per_face = 64;
-  wireframe_planet_dirty_ = true;
-  atmosphere_wireframe_mesh_ = build_atmosphere_wireframe_mesh(
-      planet_def, kPlayablePlanetConfig.atmosphere_height_m);
-
-  // Planet-surface collision from block-world terrain (shell-mapped meters).
-  collision_world.set_planet_surface_collider(
-      glm::vec3(planet_def.center),
-      static_cast<float>(planet_def.radius),
-      static_cast<float>(block_world_.max_surface_height_above_base()),
-      [&bw = block_world_](glm::vec3 direction) -> float {
-        return static_cast<float>(
-            bw.surface_height_above_base(glm::dvec3(direction)));
-      });
-
-  // Player spawn on the sun-facing +X equator of the outer shell.
-  {
-    const int32_t shell = block_world_.shell_count() - 1;
-    const int32_t equator_col =
-        block_world_.shell_config(shell).horizontal_res / 2;
-    local_player = PlayerControllerSystem::spawn_on_planet_surface(
-        block_world_, collision_world, PlanetFace::PosX, equator_col,
-        equator_col, 2.0);
-    local_player.controller.capsuleRadius = 0.7f;
-  }
+  local_player = PlayerControllerSystem::spawn_player(collision_world);
+  local_player.controller.capsuleRadius = 0.7f;
   local_player.camera_rig.pitch = -20.0f;
-  // Third-person orbit rig: distance 0 would be first-person; start in
-  // third-person so the new avatar is immediately visible.
   local_player.camera_rig.distance = 4.5f;
   local_player.camera_rig.maxDistance = 12.0f;
   local_player.camera_rig.minDistance = 1.2f;
   local_player.camera_rig.pivotHeight = 1.35f;
-  local_player.locomotion_tuning.flight_speed =
-      kPlayablePlanetConfig.debug_flight_speed_mps;
-  local_player.locomotion_tuning.flight_sprint_base_speed =
-      kPlayablePlanetConfig.debug_flight_sprint_base_mps;
-  local_player.locomotion_tuning.flight_sprint_altitude_scale =
-      kPlayablePlanetConfig.debug_flight_sprint_altitude_scale;
-  local_player.locomotion_tuning.flight_sprint_max_speed =
-      kPlayablePlanetConfig.debug_flight_sprint_max_mps;
-  local_player.locomotion_tuning.flight_acceleration =
-      kPlayablePlanetConfig.debug_flight_acceleration_mps2;
-  local_player.locomotion_tuning.flight_atmosphere_height =
-      static_cast<float>(kPlayablePlanetConfig.atmosphere_height_m);
+  local_player.locomotion_tuning.flight_speed = 18.0f;
+  local_player.locomotion_tuning.flight_sprint_base_speed = 48.0f;
+  local_player.locomotion_tuning.flight_sprint_altitude_scale = 0.5f;
+  local_player.locomotion_tuning.flight_sprint_max_speed = 120.0f;
+  local_player.locomotion_tuning.flight_acceleration = 80.0f;
   local_player_prev_position = local_player.transform.position;
   local_player_animation.reset(local_player.anim_state);
   expedition_mission_.reset();
+
   camera.z_far = 512.0f;
   camera.z_near = 0.25f;
+  update_first_person_camera(local_player, camera);
+
+  debug_fly_mode_ = false;
+  camera_snap_origin_ = glm::dvec3(local_player.transform.position);
+  load_persistent_game();
+  stream_flat_terrain();
   update_first_person_camera(local_player, camera);
 
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled,
       /*render_local_avatar=*/true,
-      avatar_style_from_character(session_state_.selected_character),
-      collision_world.has_planet_surface_collider());
+      avatar_style_from_character(session_state_.selected_character));
   refresh_overlay_text();
 
-    // Start with fly mode OFF — gravity walks on the sphere surface.
-    debug_fly_mode_ = false;
-    if (std::getenv("VOXOV_CAPTURE_ORBIT") != nullptr) {
-      const glm::dvec3 observation_direction = glm::normalize(
-          glm::dvec3(local_player.transform.position) - planet_def.center);
-      local_player.transform.position = glm::vec3(
-          planet_def.center + observation_direction *
-                                  (planet_def.radius +
-                                   kPlayablePlanetConfig.capture_orbit_altitude_m));
-      local_player.camera_rig.pitch = -89.0f;
-      local_player_prev_position = local_player.transform.position;
-      debug_fly_mode_ = true;
-    } else if (std::getenv("VOXOV_CAPTURE_FLIGHT") != nullptr) {
-      const glm::dvec3 observation_direction = glm::normalize(
-          glm::dvec3(local_player.transform.position) - planet_def.center);
-      local_player.transform.position = glm::vec3(
-          planet_def.center + observation_direction *
-                                  (planet_def.radius +
-                                   kPlayablePlanetConfig.capture_flight_altitude_m));
-      // Look back toward the compact planet so automated flight captures
-      // exercise the terrain handoff instead of recording empty sky.
-      local_player.camera_rig.pitch = -89.0f;
-      local_player_prev_position = local_player.transform.position;
-      debug_fly_mode_ = true;
-    }
-
-    // ── Solar system initialization ───────────────────────────────────
-    // Keplerian orbits use planetary distances. The planet's orbital position
-    // determines sun direction; its block-world centre remains at the origin.
-    solar_system_.init(planet_def.radius);
-    solar_system_time_ = 0.0;
-
-    // ── Coordinate frame manager initialization ───────────────────────
-    // Set up hierarchical frame transforms for inter-planetary travel.
-    // Player starts on planet surface → Planet frame.
-    frame_manager_.init();
-    active_frame_ = CoordinateFrame::Planet;
-    active_body_index_ = 1;  // Voxov planet
-    active_frame_label_ = "Planet";
-    frame_transition_cooldown_ = 0.0;
-
-    // ── Atmosphere initialization ────────────────────────────────────────
-    // Rayleigh + Mie scattering for sky color and aerial perspective.
-    // Keep the atmosphere in physical meters. This remains stable when the
-    // local terrain streamer later becomes one body in a multi-body universe.
-    {
-        AtmosphereParams atm_params = compact_planet_atmosphere(
-            planet_def.radius, kPlayablePlanetConfig.atmosphere_height_m);
-        atm_params.sun_direction = solar_system_.sun_direction_from(
-            solar_system_.body_position(active_body_index_));
-        atmosphere_.init(atm_params);
-        atmosphere_enabled_ = kPlayablePlanetConfig.atmosphere_enabled;
-    }
-
-    spdlog::info("Engine init: block planet r={:.0f}m, shells={}, fly=OFF",
-               planet_def.radius,
-               block_world_.shell_count());
-    // ── Flight vehicle spawn ──────────────────────────────────────────────
-    // Spawn the vehicle on the planet surface near the player, with
-    // initial forward direction pointing east (tangent to sphere).
-    if (kPlayablePlanetConfig.flight_vehicle_enabled) {
-        VehicleConfig vcfg{};
-        vcfg.mass = 1500.0;
-        vcfg.wing_area = 25.0;
-        vcfg.drag_coefficient = 0.025;
-        vcfg.lift_coefficient = 0.7;
-        vcfg.max_thrust = 60000.0;
-        vcfg.fuel_capacity = 200.0;
-        vcfg.fuel_consumption = 0.08;
-        flight_vehicle_.init(vcfg);
-
-        // Position: on the surface at the player's location offset by +3m radial.
-        const glm::dvec3 surface_normal = glm::normalize(
-            glm::dvec3(local_player.transform.position));
-        const double surface_r =
-            block_world_.surface_radial_distance(surface_normal);
-        const glm::dvec3 vehicle_pos = surface_normal * (surface_r + 3.0);
-
-        // Compute tangent directions for orientation at spawn.
-        glm::dvec3 world_ref(0.0, 1.0, 0.0);
-        if (std::abs(glm::dot(surface_normal, world_ref)) > 0.99)
-            world_ref = glm::dvec3(0.0, 0.0, 1.0);
-        const glm::dvec3 east = glm::normalize(glm::cross(world_ref, surface_normal));
-        const glm::dvec3 north = glm::normalize(glm::cross(surface_normal, east));
-
-        // Build quaternion from local tangent frame: up = surface_normal,
-        // forward = north. Column 0 must be up x forward for a proper
-        // (det +1) rotation; (east, up, north) would be a reflection.
-        const glm::dmat3 rot(glm::cross(surface_normal, north),
-                             surface_normal, north);
-        flight_vehicle_.state().position = vehicle_pos;
-        flight_vehicle_.state().orientation = glm::quat_cast(rot);
-        flight_vehicle_.state().forward = north;
-        flight_vehicle_.state().up = surface_normal;
-        flight_vehicle_.state().right = east;
-        flight_vehicle_spawned_ = true;
-    } else {
-        flight_vehicle_spawned_ = false;
-    }
-
-    spdlog::info("Player spawn: ({:.1f}, {:.1f}, {:.1f}), terrain_h={}, z_far={:.0f}",
-               local_player.transform.position.x,
+  spdlog::info("Engine init: endless flat world seed={:#x} spawn=({:.1f}, {:.1f}, {:.1f})",
+               fw_cfg.seed, local_player.transform.position.x,
                local_player.transform.position.y,
-               local_player.transform.position.z,
-               block_world_.terrain_height_at(
-                   glm::normalize(glm::dvec3(local_player.transform.position))),
-               camera.z_far);
-
-  // Initialize camera-relative snap origin at player spawn position.
-  camera_snap_origin_ = glm::dvec3(local_player.transform.position);
-  snap_origin_dirty_ = true;
-  rebuild_global_planet_surface();
-  load_persistent_game();
-  update_first_person_camera(local_player, camera);
-  place_ship_near_player();
+               local_player.transform.position.z);
 
   if (!renderer.init(RendererCreateInfo{
-      .backend = runtime_options.render_backend,
-  })) {
+          .backend = runtime_options.render_backend,
+      })) {
     std::fprintf(stderr, "Engine init failed: renderer init failed\n");
     physics.shutdown();
     return false;
@@ -636,23 +363,18 @@ EngineConnectResult Engine::connect(const char *host, uint16_t port) {
     return EngineConnectResult::ConnectFailed;
   }
   NetChunkInterest interest{};
-  interest.body_id = static_cast<uint32_t>(active_body_index_);
+  interest.body_id = 0;
   interest.radius = 2;
   net_client_.set_chunk_interest(interest);
   return EngineConnectResult::Connected;
 }
 
 void Engine::start_local_server(uint16_t port, bool loopback_only) {
-  if (local_server_running_ && local_server_loopback_ == loopback_only) {
+  if (local_server_running_) {
     return;
   }
-  if (local_server_running_) {
-    local_server_.shutdown();
-    local_server_running_ = false;
-  }
-  if (!local_server_.init(port, loopback_only)) {
-    spdlog::error("Failed to start {} server on {}",
-                  loopback_only ? "local-only" : "LAN", port);
+  if (!local_server_.init(port)) {
+    spdlog::error("Local server failed to initialize on port {}", port);
     return;
   }
   local_server_loopback_ = loopback_only;
@@ -681,8 +403,7 @@ bool Engine::capture_screenshot(const char *filepath, int width, int height) {
   return renderer.capture_screenshot(filepath, width, height);
 }
 
-void Engine::tick(double frame_dt,
-                  EngineInputFrame input_frame,
+void Engine::tick(double frame_dt, EngineInputFrame input_frame,
                   const RenderSurface &surface) {
   const PerfClock::time_point frame_cpu_start = PerfClock::now();
   const FixedStep &fixed = game_session.fixed_step();
@@ -702,10 +423,7 @@ void Engine::tick(double frame_dt,
   });
 
   InputState gameplay_input = input_frame.primary;
-  apply_session_input(gameplay_input, surface);
-
-  apply_sky_navigation_assist(gameplay_input, frame_dt);
-  update_ship_controls(gameplay_input, frame_dt);
+  apply_session_input(gameplay_input);
   touch_controls_visible_ = input_frame.touch_mode;
 
   PlayerControllerSystem::update_camera_rig(
@@ -714,63 +432,18 @@ void Engine::tick(double frame_dt,
 
   ProfilingSnapshot profiling_sample{};
   simulate_frame(gameplay_input, input_frame, frame_dt, profiling_sample);
-  transfer_ship_between_bodies();
 
   const double camera_altitude = update_camera(frame_dt, surface);
 
-  // gameplay_input has clicks cleared while a menu or sky navigation is open.
   update_block_interaction(gameplay_input);
   flush_pending_save(frame_dt);
 
-  // ── Camera-relative rendering origin ─────────────────────────────────
-  // Every retained mesh owns the double-precision origin used to build its
-  // float vertices. The camera can therefore rebase every frame without
-  // invalidating chunks or causing a visible streaming reset.
-  {
-    const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
-    camera_snap_origin_ = cam_pos;
-  }
-  // Camera origin must be the snap origin so the GPU shader can compute
-  // correct camera-relative positions for lighting.
+  camera_snap_origin_ = glm::dvec3(camera.transform.position);
   scene.camera_origin.world_origin = camera_snap_origin_;
 
-  // Periodic frame summary for headless/automated diagnosis. Enable with
-  // SPDLOG_LEVEL=debug.
-  if (frame_index % 120 == 0 && spdlog::should_log(spdlog::level::debug)) {
-    spdlog::debug(
-        "Frame {} | cam=({:.0f},{:.0f},{:.0f}) pitch={:.0f} yaw={:.0f} "
-        "alt={:.0f}m | grounded={} vel={:.1f}m/s | fps={:.0f} dt={:.1f}ms | "
-        "draws={} verts={} tris={} | lod={}/{}/{}/{} chunks={} opaques={} | "
-        "gen={:.1f} mesh={:.1f} upload={:.1f}ms",
-        frame_index, camera.transform.position.x, camera.transform.position.y,
-        camera.transform.position.z, local_player.camera_rig.pitch,
-        local_player.camera_rig.yaw,
-        glm::length(local_player.transform.position) -
-            block_world_.planet().radius,
-        local_player.controller.grounded,
-        glm::length(local_player.controller.velocity), render_stats.fps,
-        render_stats.frame_ms, render_stats.draw_call_count,
-        render_stats.total_vertices, render_stats.total_indices / 3,
-        render_stats.lod_chunk_count[0], render_stats.lod_chunk_count[1],
-        render_stats.lod_chunk_count[2], render_stats.lod_chunk_count[3],
-        block_world_.chunk_count(), scene.opaque_meshes.size(),
-        render_stats.chunk_gen_ms, render_stats.mesh_build_ms,
-        render_stats.gpu_upload_ms);
-  }
+  const TerrainStreamTimings terrain_timings = stream_flat_terrain();
+  append_remote_player_meshes();
 
-  const TerrainStreamTimings terrain_timings =
-      stream_block_terrain(camera_altitude, surface);
-
-  rebuild_wireframe_overlays();
-
-  update_solar_system(frame_dt);
-
-  update_coordinate_frames(frame_dt);
-
-  append_celestial_meshes(surface);
-  append_ship_mesh();
-
-  // ── Frame profiler: time GPU upload (buffer creation/update) ──
   const PerfClock::time_point gpu_upload_start = PerfClock::now();
   renderer.upload_scene(scene);
   const double gpu_upload_ms = elapsed_ms(gpu_upload_start, PerfClock::now());
@@ -779,15 +452,13 @@ void Engine::tick(double frame_dt,
 
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled,
-      local_player.camera_rig.distance > 0.1f && !piloting_ship_,
-      avatar_style_from_character(session_state_.selected_character),
-      collision_world.has_planet_surface_collider());
+      local_player.camera_rig.distance > 0.1f,
+      avatar_style_from_character(session_state_.selected_character));
   append_target_outline(scene.debug_world);
   refresh_overlay_text();
   renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
 
-  update_sky_color(camera_altitude);
-
+  (void)camera_altitude;
   const RenderFrameContext ctx = build_render_context(frame_dt, surface);
 
   const PerfClock::time_point render_cpu_start = PerfClock::now();
@@ -800,25 +471,7 @@ void Engine::tick(double frame_dt,
   render_stats.cpu_ms = smooth_metric(render_stats.cpu_ms, frame_cpu_ms, 0.25);
 }
 
-void Engine::apply_session_input(InputState &gameplay_input,
-                                 const RenderSurface &surface) {
-  if (surface.width > 0 && surface.height > 0) {
-    sky_navigation_cursor_ndc_ = glm::vec2(
-        gameplay_input.cursor_position.x /
-                static_cast<float>(surface.width) * 2.0f -
-            1.0f,
-        1.0f - gameplay_input.cursor_position.y /
-                  static_cast<float>(surface.height) * 2.0f);
-  }
-  if (gameplay_input.sky_navigation_toggle_pressed &&
-      session_state_.gameplay_started && !session_state_.menu_open) {
-    sky_navigation_mode_ = !sky_navigation_mode_;
-    sky_navigation_locked_ = false;
-    last_hud_message_ = sky_navigation_mode_
-        ? "Sky navigation ON — arrows select, ENTER locks"
-        : "Sky navigation OFF";
-  }
-
+void Engine::apply_session_input(InputState &gameplay_input) {
   if (gameplay_input.camera_toggle_pressed &&
       session_state_.gameplay_started && !session_state_.menu_open) {
     CameraRig &rig = local_player.camera_rig;
@@ -831,83 +484,6 @@ void Engine::apply_session_input(InputState &gameplay_input,
       rig.distance = third_person_distance_;
       last_hud_message_ = "Third-person view — mouse wheel zooms";
     }
-  }
-
-  if (sky_navigation_mode_) {
-    const int32_t body_count = solar_system_.body_count();
-    auto valid_target = [&](int32_t index) {
-      return index >= 0 && index < body_count &&
-          (piloting_ship_
-              ? has_terrain_runtime(index) &&
-                    (index != active_body_index_ || sky_navigation_locked_)
-              : is_sky_navigation_target(index, active_body_index_));
-    };
-    if (!valid_target(sky_navigation_target_index_)) {
-      sky_navigation_locked_ = false;
-      sky_navigation_target_index_ = -1;
-      for (int32_t i = 0; i < body_count; ++i) {
-        if (valid_target(i)) {
-          sky_navigation_target_index_ = i;
-          break;
-        }
-      }
-    }
-
-    if (!sky_navigation_locked_ && body_count > 0 && surface.width > 0 &&
-        surface.height > 0) {
-      // Sky destinations are selected by hovering their projected marker.
-      // Keep the selection radius generous enough for a moving target while
-      // still requiring the cursor to be meaningfully over a destination.
-      const glm::mat4 vp = camera.projection(
-                               static_cast<float>(surface.width) /
-                               static_cast<float>(surface.height)) *
-                           camera.view();
-      const glm::dvec3 planet_orbit_pos =
-          solar_system_.body_position(active_body_index_);
-      constexpr float kSelectionRadius = 0.14f;
-      float best_distance_sq = kSelectionRadius * kSelectionRadius;
-      int32_t hovered_target = -1;
-
-      for (int32_t i = 0; i < body_count; ++i) {
-        if (!valid_target(i)) continue;
-        const CelestialBody &body =
-            solar_system_.bodies()[static_cast<size_t>(i)];
-        const glm::dvec3 body_world = body.position - planet_orbit_pos;
-        glm::vec4 clip = vp * glm::vec4(glm::vec3(body_world), 1.0f);
-        if (clip.w <= 0.0f) continue;
-        const glm::vec2 marker(clip.x / clip.w, clip.y / clip.w);
-        if (marker.x < -1.0f || marker.x > 1.0f || marker.y < -1.0f ||
-            marker.y > 1.0f) {
-          continue;
-        }
-        const glm::vec2 delta = marker - sky_navigation_cursor_ndc_;
-        const float distance_sq = glm::dot(delta, delta);
-        if (distance_sq < best_distance_sq) {
-          best_distance_sq = distance_sq;
-          hovered_target = i;
-        }
-      }
-      if (hovered_target >= 0) {
-        sky_navigation_target_index_ = hovered_target;
-      }
-    }
-
-    if (gameplay_input.sky_navigation_lock_pressed &&
-        valid_target(sky_navigation_target_index_)) {
-      sky_navigation_locked_ = !sky_navigation_locked_;
-      if (sky_navigation_locked_) {
-        expedition_mission_.on_course_locked(sky_navigation_target_index_);
-        (void)save_persistent_game();
-      }
-      last_hud_message_ = sky_navigation_locked_
-          ? "Navigation locked"
-          : "Navigation unlocked";
-    }
-
-    // Enter belongs to the sky selector while it is open. Cursor movement is
-    // intentionally not forwarded to first-person camera look.
-    disable_gameplay_actions(gameplay_input);
-    gameplay_input.look_delta = glm::vec2(0.0f);
   }
 
   if (gameplay_input.debug_freeze_toggle_pressed) {
@@ -929,149 +505,40 @@ void Engine::apply_session_input(InputState &gameplay_input,
   }
 }
 
-void Engine::apply_sky_navigation_assist(InputState &gameplay_input,
-                                         double frame_dt) {
-  // Aboard a ship, navigation drives its thrusters in update_ship_controls.
-  // The player-only assist must never teleport the pilot away from the hull.
-  if (piloting_ship_) return;
-  // Holding W after locking a destination engages a readable flight assist:
-  // the camera slews onto the dashed route, propulsion follows that route,
-  // and arrival hands control to the destination's resident terrain runtime.
-  // Releasing W returns control to the normal flight input.
-  if (sky_navigation_mode_ && sky_navigation_locked_ &&
-      gameplay_input.key_w &&
-      sky_navigation_target_index_ >= 0 &&
-      sky_navigation_target_index_ < solar_system_.body_count()) {
-    const glm::dvec3 active_origin =
-        solar_system_.body_position(active_body_index_);
-    const CelestialBody &target = solar_system_.bodies()[static_cast<size_t>(
-        sky_navigation_target_index_)];
-    const glm::dvec3 target_local = target.position - active_origin;
-    const glm::dvec3 to_target = target_local -
-        glm::dvec3(local_player.transform.position);
-    const double distance = glm::length(to_target);
-
-    if (distance <= target.orbital.radius + 4.0 &&
-        has_terrain_runtime(sky_navigation_target_index_)) {
-      const glm::dvec3 approach = glm::length(glm::dvec3(
-          local_player.transform.position) - target_local) > 1.0e-6
-          ? glm::normalize(glm::dvec3(local_player.transform.position) -
-                           target_local)
-          : glm::dvec3(1.0, 0.0, 0.0);
-      switch_active_planet(sky_navigation_target_index_);
-      local_player.transform.position = glm::vec3(
-          approach * block_world_.surface_radial_distance(approach) +
-          approach * 2.0);
-      local_player.controller.velocity = glm::vec3(0.0f);
-      local_player.controller.grounded = true;
-      local_player.flight = PlayerFlightState{};
-      debug_fly_mode_ = false;
-      sky_navigation_locked_ = false;
-      expedition_mission_.on_landed(active_body_index_);
-      (void)save_persistent_game();
-      last_hud_message_ = "Landed on " + target.name;
-    } else {
-      debug_fly_mode_ = true;
-      gameplay_input.move = glm::vec2(0.0f, 1.0f);
-      gameplay_input.sprint_held = true;
-
-      const glm::vec3 up = collision_world.planet_up_at(
-          local_player.transform.position);
-      const glm::vec3 north =
-          player_surface_orientation::reference_forward(
-              local_player.camera_rig, up);
-      const glm::vec3 east =
-          player_surface_orientation::east_from_forward(north, up);
-      const glm::vec3 direction = glm::normalize(glm::vec3(to_target));
-      const float tangent_length = std::max(
-          1.0e-5f, glm::length(direction - up * glm::dot(direction, up)));
-      const float target_yaw = glm::degrees(std::atan2(
-          glm::dot(direction, east), glm::dot(direction, north)));
-      const float target_pitch = glm::degrees(std::atan2(
-          glm::dot(direction, up), tangent_length));
-      const float yaw_delta = std::remainder(
-          target_yaw - local_player.camera_rig.yaw, 360.0f);
-      const float steer = static_cast<float>(std::clamp(
-          frame_dt * 5.0, 0.0, 1.0));
-      local_player.camera_rig.yaw += yaw_delta * steer;
-      local_player.camera_rig.pitch = glm::mix(
-          local_player.camera_rig.pitch, target_pitch, steer);
-    }
-  }
-}
-
 double Engine::update_camera(double frame_dt, const RenderSurface &surface) {
-  if (piloting_ship_) {
-    update_ship_camera(frame_dt);
-  } else {
-    update_first_person_camera(local_player, local_player.transform.position,
-                               camera, static_cast<float>(frame_dt));
-  }
+  update_first_person_camera(local_player, local_player.transform.position,
+                             camera, static_cast<float>(frame_dt));
 
-  // Preserve precision near blocks while allowing the whole compact planet
-  // to fit in the frustum during debug flight.
-  const double camera_altitude = std::max(
-      0.0, glm::length(glm::dvec3(camera.transform.position) -
-                       block_world_.planet().center) -
-               block_world_.planet().radius);
-  const float target_near = camera_altitude > 10'000.0
-                                ? static_cast<float>(std::clamp(
-                                      camera_altitude / 100'000.0,
-                                      2.0, 100.0))
-                                : 0.25f;
-  const float target_far = static_cast<float>(std::max(
-      512.0, std::min(block_world_.planet().radius * 12.0,
-                      (block_world_.planet().radius + camera_altitude) * 4.0)));
   const float camera_ease = 1.0f - std::exp(
       -6.0f * static_cast<float>(std::clamp(frame_dt, 0.0, 0.1)));
-  camera.z_near = glm::mix(camera.z_near, target_near, camera_ease);
-  camera.z_far = target_far > camera.z_far
-                     ? target_far
-                     : glm::mix(camera.z_far, target_far, camera_ease);
+  camera.z_near = 0.25f;
+  camera.z_far = 512.0f;
+  viewport_aspect_ratio_ = static_cast<float>(surface.width) /
+                           static_cast<float>(std::max(1, surface.height));
   const float flight_speed = glm::length(local_player.controller.velocity);
-  sky_navigation_aspect_ratio_ = static_cast<float>(surface.width) /
-                                 static_cast<float>(std::max(1, surface.height));
-  if (sky_navigation_mode_) {
-    // Keep the star and distant planetary markers in the navigation frustum.
-    camera.z_far = std::max(camera.z_far, 250'000'000.0f);
-  }
-  const float flight_fov_speed = std::max(
-      1.0f, kPlayablePlanetConfig.debug_flight_sprint_max_mps);
-  const float speed_fov = (debug_fly_mode_ || piloting_ship_)
-                              ? std::clamp(flight_speed / flight_fov_speed,
-                                           0.0f, 1.0f) * 12.0f
-                              : 0.0f;
+  const float speed_fov =
+      debug_fly_mode_ ? std::clamp(flight_speed / 120.0f, 0.0f, 1.0f) * 12.0f
+                      : 0.0f;
   camera.fov_y_radians = glm::mix(
       camera.fov_y_radians, glm::radians(70.0f + speed_fov), camera_ease);
-  return camera_altitude;
+  return std::max(0.0, static_cast<double>(camera.transform.position.y));
 }
 
 void Engine::simulate_frame(InputState &gameplay_input,
                             EngineInputFrame &input_frame, double frame_dt,
                             ProfilingSnapshot &profiling_sample) {
   const FixedStep &fixed = game_session.fixed_step();
-  // Toggle the vehicle engine once per frame. Inside the fixed step a frame
-  // with two steps toggled it twice, silently cancelling the key press.
-  if (flight_vehicle_spawned_ && gameplay_input.engine_toggle_pressed) {
-    flight_vehicle_.state().engine_active =
-        !flight_vehicle_.state().engine_active;
-    last_hud_message_ = flight_vehicle_.state().engine_active
-        ? "Vehicle engine ON" : "Vehicle engine OFF";
-  }
   bool jump_consumed = false;
-  const bool observation_capture =
-      std::getenv("VOXOV_CAPTURE_ORBIT") != nullptr ||
-      std::getenv("VOXOV_CAPTURE_FLIGHT") != nullptr;
   const RuntimeGameSessionCallbacks callbacks{
-      .pump_server = [this]() {
-        if (local_server_running_) {
-          local_server_.pump();
-        }
-        net_client_.pump();
-      },
+      .pump_server =
+          [this]() {
+            if (local_server_running_) {
+              local_server_.pump();
+            }
+            net_client_.pump();
+          },
       .simulate_step =
-          [this, &gameplay_input, &jump_consumed, observation_capture,
-           &input_frame,
+          [this, &gameplay_input, &jump_consumed, &input_frame,
            &profiling_sample](const RuntimeGameSessionStepContext &step) {
             local_player_prev_position = local_player.transform.position;
             InputState step_input = gameplay_input;
@@ -1082,70 +549,11 @@ void Engine::simulate_frame(InputState &gameplay_input,
             PlayerCollisionDebug collision_debug{};
             {
               ScopedCPUTimer timer(profiling_sample.gameplay_cpu_ms);
-              if (piloting_ship_) {
-                step_ship(step.dt);
-              } else if (observation_capture && debug_fly_mode_) {
-                // Hold diagnostic views while terrain settles. Normal debug
-                // flight intentionally descends under gravity without input.
-                local_player.controller.velocity = glm::vec3(0.0f);
-              } else {
-                collision_debug = PlayerControllerSystem::simulate_fixed(
-                    local_player, step_input, collision_world, step.dt,
-                    debug_fly_mode_);
-              }
+              collision_debug = PlayerControllerSystem::simulate_fixed(
+                  local_player, step_input, collision_world, step.dt,
+                  debug_fly_mode_);
             }
 
-            // ── Flight vehicle physics ──────────────────────────────────
-            // Update vehicle state each fixed step with aerodynamic forces.
-            // WHY in simulate_step: physics should run at fixed rate for
-            // deterministic integration, independent of render framerate.
-            if (flight_vehicle_spawned_ &&
-                flight_vehicle_.state().engine_active) {
-              // Throttle: Shift increases, Ctrl decreases.
-              double throttle = flight_vehicle_.state().throttle;
-              if (gameplay_input.sprint_held) {
-                throttle = std::min(1.0, throttle + step.dt * 0.5);  // ramp up
-              }
-              if (gameplay_input.crouch_held) {
-                throttle = std::max(0.0, throttle - step.dt * 0.5);  // ramp down
-              }
-              flight_vehicle_.set_throttle(throttle);
-
-              // Flight controls: WASD for pitch/yaw, Q/E for roll.
-              // W/S → pitch, A/D → yaw, Q/E → roll.
-              constexpr double k_angular_rate = 2.0;  // rad/s at full input
-              flight_vehicle_.apply_pitch(gameplay_input.move.y * k_angular_rate);
-              flight_vehicle_.apply_yaw(gameplay_input.move.x * k_angular_rate);
-              // Roll: Q (zoom_in) and E (interact key) for roll left/right.
-              double roll_input = 0.0;
-              if (gameplay_input.key_a) roll_input -= 0.5;  // A also rolls left
-              if (gameplay_input.key_d) roll_input += 0.5;  // D also rolls right
-              flight_vehicle_.apply_roll(roll_input * k_angular_rate);
-
-              // Compute gravity toward planet centre.
-              const glm::dvec3 vpos = flight_vehicle_.state().position;
-              const double dist_from_center = glm::length(vpos);
-              const glm::dvec3 grav_dir = (dist_from_center > 1e-6)
-                  ? -glm::normalize(vpos) : glm::dvec3(0.0, -1.0, 0.0);
-              // Gravity scales with inverse square of distance from planet centre.
-              const double planet_radius = block_world_.planet().radius;
-              constexpr double k_surface_gravity = 9.81;
-              const double grav_mag = k_surface_gravity *
-                  (planet_radius / dist_from_center) *
-                  (planet_radius / dist_from_center);
-              const glm::dvec3 gravity = grav_dir * grav_mag;
-
-              // Air density: exponential decay with altitude.
-              // Scale height H ≈ 20m for our small 500m planet.
-              const double altitude = dist_from_center - planet_radius;
-              constexpr double k_sea_level_density = 1.225;  // kg/m³ at surface
-              constexpr double k_scale_height = 8'000.0;      // m
-              const double air_density = (altitude > 0.0)
-                  ? k_sea_level_density * std::exp(-altitude / k_scale_height)
-                  : k_sea_level_density;
-
-              flight_vehicle_.update(step.dt, air_density, gravity);
-            }
             {
               ScopedCPUTimer timer(profiling_sample.animation_cpu_ms);
               sync_local_animation_runtime(local_player, local_player_animation,
@@ -1213,722 +621,127 @@ void Engine::simulate_frame(InputState &gameplay_input,
   }
 }
 
-Engine::TerrainStreamTimings Engine::stream_block_terrain(
-    double camera_altitude, const RenderSurface &surface) {
-  // ── Block world chunk streaming ─────────────────────────────────────
-  // Load surface chunks in a radius around the player using the cube-sphere
-  // shell architecture (6 sectors, radial shells doubling horizontal res,
-  // 16^3 chunks). This follows proven techniques from Bowerbyte Blocky Planet,
-  // Jordan Peck Voxel Planet, Jacco's shell+slab approach, and the 2016
-  // Dimitrijević et al. paper on cube map projections for planet terrain
-  // (quadsphere to minimize distortion at 1m surface resolution).
-  // New chunks generated+meshed budget-limited per frame. When player moves
-  // to new chunk center or snap drifts, stale evicted and full set rebuilt.
-  // WHY for playable: only near-player data can be loaded (full 2000km 1m
-  // surface is ~10^13 blocks impossible); dy layers ensure the visible
-  // terrain top (Grass) in the outer thin shell is meshed (not just deep stone).
-  double chunk_gen_ms = 0.0;
-  double mesh_build_ms = 0.0;
-  const glm::dvec3 player_velocity(local_player.controller.velocity);
-  const double stream_speed = glm::length(player_velocity);
-  // A small planet brings the horizon into view quickly. Start the detailed
-  // stream before the player reaches the old 32 m cutoff, with extra lead for
-  // high-speed flight. This gives generation and meshing time to finish before
-  // a chunk crosses the near-plane instead of relying on the coarse shell.
-  const double stream_lead = std::clamp(
-      16.0 + stream_speed * 0.75,
-      16.0,
-      block_world_.planet().radius * 1.5);
-  const bool detailed_terrain_needed =
-      camera_altitude <=
-      kPlayablePlanetConfig.local_terrain_max_altitude_m + stream_lead;
-  if (detailed_terrain_needed) {
-    // Keep the recessed coarse globe behind the local voxel stream. Detailed
-    // chunks own the visible silhouette when resident, while the fallback
-    // prevents generation and eviction gaps from exposing the sky.
-    const glm::dvec3 player_offset =
-        glm::dvec3(local_player.transform.position) - block_world_.planet().center;
-    const glm::dvec3 surface_direction = glm::dot(player_offset, player_offset) > 1.0e-9
-                                             ? glm::normalize(player_offset)
-                                             : glm::dvec3(1.0, 0.0, 0.0);
-    const glm::dvec3 stream_anchor =
-        block_world_.planet().center +
-        surface_direction * block_world_.surface_radial_distance(surface_direction);
-    const BlockAddress player_addr =
-        block_world_.address_from_world(stream_anchor);
-    const int32_t surface_shell = block_world_.shell_count() - 1;
-    const int32_t chunk_radius = kSurfaceStreamRadiusChunks;
-
-    // Hash the chunk center (incl. radial y) to detect player movement to a
-    // new (x,z) column or crossing into a different radial chunk layer.
-    uint64_t center_hash =
-        (static_cast<uint64_t>(player_addr.chunk.x) << 32) ^
-        (static_cast<uint64_t>(static_cast<uint32_t>(player_addr.chunk.z))) ^
-        (static_cast<uint64_t>(static_cast<uint32_t>(player_addr.chunk.y)) << 16) ^
-        (static_cast<uint64_t>(static_cast<uint8_t>(player_addr.sector)) << 48);
-    const bool player_moved = (center_hash != last_chunk_center_hash_);
-
-    // Predict ahead along the actual flight velocity. Detailed chunks are
-    // requested around both the player and the future position, while a wider
-    // guard band retains the old neighborhood until it is safely behind us.
-    const double lookahead_seconds = std::clamp(
-        0.35 + stream_speed /
-                   std::max(64.0, block_world_.planet().radius * 4.0),
-        0.35, 1.25);
-    glm::dvec3 lookahead = player_velocity * lookahead_seconds;
-    const double max_lookahead =
-        std::min(192.0, block_world_.planet().radius * 1.5);
-    const double lookahead_distance = glm::length(lookahead);
-    if (lookahead_distance > max_lookahead) {
-      lookahead *= max_lookahead / lookahead_distance;
-    }
-    const glm::dvec3 predicted_offset = player_offset + lookahead;
-    const glm::dvec3 predicted_direction =
-        glm::dot(predicted_offset, predicted_offset) > 1.0e-9
-            ? glm::normalize(predicted_offset)
-            : surface_direction;
-    const glm::dvec3 predicted_anchor =
-        block_world_.planet().center +
-        predicted_direction *
-            block_world_.surface_radial_distance(predicted_direction);
-    const BlockAddress predicted_addr =
-        block_world_.address_from_world(predicted_anchor);
-
-    auto append_unique_chunks = [](
-        std::vector<BlockAddress> &destination,
-        const std::vector<BlockAddress> &source) {
-      std::unordered_set<BlockAddress, BlockAddressHash> known(
-          destination.begin(), destination.end());
-      for (const BlockAddress &address : source) {
-        if (known.insert(address).second) {
-          destination.push_back(address);
-        }
-      }
-    };
-
-    // Collect desired chunks for the current and predicted surface positions,
-    // including adjacent cube faces near sector edges.
-    std::vector<BlockAddress> desired;
-    block_world_.collect_stream_chunks(player_addr, surface_shell,
-                                       chunk_radius, desired);
-    std::vector<BlockAddress> predicted_desired;
-    block_world_.collect_stream_chunks(predicted_addr, surface_shell,
-                                       chunk_radius, predicted_desired);
-    append_unique_chunks(desired, predicted_desired);
-
-    std::vector<BlockAddress> resident;
-    block_world_.collect_stream_chunks(player_addr, surface_shell,
-                                       chunk_radius + 2, resident);
-    std::vector<BlockAddress> predicted_resident;
-    block_world_.collect_stream_chunks(predicted_addr, surface_shell,
-                                       chunk_radius + 2,
-                                       predicted_resident);
-    append_unique_chunks(resident, predicted_resident);
-    if (player_moved) {
-      block_world_.evict_chunks_except(resident);
-    }
-
-    // Generate missing chunks nearest-first with a per-frame budget (Craft-style
-    // streaming: show something quickly, fill the halo over subsequent frames).
-    const PerfClock::time_point chunk_gen_start = PerfClock::now();
-    auto chunk_dist_sq = [&](const BlockAddress &addr) -> double {
-      const glm::dvec3 center =
-          block_world_.world_from_address(chunk_address_key(addr));
-      const glm::dvec3 current_delta = center - stream_anchor;
-      const glm::dvec3 predicted_delta = center - predicted_anchor;
-      return std::min(glm::dot(current_delta, current_delta) * 0.75,
-                      glm::dot(predicted_delta, predicted_delta));
-    };
-
-    std::vector<BlockAddress> missing_chunks;
-    missing_chunks.reserve(desired.size());
-    for (const BlockAddress &addr : desired) {
-      if (block_world_.find_chunk(addr) != nullptr) {
-        continue;
-      }
-      missing_chunks.push_back(addr);
-    }
-    std::sort(missing_chunks.begin(), missing_chunks.end(),
-              [&](const BlockAddress &a, const BlockAddress &b) {
-                return chunk_dist_sq(a) < chunk_dist_sq(b);
-              });
-
-    std::vector<BlockAddress> new_chunks;
-    new_chunks.reserve(missing_chunks.size());
-    const uint32_t active_generation_budget = std::min<uint32_t>(
-        12u, chunk_generation_budget_ +
-                 static_cast<uint32_t>(stream_speed / 96.0));
-    uint32_t gen_count = 0;
-    for (const BlockAddress &addr : missing_chunks) {
-      if (gen_count >= active_generation_budget) {
-        break;
-      }
-      block_world_.get_or_generate_chunk(addr);
-      new_chunks.push_back(addr);
-      ++gen_count;
-    }
-    chunk_gen_ms = elapsed_ms(chunk_gen_start, PerfClock::now());
-
-    // Full vertex rebuild only when the camera snap origin shifts (all stored
-    // verts are offsets from snap). Player chunk changes are incremental:
-    // evict far meshes and mesh the new halo — clearing everything on every
-    // chunk step caused multi-second stalls and visible terrain holes.
-    const bool need_full_rebuild = snap_origin_dirty_;
-    // ── Frame profiler: time mesh building (face culling + greedy meshing) ──
-    const PerfClock::time_point mesh_build_start = PerfClock::now();
-    std::unordered_set<uint64_t> remesh_targets;
-    if (!new_chunks.empty()) {
-      collect_remesh_targets(block_world_, new_chunks, desired, remesh_targets);
-    }
-
-    auto mesh_in_scene = [&](uint64_t mid) -> bool {
-      for (const RenderMesh &m : scene.opaque_meshes) {
-        if (m.mesh_id == mid) {
-          return true;
-        }
-      }
-      return false;
-    };
-
-    bool has_pending_meshes = false;
-    for (const BlockAddress &addr : desired) {
-      BlockAddress ck = addr;
-      ck.block = glm::ivec3(0);
-      if (block_world_.find_chunk(ck) == nullptr) {
-        continue;
-      }
-      if (!mesh_in_scene(BlockWorld::chunk_mesh_id(ck))) {
-        has_pending_meshes = true;
-        break;
-      }
-      if (!mesh_in_scene(vegetation::mesh_id(ck))) {
-        has_pending_meshes = true;
-        break;
-      }
-    }
-
-    if (player_moved || !remesh_targets.empty() || snap_origin_dirty_ ||
-        has_pending_meshes) {
-      if (need_full_rebuild) {
-        scene.opaque_meshes.clear();
-        snap_origin_dirty_ = false;
-      }
-      if (player_moved) {
-        last_chunk_center_hash_ = center_hash;
-      }
-
-      auto upsert_opaque_mesh = [&](RenderMesh &&mesh) {
-        // Keep an empty mesh as a residency marker. Otherwise air-only radial
-        // chunks look perpetually unmeshed and consume the mesh budget forever.
-        for (RenderMesh &existing : scene.opaque_meshes) {
-          if (existing.mesh_id == mesh.mesh_id) {
-            existing = std::move(mesh);
-            return;
-          }
-        }
-        scene.opaque_meshes.push_back(std::move(mesh));
-      };
-
-      struct MeshWorkItem {
-        BlockAddress chunk;
-        double dist_sq = 0.0;
-        ChunkLOD lod{};
-      };
-      std::vector<MeshWorkItem> mesh_work;
-      mesh_work.reserve(desired.size());
-
-      for (const BlockAddress &addr : desired) {
-        BlockAddress ck = chunk_address_key(addr);
-        const VoxelChunk *chunk = block_world_.find_chunk(ck);
-        if (chunk == nullptr) {
-          continue;
-        }
-
-        const glm::dvec3 chunk_center = block_world_.world_from_address(ck);
-        const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
-        const float screen_h =
-            std::max(1.0f, static_cast<float>(surface.height));
-        const double chunk_ws =
-            static_cast<double>(block_world_.config().chunk_size) *
-            block_world_.config().block_size;
-        const ChunkLOD clod = lod_system_.compute_lod(
-            chunk_center, cam_pos, screen_h, chunk_ws);
-
-        const uint64_t mid = BlockWorld::chunk_mesh_id(ck);
-        bool is_new = false;
-        for (const BlockAddress &nc : new_chunks) {
-          if (chunk_address_key(nc) == ck) {
-            is_new = true;
-            break;
-          }
-        }
-
-        const bool must_remesh =
-            need_full_rebuild || is_new || !mesh_in_scene(mid) ||
-            !mesh_in_scene(vegetation::mesh_id(ck)) ||
-            remesh_targets.find(mid) != remesh_targets.end();
-        if (!must_remesh) {
-          continue;
-        }
-
-        MeshWorkItem item{};
-        item.chunk = ck;
-        item.dist_sq = chunk_dist_sq(ck);
-        // Surface row at the player layer fills in first (visible shell top).
-        if (ck.chunk.y == player_addr.chunk.y) {
-          item.dist_sq *= 0.25;
-        } else if (std::abs(ck.chunk.y - player_addr.chunk.y) == 1) {
-          item.dist_sq *= 0.5;
-        }
-        item.lod = clod;
-        mesh_work.push_back(item);
-      }
-
-      std::sort(mesh_work.begin(), mesh_work.end(),
-                [](const MeshWorkItem &a, const MeshWorkItem &b) {
-                  return a.dist_sq < b.dist_sq;
-                });
-
-      std::unordered_set<uint64_t> resident_ids;
-      for (const BlockAddress &addr : resident) {
-        const BlockAddress ck = chunk_address_key(addr);
-        if (block_world_.find_chunk(ck) != nullptr) {
-          resident_ids.insert(BlockWorld::chunk_mesh_id(ck));
-          resident_ids.insert(vegetation::mesh_id(ck));
-        }
-      }
-      uint32_t lod_distribution[4] = {0, 0, 0, 0};
-      for (const BlockAddress &addr : desired) {
-        BlockAddress ck = chunk_address_key(addr);
-        if (block_world_.find_chunk(ck) == nullptr) {
-          continue;
-        }
-
-        const glm::dvec3 chunk_center = block_world_.world_from_address(ck);
-        const glm::dvec3 cam_pos = glm::dvec3(camera.transform.position);
-        const float screen_h =
-            std::max(1.0f, static_cast<float>(surface.height));
-        const double chunk_ws =
-            static_cast<double>(block_world_.config().chunk_size) *
-            block_world_.config().block_size;
-        const ChunkLOD clod = lod_system_.compute_lod(
-            chunk_center, cam_pos, screen_h, chunk_ws);
-        if (clod.level >= 0 && clod.level <= 3) {
-          lod_distribution[clod.level]++;
-        }
-      }
-
-      // Spread first-load mesh work across frames — meshing 90+ chunks on frame 0
-      // blocked the main loop for 10+ seconds and stalled screenshot capture.
-      // A hard per-frame budget is more important than filling the horizon in
-      // one frame: startup spikes above 16.6 ms make a nominal 60 FPS game
-      // feel broken, especially on tile-based mobile GPUs.
-      const uint32_t active_mesh_budget = std::min<uint32_t>(
-          10u, mesh_build_budget_ +
-                   static_cast<uint32_t>(stream_speed / std::max(
-                       1.0f,
-                       kPlayablePlanetConfig.debug_flight_sprint_base_mps)));
-      uint32_t mesh_count = 0;
-      for (const MeshWorkItem &item : mesh_work) {
-        if (mesh_count >= active_mesh_budget) {
-          break;
-        }
-
-        const BlockAddress &ck = item.chunk;
-        const VoxelChunk *chunk = block_world_.find_chunk(ck);
-        if (chunk == nullptr) {
-          continue;
-        }
-
-        auto solid_at = [this, &ck, chunk](const BlockAddress &na) -> bool {
-          BlockAddress nk = na;
-          nk.block = glm::ivec3(0);
-          const VoxelChunk *nc =
-              (nk == ck) ? chunk : block_world_.find_chunk(nk);
-          if (nc == nullptr) {
-            // Neighbor chunks are streamed independently, but terrain height
-            // is deterministic. Sample the missing column directly so a mesh
-            // can cap a stream boundary with the same voxel profile instead
-            // of either emitting a false wall or leaving a visible slit.
-            const int32_t gx =
-                nk.chunk.x * block_world_.config().chunk_size + na.block.x;
-            const int32_t gz =
-                nk.chunk.z * block_world_.config().chunk_size + na.block.z;
-            const int32_t layer =
-                nk.chunk.y * block_world_.config().chunk_size + na.block.y;
-            const int32_t surface_height =
-                block_world_.terrain_height_at_face_uv(nk.sector, gx, gz);
-            return layer <= surface_height;
-          }
-          return nc->solid(na.block.x, na.block.y, na.block.z);
-        };
-
-        RenderMesh mesh = block_world_.build_chunk_mesh(
-            ck, *chunk, solid_at, camera_snap_origin_, item.lod.level);
-        upsert_opaque_mesh(std::move(mesh));
-        RenderMesh grass = vegetation::build_grass_mesh(
-            block_world_, ck, *chunk, camera_snap_origin_, item.lod.level);
-        upsert_opaque_mesh(std::move(grass));
-        ++mesh_count;
-      }
-
-      // Save LOD distribution to render stats for HUD display.
-      for (int i = 0; i < 4; ++i) {
-        render_stats.lod_chunk_count[i] = lod_distribution[i];
-      }
-
-      // Evict meshes no longer in the desired set (player moved away).
-      if (player_moved) {
-        auto &meshes = scene.opaque_meshes;
-        meshes.erase(
-            std::remove_if(meshes.begin(), meshes.end(),
-                           [&resident_ids](const RenderMesh &m) {
-                             if (!is_streamed_terrain_mesh(m.mesh_id)) {
-                               return false;
-                             }
-                             return resident_ids.find(m.mesh_id) ==
-                                    resident_ids.end();
-                           }),
-            meshes.end());
-      }
-    }
-    mesh_build_ms = elapsed_ms(mesh_build_start, PerfClock::now());
-  } else {
-    // The complete global surface owns the view at altitude. Remove only
-    // streamed chunk meshes; clearing the whole opaque scene caused a visible
-    // one-frame hole and discarded unrelated stable meshes.
-    block_world_.evict_chunks_except({});
-    scene.opaque_meshes.erase(
-        std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-                       [](const RenderMesh &mesh) {
-                         return is_streamed_terrain_mesh(mesh.mesh_id);
-                       }),
-        scene.opaque_meshes.end());
-    for (int i = 0; i < 4; ++i) {
-      render_stats.lod_chunk_count[i] = 0;
-    }
-    snap_origin_dirty_ = false;
-    last_chunk_center_hash_ = 0;
-  }
-  return TerrainStreamTimings{.chunk_gen_ms = chunk_gen_ms,
-                              .mesh_build_ms = mesh_build_ms};
-}
-
-void Engine::rebuild_wireframe_overlays() {
-  // Wireframe overlay — regenerate when dirty. Only show when devhud enabled.
-  // WHY: the wireframe planet mesh (colored lines per cube face) overlays
-  // the voxel terrain and creates confusing grid patterns. Disable for
-  // normal gameplay; enable with F2 for debugging.
-  if (wireframe_planet_dirty_) {
-    wireframe_planet_mesh_ = build_wireframe_voxel_planet_mesh(
-        wireframe_planet_, wireframe_planet_.chunks_per_face);
-    wireframe_planet_dirty_ = false;
-  }
-  scene.wireframe_meshes.clear();
-  if (session_state_.devhud_enabled) {
-    scene.wireframe_meshes.push_back(wireframe_planet_mesh_);
-  }
-  if (kPlayablePlanetConfig.atmosphere_preview_enabled) {
-    scene.wireframe_meshes.push_back(atmosphere_wireframe_mesh_);
-  }
-}
-
-void Engine::update_solar_system(double frame_dt) {
-  // ── Solar system update ──────────────────────────────────────────────
-  // Advance orbital simulation with frame time and build celestial body
-  // meshes BEFORE upload_scene so they are uploaded to GPU this frame.
-  // WHY before upload: celestial meshes must reach the GPU for the
-  // current frame's render; after would cause a 1-frame lag.
-  solar_system_time_ += frame_dt;
-  solar_system_.update(solar_system_time_);
-
-  if (sky_navigation_mode_) {
-    RenderMesh navigation_mesh{};
-    const glm::dvec3 planet_orbit_pos =
-        solar_system_.body_position(active_body_index_);
-    const glm::dvec3 ring_right = glm::dvec3(camera.right());
-    const glm::dvec3 ring_up = glm::dvec3(camera.up());
-    const glm::dvec3 player_world =
-        glm::dvec3(local_player.transform.position);
-
-    for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
-      if (!is_sky_navigation_target(i, active_body_index_)) continue;
-      const CelestialBody &body = solar_system_.bodies()[static_cast<size_t>(i)];
-      const glm::dvec3 body_world = body.position - planet_orbit_pos;
-      const double distance = glm::length(body_world - player_world);
-      const double ring_radius = std::clamp(
-          std::max(6.0, body.orbital.radius * 1.4),
-          6.0, std::max(6.0, distance * 0.02));
-      const bool selected = i == sky_navigation_target_index_;
-      const glm::vec3 ring_color = sky_navigation_locked_ && selected
-          ? glm::vec3(1.0f, 0.82f, 0.24f)
-          : selected ? glm::vec3(0.35f, 1.0f, 0.88f)
-                     : glm::vec3(0.55f, 0.78f, 0.92f);
-      append_dashed_ring(
-          navigation_mesh, body_world, ring_right, ring_up, ring_radius,
-          solar_system_time_ * (selected ? 1.2 : 0.7) + i * 0.8,
-          ring_color);
-    }
-
-    if (sky_navigation_locked_ &&
-        sky_navigation_target_index_ >= 0 &&
-        sky_navigation_target_index_ < solar_system_.body_count()) {
-      const CelestialBody &target = solar_system_.bodies()[static_cast<size_t>(
-          sky_navigation_target_index_)];
-      const glm::dvec3 target_world = target.position - planet_orbit_pos;
-      append_dashed_line(navigation_mesh, player_world, target_world,
-                         glm::vec3(1.0f, 0.82f, 0.24f), 48);
-    }
-
-    navigation_mesh.mesh_id = 0;
-    navigation_mesh.content_hash = frame_index + 1;
-    scene.wireframe_meshes.push_back(std::move(navigation_mesh));
-  }
-}
-
-void Engine::update_coordinate_frames(double frame_dt) {
-  // ── Coordinate frame update ─────────────────────────────────────────
-  // Sync frame transforms from solar system orbital positions.
-  // Then determine active frame based on vehicle/player altitude.
-  frame_manager_.update(solar_system_);
-
-  // Detect active coordinate frame based on altitude.
-  // Uses the flight vehicle position when spawned and altitude > 0,
-  // otherwise uses player position.
-  {
-    frame_transition_cooldown_ =
-        std::max(0.0, frame_transition_cooldown_ - frame_dt);
-
-    // Determine altitude: use vehicle if in flight, else player position.
-    // Planet radius is the block-world sphere radius.
-    const double planet_radius = block_world_.planet().radius;
-    double altitude = 0.0;
-    glm::dvec3 entity_pos = glm::dvec3(0.0);
-    const bool vehicle_active = flight_vehicle_spawned_ &&
-        flight_vehicle_.state().engine_active;
-    if (vehicle_active) {
-      const auto& vs = flight_vehicle_.state();
-      entity_pos = vs.position;
-      altitude = glm::length(vs.position) - planet_radius;
-    } else {
-      entity_pos = glm::dvec3(local_player.transform.position);
-      altitude = glm::length(entity_pos) - planet_radius;
-    }
-
-    // Atmosphere height from atmosphere params.
-    const double atm_height =
-        static_cast<double>(atmosphere_.params().atmosphere_height);
-
-    // Compute desired frame.
-    const CoordinateFrame desired_frame =
-        frame_manager_.current_frame(altitude, atm_height);
-
-    // Apply hysteresis: require cooldown to expire before frame transition.
-    if (desired_frame != active_frame_ &&
-        frame_transition_cooldown_ <= 0.0) {
-      active_frame_ = desired_frame;
-      frame_transition_cooldown_ = k_frame_transition_hysteresis;
-
-      // Log frame transition for debugging.
-      switch (active_frame_) {
-        case CoordinateFrame::Planet:
-          active_frame_label_ = "Planet";
-          spdlog::info("Frame transition: Planet (altitude={:.1f}m, atm={:.1f}m)",
-                       altitude, atm_height);
-          break;
-        case CoordinateFrame::Orbital:
-          active_frame_label_ = "Orbital";
-          spdlog::info("Frame transition: Orbital (altitude={:.1f}m, atm={:.1f}m)",
-                       altitude, atm_height);
-          break;
-        case CoordinateFrame::Solar:
-          active_frame_label_ = "Solar";
-          spdlog::info("Frame transition: Solar (altitude={:.1f}m, atm={:.1f}m)",
-                       altitude, atm_height);
-          break;
-        default:
-          active_frame_label_ = "Local";
-          break;
-      }
-    }
-
-    // ── SOI detection for interplanetary travel ───────────────────────
-    // Check if the vehicle/player is in another body's SOI.
-    // Convert vehicle position to Solar (heliocentric) frame for SOI check.
-    const glm::dvec3 solar_pos = frame_manager_.transform(
-        entity_pos, active_frame_, CoordinateFrame::Solar, active_body_index_);
-    const int32_t soi_body = frame_manager_.detect_soi(solar_pos, solar_system_);
-
-    // SOI membership is advisory. Re-targeting active_body_index_ here used
-    // to move the rendering origin to the new body while the player,
-    // collision, and resident voxels stayed in the old body's frame (and
-    // bodies without a terrain runtime, like Luna, have no voxels at all).
-    // Body switches go through switch_active_planet(), which re-bases
-    // everything atomically.
-    if (soi_body != soi_body_index_) {
-      soi_body_index_ = soi_body;
-      if (soi_body >= 0) {
-        spdlog::info("SOI: inside {} (body_index={})",
-                     solar_system_.bodies()[static_cast<size_t>(soi_body)].name,
-                     soi_body);
-      }
-    }
-
+Engine::TerrainStreamTimings Engine::stream_flat_terrain() {
+  const PerfClock::time_point gen_start = PerfClock::now();
+  const glm::dvec3 player_pos(local_player.transform.position);
+  const VoxelChunkCoord2D player_chunk =
+      FlatWorld::world_pos_to_chunk(player_pos, flat_world_.config().voxel_scale);
+  if (player_chunk.x != last_collision_center_.x ||
+      player_chunk.z != last_collision_center_.z) {
+    collision_chunks_dirty_ = true;
   }
 
-  // Update sun direction from solar system into atmosphere.
-  // WHY: the planet orbits the sun (planet at calculated position,
-  // voxel world centred at origin).  We offset the solar-system
-  // positions so the planet-centre stays at world (0,0,0) for
-  // block-world compatibility, while the sun appears to move.
-  {
-    const glm::dvec3 planet_orbit_pos =
-        solar_system_.body_position(active_body_index_);
-    const glm::dvec3 cam_world = glm::dvec3(camera.transform.position);
-    const glm::dvec3 sun_planet_centric = solar_system_.sun_position() - planet_orbit_pos;
-    const glm::dvec3 sun_dir = glm::normalize(sun_planet_centric - cam_world);
-    atmosphere_.set_sun_direction(sun_dir);
+  std::vector<VoxelChunkCoord2D> evicted;
+  const std::vector<VoxelChunkCoord2D> generated =
+      flat_world_.stream_around(player_pos, chunk_generation_budget_, evicted);
+
+  for (const VoxelChunkCoord2D &c : generated) {
+    apply_persistent_edits_to_chunk(c);
+    dirty_chunk_meshes_.insert(c);
+    dirty_chunk_meshes_.insert(VoxelChunkCoord2D{c.x - 1, c.z});
+    dirty_chunk_meshes_.insert(VoxelChunkCoord2D{c.x + 1, c.z});
+    dirty_chunk_meshes_.insert(VoxelChunkCoord2D{c.x, c.z - 1});
+    dirty_chunk_meshes_.insert(VoxelChunkCoord2D{c.x, c.z + 1});
+    collision_chunks_dirty_ = true;
   }
-}
 
-void Engine::append_celestial_meshes(const RenderSurface &surface) {
-  // ── Celestial body rendering ────────────────────────────────────────
-  // Retain destination geometry while updating its orbital origin. Only the
-  // star and other transient scene objects need to be replaced each frame.
-  {
-    // Celestial meshes are transient (mesh_id == 0). Remove by ownership,
-    // not vector position: streamed chunks may have been appended after them.
-    // Positional removal deleted fresh terrain and leaked old spheres.
-    scene.opaque_meshes.erase(
-        std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-                       [this](const RenderMesh &mesh) {
-                         return mesh.mesh_id == 0 ||
-                             (is_celestial_mesh_id(mesh.mesh_id) &&
-                              ((mesh.mesh_id >> 16) & 0xffffu) ==
-                                  static_cast<uint64_t>(active_body_index_));
-                       }),
-        scene.opaque_meshes.end());
-    last_celestial_mesh_count_ = 0;
-
-    const float screen_height = static_cast<float>(std::max(1, surface.height));
-    const int32_t globe_grid = planet_globe_subdivisions(
-        block_world_.planet().radius,
-        glm::distance(glm::dvec3(camera.transform.position), block_world_.planet().center),
-        screen_height, camera.fov_y_radians, global_planet_subdivisions_);
-    if (globe_grid != global_planet_subdivisions_) {
-      rebuild_global_planet_surface(globe_grid);
+  if (!evicted.empty()) {
+    std::unordered_set<uint64_t> evicted_mesh_ids;
+    for (const VoxelChunkCoord2D &c : evicted) {
+      dirty_chunk_meshes_.erase(c);
+      auto rev_it = chunk_mesh_revisions_.find(c);
+      if (rev_it != chunk_mesh_revisions_.end()) {
+        evicted_mesh_ids.insert(rev_it->second);
+        chunk_mesh_revisions_.erase(rev_it);
+      }
     }
-    // Keep the complete terrain globe resident at every altitude. Its radial
-    // bias places it behind the detailed voxel surface, and it closes holes
-    // while chunks are being generated or evicted.
-    const auto planet_it = std::find_if(
-        scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-        [](const RenderMesh &mesh) {
-          return mesh.mesh_id == kGlobalPlanetSurfaceMeshId;
-        });
-    if (planet_it == scene.opaque_meshes.end()) {
-      scene.opaque_meshes.push_back(global_planet_surface_mesh_);
+    if (!evicted_mesh_ids.empty()) {
+      scene.opaque_meshes.erase(
+          std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+                         [&](const RenderMesh &m) {
+                           return evicted_mesh_ids.find(m.mesh_id) !=
+                                  evicted_mesh_ids.end();
+                         }),
+          scene.opaque_meshes.end());
     }
+    collision_chunks_dirty_ = true;
+  }
 
-    const glm::dvec3 planet_orbit_pos =
-        solar_system_.body_position(active_body_index_);
+  if (collision_chunks_dirty_) {
+    install_active_surface_collider();
+  }
+  const double chunk_gen_ms = elapsed_ms(gen_start, PerfClock::now());
 
-    for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
-      const CelestialBody& body = solar_system_.bodies()[i];
-      // Skip the active body — its detailed terrain runtime owns the local
-      // surface silhouette after landing.
-      if (i == active_body_index_) continue;
-
-      const glm::dvec3 body_world = body.position - planet_orbit_pos;
-      const glm::vec3 rel_pos = camera_relative_position(
-          body_world, scene.camera_origin);
-
-      const float radius = static_cast<float>(body.orbital.radius);
-      if (!body.is_star) {
-        // Distant destinations use the same deterministic height source as
-        // their landing runtime. Only the double-precision origin moves as
-        // they orbit; retained GPU geometry is uploaded on a LOD change.
-        int32_t &previous_grid = celestial_subdivisions_[i];
-        const int32_t grid = planet_globe_subdivisions(
-            body.orbital.radius,
-            glm::distance(glm::dvec3(camera.transform.position), body_world),
-            screen_height, camera.fov_y_radians, previous_grid);
-        previous_grid = grid;
-        const uint64_t mesh_id =
-            (static_cast<uint64_t>(kCelestialMeshTag) << 32) |
-            (static_cast<uint64_t>(i) << 16) | static_cast<uint64_t>(grid);
-        const auto resident = std::find_if(
-            scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-            [i](const RenderMesh &mesh) {
-              return is_celestial_mesh_id(mesh.mesh_id) &&
-                  ((mesh.mesh_id >> 16) & 0xffffu) == static_cast<uint64_t>(i);
+  const PerfClock::time_point mesh_start = PerfClock::now();
+  std::vector<VoxelChunkCoord2D> to_mesh;
+  to_mesh.reserve(dirty_chunk_meshes_.size());
+  for (const VoxelChunkCoord2D &c : dirty_chunk_meshes_) {
+    if (flat_world_.find_chunk(c) != nullptr) {
+      to_mesh.push_back(c);
+    }
+  }
+  std::sort(to_mesh.begin(), to_mesh.end(),
+            [&](const VoxelChunkCoord2D &a, const VoxelChunkCoord2D &b) {
+              const int da = (a.x - player_chunk.x) * (a.x - player_chunk.x) +
+                             (a.z - player_chunk.z) * (a.z - player_chunk.z);
+              const int db = (b.x - player_chunk.x) * (b.x - player_chunk.x) +
+                             (b.z - player_chunk.z) * (b.z - player_chunk.z);
+              return da < db;
             });
-        if (resident != scene.opaque_meshes.end()) {
-          if (resident->mesh_id == mesh_id) {
-            resident->world_origin = body_world;
-            ++last_celestial_mesh_count_;
-            continue;
-          }
-          scene.opaque_meshes.erase(resident);
-        }
-        auto &levels = globe_meshes_[i];
-        auto it = levels.find(grid);
-        if (it == levels.end()) {
-          RenderMesh globe = build_compact_planet_surface_mesh(
-              *world_for_body(i), grid,
-              kPlayablePlanetConfig.global_surface_radial_bias_m);
-          it = levels.emplace(grid, std::move(globe)).first;
-        }
-        RenderMesh globe = it->second;
-        globe.mesh_id = mesh_id;
-        globe.world_origin = body_world;
-        scene.opaque_meshes.push_back(std::move(globe));
-        ++last_celestial_mesh_count_;
-        continue;
-      }
-      RenderMesh sphere = build_debug_sphere_mesh(rel_pos, radius, body.color);
-      sphere.mesh_id = 0; // transient — always re-upload
-      sphere.world_origin = scene.camera_origin.world_origin;
-      scene.opaque_meshes.push_back(std::move(sphere));
-      ++last_celestial_mesh_count_;
+
+  const float voxel_scale = flat_world_.config().voxel_scale;
+  const uint32_t built_limit =
+      std::min<uint32_t>(mesh_build_budget_, static_cast<uint32_t>(to_mesh.size()));
+  for (uint32_t i = 0; i < built_limit; ++i) {
+    const VoxelChunkCoord2D coord = to_mesh[i];
+    dirty_chunk_meshes_.erase(coord);
+    const VoxelChunk *chunk = flat_world_.find_chunk(coord);
+    if (chunk == nullptr) {
+      continue;
     }
 
-    append_remote_player_meshes();
+    const int32_t world_base_x = coord.x * VoxelChunk::CHUNK_X;
+    const int32_t world_base_z = coord.z * VoxelChunk::CHUNK_Z;
+    RenderMesh mesh = chunk->build_greedy_mesh(
+        glm::vec3(0.0f), voxel_scale, world_base_x, world_base_z,
+        [this](int wx, int wy, int wz) {
+          return flat_world_.solid_at(wx, wy, wz);
+        });
+
+    auto [id_it, inserted] =
+        chunk_mesh_revisions_.emplace(coord, next_chunk_revision_);
+    if (inserted) {
+      ++next_chunk_revision_;
+    }
+    const uint64_t mesh_id = id_it->second;
+    mesh.mesh_id = mesh_id;
+    mesh.content_hash = next_chunk_revision_++;
+    mesh.world_origin =
+        glm::dvec3(static_cast<double>(world_base_x) * voxel_scale, 0.0,
+                   static_cast<double>(world_base_z) * voxel_scale);
+
+    auto existing = std::find_if(
+        scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+        [mesh_id](const RenderMesh &m) { return m.mesh_id == mesh_id; });
+    if (existing != scene.opaque_meshes.end()) {
+      *existing = std::move(mesh);
+    } else {
+      scene.opaque_meshes.push_back(std::move(mesh));
+    }
   }
+  const double mesh_build_ms = elapsed_ms(mesh_start, PerfClock::now());
+
+  return TerrainStreamTimings{
+      .chunk_gen_ms = chunk_gen_ms,
+      .mesh_build_ms = mesh_build_ms,
+  };
 }
 
 void Engine::append_remote_player_meshes() {
-  // Replicated clients use the same camera-relative coordinate path as
-  // planetary terrain, preserving precision at two-million-metre radii.
-  // Snapshot positions are the players' feet.
-  const glm::dvec3 planet_center = block_world_.planet().center;
-  const float dt = static_cast<float>(std::clamp(last_frame_dt, 0.0, 0.1));
-  std::unordered_set<uint32_t> present;
-  for (const auto &[player_id, state] : net_client_.player_states()) {
-    if (player_id == 0 || player_id == net_client_.local_player_id()) {
-      continue;
-    }
-    present.insert(player_id);
-    RemoteAvatarState &avatar = remote_avatars_[player_id];
-    update_remote_avatar(avatar, glm::dvec3(state.x, state.y, state.z),
-                         glm::vec3(state.vx, state.vy, state.vz),
-                         planet_center, dt);
-    const SkeletonPose pose = SkeletalAnimator::sample_pose(
-        static_cast<PlayerAnimState>(state.anim_state), state.anim_phase,
-        state.anim_blend);
-    RenderMesh player_mesh{};
-    SkeletalAnimator::append_blocky_mesh(
-        player_mesh, pose,
-        camera_relative_position(avatar.feet, scene.camera_origin),
-        remote_avatar_orientation(avatar, planet_center),
-        player_color_from_network_id(player_id));
-    player_mesh.mesh_id = 0;
-    player_mesh.world_origin = scene.camera_origin.world_origin;
-    scene.opaque_meshes.push_back(std::move(player_mesh));
+  for (const auto &[player_id, remote] : remote_avatars_) {
+    (void)player_id;
+    (void)remote;
   }
-  std::erase_if(remote_avatars_, [&present](const auto &entry) {
-    return present.count(entry.first) == 0;
-  });
 }
 
 void Engine::update_render_stats(const ProfilingSnapshot &profiling_sample,
@@ -1953,7 +766,7 @@ void Engine::update_render_stats(const ProfilingSnapshot &profiling_sample,
   render_stats.net_tx_bytes_per_sec = net_stats.tx_bytes_per_sec;
   render_stats.net_rx_bytes_per_sec = net_stats.rx_bytes_per_sec;
   render_stats.streamed_chunk_count =
-      static_cast<uint32_t>(block_world_.chunk_count());
+      static_cast<uint32_t>(flat_world_.chunk_count());
   render_stats.profiling.gameplay_cpu_ms = smooth_metric(
       render_stats.profiling.gameplay_cpu_ms, profiling_sample.gameplay_cpu_ms,
       0.25);
@@ -1977,20 +790,13 @@ void Engine::update_render_stats(const ProfilingSnapshot &profiling_sample,
   render_stats.profiling.memory_current_bytes = memory_stats.current_bytes;
   render_stats.profiling.memory_total_bytes = memory_stats.total_bytes;
 
-  // ── Frame profiler: smooth per-stage timings ─────────────────────────
-  // WHY: expose chunk gen, mesh build, and GPU upload costs for
-  // bottleneck identification in the dev HUD (F2). Smoothing prevents
-  // flickering numbers from frame-to-frame variance.
   render_stats.chunk_gen_ms =
       smooth_metric(render_stats.chunk_gen_ms, terrain_timings.chunk_gen_ms);
   render_stats.mesh_build_ms =
-      smooth_metric(render_stats.mesh_build_ms,
-                    terrain_timings.mesh_build_ms);
+      smooth_metric(render_stats.mesh_build_ms, terrain_timings.mesh_build_ms);
   render_stats.gpu_upload_ms =
       smooth_metric(render_stats.gpu_upload_ms, gpu_upload_ms);
 
-  // Accumulate vertex/index counts from chunk meshes for HUD display.
-  // These represent application-level geometry for the voxel terrain.
   uint32_t opaque_verts = 0;
   uint32_t opaque_idxs = 0;
   for (const RenderMesh &mesh : scene.opaque_meshes) {
@@ -2003,35 +809,8 @@ void Engine::update_render_stats(const ProfilingSnapshot &profiling_sample,
   }
   render_stats.total_vertices = opaque_verts;
   render_stats.total_indices = opaque_idxs;
-}
-
-void Engine::update_sky_color(double camera_altitude) {
-  // ── Atmosphere computation ──────────────────────────────────────────
-  // Compute sky color for the camera view direction.  This is used as the
-  // clear color (background sky).  The fragment shader applies aerial
-  // perspective (transmittance) for terrain fragments.
-  if (atmosphere_enabled_) {
-    const glm::dvec3 cam_world_pos = glm::dvec3(camera.transform.position);
-    const glm::dvec3 cam_dir = glm::dvec3(camera.forward());
-    atmosphere_state_ = atmosphere_.compute_sky_color(cam_world_pos, cam_dir);
-    const float inside_atmosphere = static_cast<float>(std::clamp(
-        1.0 - camera_altitude / atmosphere_.params().atmosphere_height,
-        0.0, 1.0));
-    // HDR daylight target; Reinhard tone mapping later produces the saturated
-    // blue sky and strong terrain silhouette seen in the Meese reference.
-    const glm::vec3 daylight_sky(0.80f, 1.55f, 7.0f);
-    glm::vec3 physical_sky = atmosphere_state_.sky_color;
-    for (int component = 0; component < 3; ++component) {
-      if (!std::isfinite(physical_sky[component]) ||
-          physical_sky[component] < 0.0f) {
-        physical_sky[component] = 0.0f;
-      }
-    }
-    physical_sky = glm::min(physical_sky, glm::vec3(4.0f));
-    atmosphere_state_.sky_color = glm::mix(
-        physical_sky, daylight_sky,
-        0.72f * inside_atmosphere);
-  }
+  render_stats.draw_call_count =
+      static_cast<uint32_t>(scene.opaque_meshes.size());
 }
 
 RenderFrameContext Engine::build_render_context(double frame_dt,
@@ -2048,51 +827,28 @@ RenderFrameContext Engine::build_render_context(double frame_dt,
   ctx.views[0].camera = camera;
   ctx.views[0].viewport = glm::vec4(0.0f, 0.0f, 1.0f, 1.0f);
   ctx.debug_xray = false;
-  ctx.grayscale_view = sky_navigation_mode_;
-  ctx.blocky_sky = atmosphere_enabled_;
+  ctx.grayscale_view = false;
+  ctx.blocky_sky = false;
 
-  // ── Atmosphere uniforms for GPU ─────────────────────────────────────
-  // WHY camera-relative: terrain vertices are stored as offsets from
-  // camera_snap_origin_ for float32 precision.  Atmosphere params must
-  // use the same coordinate frame so the fragment shader can compute
-  // transmittance correctly.  Planet center at world (0,0,0) maps to
-  // (-snap_origin) in camera-relative space.
-  {
-    const auto& atm = atmosphere_.params();
-    const glm::vec3 rel_center = -glm::vec3(camera_snap_origin_);
-    ctx.atmosphere.planet_center_radius = glm::vec4(rel_center,
-        static_cast<float>(atm.planet_radius));
-    ctx.atmosphere.atm_params_1 = glm::vec4(
-        static_cast<float>(atm.atmosphere_height),
-        static_cast<float>(atm.rayleigh_scale_height),
-        static_cast<float>(atm.mie_scale_height),
-        static_cast<float>(atm.mie_asymmetry));
-    ctx.atmosphere.rayleigh_scatter = glm::vec4(
-        glm::vec3(atm.rayleigh_scattering), 0.0f);
-    ctx.atmosphere.mie_scatter = glm::vec4(
-        static_cast<float>(atm.mie_scattering), 0.0f, 0.0f, 0.0f);
-    ctx.atmosphere.sun_dir_intensity = glm::vec4(
-        glm::vec3(atm.sun_direction),
-        static_cast<float>(atm.sun_intensity));
-
-    // Sky color for clear color (tone-map from HDR).
-    // Simple Reinhard tone mapping: color / (1 + color).
-    glm::vec3 sc = atmosphere_state_.sky_color;
-    glm::vec3 tm = sc / (glm::vec3(1.0f) + sc);
-    if (sky_navigation_mode_) {
-      const float luma = glm::dot(
-          tm, glm::vec3(0.2126f, 0.7152f, 0.0722f));
-      tm = glm::vec3(luma);
-    }
-    ctx.atmosphere.sky_color = glm::vec4(tm, 1.0f);
-  }
+  ctx.atmosphere.planet_center_radius =
+      glm::vec4(0.0f, -6371000.0f, 0.0f, 6371000.0f);
+  ctx.atmosphere.atm_params_1 = glm::vec4(80000.0f, 8500.0f, 1200.0f, 0.76f);
+  ctx.atmosphere.rayleigh_scatter = glm::vec4(5.5e-6f, 13.0e-6f, 22.4e-6f, 0.0f);
+  ctx.atmosphere.mie_scatter = glm::vec4(21.0e-6f, 0.0f, 0.0f, 0.0f);
+  ctx.atmosphere.sun_dir_intensity = glm::vec4(sun_direction_, 20.0f);
+  ctx.atmosphere.sky_color = glm::vec4(sky_color_, 1.0f);
   return ctx;
 }
 
 const RenderStats &Engine::stats() const { return render_stats; }
 
 void Engine::set_session_state(const EngineSessionState &state) {
+  const bool character_changed =
+      session_state_.selected_character != state.selected_character;
   session_state_ = state;
+  if (character_changed) {
+    (void)save_persistent_game();
+  }
 }
 
 RuntimeSessionSnapshot Engine::session_snapshot() const {
@@ -2163,15 +919,13 @@ void Engine::leave_session() {
   local_server_loopback_ = true;
 }
 
-void Engine::sync_network_state(uint32_t sim_tick,
-                                const InputState &input) {
+void Engine::sync_network_state(uint32_t sim_tick, const InputState &input) {
   if (!net_client_.is_connected()) {
     return;
   }
-
   NetTickInput tick_input{};
   tick_input.tick = sim_tick;
-  tick_input.body_id = static_cast<uint32_t>(active_body_index_);
+  tick_input.body_id = 0;
   tick_input.move_x = input.move.x;
   tick_input.move_y = input.move.y;
   tick_input.camera_yaw_deg = local_player.camera_rig.yaw;
@@ -2191,156 +945,38 @@ void Engine::sync_network_state(uint32_t sim_tick,
 }
 
 void Engine::reset_camera() {
-  local_player.camera_rig.yaw = 180.0f;
-  local_player.camera_rig.pitch = -10.0f;
+  local_player.camera_rig.yaw = 0.0f;
+  local_player.camera_rig.pitch = -20.0f;
+  local_player.camera_rig.distance = 4.5f;
   third_person_camera_initialized_ = false;
+  update_first_person_camera(local_player, camera);
 }
 
 GuiMenu::Character Engine::preferred_character() const {
   return session_state_.selected_character;
 }
 
-void Engine::rebuild_global_planet_surface(int32_t subdivisions) {
-  auto &levels = globe_meshes_[active_body_index_];
-  auto it = levels.find(subdivisions);
-  if (it == levels.end()) {
-    it = levels.emplace(subdivisions, build_compact_planet_surface_mesh(
-        block_world_, subdivisions,
-        kPlayablePlanetConfig.global_surface_radial_bias_m)).first;
-  }
-  global_planet_surface_mesh_ = it->second;
-  global_planet_subdivisions_ = subdivisions;
-  global_planet_surface_mesh_.mesh_id = kGlobalPlanetSurfaceMeshId;
-  // This is a recessed safety shell for the brief interval while a detailed
-  // chunk is being generated. Render both faces so oblique approach rays can
-  // never look through a missing chunk into the sky.
-  global_planet_surface_mesh_.double_sided = true;
-  // append_celestial_meshes() only inserts the globe when it is missing, so
-  // drop the scene's copy; otherwise the previous body's globe survived a
-  // planet switch and enclosed the new, smaller body in a green shell.
-  scene.opaque_meshes.erase(
-      std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-                     [](const RenderMesh &mesh) {
-                       return mesh.mesh_id == kGlobalPlanetSurfaceMeshId;
-                     }),
-      scene.opaque_meshes.end());
-}
-
-void Engine::switch_active_planet(int32_t body_index) {
-  if (body_index == active_body_index_) {
-    return;
-  }
-  if (!has_terrain_runtime(body_index)) {
-    last_hud_message_ = "Terrain runtime unavailable for destination";
-    return;
-  }
-
-  // Swap complete body-local runtimes, including resident chunks. This keeps
-  // edits and collision data alive on both planets without pretending that a
-  // single global voxel cache can represent two different surfaces.
-  PlanetTerrainRuntime &incoming = parked_runtime(body_index);
-  std::swap(block_world_, incoming.world);
-  std::swap(collision_world, incoming.collision);
-  // `incoming` now holds the departing body's runtime; re-key it.
-  PlanetTerrainRuntime departing = std::move(incoming);
-  parked_planets_.erase(body_index);
-  parked_planets_[active_body_index_] = std::move(departing);
-  install_active_surface_collider();
-
-  active_body_index_ = body_index;
-  third_person_camera_initialized_ = false;
-  if (net_client_.is_connected()) {
-    NetChunkInterest interest{};
-    interest.body_id = static_cast<uint32_t>(body_index);
-    interest.radius = 2;
-    net_client_.set_chunk_interest(interest);
-  }
-  active_frame_ = CoordinateFrame::Planet;
-  active_frame_label_ = "Planet";
-  frame_transition_cooldown_ = k_frame_transition_hysteresis;
-
-  wireframe_planet_ = block_world_.planet();
-  wireframe_planet_dirty_ = true;
-  atmosphere_wireframe_mesh_ = build_atmosphere_wireframe_mesh(
-      wireframe_planet_, kPlayablePlanetConfig.atmosphere_height_m);
-  rebuild_global_planet_surface();
-
-  AtmosphereParams atmosphere_params = compact_planet_atmosphere(
-      block_world_.planet().radius,
-      std::max(kPlayablePlanetConfig.atmosphere_height_m *
-                   block_world_.planet().radius / kPlayablePlanetConfig.radius_m,
-               block_world_.max_surface_height_above_base() * 2.0 +
-                   block_world_.config().block_size));
-  atmosphere_params.sun_direction = atmosphere_.params().sun_direction;
-  atmosphere_.init(atmosphere_params);
-  last_chunk_center_hash_ = 0;
-  snap_origin_dirty_ = true;
-}
-
-BlockWorld *Engine::world_for_body(int32_t body_index) {
-  if (body_index == active_body_index_) {
-    return &block_world_;
-  }
-  if (!has_terrain_runtime(body_index)) {
-    return nullptr;
-  }
-  return &parked_runtime(body_index).world;
-}
-
-bool Engine::has_terrain_runtime(int32_t body_index) const {
-  if (body_index < 0 || body_index >= solar_system_.body_count()) {
-    return false;
-  }
-  return !solar_system_.bodies()[static_cast<size_t>(body_index)].is_star;
-}
-
-BlockWorldConfig Engine::terrain_config_for_body(int32_t body_index) const {
-  BlockWorldConfig config = base_terrain_config_;
-  if (body_index == kVoxovBodyIndex) {
-    return config;
-  }
-  config.planet.radius = solar_system_.bodies()[static_cast<size_t>(
-                             body_index)].orbital.radius;
-  // Aster keeps its original seed so existing saves regenerate the same
-  // terrain under their recorded edits.
-  config.planet.seed = body_index == kAsterBodyIndex
-      ? (k_voxov_flat_world_seed ^ 0xa57e'c0deull)
-      : (k_voxov_flat_world_seed ^
-         (0x9e37'79b9'7f4a'7c15ull * static_cast<uint64_t>(body_index)));
-  config.seed = config.planet.seed;
-  return config;
-}
-
-Engine::PlanetTerrainRuntime &Engine::parked_runtime(int32_t body_index) {
-  auto it = parked_planets_.find(body_index);
-  if (it == parked_planets_.end()) {
-    it = parked_planets_.emplace(body_index, PlanetTerrainRuntime{}).first;
-    it->second.world.init(terrain_config_for_body(body_index));
-  }
-  return it->second;
-}
-
 void Engine::install_active_surface_collider() {
-  collision_world.set_planet_surface_collider(
-      glm::vec3(0.0f), static_cast<float>(block_world_.planet().radius),
-      static_cast<float>(block_world_.max_surface_height_above_base()),
-      [this](glm::vec3 direction) -> float {
-        return static_cast<float>(
-            block_world_.surface_height_above_base(glm::dvec3(direction)));
-      });
+  const glm::dvec3 pos(local_player.transform.position);
+  last_collision_center_ =
+      FlatWorld::world_pos_to_chunk(pos, flat_world_.config().voxel_scale);
+  active_collision_chunks_ = flat_world_.collect_collision_chunks(pos, 1);
+  collision_world = VoxelCollisionWorld(
+      active_collision_chunks_, flat_world_.config().voxel_scale);
+  collision_chunks_dirty_ = false;
 }
 
-void Engine::record_block_edit(int32_t body_index,
-                               const BlockAddress &address,
+void Engine::record_block_edit(const FlatBlockAddress &address,
                                VoxelMaterial material, bool solid) {
+  const BlockAddress packed = persistent_address_from_flat(address);
   const auto existing = std::find_if(
       persistent_block_edits_.begin(), persistent_block_edits_.end(),
       [&](const PersistentBlockEdit &edit) {
-        return edit.body_index == body_index && edit.address == address;
+        return edit.body_index == 0 && edit.address == packed;
       });
   const PersistentBlockEdit replacement{
-      .body_index = body_index,
-      .address = address,
+      .body_index = 0,
+      .address = packed,
       .material = material,
       .solid = solid,
   };
@@ -2348,6 +984,28 @@ void Engine::record_block_edit(int32_t body_index,
     *existing = replacement;
   } else {
     persistent_block_edits_.push_back(replacement);
+  }
+}
+
+void Engine::apply_persistent_edits_to_chunk(VoxelChunkCoord2D coord) {
+  VoxelChunk *chunk = flat_world_.find_chunk(coord);
+  if (chunk == nullptr) {
+    return;
+  }
+  for (const PersistentBlockEdit &edit : persistent_block_edits_) {
+    if (edit.address.chunk.x != coord.x || edit.address.chunk.z != coord.z) {
+      continue;
+    }
+    const int lx = edit.address.block.x;
+    const int ly = edit.address.block.y;
+    const int lz = edit.address.block.z;
+    if (lx < 0 || lx >= VoxelChunk::CHUNK_X || ly < 0 ||
+        ly >= VoxelChunk::CHUNK_Y || lz < 0 || lz >= VoxelChunk::CHUNK_Z) {
+      continue;
+    }
+    chunk->set_material(
+        lx, ly, lz, edit.material,
+        edit.solid ? VoxelChunk::kMaxBlockHeight : 0);
   }
 }
 
@@ -2363,482 +1021,38 @@ void Engine::load_persistent_game() {
   }
 
   for (const PersistentBlockEdit &edit : state.block_edits) {
-    BlockWorld *world = world_for_body(edit.body_index);
-    if (world == nullptr || edit.address.shell < 0 ||
-        edit.address.shell >= world->shell_count()) {
+    if (edit.body_index != 0) {
       continue;
     }
-    const int32_t chunk_size = world->config().chunk_size;
-    const ShellConfig &shell = world->shell_config(edit.address.shell);
-    const int32_t horizontal_chunks =
-        (shell.horizontal_res + chunk_size - 1) / chunk_size;
-    const int32_t vertical_chunks =
-        (shell.vertical_layers + chunk_size - 1) / chunk_size;
-    const bool valid_chunk = edit.address.chunk.x >= 0 &&
-        edit.address.chunk.x < horizontal_chunks &&
-        edit.address.chunk.z >= 0 &&
-        edit.address.chunk.z < horizontal_chunks &&
-        edit.address.chunk.y >= 0 &&
-        edit.address.chunk.y < vertical_chunks;
-    const bool valid_block = edit.address.block.x >= 0 &&
-        edit.address.block.x < chunk_size && edit.address.block.y >= 0 &&
-        edit.address.block.y < chunk_size && edit.address.block.z >= 0 &&
-        edit.address.block.z < chunk_size;
-    if (!valid_chunk || !valid_block) {
+    const FlatBlockAddress flat_addr = flat_address_from_persistent(edit.address);
+    if (flat_addr.wy < 0 || flat_addr.wy >= VoxelChunk::CHUNK_Y) {
       continue;
     }
-    VoxelChunk &chunk = world->get_or_generate_chunk(edit.address);
-    chunk.set_material(edit.address.block.x, edit.address.block.y,
-                       edit.address.block.z, edit.material);
-    chunk.set_solid(edit.address.block.x, edit.address.block.y,
-                    edit.address.block.z, edit.solid);
     persistent_block_edits_.push_back(edit);
+    if (flat_world_.find_chunk(
+            VoxelChunkCoord2D{edit.address.chunk.x, edit.address.chunk.z}) !=
+        nullptr) {
+      flat_world_.set_block(flat_addr.wx, flat_addr.wy, flat_addr.wz,
+                            edit.solid ? edit.material : VoxelMaterial::Air);
+    }
   }
 
   (void)expedition_mission_.restore(state.expedition_stage);
   session_state_.selected_character = state.character;
-  if (state.active_body_index != active_body_index_) {
-    switch_active_planet(state.active_body_index);
+  if (glm::dot(state.player_local_position, state.player_local_position) > 1.0e-4) {
+    local_player.transform.position = glm::vec3(state.player_local_position);
+    third_person_camera_initialized_ = false;
+    local_player_prev_position = local_player.transform.position;
+    camera_snap_origin_ = state.player_local_position;
   }
-  local_player.transform.position = glm::vec3(state.player_local_position);
-  third_person_camera_initialized_ = false;
-  local_player_prev_position = local_player.transform.position;
-  camera_snap_origin_ = state.player_local_position;
-  snap_origin_dirty_ = true;
-  spdlog::info("Loaded save: body={}, edits={}, expedition={}",
-               active_body_index_, persistent_block_edits_.size(),
-               static_cast<int>(expedition_mission_.stage()));
-}
-
-void Engine::append_target_outline(RenderMesh &mesh) const {
-  if (!targeted_addr_.has_value() || session_state_.menu_open ||
-      sky_navigation_mode_) {
-    return;
-  }
-  const std::array<glm::dvec3, 8> corners =
-      block_world_.block_corners(*targeted_addr_);
-  glm::dvec3 center(0.0);
-  for (const glm::dvec3 &corner : corners) {
-    center += corner * 0.125;
-  }
-  // Push the edges slightly outward so they aren't z-fighting the faces.
-  constexpr double kInflate = 1.02;
-  constexpr int kEdges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7},
-                                 {0, 2}, {1, 3}, {4, 6}, {5, 7},
-                                 {0, 4}, {1, 5}, {2, 6}, {3, 7}};
-  const glm::vec3 color(0.06f, 0.07f, 0.08f);
-  for (const auto &edge : kEdges) {
-    const glm::vec3 a(center + (corners[edge[0]] - center) * kInflate);
-    const glm::vec3 b(center + (corners[edge[1]] - center) * kInflate);
-    append_mesh(mesh, build_debug_line_mesh(a, b, 0.018f, color));
-  }
-}
-
-SpaceshipEnvironment Engine::ship_environment() const {
-  SpaceshipEnvironment environment{};
-  environment.body_center = block_world_.planet().center;
-  environment.body_radius = block_world_.planet().radius;
-  environment.surface_gravity = 9.81;
-  environment.atmosphere_height = atmosphere_.params().atmosphere_height;
-  environment.ground_radius = [this](const glm::dvec3 &direction) {
-    return block_world_.surface_radial_distance(direction);
-  };
-  return environment;
-}
-
-void Engine::place_ship_near_player() {
-  const glm::dvec3 center = block_world_.planet().center;
-  const glm::dvec3 feet(local_player.transform.position);
-  glm::dvec3 up = feet - center;
-  up = glm::dot(up, up) > 1.0e-9 ? glm::normalize(up)
-                                 : glm::dvec3(0.0, 1.0, 0.0);
-  glm::dvec3 heading(camera.forward());
-  heading -= up * glm::dot(heading, up);
-  if (glm::dot(heading, heading) < 1.0e-9) {
-    heading = glm::abs(up.y) < 0.99 ? glm::dvec3(0.0, 1.0, 0.0)
-                                     : glm::dvec3(0.0, 0.0, 1.0);
-    heading -= up * glm::dot(heading, up);
-  }
-  heading = glm::normalize(heading);
-  // Park it ahead and to the right of the player, facing the same way.
-  const glm::dvec3 right = glm::normalize(glm::cross(heading, up));
-  const glm::dvec3 spot = glm::normalize(feet + heading * 7.0 + right * 6.0 -
-                                         center);
-  const glm::dvec3 ground =
-      center + spot * block_world_.surface_radial_distance(spot);
-  // Sit the hull on the ground rather than half inside it.
-  ship_tuning_.hull_clearance = double(spaceship_hull_extents().y) * 0.5 + 0.6;
-  ship_ = make_landed_spaceship(ground, center, heading, ship_tuning_);
-  ship_body_index_ = active_body_index_;
-  piloting_ship_ = false;
-}
-
-bool Engine::player_near_ship() const {
-  if (ship_body_index_ != active_body_index_) {
-    return false;
-  }
-  constexpr double kBoardingRange = 5.0;
-  return spaceship_hull_distance(
-             ship_, glm::dvec3(local_player.transform.position)) < kBoardingRange;
-}
-
-void Engine::update_ship_controls(InputState &gameplay_input,
-                                  double frame_dt) {
-  ship_transfer_cooldown_ = std::max(0.0, ship_transfer_cooldown_ - frame_dt);
-  // Automated capture: VOXOV_CAPTURE_SHIP=<body index> boards the ship and
-  // flies it toward that body so takeoff, frame transfer, and arrival can be
-  // screenshot without a pilot.
-  static const char *capture_target_env = std::getenv("VOXOV_CAPTURE_SHIP");
-  const int32_t capture_target =
-      capture_target_env != nullptr ? std::atoi(capture_target_env) : -1;
-  if (capture_target >= 0 && !piloting_ship_ && frame_index > 10 &&
-      ship_body_index_ == active_body_index_) {
-    piloting_ship_ = true;
-    ship_camera_initialized_ = false;
-  }
-  if (!piloting_ship_) {
-    if (gameplay_input.interact_pressed && player_near_ship()) {
-      piloting_ship_ = true;
-      ship_camera_initialized_ = false;
-      gameplay_input.interact_pressed = false;
-      last_hud_message_ = "Ship: W/S thrust, mouse steer, SPACE lift, E exit";
-    }
-    return;
-  }
-
-  // Exit only when parked or nearly so, onto the ground beside the hatch.
-  if (gameplay_input.interact_pressed) {
-    const double altitude = spaceship_altitude(ship_, ship_environment());
-    if (ship_.landed ||
-        (altitude < ship_tuning_.hull_clearance + 2.0 &&
-         glm::length(ship_.velocity) < 3.0)) {
-      const glm::dvec3 center = block_world_.planet().center;
-      const glm::dvec3 up = glm::normalize(ship_.position - center);
-      const glm::dvec3 side = glm::normalize(
-          glm::cross(up, spaceship_forward(ship_)));
-      const double exit_offset = double(spaceship_hull_extents().x) * 0.5 + 3.5;
-      const glm::dvec3 spot =
-          glm::normalize(ship_.position + side * exit_offset - center);
-      local_player.transform.position = glm::vec3(
-          center + spot * (block_world_.surface_radial_distance(spot) + 0.3));
-      local_player.controller.velocity = glm::vec3(0.0f);
-      local_player.locomotion.vertical_velocity = 0.0f;
-      local_player_prev_position = local_player.transform.position;
-      piloting_ship_ = false;
-      third_person_camera_initialized_ = false;
-      last_hud_message_ = "Left the ship";
-    } else {
-      last_hud_message_ = "Land before leaving the ship";
-    }
-    gameplay_input.interact_pressed = false;
-    if (!piloting_ship_) {
-      return;
-    }
-  }
-
-  const float sensitivity =
-      glm::radians(local_player.camera_rig.sensitivityMouse);
-  ship_input_ = SpaceshipInput{};
-  ship_input_.pitch_delta = -gameplay_input.look_delta.y * sensitivity;
-  ship_input_.yaw_delta = gameplay_input.look_delta.x * sensitivity;
-  ship_input_.roll_axis = gameplay_input.move.x;
-  ship_input_.thrust_axis = gameplay_input.move.y;
-  ship_input_.lift = gameplay_input.jump_held;
-  ship_input_.descend = gameplay_input.crouch_held;
-  ship_input_.boost = gameplay_input.sprint_held;
-  if (capture_target >= 0 && capture_target < solar_system_.body_count()) {
-    ship_input_ = autopilot_input(capture_target, frame_dt);
-  } else if (sky_navigation_mode_ && sky_navigation_locked_ &&
-             gameplay_input.key_w && session_state_.gameplay_started &&
-             !session_state_.menu_open &&
-             has_terrain_runtime(sky_navigation_target_index_)) {
-    ship_input_ = autopilot_input(sky_navigation_target_index_, frame_dt);
-  }
-  steer_spaceship(ship_, ship_input_, ship_tuning_, frame_dt);
-
-  // The pilot's body rides along; nothing else reacts to flight input.
-  disable_gameplay_actions(gameplay_input);
-  gameplay_input.look_delta = glm::vec2(0.0f);
-  gameplay_input.zoom_delta = 0.0f;
-}
-
-void Engine::step_ship(double dt) {
-  const bool was_landed = ship_.landed;
-  step_spaceship(ship_, ship_input_, ship_environment(), ship_tuning_, dt);
-  local_player.transform.position = glm::vec3(ship_.position);
-  local_player.controller.velocity = glm::vec3(ship_.velocity);
-  local_player.controller.grounded = ship_.landed;
-  if (ship_.landed && !was_landed) {
-    if (sky_navigation_mode_ && sky_navigation_target_index_ == active_body_index_) {
-      sky_navigation_locked_ = false;
-    }
-    // Flying there counts as plotting the course for the expedition.
-    expedition_mission_.on_course_locked(active_body_index_);
-    expedition_mission_.on_landed(active_body_index_);
-    request_save();
-    last_hud_message_ = "Landed on " +
-        solar_system_.bodies()[static_cast<size_t>(active_body_index_)].name;
-  }
-}
-
-SpaceshipInput Engine::autopilot_input(int32_t target_body, double dt) const {
-  // Velocity-matching approach: aim the nose along (desired - current)
-  // velocity, where the desired velocity heads for the target's surface at a
-  // speed that can still be braked away. Cancels sideways drift too.
-  SpaceshipInput input{};
-  const SpaceshipEnvironment environment = ship_environment();
-  const double altitude = spaceship_altitude(ship_, environment);
-  const CelestialBody &target =
-      solar_system_.bodies()[static_cast<size_t>(target_body)];
-  const glm::dvec3 target_center =
-      target_body == active_body_index_
-          ? environment.body_center
-          : target.position - solar_system_.body_position(active_body_index_);
-  const glm::dvec3 to_target = target_center - ship_.position;
-  const double target_distance = glm::length(to_target);
-  const glm::dvec3 direction = target_distance > 1.0e-9
-      ? to_target / target_distance : -spaceship_up(ship_);
-  const glm::dvec3 target_velocity = target_body == active_body_index_
-      ? glm::dvec3(0.0)
-      : target.velocity - solar_system_.bodies()[
-            static_cast<size_t>(active_body_index_)].velocity;
-  const double landing_radius = target_body == active_body_index_
-      ? environment.ground_radius(-direction) + ship_tuning_.hull_clearance
-      : target.orbital.radius + 12.0;
-  const double range = std::max(
-      0.0, target_distance - landing_radius);
-  const double brake_accel =
-      ship_tuning_.thrust_accel * ship_tuning_.boost_multiplier * 0.5;
-  const double approach_speed = std::min(
-      ship_tuning_.max_speed * 0.9, std::sqrt(2.0 * brake_accel * range));
-  // Match the destination's orbital velocity before entering its frame.
-  // Aiming only at its current position leaves a sideways arrival impulse.
-  const glm::dvec3 desired = target_velocity + direction * approach_speed;
-
-  if (target_body == active_body_index_ && range < 1.0 &&
-      glm::length(ship_.velocity) < 4.0) {
-    input.descend = altitude > 3.0; // settle onto the surface
-    return input;
-  }
-  input = spaceship_velocity_guidance(ship_, desired, dt);
-  input.lift = ship_.landed || (altitude < 10.0 && target_body != active_body_index_);
-  return input;
-}
-
-void Engine::transfer_ship_between_bodies() {
-  if (!piloting_ship_ || ship_transfer_cooldown_ > 0.0) {
-    return;
-  }
-  const glm::dvec3 solar_position =
-      ship_.position + solar_system_.body_position(active_body_index_);
-  const int32_t soi = frame_manager_.detect_soi(solar_position, solar_system_);
-  if (soi < 0 || soi == active_body_index_ || !has_terrain_runtime(soi)) {
-    return;
-  }
-  const int32_t from = active_body_index_;
-  const CelestialBody &from_body =
-      solar_system_.bodies()[static_cast<size_t>(from)];
-  const CelestialBody &to_body =
-      solar_system_.bodies()[static_cast<size_t>(soi)];
-  const glm::dvec3 offset = from_body.position - to_body.position;
-  const glm::dvec3 relative_velocity = from_body.velocity - to_body.velocity;
-
-  switch_active_planet(soi);
-  if (active_body_index_ != soi) {
-    return;
-  }
-  ship_.position += offset;
-  ship_.velocity += relative_velocity;
-  ship_body_index_ = soi;
-  ship_camera_eye_ += offset;
-  local_player.transform.position = glm::vec3(ship_.position);
-  local_player_prev_position = local_player.transform.position;
-  ship_transfer_cooldown_ = 2.0;
-  last_hud_message_ = "Entering " + to_body.name + " space";
-  spdlog::info("Ship transfer: {} -> {}", from_body.name, to_body.name);
-}
-
-void Engine::update_ship_camera(double frame_dt) {
-  const glm::dvec3 forward = spaceship_forward(ship_);
-  const glm::dvec3 roof = spaceship_up(ship_);
-  const double speed = glm::length(ship_.velocity);
-  // Frame the hull whatever its size, then pull back a little more as speed
-  // builds so the planet stays readable. A fixed 13 m sat inside anything
-  // larger than the original hand-built fuselage.
-  const glm::vec3 hull = spaceship_hull_extents();
-  const double distance =
-      double(hull.z) * 1.1 + 6.0 + std::min(speed * 0.05, 8.0);
-  glm::dvec3 desired =
-      ship_.position - forward * distance + roof * (double(hull.y) * 0.8 + 2.0);
-  const glm::dvec3 center = block_world_.planet().center;
-  const glm::dvec3 desired_dir = glm::normalize(desired - center);
-  const double floor =
-      block_world_.surface_radial_distance(desired_dir) + 1.5;
-  if (glm::length(desired - center) < floor) {
-    desired = center + desired_dir * floor;
-  }
-  if (!ship_camera_initialized_) {
-    ship_camera_eye_ = desired;
-    ship_camera_initialized_ = true;
-  } else {
-    const double alpha = 1.0 - std::exp(-7.0 * std::max(frame_dt, 0.0));
-    ship_camera_eye_ += (desired - ship_camera_eye_) * alpha;
-  }
-  const glm::dvec3 target = ship_.position + forward * 8.0 + roof * 1.5;
-  const glm::dvec3 view_dir = glm::normalize(target - ship_camera_eye_);
-  const glm::mat4 view = glm::lookAt(glm::vec3(ship_camera_eye_),
-                                     glm::vec3(target), glm::vec3(roof));
-  camera.set_view_override(view);
-  camera.transform.position = glm::vec3(ship_camera_eye_);
-  camera.transform.euler_radians.y =
-      static_cast<float>(std::atan2(view_dir.x, -view_dir.z));
-  camera.transform.euler_radians.x =
-      static_cast<float>(-std::asin(std::clamp(view_dir.y, -1.0, 1.0)));
-  camera.transform.euler_radians.z = 0.0f;
-}
-
-void Engine::append_ship_mesh() {
-  const auto resident =
-      std::find_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-                   [](const RenderMesh &m) { return m.mesh_id == kShipMeshId; });
-  if (ship_body_index_ != active_body_index_) {
-    if (resident != scene.opaque_meshes.end()) {
-      scene.opaque_meshes.erase(resident);
-    }
-    return;
-  }
-
-  // The hull is built relative to the ship itself, so moving the ship or the
-  // camera only moves world_origin. It is rebuilt and re-uploaded only when
-  // the ship turns or its exhaust glow changes, so a parked ship costs
-  // nothing per frame. The glow is quantised so a fading exhaust settles.
-  SpaceshipState pose = ship_;
-  pose.thrust_level =
-      std::round(std::clamp(ship_.thrust_level, 0.0f, 1.0f) * 64.0f) / 64.0f;
-  uint64_t hash = 1469598103934665603ull;
-  const auto mix = [&hash](const void *data, size_t size) {
-    const auto *bytes = static_cast<const uint8_t *>(data);
-    for (size_t i = 0; i < size; ++i) {
-      hash = (hash ^ bytes[i]) * 1099511628211ull;
-    }
-  };
-  mix(&pose.orientation, sizeof(pose.orientation));
-  mix(&pose.thrust_level, sizeof(pose.thrust_level));
-  hash = hash == 0 ? 1 : hash;
-
-  if (resident != scene.opaque_meshes.end() && resident->content_hash == hash) {
-    resident->world_origin = ship_.position;
-    return;
-  }
-  RenderMesh mesh = build_spaceship_mesh(pose, ship_.position);
-  mesh.mesh_id = kShipMeshId;
-  mesh.content_hash = hash;
-  mesh.world_origin = ship_.position;
-  if (resident != scene.opaque_meshes.end()) {
-    *resident = std::move(mesh);
-  } else {
-    scene.opaque_meshes.push_back(std::move(mesh));
-  }
-}
-
-void Engine::request_save() {
-  persistence_dirty_ = true;
-}
-
-void Engine::flush_pending_save(double frame_dt) {
-  constexpr double kSaveDebounceSeconds = 2.0;
-  seconds_since_save_ += std::max(0.0, frame_dt);
-  if (!persistence_dirty_ || seconds_since_save_ < kSaveDebounceSeconds) {
-    return;
-  }
-  if (save_persistent_game()) {
-    persistence_dirty_ = false;
-  }
-  seconds_since_save_ = 0.0;
-}
-
-void Engine::invalidate_block_meshes(const BlockAddress &addr) {
-  std::unordered_set<uint64_t> stale;
-  for (const BlockAddress &chunk : chunks_touching_block(block_world_, addr)) {
-    stale.insert(BlockWorld::chunk_mesh_id(chunk));
-    stale.insert(vegetation::mesh_id(chunk));
-  }
-  scene.opaque_meshes.erase(
-      std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
-                     [&stale](const RenderMesh &mesh) {
-                       return stale.count(mesh.mesh_id) != 0;
-                     }),
-      scene.opaque_meshes.end());
-}
-
-void Engine::update_block_interaction(const InputState &input) {
-  if (piloting_ship_) {
-    targeted_addr_.reset();
-    return;
-  }
-  // Pick along the crosshair ray, but measure reach from the player's eye so
-  // the third-person orbit distance neither extends nor shortens it.
-  constexpr float k_reach = 7.0f;
-  constexpr float k_eye_height = 1.6f;
-  const glm::vec3 feet = local_player.transform.position;
-  const glm::vec3 player_up = glm::dot(feet, feet) > 1.0e-6f
-                                  ? glm::normalize(feet)
-                                  : glm::vec3(0.0f, 1.0f, 0.0f);
-  const glm::vec3 eye = feet + player_up * k_eye_height;
-  const glm::vec3 ray_origin = camera.transform.position;
-  const BlockPick pick = pick_block(
-      block_world_, ray_origin, camera.forward(), eye, k_reach,
-      glm::length(eye - ray_origin) + k_reach);
-
-  targeted_addr_ = pick.hit;
-  targeted_hit_pos_ = pick.hit.has_value()
-                          ? block_world_.world_from_address(*pick.hit)
-                          : glm::dvec3(0.0);
-  targeted_face_normal_ = pick.face_normal;
-  if (!pick.hit.has_value()) {
-    return;
-  }
-
-  if (input.left_click_pressed) {
-    const BlockAddress addr = *pick.hit;
-    VoxelChunk &chunk = block_world_.get_or_generate_chunk(addr);
-    chunk.set_material(addr.block.x, addr.block.y, addr.block.z,
-                       VoxelMaterial::Air);
-    chunk.set_solid(addr.block.x, addr.block.y, addr.block.z, false);
-    expedition_mission_.on_block_removed(active_body_index_);
-    record_block_edit(active_body_index_, addr, VoxelMaterial::Air, false);
-    request_save();
-    invalidate_block_meshes(addr);
-    return;
-  }
-
-  if (!input.right_click_pressed || !pick.place.has_value() ||
-      block_overlaps_capsule(block_world_, *pick.place,
-                             glm::dvec3(local_player.transform.position),
-                             local_player.controller.capsuleRadius,
-                             local_player.controller.capsuleHeight)) {
-    return;
-  }
-  const BlockAddress place = *pick.place;
-  VoxelChunk &chunk = block_world_.get_or_generate_chunk(place);
-  if (chunk.material(place.block.x, place.block.y, place.block.z) !=
-      VoxelMaterial::Air) {
-    return;
-  }
-  const VoxelMaterial material = kBlockHotbar[hotbar_slot_].material;
-  chunk.set_material(place.block.x, place.block.y, place.block.z, material);
-  chunk.set_solid(place.block.x, place.block.y, place.block.z, true);
-  expedition_mission_.on_block_placed(active_body_index_);
-  record_block_edit(active_body_index_, place, material, true);
-  request_save();
-  invalidate_block_meshes(place);
+  spdlog::info("Loaded flat world save: edits={}", persistent_block_edits_.size());
 }
 
 bool Engine::save_persistent_game() {
   PersistentGameState state{};
   state.expedition_stage = expedition_mission_.stage();
   state.character = session_state_.selected_character;
-  state.active_body_index = active_body_index_;
+  state.active_body_index = 0;
   state.player_local_position = glm::dvec3(local_player.transform.position);
   state.block_edits = persistent_block_edits_;
   std::string error;
@@ -2849,67 +1063,163 @@ bool Engine::save_persistent_game() {
   return true;
 }
 
-void Engine::update_first_person_camera(PlayerEntity &player,
-                                        Camera &out_camera, float dt) {
+void Engine::request_save() { persistence_dirty_ = true; }
+
+void Engine::flush_pending_save(double frame_dt) {
+  if (!persistence_dirty_) {
+    return;
+  }
+  seconds_since_save_ += frame_dt;
+  if (seconds_since_save_ < kSaveDebounceSeconds) {
+    return;
+  }
+  if (save_persistent_game()) {
+    persistence_dirty_ = false;
+    seconds_since_save_ = 0.0;
+  }
+}
+
+void Engine::invalidate_chunk_mesh(VoxelChunkCoord2D coord) {
+  dirty_chunk_meshes_.insert(coord);
+}
+
+void Engine::invalidate_block_meshes(const FlatBlockAddress &addr) {
+  VoxelChunkCoord2D coord{};
+  int lx = 0;
+  int lz = 0;
+  FlatWorld::world_to_local(addr.wx, addr.wz, coord, lx, lz);
+  invalidate_chunk_mesh(coord);
+  if (lx == 0) {
+    invalidate_chunk_mesh(VoxelChunkCoord2D{coord.x - 1, coord.z});
+  } else if (lx == VoxelChunk::CHUNK_X - 1) {
+    invalidate_chunk_mesh(VoxelChunkCoord2D{coord.x + 1, coord.z});
+  }
+  if (lz == 0) {
+    invalidate_chunk_mesh(VoxelChunkCoord2D{coord.x, coord.z - 1});
+  } else if (lz == VoxelChunk::CHUNK_Z - 1) {
+    invalidate_chunk_mesh(VoxelChunkCoord2D{coord.x, coord.z + 1});
+  }
+}
+
+void Engine::update_block_interaction(const InputState &input) {
+  constexpr float k_reach = 7.0f;
+  constexpr float k_eye_height = 1.6f;
+  const glm::vec3 eye =
+      local_player.transform.position + glm::vec3(0.0f, k_eye_height, 0.0f);
+  const glm::vec3 ray_origin = camera.transform.position;
+  const float max_dist = glm::length(eye - ray_origin) + k_reach;
+
+  FlatBlockAddress hit{};
+  glm::vec3 normal(0.0f);
+  if (!flat_world_.raycast(glm::dvec3(ray_origin), glm::dvec3(camera.forward()),
+                           max_dist, hit, normal)) {
+    targeted_addr_.reset();
+    return;
+  }
+  const glm::vec3 hit_center(static_cast<float>(hit.wx) + 0.5f,
+                             static_cast<float>(hit.wy) + 0.5f,
+                             static_cast<float>(hit.wz) + 0.5f);
+  if (glm::length(hit_center - eye) > k_reach + 0.5f) {
+    targeted_addr_.reset();
+    return;
+  }
+
+  targeted_addr_ = hit;
+  targeted_face_normal_ = normal;
+
+  if (input.left_click_pressed) {
+    flat_world_.set_block(hit.wx, hit.wy, hit.wz, VoxelMaterial::Air);
+    expedition_mission_.on_block_removed(0);
+    record_block_edit(hit, VoxelMaterial::Air, false);
+    request_save();
+    invalidate_block_meshes(hit);
+    return;
+  }
+
+  if (input.right_click_pressed) {
+    const FlatBlockAddress place{
+        hit.wx + static_cast<int32_t>(std::lround(normal.x)),
+        hit.wy + static_cast<int32_t>(std::lround(normal.y)),
+        hit.wz + static_cast<int32_t>(std::lround(normal.z)),
+    };
+    if (place.wy < 0 || place.wy >= VoxelChunk::CHUNK_Y ||
+        flat_world_.material_at(place.wx, place.wy, place.wz) !=
+            VoxelMaterial::Air) {
+      return;
+    }
+    const VoxelMaterial mat = kBlockHotbar[hotbar_slot_].material;
+    flat_world_.set_block(place.wx, place.wy, place.wz, mat);
+    expedition_mission_.on_block_placed(0);
+    record_block_edit(place, mat, true);
+    request_save();
+    invalidate_block_meshes(place);
+  }
+}
+
+void Engine::append_target_outline(RenderMesh &mesh) const {
+  if (!targeted_addr_.has_value() || session_state_.menu_open) {
+    return;
+  }
+  const FlatBlockAddress &a = *targeted_addr_;
+  const float scale = flat_world_.config().voxel_scale;
+  const glm::vec3 min_p =
+      glm::vec3(static_cast<float>(a.wx), static_cast<float>(a.wy),
+                static_cast<float>(a.wz)) *
+      scale;
+  const glm::vec3 max_p = min_p + glm::vec3(scale);
+  const glm::vec3 center = (min_p + max_p) * 0.5f;
+  constexpr float kInflate = 1.02f;
+  const glm::vec3 c[8] = {
+      center + (glm::vec3(min_p.x, min_p.y, min_p.z) - center) * kInflate,
+      center + (glm::vec3(max_p.x, min_p.y, min_p.z) - center) * kInflate,
+      center + (glm::vec3(min_p.x, max_p.y, min_p.z) - center) * kInflate,
+      center + (glm::vec3(max_p.x, max_p.y, min_p.z) - center) * kInflate,
+      center + (glm::vec3(min_p.x, min_p.y, max_p.z) - center) * kInflate,
+      center + (glm::vec3(max_p.x, min_p.y, max_p.z) - center) * kInflate,
+      center + (glm::vec3(min_p.x, max_p.y, max_p.z) - center) * kInflate,
+      center + (glm::vec3(max_p.x, max_p.y, max_p.z) - center) * kInflate,
+  };
+  constexpr int kEdges[12][2] = {{0, 1}, {2, 3}, {4, 5}, {6, 7},
+                                 {0, 2}, {1, 3}, {4, 6}, {5, 7},
+                                 {0, 4}, {1, 5}, {2, 6}, {3, 7}};
+  const glm::vec3 color(0.06f, 0.07f, 0.08f);
+  for (const auto &edge : kEdges) {
+    append_mesh(mesh, build_debug_line_mesh(c[edge[0]], c[edge[1]], 0.018f, color));
+  }
+}
+
+void Engine::update_first_person_camera(PlayerEntity &player, Camera &out_camera,
+                                        float dt) {
   update_first_person_camera(player, player.transform.position, out_camera, dt);
 }
 
 void Engine::update_first_person_camera(PlayerEntity &player,
-                                         const glm::vec3 &render_position,
-                                         Camera &out_camera, float dt) {
-  // WHY use view override: The Camera class computes view from
-  // yawPitchRoll which assumes world-Y-up. On a sphere planet the local "up"
-  // varies by position. We compute the view matrix directly with glm::lookAt
-  // in the local tangent frame, then set it as an override so the renderer
-  // uses the correct orientation regardless of planet curvature.
-
-  // Radial "up" from planet center.
-  glm::vec3 local_up = glm::normalize(render_position);
-  if (glm::length(local_up) < 0.1f) local_up = glm::vec3(0.0f, 1.0f, 0.0f);
-
-  // Use the same transported tangent frame as locomotion. It stays continuous
-  // through the poles instead of switching reference axes abruptly.
-  const glm::vec3 north =
-      player_surface_orientation::reference_forward(player.camera_rig, local_up);
-  const glm::vec3 east =
-      player_surface_orientation::east_from_forward(north, local_up);
-
+                                        const glm::vec3 &render_position,
+                                        Camera &out_camera, float dt) {
+  const glm::vec3 local_up(0.0f, 1.0f, 0.0f);
   const float yaw_rad = glm::radians(player.camera_rig.yaw);
   const float pitch_rad = glm::radians(player.camera_rig.pitch);
+  const glm::vec3 forward(std::sin(yaw_rad) * std::cos(pitch_rad),
+                          std::sin(pitch_rad),
+                          std::cos(yaw_rad) * std::cos(pitch_rad));
 
-  // View direction: yaw rotates in tangent plane, pitch tilts up/down.
-  // Positive pitch = look up (away from surface), negative = look down.
-  const glm::vec3 view_dir = glm::normalize(
-      std::cos(pitch_rad) * (std::sin(yaw_rad) * east + std::cos(yaw_rad) * north)
-      + std::sin(pitch_rad) * local_up);
-
-  // Camera at player eye position: 1.6m above feet along radial up.
-  // In third-person (distance > 0) the eye orbits backwards along -view_dir
-  // around a pivot at pivotHeight above the feet.
   constexpr float k_eye_height = 1.6f;
   const bool third_person = player.camera_rig.distance > 0.0f;
   const float pivot_height =
       third_person ? player.camera_rig.pivotHeight : k_eye_height;
   glm::vec3 pivot = render_position + local_up * pivot_height;
   if (third_person) {
-    // Over-the-right-shoulder framing keeps the crosshair (and the pick ray)
-    // off the avatar's back. The offset shrinks when zoomed in and stops
-    // short of any wall beside the player.
     constexpr float k_shoulder_offset = 0.65f;
-    const glm::vec3 right = glm::cross(view_dir, local_up);
+    const glm::vec3 right = glm::cross(forward, local_up);
     if (glm::dot(right, right) > 1.0e-6f) {
       const glm::vec3 right_dir = glm::normalize(right);
-      float offset = k_shoulder_offset *
-                     std::clamp(player.camera_rig.distance / 2.5f, 0.0f, 1.0f);
-      float hit_distance = 0.0f;
-      if (collision_world.has_planet_surface_collider() &&
-          collision_world.raycast(pivot, right_dir, offset + 0.3f,
-                                  hit_distance)) {
-        offset = std::clamp(hit_distance - 0.3f, 0.0f, offset);
-      }
+      const float offset =
+          k_shoulder_offset *
+          std::clamp(player.camera_rig.distance / 2.5f, 0.0f, 1.0f);
       pivot += right_dir * offset;
     }
   }
+
   glm::vec3 orbit_origin = pivot;
   float orbit_distance = player.camera_rig.distance;
   if (third_person) {
@@ -2931,142 +1241,21 @@ void Engine::update_first_person_camera(PlayerEntity &player,
     }
     orbit_origin = third_person_pivot_;
     orbit_distance = third_person_smoothed_distance_;
-  }
-  glm::vec3 eye_pos = orbit_origin - view_dir * orbit_distance;
 
-  if (third_person && collision_world.has_planet_surface_collider()) {
-    const float k_padding = out_camera.z_near + 0.08f;
-    constexpr int k_ray_count = 5;
-    const glm::vec3 to_camera = -view_dir;
-    const glm::vec3 side = glm::normalize(
-        std::fabs(glm::dot(to_camera, local_up)) < 0.98f
-            ? glm::cross(to_camera, local_up)
-            : glm::cross(to_camera, glm::vec3(0.0f, 1.0f, 0.0f)));
-    const glm::vec3 vertical = glm::normalize(glm::cross(side, to_camera));
-    float best_hit = orbit_distance;
-    for (int i = 0; i < k_ray_count; ++i) {
-      const bool center = i == 0;
-      const float ring = center ? 0.0f : 0.32f;
-      const float angle = 1.5707964f * static_cast<float>(i - 1);
-      const glm::vec3 offset = center
-          ? glm::vec3(0.0f)
-          : glm::normalize(side * std::cos(angle) +
-                           vertical * std::sin(angle)) * ring;
-      const glm::vec3 ray_origin = pivot + offset;
-      const glm::vec3 ray_direction =
-          glm::normalize(to_camera + offset * 0.5f);
-      const float max_range = orbit_distance + glm::length(offset);
-      float hit_distance = 0.0f;
-      if (collision_world.raycast(ray_origin, ray_direction, max_range,
-                                  hit_distance)) {
-        best_hit = std::min(best_hit, hit_distance - glm::length(offset));
-      }
-    }
-    // Pull the camera in front of any terrain between the pivot and the
-    // desired eye so it never clips into voxels behind the player.
-    if (best_hit < orbit_distance) {
-      orbit_distance = std::max(0.0f, best_hit - k_padding);
-      eye_pos = orbit_origin - view_dir * orbit_distance;
-      third_person_smoothed_distance_ = orbit_distance;
+    float hit_distance = 0.0f;
+    if (collision_world.raycast(orbit_origin, -forward, orbit_distance + 0.25f,
+                                hit_distance)) {
+      orbit_distance = std::clamp(hit_distance - 0.25f, 0.2f, orbit_distance);
     }
   }
-  const glm::vec3 camera_position = eye_pos;
 
-  // Build view matrix from local tangent frame using glm::lookAt.
-  // This correctly handles any position on the sphere — camera up is
-  // always the local radial direction.
-  const glm::mat4 view_matrix = glm::lookAt(
-      glm::vec3(camera_position),
-      glm::vec3(camera_position + view_dir),
-      glm::vec3(local_up));
-
-  out_camera.set_view_override(view_matrix);
-  out_camera.transform.position = camera_position;
-  // euler_radians unused when view override is active, but keep in sync
-  // for any debug display that reads them.
-  out_camera.transform.euler_radians.y = std::atan2(view_dir.x, -view_dir.z);
+  const glm::vec3 eye = orbit_origin - forward * orbit_distance;
+  out_camera.transform.position = eye;
+  out_camera.set_view_override(glm::lookAt(eye, eye + forward, local_up));
+  out_camera.transform.euler_radians.y = std::atan2(forward.x, -forward.z);
   out_camera.transform.euler_radians.x =
-      -std::asin(std::clamp(view_dir.y, -1.0f, 1.0f));
+      -std::asin(std::clamp(forward.y, -1.0f, 1.0f));
   out_camera.transform.euler_radians.z = 0.0f;
-}
-
-void Engine::append_ship_hud() {
-  const SpaceshipEnvironment environment = ship_environment();
-  const CelestialBody &here =
-      solar_system_.bodies()[static_cast<size_t>(active_body_index_)];
-  const auto metres = [](double value) {
-    return value >= 1000.0
-        ? std::to_string(static_cast<int>(value / 100.0) / 10) + "." +
-              std::to_string(static_cast<int>(value / 100.0) % 10) + "KM"
-        : std::to_string(static_cast<int>(value)) + "M";
-  };
-  append_screen_rect(scene.debug_screen, 0.40f, -0.60f, 0.96f, -0.94f,
-                     glm::vec3(0.04f, 0.07f, 0.10f));
-  append_screen_label(scene.debug_screen, "SHIP  " + uppercase_ascii(here.name),
-                      0.44f, -0.66f, 0.0048f, glm::vec3(1.0f, 0.86f, 0.40f));
-  append_screen_label(
-      scene.debug_screen,
-      "SPEED " + std::to_string(static_cast<int>(glm::length(ship_.velocity))) +
-          " M/S   ALT " +
-          metres(std::max(0.0, spaceship_altitude(ship_, environment))),
-      0.44f, -0.74f, 0.0042f, glm::vec3(0.92f, 0.96f, 1.0f));
-  append_screen_label(scene.debug_screen,
-                      ship_.landed ? "LANDED  SPACE LIFT  E EXIT"
-                                   : "W/S THRUST  MOUSE STEER  A/D ROLL",
-                      0.44f, -0.82f, 0.0036f, glm::vec3(0.70f, 0.80f, 0.90f));
-  append_screen_label(scene.debug_screen,
-                      "SPACE/CTRL LIFT  SHIFT BOOST",
-                      0.44f, -0.89f, 0.0036f, glm::vec3(0.70f, 0.80f, 0.90f));
-
-  // Destination markers: every other non-star body, labelled with range.
-  const glm::mat4 vp = camera.projection(sky_navigation_aspect_ratio_) *
-                       camera.view();
-  const glm::dvec3 origin = solar_system_.body_position(active_body_index_);
-  std::vector<glm::vec2> placed_labels;
-  for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
-    const CelestialBody &body = solar_system_.bodies()[static_cast<size_t>(i)];
-    if (i == active_body_index_ || body.is_star) {
-      continue;
-    }
-    const glm::dvec3 relative = body.position - origin;
-    glm::vec4 clip = vp * glm::vec4(glm::vec3(relative), 1.0f);
-    const bool behind = clip.w <= 0.0f;
-    if (behind) {
-      // Mirror targets behind the camera so their marker pins to the edge
-      // on the side you'd turn toward.
-      clip = glm::vec4(-clip.x, -clip.y, clip.z, std::max(0.001f, -clip.w));
-    }
-    glm::vec2 marker(clip.x / clip.w, clip.y / clip.w);
-    if (behind || std::fabs(marker.x) > 0.9f || marker.y > 0.9f ||
-        marker.y < -0.5f) {
-      const float scale = std::max(
-          {std::fabs(marker.x) / 0.9f, marker.y / 0.9f, -marker.y / 0.5f,
-           1.0f});
-      marker /= scale;
-    }
-    const float x = marker.x;
-    float y = marker.y;
-    // Stack labels that would overlap (bodies in nearly the same direction).
-    for (bool moved = true; moved;) {
-      moved = false;
-      for (const glm::vec2 &other : placed_labels) {
-        if (std::fabs(other.x - x) < 0.3f && std::fabs(other.y - y) < 0.05f) {
-          y -= 0.06f;
-          moved = true;
-        }
-      }
-    }
-    placed_labels.push_back(glm::vec2(x, y));
-    const double range =
-        std::max(0.0, glm::length(relative - ship_.position) -
-                          body.orbital.radius);
-    append_screen_cursor(scene.debug_screen, glm::vec2(x, y),
-                         glm::vec3(0.40f, 1.0f, 0.86f));
-    append_screen_label(scene.debug_screen,
-                        uppercase_ascii(body.name) + " " + metres(range),
-                        x + 0.02f, y - 0.03f, 0.0040f,
-                        glm::vec3(0.40f, 1.0f, 0.86f));
-  }
 }
 
 void Engine::refresh_overlay_text() {
@@ -3107,132 +1296,29 @@ void Engine::refresh_overlay_text() {
                           glm::vec3(0.88f, 0.93f, 0.99f));
     }
     if (touch_controls_visible_) {
-      append_screen_label(scene.debug_screen,
-                          "Touch: RUN=DOWN  CROUCH=UP  JUMP=SELECT  MENU=CLOSE",
-                          -0.88f, -0.64f, 0.0048f,
-                          glm::vec3(0.88f, 0.95f, 1.0f));
+      append_touch_button_hint(scene.debug_screen, -0.90f, -0.60f, -0.50f,
+                               -0.70f, "MENU=CLOSE");
     }
     return;
   }
 
-  if (sky_navigation_mode_) {
-    append_screen_rect(scene.debug_screen, -0.97f, 0.91f, -0.30f, 0.73f,
-                       glm::vec3(0.03f, 0.05f, 0.08f));
-    append_screen_label(scene.debug_screen, "SKY NAVIGATION", -0.93f, 0.86f,
-                        0.0058f, glm::vec3(0.80f, 0.95f, 1.0f));
-    append_screen_label(
-        scene.debug_screen,
-        sky_navigation_locked_
-            ? "ENTER UNLOCK   F6 CLOSE"
-            : "MOVE CURSOR TO SELECT   ENTER LOCK   F6 CLOSE",
-        -0.93f, 0.78f, 0.0042f, glm::vec3(0.65f, 0.78f, 0.86f));
-    append_screen_label(scene.debug_screen,
-                        std::string(expedition_mission_.status()), -0.93f,
-                        0.69f, 0.0043f, glm::vec3(0.92f, 0.95f, 1.0f));
-
-    append_screen_cursor(scene.debug_screen, sky_navigation_cursor_ndc_,
-                         glm::vec3(0.95f, 0.98f, 1.0f));
-
-    const glm::mat4 vp = camera.projection(sky_navigation_aspect_ratio_) *
-                         camera.view();
-    const glm::dvec3 planet_orbit_pos =
-        solar_system_.body_position(active_body_index_);
-    const glm::dvec3 player_world =
-        glm::dvec3(local_player.transform.position);
-    for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
-      if (!is_sky_navigation_target(i, active_body_index_)) continue;
-      const CelestialBody &body = solar_system_.bodies()[static_cast<size_t>(i)];
-      const glm::dvec3 body_world = body.position - planet_orbit_pos;
-      glm::vec4 clip = vp * glm::vec4(glm::vec3(body_world), 1.0f);
-      if (clip.w <= 0.0f) {
-        clip.x = -clip.x;
-        clip.y = -clip.y;
-        clip.w = std::max(0.001f, -clip.w);
-      }
-      float x = clip.x / clip.w;
-      float y = clip.y / clip.w;
-      x = std::clamp(x, -0.88f, 0.88f);
-      y = std::clamp(y, -0.78f, 0.78f);
-
-      const bool selected = i == sky_navigation_target_index_;
-      const glm::vec3 label_color = sky_navigation_locked_ && selected
-          ? glm::vec3(1.0f, 0.84f, 0.28f)
-          : selected ? glm::vec3(0.38f, 1.0f, 0.86f)
-                     : glm::vec3(0.80f, 0.88f, 0.94f);
-      const std::string name = uppercase_ascii(body.name);
-      const double distance = glm::length(body_world - player_world);
-      const std::string distance_text = distance >= 1000.0
-          ? std::to_string(static_cast<int>(distance / 1000.0)) + "KM"
-          : std::to_string(static_cast<int>(distance)) + "M";
-      append_screen_label(scene.debug_screen,
-                          (selected ? "> " : "  ") + name + " " + distance_text,
-                          x - 0.06f, y, selected ? 0.0058f : 0.0048f,
-                          label_color);
-    }
-    return;
-  }
-
-  if (touch_controls_visible_) {
-    append_screen_label(scene.debug_screen, "MENU", -0.92f, 0.86f, 0.0047f);
-    append_screen_label(scene.debug_screen, "GOD", 0.76f, 0.86f, 0.0047f,
-                        glm::vec3(1.0f, 0.85f, 0.4f));
-    append_screen_label(scene.debug_screen, "MOVE", -0.78f, -0.70f, 0.0062f);
-    append_screen_label(scene.debug_screen, "LOOK / DRAG", 0.26f, -0.70f,
-                        0.0054f);
-    append_touch_button_hint(scene.debug_screen, 0.71f, -0.59f, 0.93f, -0.77f,
-                             "JUMP");
-    append_touch_button_hint(scene.debug_screen, 0.46f, -0.59f, 0.68f, -0.77f,
-                             "RUN");
-    append_touch_button_hint(scene.debug_screen, 0.71f, -0.36f, 0.93f, -0.54f,
-                             "CROUCH");
-  }
-
-  append_screen_rect(scene.debug_screen, -0.94f, -0.63f, 0.24f, -0.88f,
-                     expedition_mission_.complete()
-                         ? glm::vec3(0.05f, 0.18f, 0.13f)
-                         : glm::vec3(0.04f, 0.07f, 0.10f));
-  append_screen_label(scene.debug_screen,
-                      std::string(expedition_mission_.status()), -0.90f,
-                      -0.69f, 0.0045f,
-                      expedition_mission_.complete()
-                          ? glm::vec3(0.45f, 1.0f, 0.68f)
-                          : glm::vec3(0.92f, 0.96f, 1.0f));
-  append_screen_label(scene.debug_screen,
-                      std::string(expedition_mission_.hint()), -0.90f,
-                      -0.78f, 0.0040f, glm::vec3(0.75f, 0.84f, 0.92f));
-
-  if (piloting_ship_) {
-    append_ship_hud();
-  } else {
-    append_block_hotbar(scene.debug_screen, hotbar_slot_,
-                        sky_navigation_aspect_ratio_);
-    if (player_near_ship()) {
-      append_screen_label(scene.debug_screen, "E  BOARD SHIP", -0.10f, -0.22f,
-                          0.0050f, glm::vec3(1.0f, 0.88f, 0.45f));
-    }
-  }
+  append_block_hotbar(scene.debug_screen, hotbar_slot_, viewport_aspect_ratio_);
 
   if (!session_state_.devhud_enabled) {
-    // ── Crosshair ────────────────────────────────────────────────────
-    // Draw a small white cross at screen center for first-person aiming.
     const glm::vec3 crosshair_color(0.95f, 0.95f, 0.95f);
-    constexpr float ch_size = 0.018f;   // arm length in NDC
-    constexpr float ch_thick = 0.003f;  // arm thickness in NDC
-    // Horizontal bar
-    append_screen_rect(scene.debug_screen,
-        -ch_size, ch_thick, ch_size, -ch_thick, crosshair_color);
-    // Vertical bar
-    append_screen_rect(scene.debug_screen,
-        -ch_thick, ch_size, ch_thick, -ch_size, crosshair_color);
+    constexpr float ch_size = 0.018f;
+    constexpr float ch_thick = 0.003f;
+    append_screen_rect(scene.debug_screen, -ch_size, ch_thick, ch_size,
+                       -ch_thick, crosshair_color);
+    append_screen_rect(scene.debug_screen, -ch_thick, ch_size, ch_thick,
+                       -ch_size, crosshair_color);
     return;
   }
 
   const ProfilingSnapshot &profiling = render_stats.profiling;
-
-  // Get player block address for debug display.
-  const BlockAddress player_dbg_addr =
-      block_world_.address_from_world(
-          glm::dvec3(local_player.transform.position));
+  const VoxelChunkCoord2D player_chunk = FlatWorld::world_pos_to_chunk(
+      glm::dvec3(local_player.transform.position),
+      flat_world_.config().voxel_scale);
 
   std::string overlay_text =
       "FPS: " + std::to_string(static_cast<int>(render_stats.fps + 0.5)) +
@@ -3243,158 +1329,41 @@ void Engine::refresh_overlay_text() {
       " ms  Fixed: " + std::to_string(render_stats.fixed_cpu_ms).substr(0, 5) +
       " ms x" + std::to_string(render_stats.fixed_steps) +
       "\nChunk gen: " + std::to_string(render_stats.chunk_gen_ms).substr(0, 5) +
-      " ms  Mesh build: " + std::to_string(render_stats.mesh_build_ms).substr(0, 5) +
-      " ms" +
-      "\nGPU upload: " + std::to_string(render_stats.gpu_upload_ms).substr(0, 5) +
+      " ms  Mesh build: " +
+      std::to_string(render_stats.mesh_build_ms).substr(0, 5) + " ms" +
+      "\nGPU upload: " +
+      std::to_string(render_stats.gpu_upload_ms).substr(0, 5) +
       " ms  Draw calls: " + std::to_string(render_stats.draw_call_count) +
       "\nVertices: " + std::to_string(render_stats.total_vertices) +
       "  Indices: " + std::to_string(render_stats.total_indices) +
-      "\nGameplay: " +
-      std::to_string(profiling.gameplay_cpu_ms).substr(0, 5) +
-      " ms  Anim: " +
-      std::to_string(profiling.animation_cpu_ms).substr(0, 5) + " ms" +
-      "\nPhysics: " + std::to_string(profiling.physics_cpu_ms).substr(0, 5) +
-      " ms" +
-      "\nEvents fixed/frame: " +
-      std::to_string(profiling.fixed_event_drain_cpu_ms).substr(0, 5) +
-      " / " +
-      std::to_string(profiling.frame_event_drain_cpu_ms).substr(0, 5) +
-      " ms" +
       "\nMemory allocs: " +
       std::to_string(profiling.memory_current_allocations) + "/" +
       std::to_string(profiling.memory_total_allocations) + "  KiB: " +
       std::to_string(bytes_to_kib(profiling.memory_current_bytes)) + "/" +
       std::to_string(bytes_to_kib(profiling.memory_total_bytes)) +
-      "\nFrame events: " + std::to_string(presentation_frame_events_seen_) +
-      "\nCollisions: " + std::to_string(collision_count_) +
-      "\nNetwork events: " + std::to_string(net_events_seen_) +
-      "\nNetwork status: " + last_net_status_;
-  overlay_text += "\nFly mode: ";
-  overlay_text += debug_fly_mode_ ? "ON (F4)" : "OFF (F4)";
-  overlay_text += "\nWorld chunks: ";
-  overlay_text += std::to_string(render_stats.streamed_chunk_count);
-  // LOD distribution: how many chunks at each level.
-  overlay_text += "\nLOD: L0=" + std::to_string(render_stats.lod_chunk_count[0]) +
-      " L1=" + std::to_string(render_stats.lod_chunk_count[1]) +
-      " L2=" + std::to_string(render_stats.lod_chunk_count[2]) +
-      " L3=" + std::to_string(render_stats.lod_chunk_count[3]);
+      "\nFly mode: " + std::string(debug_fly_mode_ ? "ON (F4)" : "OFF (F4)") +
+      "\nFlat chunks: " + std::to_string(render_stats.streamed_chunk_count) +
+      "  Opaques: " + std::to_string(scene.opaque_meshes.size()) +
+      "\nPos: (" +
+      std::to_string(static_cast<int>(local_player.transform.position.x)) +
+      ", " +
+      std::to_string(static_cast<int>(local_player.transform.position.y)) +
+      ", " +
+      std::to_string(static_cast<int>(local_player.transform.position.z)) +
+      ")" +
+      "\nChunk: (" + std::to_string(player_chunk.x) + ", " +
+      std::to_string(player_chunk.z) + ")" +
+      "\nTerrain h: " +
+      std::to_string(static_cast<int>(flat_world_.surface_height_at(
+          local_player.transform.position.x,
+          local_player.transform.position.z))) +
+      "\nGrounded: " +
+      std::string(local_player.controller.grounded ? "YES" : "NO");
 
-  // Player position and block address debug info.
-  overlay_text += "\nPos: (" +
-      std::to_string(static_cast<int>(local_player.transform.position.x)) + ", " +
-      std::to_string(static_cast<int>(local_player.transform.position.y)) + ", " +
-      std::to_string(static_cast<int>(local_player.transform.position.z)) + ")";
-  overlay_text += "\nSector: " + std::to_string(static_cast<int>(player_dbg_addr.sector)) +
-      " Shell: " + std::to_string(player_dbg_addr.shell);
-  overlay_text += "\nChunk: (" + std::to_string(player_dbg_addr.chunk.x) + ", " +
-      std::to_string(player_dbg_addr.chunk.y) + ", " +
-      std::to_string(player_dbg_addr.chunk.z) + ")";
-  overlay_text += "\nOpaques: " + std::to_string(scene.opaque_meshes.size());
-
-  // ── Solar system HUD info ───────────────────────────────────────────
-  overlay_text += "\nSolar system: ";
-  overlay_text += std::to_string(solar_system_.body_count()) + " bodies";
-  overlay_text += "\nSun dir: (" +
-      std::to_string(static_cast<int>(atmosphere_.params().sun_direction.x * 100.0) / 100.0) + ", " +
-      std::to_string(static_cast<int>(atmosphere_.params().sun_direction.y * 100.0) / 100.0) + ", " +
-      std::to_string(static_cast<int>(atmosphere_.params().sun_direction.z * 100.0) / 100.0) + ")";
-  {
-    const glm::dvec3 planet_pos =
-        solar_system_.body_position(active_body_index_);
-    overlay_text += "\nPlanet orbit pos: (" +
-        std::to_string(static_cast<int>(planet_pos.x)) + ", " +
-        std::to_string(static_cast<int>(planet_pos.y)) + ", " +
-        std::to_string(static_cast<int>(planet_pos.z)) + ")";
-  }
-  overlay_text += "\nSolar time: " + std::to_string(static_cast<int>(solar_system_time_)) + "s";
-
-  // ── Coordinate frame HUD info ──────────────────────────────────────
-  overlay_text += "\nFrame: " + std::string(active_frame_label_);
-  overlay_text += "  Body: ";
-  {
-    const auto& bodies = solar_system_.bodies();
-    if (active_body_index_ >= 0 &&
-        active_body_index_ < static_cast<int32_t>(bodies.size())) {
-      overlay_text += bodies[static_cast<size_t>(active_body_index_)].name;
-    } else {
-      overlay_text += "?";
-    }
-  }
-  {
-    // Show altitude above current body surface.
-    const double planet_radius = block_world_.planet().radius;
-    double altitude = 0.0;
-    if (flight_vehicle_spawned_ &&
-        flight_vehicle_.state().engine_active) {
-      altitude = glm::length(flight_vehicle_.state().position) - planet_radius;
-    } else {
-      altitude = glm::length(glm::dvec3(local_player.transform.position))
-                 - planet_radius;
-    }
-    overlay_text += "\nAltitude: " + std::to_string(static_cast<int>(altitude)) + "m";
-  }
-  // Frame transition cooldown timer.
-  if (frame_transition_cooldown_ > 0.0) {
-    overlay_text += "  Cooldown: " +
-        std::to_string(frame_transition_cooldown_).substr(0, 3) + "s";
-  }
-
-  // ── Atmosphere HUD info ─────────────────────────────────────────────
-  overlay_text += "\nAtmosphere: ";
-  overlay_text += atmosphere_enabled_ ? "ON" : "OFF";
-  overlay_text += "\nSky color: (" +
-      std::to_string(atmosphere_state_.sky_color.r).substr(0, 5) + ", " +
-      std::to_string(atmosphere_state_.sky_color.g).substr(0, 5) + ", " +
-      std::to_string(atmosphere_state_.sky_color.b).substr(0, 5) + ")";
-  overlay_text += "\nSun cos(angle): " + std::to_string(atmosphere_state_.sun_angle_cos).substr(0, 5);
-
-  // Camera debug info for visual debugging.
-  const glm::vec3 local_up = glm::normalize(local_player.transform.position);
-  overlay_text += "\nCam pitch: " + std::to_string(static_cast<int>(local_player.camera_rig.pitch)) +
-      " yaw: " + std::to_string(static_cast<int>(local_player.camera_rig.yaw));
-  overlay_text += "\nCam dist: " + std::to_string(static_cast<int>(local_player.camera_rig.distance));
-  overlay_text += "\nLocal up: (" +
-      std::to_string(local_up.x).substr(0, 4) + ", " +
-      std::to_string(local_up.y).substr(0, 4) + ", " +
-      std::to_string(local_up.z).substr(0, 4) + ")";
-  overlay_text += "\nTerrain h: " + std::to_string(
-      block_world_.terrain_height_at(glm::dvec3(local_up)));
-
-  // Gameplay state debug info.
-  overlay_text += "\nGrounded: " + std::string(local_player.controller.grounded ? "YES" : "NO");
-  overlay_text += "\nVel: " + std::to_string(static_cast<int>(
-      glm::length(local_player.controller.velocity)));
-  overlay_text += "\nLocomotion: " + std::string(
-      player_locomotion_state_name(local_player.locomotion.state));
-
-  // ── Flight vehicle HUD ──────────────────────────────────────────────
-  if (flight_vehicle_spawned_) {
-    const auto& vs = flight_vehicle_.state();
-    const auto& vf = flight_vehicle_.forces();
-    overlay_text += "\n--- Vehicle ---";
-    overlay_text += "\nEngine: " + std::string(vs.engine_active ? "ON (T)" : "OFF (T)");
-    overlay_text += "\nThrottle: " + std::to_string(static_cast<int>(vs.throttle * 100)) + "%";
-    overlay_text += "\nFuel: " + std::to_string(static_cast<int>(vs.fuel_remaining)) + "kg";
-    overlay_text += "\nSpeed: " + std::to_string(static_cast<int>(glm::length(vs.velocity))) + "m/s";
-    overlay_text += "\nAltitude: " + std::to_string(static_cast<int>(
-        glm::length(vs.position) - block_world_.planet().radius)) + "m";
-    overlay_text += "\nAtmo: " + std::string(flight_vehicle_.in_atmosphere() ? "YES" : "SPACE");
-    // Force magnitudes in kN for readability.
-    const auto kn = [](double n) -> int { return static_cast<int>(n / 1000.0); };
-    overlay_text += "\nThrust: " + std::to_string(kn(glm::length(vf.thrust))) + "kN";
-    overlay_text += "\nLift: " + std::to_string(kn(glm::length(vf.lift))) + "kN";
-    overlay_text += "\nDrag: " + std::to_string(kn(glm::length(vf.drag))) + "kN";
-  }
-
-  // Block targeting debug info.
   if (targeted_addr_.has_value()) {
-    const BlockAddress &ta = *targeted_addr_;
-    overlay_text += "\nTarget block: (" + std::to_string(ta.block.x) + "," +
-        std::to_string(ta.block.y) + "," + std::to_string(ta.block.z) + ")";
-    overlay_text += "\nFace normal: (" +
-        std::to_string(static_cast<int>(targeted_face_normal_.x)) + "," +
-        std::to_string(static_cast<int>(targeted_face_normal_.y)) + "," +
-        std::to_string(static_cast<int>(targeted_face_normal_.z)) + ")";
+    const FlatBlockAddress &ta = *targeted_addr_;
+    overlay_text += "\nTarget: (" + std::to_string(ta.wx) + "," +
+                    std::to_string(ta.wy) + "," + std::to_string(ta.wz) + ")";
   } else {
     overlay_text += "\nTarget: NONE";
   }

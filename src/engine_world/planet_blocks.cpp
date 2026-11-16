@@ -781,6 +781,9 @@ RenderMesh BlockWorld::build_chunk_mesh(
     RenderMesh mesh{};
     mesh.world_origin = camera_relative_origin;
     mesh.mesh_id = block_chunk_mesh_id(addr);
+    if (chunk.is_empty()) {
+        return mesh;
+    }
     mesh.vertices.reserve(8192);
     mesh.indices.reserve(12288);
 
@@ -1285,12 +1288,34 @@ RenderMesh BlockWorld::build_chunk_mesh(
                             v2 = p_side_x1[1]; v3 = p_side_x1[0];
                         }
 
+                        float ao0 = 1.0f, ao1 = 1.0f, ao2 = 1.0f, ao3 = 1.0f;
+                        if (face.fd == BlockDir::Left || face.fd == BlockDir::Right) {
+                            const bool s_zm = sample_solid_occluder(nx, by, bz - stride);
+                            const bool s_zp = sample_solid_occluder(nx, by, bz + stride);
+                            const bool s_ym = sample_solid_occluder(nx, by - stride, bz);
+                            const bool s_yp = sample_solid_occluder(nx, by + stride, bz);
+                            ao0 = voxel_ao_factor(s_zm, s_ym, sample_solid_occluder(nx, by - stride, bz - stride));
+                            ao1 = voxel_ao_factor(s_zp, s_ym, sample_solid_occluder(nx, by - stride, bz + stride));
+                            ao2 = voxel_ao_factor(s_zp, s_yp, sample_solid_occluder(nx, by + stride, bz + stride));
+                            ao3 = voxel_ao_factor(s_zm, s_yp, sample_solid_occluder(nx, by + stride, bz - stride));
+                        } else {
+                            const bool s_xm = sample_solid_occluder(bx - stride, by, nz);
+                            const bool s_xp = sample_solid_occluder(bx + stride, by, nz);
+                            const bool s_ym = sample_solid_occluder(bx, by - stride, nz);
+                            const bool s_yp = sample_solid_occluder(bx, by + stride, nz);
+                            ao0 = voxel_ao_factor(s_xm, s_ym, sample_solid_occluder(bx - stride, by - stride, nz));
+                            ao1 = voxel_ao_factor(s_xm, s_yp, sample_solid_occluder(bx - stride, by + stride, nz));
+                            ao2 = voxel_ao_factor(s_xp, s_yp, sample_solid_occluder(bx + stride, by + stride, nz));
+                            ao3 = voxel_ao_factor(s_xp, s_ym, sample_solid_occluder(bx + stride, by - stride, nz));
+                        }
+
                         const bool top_face = false;
                         const glm::vec3 color =
                             VoxelChunk::material_color(mat, top_face, height_t);
                         const glm::dvec3 face_center = (v0 + v1 + v2 + v3) * 0.25;
-                        emit_quad(v0, v1, v2, v3, color, face_center - cell_mid,
-                                  texture_layer(mat, false));
+                        emit_quad_ao(v0, v1, v2, v3, ao0, ao1, ao2, ao3,
+                                     color, face_center - cell_mid,
+                                     texture_layer(mat, false));
                     } else if (face.fd != BlockDir::Up) {
                         // ── Down face (bottom): original logic ──
                         // Bottom face of the block: emitted when neighbor below is

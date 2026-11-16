@@ -606,3 +606,12 @@ RenderMesh VoxelChunk::build_sky_placeholder(float size) const {
 
   return mesh;
 }
+
+bool VoxelChunk::is_empty() const {
+  for (uint8_t v : voxels) {
+    if ((v & 0x0Fu) != 0u) {
+      return false;
+    }
+  }
+  return true;
+}

@@ -46,6 +46,7 @@ public:
   void generate_flat_ground(int ground_y);
   VoxelMaterial material(int x, int y, int z) const;
   bool solid(int x, int y, int z) const;
+  bool is_empty() const;
   /// Returns sub-voxel height (0-63), stored as one of 16 levels.
   /// 0 means the block has zero height (air-like), 63 means full block height.
   uint8_t block_height(int x, int y, int z) const;

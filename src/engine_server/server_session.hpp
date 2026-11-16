@@ -4,9 +4,11 @@
 #include "engine_net_proto/net_types.hpp"
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/planet_blocks.hpp"
+#include "engine_world/solar_system.hpp"
 
-#include <cstdint>
 #include <cstddef>
+#include <cstdint>
+#include <memory>
 #include <optional>
 #include <unordered_map>
 
@@ -14,6 +16,11 @@ struct _ENetPeer;
 
 struct NetChunkCoordHash {
     size_t operator()(const NetChunkCoord &coord) const noexcept;
+};
+
+struct ServerBodyRuntime {
+    BlockWorld world{};
+    VoxelCollisionWorld collision{nullptr};
 };
 
 struct ServerClientState {
@@ -51,18 +58,18 @@ public:
         const ServerClientState &observer,
         const ServerClientState &subject) const;
     uint32_t server_sim_tick() const;
+    bool supports_body(uint32_t body_id) const;
+    const VoxelCollisionWorld &collision_for_body(uint32_t body_id) const;
 
 private:
     void simulate_client_tick(ServerClientState &state);
     PlayerEntity spawn_player_for_body(uint32_t body_id,
                                        uint32_t player_id) const;
-    const VoxelCollisionWorld &collision_for_body(uint32_t body_id) const;
+    const ServerBodyRuntime &body_runtime(uint32_t body_id) const;
 
     std::unordered_map<_ENetPeer *, ServerClientState> client_states;
-    BlockWorld voxov_world{};
-    BlockWorld aster_world{};
-    VoxelCollisionWorld voxov_collision{nullptr};
-    VoxelCollisionWorld aster_collision{nullptr};
+    SolarSystem solar_system_{};
+    std::unordered_map<uint32_t, std::unique_ptr<ServerBodyRuntime>> body_worlds_;
     uint32_t next_player_id = 1;
     uint32_t server_sim_tick_value = 0;
 };

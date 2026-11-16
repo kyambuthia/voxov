@@ -4,6 +4,7 @@
 #include "engine_gameplay/player/remote_avatar.hpp"
 #include "engine_world/block_picking.hpp"
 #include "engine/planet_gameplay_config.hpp"
+#include "engine_world/planet_world_config.hpp"
 
 #include "engine_core/memory.hpp"
 #include "engine_core/timing.hpp"
@@ -388,32 +389,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   // ── Block-based voxel planet (Bowerbyte/Pec architecture) ───────────
   // 6 cube-face sectors → shells (doubling resolution/axis) → 16³ chunks.
   // 3D noise on sphere surface for seamless terrain.
-  PlanetDefinition planet_def{};
-  planet_def.center = glm::dvec3(0.0);
-  planet_def.radius = kPlayablePlanetConfig.radius_m;
-  planet_def.voxel_size = kPlayablePlanetConfig.voxel_size_m;
-  planet_def.chunks_per_face = 64;
-  planet_def.seed = k_voxov_flat_world_seed;
-
-  BlockWorldConfig bw_cfg{};
-  bw_cfg.planet = planet_def;
-  bw_cfg.surface_shells = kPlayablePlanetConfig.surface_shells;
-  bw_cfg.base_resolution = kPlayablePlanetConfig.base_resolution;
-  bw_cfg.block_size = kPlayablePlanetConfig.voxel_size_m;
-  bw_cfg.terrain_feature_size =
-      kPlayablePlanetConfig.terrain_feature_size_m;
-  bw_cfg.terrain_base_height =
-      kPlayablePlanetConfig.terrain_base_height_blocks;
-  bw_cfg.terrain_amplitude =
-      kPlayablePlanetConfig.terrain_amplitude_blocks;
-  bw_cfg.terrain_min_height =
-      kPlayablePlanetConfig.terrain_min_height_blocks;
-  bw_cfg.terrain_max_height =
-      kPlayablePlanetConfig.terrain_max_height_blocks;
-  bw_cfg.terrain_shell_margin =
-      kPlayablePlanetConfig.terrain_shell_margin_blocks;
-  bw_cfg.chunk_size = kPlayablePlanetConfig.chunk_size;
-  bw_cfg.seed = k_voxov_flat_world_seed;
+  const BlockWorldConfig bw_cfg = make_playable_block_world_config();
+  const PlanetDefinition &planet_def = bw_cfg.planet;
   block_world_.init(bw_cfg);
 
   // Other bodies' terrain runtimes are created on demand from this base
@@ -2295,20 +2272,8 @@ bool Engine::has_terrain_runtime(int32_t body_index) const {
 }
 
 BlockWorldConfig Engine::terrain_config_for_body(int32_t body_index) const {
-  BlockWorldConfig config = base_terrain_config_;
-  if (body_index == kVoxovBodyIndex) {
-    return config;
-  }
-  config.planet.radius = solar_system_.bodies()[static_cast<size_t>(
-                             body_index)].orbital.radius;
-  // Aster keeps its original seed so existing saves regenerate the same
-  // terrain under their recorded edits.
-  config.planet.seed = body_index == kAsterBodyIndex
-      ? (k_voxov_flat_world_seed ^ 0xa57e'c0deull)
-      : (k_voxov_flat_world_seed ^
-         (0x9e37'79b9'7f4a'7c15ull * static_cast<uint64_t>(body_index)));
-  config.seed = config.planet.seed;
-  return config;
+  return make_body_block_world_config(base_terrain_config_, solar_system_,
+                                      body_index);
 }
 
 Engine::PlanetTerrainRuntime &Engine::parked_runtime(int32_t body_index) {
@@ -2321,13 +2286,7 @@ Engine::PlanetTerrainRuntime &Engine::parked_runtime(int32_t body_index) {
 }
 
 void Engine::install_active_surface_collider() {
-  collision_world.set_planet_surface_collider(
-      glm::vec3(0.0f), static_cast<float>(block_world_.planet().radius),
-      static_cast<float>(block_world_.max_surface_height_above_base()),
-      [this](glm::vec3 direction) -> float {
-        return static_cast<float>(
-            block_world_.surface_height_above_base(glm::dvec3(direction)));
-      });
+  install_planet_surface_collider(collision_world, block_world_);
 }
 
 void Engine::record_block_edit(int32_t body_index,

@@ -1,6 +1,7 @@
 #include "engine_server/server_session.hpp"
 
 #include "engine/planet_gameplay_config.hpp"
+#include "engine_world/planet_world_config.hpp"
 #include "engine_net/net_runtime_shared.hpp"
 #include "engine_gameplay/player/player_controller.hpp"
 #include "engine_input/input_state.hpp"
@@ -19,50 +20,9 @@ constexpr uint8_t k_known_input_flags =
     net_flag(NetInputFlags::SprintHeld) |
     net_flag(NetInputFlags::CrouchHeld);
 
-bool supported_body(uint32_t body_id) {
-    return body_id == 1u || body_id == 3u;
-}
-
 bool tick_newer(uint32_t incoming, uint32_t last_seen) {
     return incoming != last_seen &&
            static_cast<int32_t>(incoming - last_seen) > 0;
-}
-
-BlockWorldConfig server_world_config(double radius, uint64_t seed) {
-    PlanetDefinition planet{};
-    planet.center = glm::dvec3(0.0);
-    planet.radius = radius;
-    planet.voxel_size = kPlayablePlanetConfig.voxel_size_m;
-    planet.chunks_per_face = 64;
-    planet.seed = seed;
-
-    BlockWorldConfig config{};
-    config.planet = planet;
-    config.surface_shells = kPlayablePlanetConfig.surface_shells;
-    config.base_resolution = kPlayablePlanetConfig.base_resolution;
-    config.block_size = kPlayablePlanetConfig.voxel_size_m;
-    config.terrain_feature_size =
-        kPlayablePlanetConfig.terrain_feature_size_m;
-    config.terrain_base_height =
-        kPlayablePlanetConfig.terrain_base_height_blocks;
-    config.terrain_amplitude =
-        kPlayablePlanetConfig.terrain_amplitude_blocks;
-    config.terrain_min_height =
-        kPlayablePlanetConfig.terrain_min_height_blocks;
-    config.terrain_max_height =
-        kPlayablePlanetConfig.terrain_max_height_blocks;
-    config.terrain_shell_margin =
-        kPlayablePlanetConfig.terrain_shell_margin_blocks;
-    config.chunk_size = kPlayablePlanetConfig.chunk_size;
-    config.seed = seed;
-    return config;
-}
-
-float server_surface_radius(const BlockWorld &world) {
-    const int32_t shell = world.shell_count() - 1;
-    const int32_t equator_col = world.shell_config(shell).horizontal_res / 2;
-    return static_cast<float>(glm::length(world.spawn_position_at_face_uv(
-        PlanetFace::PosX, equator_col, equator_col, 0.0)));
 }
 
 void sync_net_player_state_from_entity(const PlayerEntity &player,
@@ -114,19 +74,19 @@ ServerSession::ServerSession() { reset(); }
 
 void ServerSession::reset() {
     client_states.clear();
-    voxov_world = BlockWorld{};
-    voxov_world.init(server_world_config(
-        kPlayablePlanetConfig.radius_m, k_voxov_flat_world_seed));
-    voxov_collision = VoxelCollisionWorld{};
-    voxov_collision.set_planet_surface_collider(
-        glm::vec3(0.0f), server_surface_radius(voxov_world));
-
-    aster_world = BlockWorld{};
-    aster_world.init(server_world_config(
-        32.0, k_voxov_flat_world_seed ^ 0xa57e'c0deull));
-    aster_collision = VoxelCollisionWorld{};
-    aster_collision.set_planet_surface_collider(
-        glm::vec3(0.0f), server_surface_radius(aster_world));
+    solar_system_.init(kPlayablePlanetConfig.radius_m);
+    body_worlds_.clear();
+    const BlockWorldConfig base_config = make_playable_block_world_config();
+    for (int32_t i = 0; i < solar_system_.body_count(); ++i) {
+        if (solar_system_.bodies()[static_cast<size_t>(i)].is_star) {
+            continue;
+        }
+        auto runtime = std::make_unique<ServerBodyRuntime>();
+        runtime->world.init(
+            make_body_block_world_config(base_config, solar_system_, i));
+        install_planet_surface_collider(runtime->collision, runtime->world);
+        body_worlds_.emplace(static_cast<uint32_t>(i), std::move(runtime));
+    }
     next_player_id = 1;
     server_sim_tick_value = 0;
 }
@@ -195,7 +155,7 @@ void ServerSession::simulate_client_tick(ServerClientState &state) {
 
 bool ServerSession::accept_input(ServerClientState &client,
                                  const NetTickInput &input) {
-    if (!supported_body(input.body_id) || !std::isfinite(input.move_x) ||
+    if (!supports_body(input.body_id) || !std::isfinite(input.move_x) ||
         !std::isfinite(input.move_y) ||
         !std::isfinite(input.camera_yaw_deg) ||
         std::abs(input.move_x) > 1.0f || std::abs(input.move_y) > 1.0f ||
@@ -216,10 +176,23 @@ bool ServerSession::accept_input(ServerClientState &client,
     return true;
 }
 
+bool ServerSession::supports_body(uint32_t body_id) const {
+    return body_worlds_.find(body_id) != body_worlds_.end();
+}
+
+const ServerBodyRuntime &ServerSession::body_runtime(uint32_t body_id) const {
+    auto it = body_worlds_.find(body_id);
+    if (it != body_worlds_.end()) {
+        return *it->second;
+    }
+    return *body_worlds_.at(static_cast<uint32_t>(kVoxovBodyIndex));
+}
+
 PlayerEntity ServerSession::spawn_player_for_body(uint32_t body_id,
                                                   uint32_t player_id) const {
-    const BlockWorld &world = body_id == 3u ? aster_world : voxov_world;
-    const VoxelCollisionWorld &collision = collision_for_body(body_id);
+    const ServerBodyRuntime &runtime = body_runtime(body_id);
+    const BlockWorld &world = runtime.world;
+    const VoxelCollisionWorld &collision = runtime.collision;
     const int32_t shell = world.shell_count() - 1;
     const int32_t equator_col = world.shell_config(shell).horizontal_res / 2;
     PlayerEntity player = PlayerControllerSystem::spawn_on_planet_surface(
@@ -239,13 +212,13 @@ PlayerEntity ServerSession::spawn_player_for_body(uint32_t body_id,
 
 const VoxelCollisionWorld &
 ServerSession::collision_for_body(uint32_t body_id) const {
-    return body_id == 3u ? aster_collision : voxov_collision;
+    return body_runtime(body_id).collision;
 }
 
 bool ServerSession::accept_interest(ServerClientState &client,
                                     const NetChunkInterest &interest,
                                     uint64_t received_at_ms) {
-    if (!supported_body(interest.body_id) || interest.face >= 6u ||
+    if (!supports_body(interest.body_id) || interest.face >= 6u ||
         interest.shell >= 32u || interest.radius > k_net_max_interest_radius) {
         return false;
     }

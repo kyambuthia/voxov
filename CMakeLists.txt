@@ -176,6 +176,7 @@ add_library(engine_world STATIC
     src/engine_world/planet.cpp
     src/engine_world/planet_blocks.cpp
     src/engine_world/planet_lod.cpp
+    src/engine_world/planet_world_config.cpp
     src/engine_world/solar_system.cpp
     src/engine_world/voxel_chunk.cpp
     src/engine_world/vegetation.cpp

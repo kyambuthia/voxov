@@ -1,5 +1,8 @@
 #pragma once
 
+#include "engine_world/planet_blocks.hpp"
+#include "engine_world/world_gen.hpp"
+
 #include <cstdint>
 
 // Runtime-facing scale profile for the single playable planet. BlockWorld
@@ -37,3 +40,28 @@ struct PlanetGameplayConfig {
 };
 
 inline constexpr PlanetGameplayConfig kPlayablePlanetConfig{};
+
+inline BlockWorldConfig make_playable_block_world_config(
+    const PlanetGameplayConfig &cfg = kPlayablePlanetConfig) {
+  PlanetDefinition planet_def{};
+  planet_def.center = glm::dvec3(0.0);
+  planet_def.radius = cfg.radius_m;
+  planet_def.voxel_size = cfg.voxel_size_m;
+  planet_def.chunks_per_face = 64;
+  planet_def.seed = k_voxov_flat_world_seed;
+
+  BlockWorldConfig bw_cfg{};
+  bw_cfg.planet = planet_def;
+  bw_cfg.surface_shells = cfg.surface_shells;
+  bw_cfg.base_resolution = cfg.base_resolution;
+  bw_cfg.block_size = cfg.voxel_size_m;
+  bw_cfg.terrain_feature_size = cfg.terrain_feature_size_m;
+  bw_cfg.terrain_base_height = cfg.terrain_base_height_blocks;
+  bw_cfg.terrain_amplitude = cfg.terrain_amplitude_blocks;
+  bw_cfg.terrain_min_height = cfg.terrain_min_height_blocks;
+  bw_cfg.terrain_max_height = cfg.terrain_max_height_blocks;
+  bw_cfg.terrain_shell_margin = cfg.terrain_shell_margin_blocks;
+  bw_cfg.chunk_size = cfg.chunk_size;
+  bw_cfg.seed = k_voxov_flat_world_seed;
+  return bw_cfg;
+}

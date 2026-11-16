@@ -491,6 +491,19 @@ void test_server_rejects_invalid_or_replayed_client_requests() {
   assert(connected.state.world.body_id == 3u);
   assert(glm::length(connected.player.transform.position) > 30.0f);
   assert(glm::length(connected.player.transform.position) < 48.0f);
+
+  // Star body (0) is rejected; Luna (2) is supported with shared terrain config.
+  NetTickInput star_input{};
+  star_input.tick = 2;
+  star_input.body_id = 0;
+  assert(!session.accept_input(connected, star_input));
+  assert(session.supports_body(2u));
+  NetTickInput luna_input{};
+  luna_input.tick = 2;
+  luna_input.body_id = 2;
+  assert(session.accept_input(connected, luna_input));
+  session.simulate_fixed_tick();
+  assert(connected.state.world.body_id == 2u);
 }
 
 void test_chunk_runtime_helpers() {

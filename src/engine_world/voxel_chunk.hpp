@@ -18,14 +18,15 @@ enum class VoxelMaterial : uint8_t {
   Planks = 5,
   Brick = 6,
   Snow = 7,
+  Water = 8,
 };
 
-inline constexpr VoxelMaterial kLastVoxelMaterial = VoxelMaterial::Snow;
+inline constexpr VoxelMaterial kLastVoxelMaterial = VoxelMaterial::Water;
 
 class VoxelChunk {
 public:
   static constexpr int CHUNK_X = 64;
-  static constexpr int CHUNK_Y = 32;
+  static constexpr int CHUNK_Y = 64;
   static constexpr int CHUNK_Z = 64;
   // Default (legacy flat-world) dimensions. Planet block chunks are sized to
   // the BlockWorld chunk_size instead; use size_x()/size_y()/size_z().

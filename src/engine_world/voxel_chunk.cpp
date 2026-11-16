@@ -82,6 +82,9 @@ glm::vec3 VoxelChunk::material_color(VoxelMaterial material, bool top_face,
     return glm::vec3(0.72f, 0.36f, 0.30f);
   case VoxelMaterial::Snow:
     return glm::vec3(0.94f, 0.96f, 1.0f);
+  case VoxelMaterial::Water:
+    return top_face ? glm::vec3(0.14f, 0.45f, 0.78f)
+                    : glm::vec3(0.10f, 0.35f, 0.66f);
   case VoxelMaterial::Dirt:
   default:
     // Dirt with height variation: lighter at higher elevations.
@@ -310,10 +313,13 @@ void VoxelChunk::refresh_surface_materials() {
         }
 
         if (!surface_found) {
-          if (mat != VoxelMaterial::Stone) {
+          if (mat != VoxelMaterial::Stone && mat != VoxelMaterial::Sand &&
+              mat != VoxelMaterial::Snow && mat != VoxelMaterial::Water) {
             set_material(x, y, z, VoxelMaterial::Grass);
           }
-          surface_found = true;
+          if (mat != VoxelMaterial::Water) {
+            surface_found = true;
+          }
         } else if (mat == VoxelMaterial::Grass) {
           set_material(x, y, z, VoxelMaterial::Dirt);
         }
@@ -333,7 +339,7 @@ RenderMesh VoxelChunk::build_greedy_mesh(const glm::vec3 &origin,
   std::vector<int16_t> mask(max_mask_size, 0);
 
   // Track per-material quad counts to determine the primary material.
-  uint32_t material_quads[4] = {0, 0, 0, 0};
+  uint32_t material_quads[16] = {};
 
   for (int d = 0; d < 3; ++d) {
     const int u = axis_u[d];
@@ -435,7 +441,7 @@ RenderMesh VoxelChunk::build_greedy_mesh(const glm::vec3 &origin,
   // Set the primary material to the most-frequent face material.
   uint8_t primary = 0;
   uint32_t best = 0;
-  for (uint8_t m = 1; m < 4; ++m) {
+  for (uint8_t m = 1; m < 16; ++m) {
     if (material_quads[m] > best) {
       best = material_quads[m];
       primary = m;
@@ -458,7 +464,7 @@ RenderMesh VoxelChunk::build_greedy_mesh(
       std::max({size_x_ * size_y_, size_y_ * size_z_, size_x_ * size_z_}));
   std::vector<int16_t> mask(max_mask_size, 0);
 
-  uint32_t material_quads[4] = {0, 0, 0, 0};
+  uint32_t material_quads[16] = {};
 
   for (int d = 0; d < 3; ++d) {
     const int u = axis_u[d];
@@ -472,6 +478,7 @@ RenderMesh VoxelChunk::build_greedy_mesh(
       for (x[v] = 0; x[v] < dims[v]; ++x[v]) {
         for (x[u] = 0; x[u] < dims[u]; ++x[u], ++n) {
           VoxelMaterial a = VoxelMaterial::Air;
+          bool a_from_neighbor = false;
           if (x[d] >= 0) {
             a = material(x.x, x.y, x.z);
           } else if (world_solid_at) {
@@ -479,11 +486,14 @@ RenderMesh VoxelChunk::build_greedy_mesh(
             const int wx = world_base_x + x.x;
             const int wy = x.y;
             const int wz = world_base_z + x.z;
-            a = world_solid_at(wx, wy, wz) ? VoxelMaterial::Stone
-                                           : VoxelMaterial::Air;
+            if (world_solid_at(wx, wy, wz)) {
+              a = VoxelMaterial::Stone;
+              a_from_neighbor = true;
+            }
           }
 
           VoxelMaterial b = VoxelMaterial::Air;
+          bool b_from_neighbor = false;
           if (x[d] < dims[d] - 1) {
             b = material(x.x + q.x, x.y + q.y, x.z + q.z);
           } else if (world_solid_at) {
@@ -491,11 +501,14 @@ RenderMesh VoxelChunk::build_greedy_mesh(
             const int wx = world_base_x + x.x + q.x;
             const int wy = x.y + q.y;
             const int wz = world_base_z + x.z + q.z;
-            b = world_solid_at(wx, wy, wz) ? VoxelMaterial::Stone
-                                           : VoxelMaterial::Air;
+            if (world_solid_at(wx, wy, wz)) {
+              b = VoxelMaterial::Stone;
+              b_from_neighbor = true;
+            }
           }
 
-          if (a == b) {
+          if (a == b || ((a_from_neighbor || b_from_neighbor) &&
+                         a != VoxelMaterial::Air && b != VoxelMaterial::Air)) {
             mask[static_cast<size_t>(n)] = 0;
           } else {
             mask[static_cast<size_t>(n)] =
@@ -577,7 +590,7 @@ RenderMesh VoxelChunk::build_greedy_mesh(
 
   uint8_t primary = 0;
   uint32_t best = 0;
-  for (uint8_t m = 1; m < 4; ++m) {
+  for (uint8_t m = 1; m < 16; ++m) {
     if (material_quads[m] > best) {
       best = material_quads[m];
       primary = m;

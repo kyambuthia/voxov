@@ -865,6 +865,23 @@ RenderMesh BlockWorld::build_chunk_mesh(
         return true;
     };
 
+    // Cache the 6 cardinal neighbor chunk pointers once per build_chunk_mesh
+    // call so border voxels and AO corner queries avoid repeated map lookups.
+    const VoxelChunk *nb_cached[6]{};
+    {
+        constexpr int kOffsets[6][3] = {
+            {-1, 0, 0}, {1, 0, 0}, {0, -1, 0},
+            {0, 1, 0},  {0, 0, -1}, {0, 0, 1},
+        };
+        for (int i = 0; i < 6; ++i) {
+            BlockAddress ck = addr;
+            if (offset_chunk_address(addr, kOffsets[i][0], kOffsets[i][1],
+                                     kOffsets[i][2], ck)) {
+                nb_cached[i] = find_chunk(ck);
+            }
+        }
+    }
+
     auto get_neighbor_height = [&](int nx, int ny, int nz,
                                    BlockAddress &nb_addr,
                                    bool &neighbor_exists) -> uint8_t {
@@ -873,13 +890,23 @@ RenderMesh BlockWorld::build_chunk_mesh(
             return 0;
         }
 
-        BlockAddress chunk_key = nb_addr;
-        chunk_key.block = glm::ivec3(0);
-        const VoxelChunk *nc = (chunk_key.sector == addr.sector &&
-                                chunk_key.shell == addr.shell &&
-                                chunk_key.chunk == addr.chunk)
-            ? &chunk
-            : find_chunk(chunk_key);
+        const int dcx = (nx < 0) ? -1 : (nx >= cs ? 1 : 0);
+        const int dcy = (ny < 0) ? -1 : (ny >= cs ? 1 : 0);
+        const int dcz = (nz < 0) ? -1 : (nz >= cs ? 1 : 0);
+        const VoxelChunk *nc = nullptr;
+        if (dcx == 0 && dcy == 0 && dcz == 0) {
+            nc = &chunk;
+        } else {
+            BlockAddress chunk_key = nb_addr;
+            chunk_key.block = glm::ivec3(0);
+            if (dcx == -1 && dcy == 0 && dcz == 0) nc = nb_cached[0];
+            else if (dcx == 1 && dcy == 0 && dcz == 0) nc = nb_cached[1];
+            else if (dcx == 0 && dcy == -1 && dcz == 0) nc = nb_cached[2];
+            else if (dcx == 0 && dcy == 1 && dcz == 0) nc = nb_cached[3];
+            else if (dcx == 0 && dcy == 0 && dcz == -1) nc = nb_cached[4];
+            else if (dcx == 0 && dcy == 0 && dcz == 1) nc = nb_cached[5];
+            else nc = find_chunk(chunk_key);
+        }
         if (nc == nullptr) {
             // A streamed chunk is an unknown solid boundary, not air. Treating
             // it as air emits side faces into the not-yet-loaded neighbor and

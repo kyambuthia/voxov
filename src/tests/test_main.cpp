@@ -560,6 +560,42 @@ void test_chunk_runtime_helpers() {
   assert(hull.contains_solid_local(glm::vec3(-0.25f, -0.25f, -0.25f)));
   assert(!hull.contains_solid_local(glm::vec3(0.25f, 0.25f, 0.25f)));
   assert(!hull.contains_solid_local(glm::vec3(5.0f, 0.0f, 0.0f)));
+
+  // VoxelChunk::is_empty() and per-vertex AO darkening check.
+  VoxelChunk empty_chunk(16, 16, 16);
+  assert(empty_chunk.is_empty());
+  BlockWorld ao_world;
+  BlockWorldConfig ao_cfg{};
+  ao_cfg.planet.radius = 64.0;
+  ao_cfg.chunk_size = 16;
+  ao_cfg.surface_shells = 1;
+  ao_cfg.base_resolution = 32;
+  ao_world.init(ao_cfg);
+  BlockAddress ao_addr{};
+  ao_addr.sector = PlanetFace::PosX;
+  ao_addr.shell = 0;
+  ao_addr.chunk = glm::ivec3(0, 0, 0);
+  assert(ao_world.build_chunk_mesh(ao_addr, empty_chunk, nullptr).vertices.empty());
+
+  VoxelChunk ao_chunk_open(16, 16, 16);
+  ao_chunk_open.set_material(4, 4, 4, VoxelMaterial::Stone, VoxelChunk::kMaxBlockHeight);
+  assert(!ao_chunk_open.is_empty());
+  const RenderMesh open_mesh = ao_world.build_chunk_mesh(ao_addr, ao_chunk_open, nullptr);
+  assert(!open_mesh.vertices.empty());
+  float min_open = 1.0f;
+  for (const RenderVertex &v : open_mesh.vertices) {
+    min_open = std::min(min_open, v.color.r);
+  }
+
+  VoxelChunk ao_chunk(16, 16, 16);
+  ao_chunk.set_material(4, 4, 4, VoxelMaterial::Stone, VoxelChunk::kMaxBlockHeight);
+  ao_chunk.set_material(3, 5, 4, VoxelMaterial::Stone, VoxelChunk::kMaxBlockHeight);
+  const RenderMesh ao_mesh = ao_world.build_chunk_mesh(ao_addr, ao_chunk, nullptr);
+  float min_ao = 1.0f;
+  for (const RenderVertex &v : ao_mesh.vertices) {
+    min_ao = std::min(min_ao, v.color.r);
+  }
+  assert(min_ao < min_open);
 }
 
 void test_planet_face_uv_to_direction_unit_vectors() {

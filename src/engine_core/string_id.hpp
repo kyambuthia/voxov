@@ -14,6 +14,6 @@ constexpr StringId string_id_fnv1a(const char* str, size_t len) {
     return hash;
 }
 
-constexpr StringId operator"" _sid(const char* str, size_t len) {
+constexpr StringId operator""_sid(const char* str, size_t len) {
     return string_id_fnv1a(str, len);
 }

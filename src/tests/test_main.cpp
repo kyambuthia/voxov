@@ -2021,9 +2021,11 @@ void test_world_generator_hills_and_valleys_are_deterministic_and_bounded() {
   float max_height = 0.0f;
   bool different_seed_changes_surface = false;
   bool includes_valley_influence = false;
+  bool includes_mountain_influence = false;
+  bool includes_river_influence = false;
 
-  for (int z = -384; z <= 384; z += 24) {
-    for (int x = -384; x <= 384; x += 24) {
+  for (int z = -384; z <= 384; z += 16) {
+    for (int x = -384; x <= 384; x += 16) {
       const TerrainColumnSample sample =
           generator.sample_column(static_cast<float>(x), static_cast<float>(z));
       const TerrainColumnSample repeat =
@@ -2037,6 +2039,8 @@ void test_world_generator_hills_and_valleys_are_deterministic_and_bounded() {
       assert(sample.surface_height <=
              static_cast<float>(VoxelChunk::CHUNK_Y - 3));
       assert(sample.valley_factor >= 0.0f && sample.valley_factor <= 1.0f);
+      assert(sample.mountain_factor >= 0.0f && sample.mountain_factor <= 1.0f);
+      assert(sample.river_factor >= 0.0f && sample.river_factor <= 1.0f);
 
       min_height = std::min(min_height, sample.surface_height);
       max_height = std::max(max_height, sample.surface_height);
@@ -2045,12 +2049,20 @@ void test_world_generator_hills_and_valleys_are_deterministic_and_bounded() {
           std::fabs(sample.surface_height - other.surface_height) > 0.01f;
       includes_valley_influence =
           includes_valley_influence || sample.valley_factor > 0.5f;
+      includes_mountain_influence =
+          includes_mountain_influence || sample.mountain_factor > 0.5f;
+      includes_river_influence =
+          includes_river_influence ||
+          (sample.river_factor > 0.3f &&
+           sample.surface_height < sample.water_level);
     }
   }
 
-  assert(max_height - min_height >= 8.0f);
+  assert(max_height - min_height >= 20.0f);
   assert(different_seed_changes_surface);
   assert(includes_valley_influence);
+  assert(includes_mountain_influence);
+  assert(includes_river_influence);
 }
 
 void test_heightmap_generation_samples_continuously_across_chunk_edges() {
@@ -2064,19 +2076,27 @@ void test_heightmap_generation_samples_continuously_across_chunk_edges() {
   for (int z = 0; z < VoxelChunk::CHUNK_Z; ++z) {
     const float world_z =
         static_cast<float>(-2 * VoxelChunk::CHUNK_Z + z);
-    const int expected_left = static_cast<int>(std::floor(
-        generator.sample_height(static_cast<float>(2 * VoxelChunk::CHUNK_X - 1),
-                                world_z)));
-    const int expected_right = static_cast<int>(std::floor(
-        generator.sample_height(static_cast<float>(2 * VoxelChunk::CHUNK_X),
-                                world_z)));
+    const TerrainColumnSample sample_left = generator.sample_column(
+        static_cast<float>(2 * VoxelChunk::CHUNK_X - 1), world_z);
+    const TerrainColumnSample sample_right = generator.sample_column(
+        static_cast<float>(2 * VoxelChunk::CHUNK_X), world_z);
+    const auto expected_top_y = [](const TerrainColumnSample &s) {
+      int y = static_cast<int>(std::floor(s.surface_height));
+      const int water_y = static_cast<int>(std::floor(s.water_level));
+      if (s.river_factor > 0.25f && y < water_y) {
+        y = water_y;
+      }
+      return y;
+    };
+    const int expected_left = expected_top_y(sample_left);
+    const int expected_right = expected_top_y(sample_right);
     const int generated_left =
         highest_solid_y(left, VoxelChunk::CHUNK_X - 1, z);
     const int generated_right = highest_solid_y(right, 0, z);
 
     assert(generated_left == expected_left);
     assert(generated_right == expected_right);
-    assert(std::abs(generated_left - generated_right) <= 2);
+    assert(std::abs(generated_left - generated_right) <= 3);
   }
 }
 

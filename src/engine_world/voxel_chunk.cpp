@@ -127,21 +127,44 @@ void VoxelChunk::generate_heightmap_terrain_seeded(uint64_t world_seed,
       const float world_z = static_cast<float>(world_base_z + z);
       const TerrainColumnSample sample =
           generator.sample_column(world_x, world_z);
-      int max_y = static_cast<int>(std::floor(sample.surface_height));
-      if (max_y < 1) {
-        max_y = 1;
-      }
-      if (max_y >= size_y_) {
-        max_y = size_y_ - 1;
-      }
+      const int max_y = std::clamp(
+          static_cast<int>(std::floor(sample.surface_height)), 1, size_y_ - 1);
+      const int water_y = std::clamp(
+          static_cast<int>(std::floor(sample.water_level)), 1, size_y_ - 1);
+      const bool river_bank =
+          sample.river_factor > 0.22f && max_y <= water_y + 1;
+
       for (int y = 0; y <= max_y; ++y) {
-        // Full-height blocks for flat terrain generation.
-        set_material(x, y, z, VoxelMaterial::Dirt, 15);
+        VoxelMaterial mat = VoxelMaterial::Stone;
+        if (y == max_y) {
+          if (river_bank) {
+            mat = VoxelMaterial::Sand;
+          } else if (max_y >= 42) {
+            mat = VoxelMaterial::Snow;
+          } else if (max_y >= 32 || sample.mountain_factor > 0.62f) {
+            mat = VoxelMaterial::Stone;
+          } else {
+            mat = VoxelMaterial::Grass;
+          }
+        } else if (y >= max_y - 3) {
+          if (river_bank) {
+            mat = VoxelMaterial::Sand;
+          } else if (max_y >= 32 || sample.mountain_factor > 0.62f) {
+            mat = VoxelMaterial::Stone;
+          } else {
+            mat = VoxelMaterial::Dirt;
+          }
+        }
+        set_material(x, y, z, mat, kMaxBlockHeight);
+      }
+
+      if (sample.river_factor > 0.25f && max_y < water_y) {
+        for (int y = max_y + 1; y <= water_y; ++y) {
+          set_material(x, y, z, VoxelMaterial::Water, kMaxBlockHeight);
+        }
       }
     }
   }
-
-  refresh_surface_materials();
 }
 
 void VoxelChunk::generate_spherical_planet_seeded(uint64_t world_seed) {

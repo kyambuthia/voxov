@@ -65,8 +65,20 @@ uint64_t WorldGenerator::chunk_seed(VoxelChunkCoord2D coord) const {
 
 TerrainColumnSample WorldGenerator::sample_column(float world_x,
                                                    float world_z) const {
+  constexpr float kWaterLevel = 14.0f;
+
+  // Domain warp for natural meandering rivers and organic mountain ridges.
+  const float warp_x =
+      value_noise(world_x, world_z, 140.0f, seed, 0x1a2b3c4d5e6f7081ull) *
+      24.0f;
+  const float warp_z =
+      value_noise(world_x, world_z, 140.0f, seed, 0x81706f5e4d3c2b1aull) *
+      24.0f;
+  const float wx = world_x + warp_x;
+  const float wz = world_z + warp_z;
+
   const float continental =
-      value_noise(world_x, world_z, 256.0f, seed, 0x2f6e2b1d54a32f71ull);
+      value_noise(world_x, world_z, 340.0f, seed, 0x2f6e2b1d54a32f71ull);
   const float broad_hills =
       value_noise(world_x, world_z, 112.0f, seed, 0xb43ac574127b3b55ull);
   const float rolling_hills =
@@ -74,29 +86,57 @@ TerrainColumnSample WorldGenerator::sample_column(float world_x,
   const float surface_detail =
       value_noise(world_x, world_z, 18.0f, seed, 0x6f54789be80a9d2bull);
 
-  const float ridge_source =
-      1.0f - std::fabs(value_noise(world_x, world_z, 92.0f, seed,
-                                   0xe290a3ac986dc3d7ull));
-  const float ridge_factor = smoothstep_range(0.38f, 0.86f, ridge_source);
-
   const float valley_source =
-      1.0f - std::fabs(value_noise(world_x, world_z, 176.0f, seed,
+      1.0f - std::fabs(value_noise(wx, wz, 210.0f, seed,
                                    0x47dfd298cba61d31ull));
-  const float valley_factor = smoothstep_range(0.56f, 0.94f, valley_source);
+  const float valley_factor = smoothstep_range(0.55f, 0.94f, valley_source);
 
-  float surface_height = 11.0f;
-  surface_height += continental * 4.0f;
-  surface_height += broad_hills * 3.4f;
-  surface_height += rolling_hills * 2.1f;
-  surface_height += ridge_factor * ridge_factor * 4.8f;
-  surface_height -= valley_factor * (3.2f + ridge_factor * 1.7f);
-  surface_height += surface_detail * 0.7f;
+  const float mountain_region = smoothstep_range(
+      -0.10f, 0.55f,
+      value_noise(world_x, world_z, 180.0f, seed, 0x51a7c9e23f8014d3ull));
+  const float ridge_raw =
+      1.0f - std::fabs(value_noise(wx, wz, 96.0f, seed,
+                                   0xe290a3ac986dc3d7ull));
+  const float ridge_sharp = smoothstep_range(0.28f, 0.85f, ridge_raw);
+  const float mountain_factor =
+      std::clamp(mountain_region * (0.35f + 0.65f * ridge_sharp) *
+                     (1.0f - 0.60f * valley_factor),
+                 0.0f, 1.0f);
+
+  float surface_height = 17.5f;
+  surface_height += continental * 4.5f;
+  surface_height += broad_hills * 3.5f;
+  surface_height += rolling_hills * 2.0f;
+  surface_height += std::pow(mountain_factor, 1.3f) * 32.0f;
+  surface_height -= valley_factor * 5.0f;
+  surface_height += surface_detail * 0.8f;
+
+  // Meandering river channels carved through lowlands and valleys.
+  const float river_source =
+      1.0f - std::fabs(value_noise(wx, wz, 240.0f, seed,
+                                   0x7c3e91a4b2d805f1ull));
+  const float river_channel = smoothstep_range(0.84f, 0.96f, river_source);
+  const float river_mountain_mask =
+      1.0f - smoothstep_range(0.38f, 0.78f, mountain_factor);
+  const float river_factor =
+      std::clamp(river_channel * river_mountain_mask, 0.0f, 1.0f);
+
+  if (river_factor > 0.0f) {
+    const float river_bed_height =
+        kWaterLevel - 3.2f + surface_detail * 0.4f;
+    surface_height =
+        std::lerp(surface_height, std::min(surface_height, river_bed_height),
+                  river_factor);
+  }
 
   TerrainColumnSample sample{};
   sample.surface_height =
       std::clamp(surface_height, 2.0f,
                  static_cast<float>(VoxelChunk::CHUNK_Y - 3));
   sample.valley_factor = valley_factor;
+  sample.mountain_factor = mountain_factor;
+  sample.river_factor = river_factor;
+  sample.water_level = kWaterLevel;
   return sample;
 }
 

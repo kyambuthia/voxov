@@ -12,6 +12,9 @@ struct VoxelChunkCoord2D {
 struct TerrainColumnSample {
   float surface_height = 0.0f;
   float valley_factor = 0.0f;
+  float mountain_factor = 0.0f;
+  float river_factor = 0.0f;
+  float water_level = 14.0f;
 };
 
 constexpr uint64_t k_voxov_flat_world_seed = 0x0DDF00D5EEDull;

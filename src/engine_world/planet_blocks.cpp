@@ -919,9 +919,28 @@ RenderMesh BlockWorld::build_chunk_mesh(
         return 1.0f;
     };
 
-    auto emit_quad = [&](glm::dvec3 v0, glm::dvec3 v1, glm::dvec3 v2, glm::dvec3 v3,
-                         const glm::vec3 &color, const glm::dvec3 &outward_hint,
-                         float material_layer) {
+    auto voxel_ao_factor = [](bool side1, bool side2, bool corner) -> float {
+        constexpr float kAoCurve[4] = {0.52f, 0.68f, 0.84f, 1.0f};
+        const int level = (side1 && side2)
+            ? 0
+            : (3 - (side1 ? 1 : 0) - (side2 ? 1 : 0) - (corner ? 1 : 0));
+        return kAoCurve[level];
+    };
+
+    auto sample_solid_occluder = [&](int nx, int ny, int nz) -> bool {
+        if (nx >= 0 && nx < cs && ny >= 0 && ny < cs && nz >= 0 && nz < cs) {
+            return chunk.solid(nx, ny, nz) && chunk.block_height(nx, ny, nz) > 0;
+        }
+        BlockAddress nb_addr = addr;
+        bool neighbor_exists = false;
+        const uint8_t nbh = get_neighbor_height(nx, ny, nz, nb_addr, neighbor_exists);
+        return neighbor_exists && nbh > 0;
+    };
+
+    auto emit_quad_ao = [&](glm::dvec3 v0, glm::dvec3 v1, glm::dvec3 v2, glm::dvec3 v3,
+                            float ao0, float ao1, float ao2, float ao3,
+                            const glm::vec3 &color, const glm::dvec3 &outward_hint,
+                            float material_layer) {
         glm::dvec3 fn = glm::cross(v1 - v0, v2 - v0);
         if (glm::dot(fn, fn) < 1e-18) {
             return;
@@ -932,6 +951,7 @@ RenderMesh BlockWorld::build_chunk_mesh(
         // stays correct on curved cube-sphere blocks.
         if (glm::dot(fn, outward_hint) < 0.0) {
             std::swap(v1, v3);
+            std::swap(ao1, ao3);
             fn = -fn;
         }
 
@@ -942,20 +962,35 @@ RenderMesh BlockWorld::build_chunk_mesh(
         const float repeat_v = static_cast<float>(
             std::max(glm::length(v3 - v0) / std::max(bw, 0.01), 0.001));
         mesh.vertices.push_back(RenderVertex{
-            glm::vec3(v0 - rel), color, glm::vec3(fn),
+            glm::vec3(v0 - rel), color * ao0, glm::vec3(fn),
             glm::vec3(0.0f, 0.0f, material_layer)});
         mesh.vertices.push_back(RenderVertex{
-            glm::vec3(v1 - rel), color, glm::vec3(fn),
+            glm::vec3(v1 - rel), color * ao1, glm::vec3(fn),
             glm::vec3(repeat_u, 0.0f, material_layer)});
         mesh.vertices.push_back(RenderVertex{
-            glm::vec3(v2 - rel), color, glm::vec3(fn),
+            glm::vec3(v2 - rel), color * ao2, glm::vec3(fn),
             glm::vec3(repeat_u, repeat_v, material_layer)});
         mesh.vertices.push_back(RenderVertex{
-            glm::vec3(v3 - rel), color, glm::vec3(fn),
+            glm::vec3(v3 - rel), color * ao3, glm::vec3(fn),
             glm::vec3(0.0f, repeat_v, material_layer)});
-        mesh.indices.insert(mesh.indices.end(), {
-            base, base + 1, base + 2,
-            base, base + 2, base + 3});
+
+        // Flip quad diagonal to eliminate ambient-occlusion anisotropy artifacts.
+        if (ao0 + ao2 >= ao1 + ao3) {
+            mesh.indices.insert(mesh.indices.end(), {
+                base, base + 1, base + 2,
+                base, base + 2, base + 3});
+        } else {
+            mesh.indices.insert(mesh.indices.end(), {
+                base + 1, base + 2, base + 3,
+                base + 1, base + 3, base});
+        }
+    };
+
+    auto emit_quad = [&](glm::dvec3 v0, glm::dvec3 v1, glm::dvec3 v2, glm::dvec3 v3,
+                         const glm::vec3 &color, const glm::dvec3 &outward_hint,
+                         float material_layer) {
+        emit_quad_ao(v0, v1, v2, v3, 1.0f, 1.0f, 1.0f, 1.0f,
+                     color, outward_hint, material_layer);
     };
 
     const double res = static_cast<double>(sh.horizontal_res);
@@ -1065,10 +1100,23 @@ RenderMesh BlockWorld::build_chunk_mesh(
                     0.0f, 1.0f);
                 const glm::vec3 color = VoxelChunk::material_color(
                     face_mat, true, height_t);
+                const int32_t ao_y = by + stride;
+                const bool s_xm = sample_solid_occluder(bx - stride, ao_y, bz);
+                const bool s_xp = sample_solid_occluder(bx + stride, ao_y, bz);
+                const bool s_zm = sample_solid_occluder(bx, ao_y, bz - stride);
+                const bool s_zp = sample_solid_occluder(bx, ao_y, bz + stride);
+                const float ao0 = voxel_ao_factor(
+                    s_xm, s_zm, sample_solid_occluder(bx - stride, ao_y, bz - stride));
+                const float ao1 = voxel_ao_factor(
+                    s_xp, s_zm, sample_solid_occluder(bx + stride, ao_y, bz - stride));
+                const float ao2 = voxel_ao_factor(
+                    s_xp, s_zp, sample_solid_occluder(bx + stride, ao_y, bz + stride));
+                const float ao3 = voxel_ao_factor(
+                    s_xm, s_zp, sample_solid_occluder(bx - stride, ao_y, bz + stride));
                 const glm::dvec3 face_center = (v0w + v1w + v2w + v3w) * 0.25;
-                emit_quad(v0w, v1w, v2w, v3w, color,
-                          face_center - config_.planet.center,
-                          texture_layer(face_mat, true));
+                emit_quad_ao(v0w, v1w, v2w, v3w, ao0, ao1, ao2, ao3, color,
+                             face_center - config_.planet.center,
+                             texture_layer(face_mat, true));
 
                 for (int32_t row = 0; row < height; ++row) {
                     for (int32_t col = 0; col < width; ++col) {

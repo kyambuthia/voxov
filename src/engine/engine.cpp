@@ -1400,13 +1400,13 @@ Engine::TerrainStreamTimings Engine::stream_block_terrain(
       collect_remesh_targets(block_world_, new_chunks, desired, remesh_targets);
     }
 
+    std::unordered_map<uint64_t, size_t> opaque_mesh_index;
+    opaque_mesh_index.reserve(scene.opaque_meshes.size());
+    for (size_t idx = 0; idx < scene.opaque_meshes.size(); ++idx) {
+      opaque_mesh_index[scene.opaque_meshes[idx].mesh_id] = idx;
+    }
     auto mesh_in_scene = [&](uint64_t mid) -> bool {
-      for (const RenderMesh &m : scene.opaque_meshes) {
-        if (m.mesh_id == mid) {
-          return true;
-        }
-      }
-      return false;
+      return opaque_mesh_index.find(mid) != opaque_mesh_index.end();
     };
 
     bool has_pending_meshes = false;
@@ -1430,6 +1430,7 @@ Engine::TerrainStreamTimings Engine::stream_block_terrain(
         has_pending_meshes) {
       if (need_full_rebuild) {
         scene.opaque_meshes.clear();
+        opaque_mesh_index.clear();
         snap_origin_dirty_ = false;
       }
       if (player_moved) {
@@ -1439,12 +1440,14 @@ Engine::TerrainStreamTimings Engine::stream_block_terrain(
       auto upsert_opaque_mesh = [&](RenderMesh &&mesh) {
         // Keep an empty mesh as a residency marker. Otherwise air-only radial
         // chunks look perpetually unmeshed and consume the mesh budget forever.
-        for (RenderMesh &existing : scene.opaque_meshes) {
-          if (existing.mesh_id == mesh.mesh_id) {
-            existing = std::move(mesh);
-            return;
-          }
+        const auto it = opaque_mesh_index.find(mesh.mesh_id);
+        if (it != opaque_mesh_index.end() &&
+            it->second < scene.opaque_meshes.size() &&
+            scene.opaque_meshes[it->second].mesh_id == mesh.mesh_id) {
+          scene.opaque_meshes[it->second] = std::move(mesh);
+          return;
         }
+        opaque_mesh_index[mesh.mesh_id] = scene.opaque_meshes.size();
         scene.opaque_meshes.push_back(std::move(mesh));
       };
 

@@ -27,8 +27,16 @@ inline constexpr uint8_t kVoxelThrusterMaterial = 4;
 
 struct VoxelModel {
   std::vector<VoxelQuad> quads;
+  std::vector<uint8_t> occupancy;
+  glm::ivec3 grid_size{0};
+  float voxel_size_meters = 1.0f;
   glm::vec3 size_meters{0.0f};
   bool valid = false;
+
+  uint8_t voxel_at_local(const glm::vec3 &local_pos) const;
+  bool contains_solid_local(const glm::vec3 &local_pos) const {
+    return voxel_at_local(local_pos) != 0;
+  }
 };
 
 // Parses `data` as a .vox file. Returns an invalid model on malformed input

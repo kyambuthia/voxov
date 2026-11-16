@@ -34,6 +34,8 @@ struct OrbitalElements {
 
 // ── Celestial Body ────────────────────────────────────────────────────────
 struct CelestialBody {
+    uint32_t id = 0;
+    uint32_t parent_id = 0;
     std::string name;
     OrbitalElements orbital;
     glm::dvec3 position{0.0};        // current world position (updated each update)
@@ -73,6 +75,8 @@ public:
     glm::dvec3 sun_direction_from(const glm::dvec3& position) const;
 
     int32_t body_count() const { return static_cast<int32_t>(bodies_.size()); }
+    int32_t index_for_body_id(uint32_t id) const;
+    const CelestialBody *find_body(uint32_t id) const;
 
 private:
     std::vector<CelestialBody> bodies_;

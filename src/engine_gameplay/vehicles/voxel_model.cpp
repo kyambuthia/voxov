@@ -142,9 +142,47 @@ VoxelModel parse_vox_model(const std::vector<uint8_t> &data,
     }
   }
 
-  model.size_meters = glm::vec3(hi - lo + glm::ivec3(1)) * voxel_size_meters;
+  model.grid_size = hi - lo + glm::ivec3(1);
+  model.voxel_size_meters = voxel_size_meters;
+  model.occupancy.assign(
+      static_cast<size_t>(model.grid_size.x) *
+          static_cast<size_t>(model.grid_size.y) *
+          static_cast<size_t>(model.grid_size.z),
+      0);
+  for (const auto &[key, index] : voxels) {
+    const glm::ivec3 rel = glm::ivec3(key.x, key.y, key.z) - lo;
+    const size_t flat =
+        (static_cast<size_t>(rel.z) * static_cast<size_t>(model.grid_size.y) +
+         static_cast<size_t>(rel.y)) *
+            static_cast<size_t>(model.grid_size.x) +
+        static_cast<size_t>(rel.x);
+    model.occupancy[flat] = index;
+  }
+  model.size_meters = glm::vec3(model.grid_size) * voxel_size_meters;
   model.valid = true;
   return model;
+}
+
+uint8_t VoxelModel::voxel_at_local(const glm::vec3 &local_pos) const {
+  if (!valid || voxel_size_meters <= 0.0f || grid_size.x <= 0 ||
+      grid_size.y <= 0 || grid_size.z <= 0) {
+    return 0;
+  }
+  const glm::vec3 grid_pos =
+      (local_pos / voxel_size_meters) + 0.5f * glm::vec3(grid_size);
+  const glm::ivec3 cell(static_cast<int>(std::floor(grid_pos.x)),
+                        static_cast<int>(std::floor(grid_pos.y)),
+                        static_cast<int>(std::floor(grid_pos.z)));
+  if (cell.x < 0 || cell.y < 0 || cell.z < 0 || cell.x >= grid_size.x ||
+      cell.y >= grid_size.y || cell.z >= grid_size.z) {
+    return 0;
+  }
+  const size_t flat =
+      (static_cast<size_t>(cell.z) * static_cast<size_t>(grid_size.y) +
+       static_cast<size_t>(cell.y)) *
+          static_cast<size_t>(grid_size.x) +
+      static_cast<size_t>(cell.x);
+  return occupancy[flat];
 }
 
 const VoxelModel &load_voxel_model(const PlatformServices &services,

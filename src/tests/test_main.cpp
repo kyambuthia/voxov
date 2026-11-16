@@ -544,6 +544,22 @@ void test_chunk_runtime_helpers() {
          SnapshotReconcileAction::Snapped);
   assert(std::abs(predicted.transform.position.x - 25.0f) < 1.0e-5f);
   assert(std::abs(predicted.controller.velocity.x - 3.0f) < 1.0e-5f);
+
+  SolarSystem sys;
+  sys.init(64.0);
+  const CelestialBody *aster = sys.find_body(static_cast<uint32_t>(kAsterBodyIndex));
+  assert(aster != nullptr && aster->id == 3u && aster->name == "Aster");
+  assert(sys.find_body(999u) == nullptr);
+
+  VoxelModel hull{};
+  hull.valid = true;
+  hull.grid_size = glm::ivec3(2, 2, 2);
+  hull.voxel_size_meters = 0.5f;
+  hull.occupancy.assign(8, 0);
+  hull.occupancy[0] = 4; // (-0.25, -0.25, -0.25) cell
+  assert(hull.contains_solid_local(glm::vec3(-0.25f, -0.25f, -0.25f)));
+  assert(!hull.contains_solid_local(glm::vec3(0.25f, 0.25f, 0.25f)));
+  assert(!hull.contains_solid_local(glm::vec3(5.0f, 0.0f, 0.0f)));
 }
 
 void test_planet_face_uv_to_direction_unit_vectors() {

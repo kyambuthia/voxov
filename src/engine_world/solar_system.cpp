@@ -90,6 +90,12 @@ void SolarSystem::init(double playable_planet_radius) {
     bodies_.push_back(make_planet(playable_planet_radius));  // index 1
     bodies_.push_back(make_moon(playable_planet_radius));    // index 2
     bodies_.push_back(make_companion_planet(playable_planet_radius)); // index 3
+    for (size_t i = 0; i < bodies_.size(); ++i) {
+        bodies_[i].id = static_cast<uint32_t>(i);
+        bodies_[i].parent_id = bodies_[i].parent_index >= 0
+            ? static_cast<uint32_t>(bodies_[i].parent_index)
+            : 0u;
+    }
 }
 
 void SolarSystem::update(double time_seconds) {
@@ -268,4 +274,18 @@ glm::dvec3 SolarSystem::orbital_to_cartesian(const OrbitalElements& oe,
     const double z3 = z2;
 
     return glm::dvec3(x3, y3, z3);
+}
+
+int32_t SolarSystem::index_for_body_id(uint32_t id) const {
+    for (size_t i = 0; i < bodies_.size(); ++i) {
+        if (bodies_[i].id == id) {
+            return static_cast<int32_t>(i);
+        }
+    }
+    return -1;
+}
+
+const CelestialBody *SolarSystem::find_body(uint32_t id) const {
+    const int32_t idx = index_for_body_id(id);
+    return idx >= 0 ? &bodies_[static_cast<size_t>(idx)] : nullptr;
 }

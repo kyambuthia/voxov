@@ -144,6 +144,9 @@ bool NetClient::connect(const char *host, uint16_t port) {
     assigned_player_id = 0;
     has_server_session_info = false;
     server_session_info = NetSessionInfo{};
+    has_snapshot = false;
+    has_last_snapshot_sequence = false;
+    last_snapshot_sequence = 0;
     target_host = host;
     target_port = port;
     spdlog::info("NetClient: connecting to {}:{}", host, port);
@@ -162,6 +165,8 @@ void NetClient::disconnect() {
     has_server_session_info = false;
     server_session_info = NetSessionInfo{};
     has_snapshot = false;
+    has_last_snapshot_sequence = false;
+    last_snapshot_sequence = 0;
     chunk_updates.clear();
     replicated_players.clear();
     replicated_player_sequences.clear();

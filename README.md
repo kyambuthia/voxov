@@ -57,10 +57,6 @@ Tests:
 ctest --test-dir build/desktop/main --output-on-failure
 ```
 
-See [`docs/CROSS_PLATFORM_PLAY.md`](docs/CROSS_PLATFORM_PLAY.md) for Android,
-WebAssembly, dedicated-server, and cross-platform multiplayer commands.
-See [`docs/SCALABILITY_ROADMAP.md`](docs/SCALABILITY_ROADMAP.md) for the
-planet-to-galaxy architecture boundaries and prioritized engineering work.
 
 ## Architecture Snapshot
 

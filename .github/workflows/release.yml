@@ -58,6 +58,8 @@ jobs:
           cp build/desktop/release-linux/bin/voxov_server "${ASSET_DIR}/"
           chmod +x "${ASSET_DIR}/voxov" "${ASSET_DIR}/voxov_server"
           cp -R assets/fonts "${ASSET_DIR}/assets/"
+          cp -R assets/models "${ASSET_DIR}/assets/"
+          cp -R assets/audio "${ASSET_DIR}/assets/"
           cat > "${ASSET_DIR}/run.sh" << 'EOF'
           #!/usr/bin/env bash
           set -euo pipefail
@@ -85,6 +87,7 @@ jobs:
           test -x "smoke-linux/${ASSET_DIR}/run.sh"
           test -x "smoke-linux/${ASSET_DIR}/host.sh"
           test -f "smoke-linux/${ASSET_DIR}/assets/fonts/IBMPlexMono-Regular.ttf"
+          test -f "smoke-linux/${ASSET_DIR}/assets/models/ships/shrike.vox"
           ldd "smoke-linux/${ASSET_DIR}/voxov" | tee /tmp/voxov-linux-ldd.txt
           if grep -q "not found" /tmp/voxov-linux-ldd.txt; then
             echo "Unresolved runtime dependency in linux bundle"
@@ -166,6 +169,8 @@ jobs:
           Copy-Item "build/desktop/release-windows/bin/voxov_server.exe" "$AssetDir/" -Force
           Copy-Item "build/desktop/release-windows/bin/*.dll" "$AssetDir/" -ErrorAction SilentlyContinue
           Copy-Item "assets/fonts" "$AssetDir/assets/" -Recurse -Force
+          Copy-Item "assets/models" "$AssetDir/assets/" -Recurse -Force
+          Copy-Item "assets/audio" "$AssetDir/assets/" -Recurse -Force
           $AssetZip = "$AssetDir.zip"
           Compress-Archive -Path "$AssetDir/*" -DestinationPath $AssetZip -Force
 
@@ -184,6 +189,7 @@ jobs:
           if (-not (Test-Path "$SmokeDir/libstdc++-6.dll")) { throw "libstdc++-6.dll missing from windows bundle" }
           if (-not (Test-Path "$SmokeDir/libwinpthread-1.dll")) { throw "libwinpthread-1.dll missing from windows bundle" }
           if (-not (Test-Path "$SmokeDir/assets/fonts/IBMPlexMono-Regular.ttf")) { throw "IBMPlexMono-Regular.ttf missing from windows bundle" }
+          if (-not (Test-Path "$SmokeDir/assets/models/ships/shrike.vox")) { throw "shrike.vox missing from windows bundle" }
           $ServerOut = Join-Path $SmokeDir "server.stdout.log"
           $ServerErr = Join-Path $SmokeDir "server.stderr.log"
           $ClientOut = Join-Path $SmokeDir "client.stdout.log"

@@ -1,7 +1,7 @@
 cmake_minimum_required(VERSION 3.16.0)
 
 project(voxov
-    VERSION 1.0.0
+    VERSION 0.1.0
     DESCRIPTION "Voxov — sokol-based game engine"
     LANGUAGES C CXX
 )

@@ -200,15 +200,34 @@ static void integrate_spaceship(SpaceshipState &ship, const SpaceshipInput &inpu
   }
   acceleration -= radial * gravity;
 
-  ship.velocity += acceleration * dt;
   const double altitude = distance - environment.body_radius;
   const double in_atmosphere = std::clamp(
       environment.atmosphere_height > 0.0
           ? 1.0 - altitude / environment.atmosphere_height : 0.0, 0.0, 1.0);
+
+  // When actively thrusting in atmosphere without descending, compensate
+  // gravity so the ship cruises smoothly instead of sinking into terrain.
+  if (in_atmosphere > 0.0 && !input.descend &&
+      std::fabs(input.thrust_axis) > 0.05f) {
+    const double assist =
+        in_atmosphere *
+        std::min(1.0, static_cast<double>(std::fabs(input.thrust_axis)) * 1.5);
+    acceleration += radial * (gravity * assist);
+  }
+
+  ship.velocity += acceleration * dt;
   const double drag = tuning.space_drag +
                       (tuning.atmosphere_drag - tuning.space_drag) *
                           in_atmosphere;
   ship.velocity *= std::exp(-drag * dt);
+
+  // Damp lateral/sideways slip in atmosphere so the craft tracks its nose.
+  if (in_atmosphere > 0.0 && tuning.lateral_grip > 0.0) {
+    const glm::dvec3 along_nose = forward * glm::dot(ship.velocity, forward);
+    const glm::dvec3 lateral = ship.velocity - along_nose;
+    ship.velocity =
+        along_nose + lateral * std::exp(-tuning.lateral_grip * in_atmosphere * dt);
+  }
   const double speed = glm::length(ship.velocity);
   if (speed > tuning.max_speed) {
     ship.velocity *= tuning.max_speed / speed;

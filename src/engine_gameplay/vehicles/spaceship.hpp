@@ -41,15 +41,16 @@ struct SpaceshipEnvironment {
 };
 
 struct SpaceshipTuning {
-  double thrust_accel = 30.0;   // m/s^2 along the nose at full throttle
-  double boost_multiplier = 4.0;
-  double lift_accel = 22.0;     // m/s^2 along the roof
-  double roll_rate = 2.2;       // rad/s at full roll input
-  double atmosphere_drag = 0.8; // 1/s velocity damping at the surface
+  double thrust_accel = 22.0;   // m/s^2 along the nose at full throttle
+  double boost_multiplier = 2.8;
+  double lift_accel = 20.0;     // m/s^2 along the roof
+  double roll_rate = 1.8;       // rad/s at full roll input
+  double atmosphere_drag = 1.2; // 1/s velocity damping at the surface
+  double lateral_grip = 3.5;    // 1/s lateral slip damping in atmosphere
   double space_drag = 0.0;      // vacuum preserves orbital momentum
   double hull_clearance = 1.1;  // hull centre height above the ground
-  double safe_landing_speed = 7.0;
-  double level_rate = 3.0;      // 1/s auto-levelling toward radial up
+  double safe_landing_speed = 10.0;
+  double level_rate = 4.5;      // 1/s auto-levelling toward radial up
   double max_speed = 250.0;     // m/s cap so the ship can always be stopped
 };
 

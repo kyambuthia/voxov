@@ -2556,10 +2556,12 @@ void Engine::update_ship_controls(InputState &gameplay_input,
   }
 
   const float sensitivity =
-      glm::radians(local_player.camera_rig.sensitivityMouse);
+      glm::radians(local_player.camera_rig.sensitivityMouse) * 0.55f;
   ship_input_ = SpaceshipInput{};
-  ship_input_.pitch_delta = -gameplay_input.look_delta.y * sensitivity;
-  ship_input_.yaw_delta = gameplay_input.look_delta.x * sensitivity;
+  ship_input_.pitch_delta = std::clamp(
+      -gameplay_input.look_delta.y * sensitivity, -0.08f, 0.08f);
+  ship_input_.yaw_delta = std::clamp(
+      gameplay_input.look_delta.x * sensitivity, -0.08f, 0.08f);
   ship_input_.roll_axis = gameplay_input.move.x;
   ship_input_.thrust_axis = gameplay_input.move.y;
   ship_input_.lift = gameplay_input.jump_held;

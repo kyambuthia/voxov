@@ -839,8 +839,6 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
             static_assert(sizeof(SkyParams) == 48);
             const sg_range sky_fs_range = SG_RANGE(sky_params);
             sg_apply_pipeline(pipelines_.sky);
-            sg_bindings sky_bindings{};
-            sg_apply_bindings(&sky_bindings);
             sg_apply_uniforms(0, &sky_vs_range);
             sg_apply_uniforms(1, &sky_fs_range);
             sg_draw(0, 3, 1);

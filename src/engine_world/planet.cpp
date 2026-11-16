@@ -1092,17 +1092,6 @@ PlanetChunkUvRange planet_chunk_uv_range(const PlanetChunkId &chunk_id) {
   return range;
 }
 
-void stitch_face_edges(VoxelChunk &chunk, PlanetFace face, int32_t chunk_x,
-                       int32_t chunk_y, const PlanetDefinition &planet) {
-  (void)chunk;
-  (void)face;
-  (void)chunk_x;
-  (void)chunk_y;
-  (void)planet;
-  // TODO: Implement face-edge stitching in Phase 5b
-  return;
-}
-
 RenderMesh build_planet_terrain_mesh(
     const PlanetDefinition &planet, const PlanetChunkId &chunk_id,
     PlanetTerrainRenderMode mode,
@@ -1111,7 +1100,6 @@ RenderMesh build_planet_terrain_mesh(
 
   VoxelChunk chunk;
   terrain_generate_heightfield(chunk, planet, uv_range);
-  stitch_face_edges(chunk, chunk_id.face, chunk_id.x, chunk_id.y, planet);
 
   RenderMesh mesh{};
   mesh.vertices.reserve(
@@ -1160,6 +1148,14 @@ RenderMesh build_planet_terrain_mesh(
                 neighbor_uv.y >= -1.0 && neighbor_uv.y <= 1.0) {
               const int neighbor_height = terrain_height_at_face_uv_fn(
                   planet, neighbor_uv.x, neighbor_uv.y);
+              neighbor_solid = neighbor.y <= neighbor_height;
+            } else {
+              // Cross-face cube-sphere neighbor lookup via 3D direction projection.
+              const glm::dvec3 neighbor_dir = face_uv_to_direction(
+                  chunk_id.face, neighbor_uv.x, neighbor_uv.y);
+              const PlanetFaceUV adj_uv = direction_to_face_uv(neighbor_dir);
+              const int neighbor_height =
+                  terrain_height_at_face_uv_fn(planet, adj_uv.u, adj_uv.v);
               neighbor_solid = neighbor.y <= neighbor_height;
             }
           }

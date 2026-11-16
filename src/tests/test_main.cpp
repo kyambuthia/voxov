@@ -21,6 +21,7 @@
 #include "engine_runtime/persistent_game_state.hpp"
 #include "engine_net_proto/net_types.hpp"
 #include "engine_world/net_chunk_state.hpp"
+#include "engine_world/flat_world.hpp"
 #include "engine_world/planet.hpp"
 #include "engine_world/planet_lod.hpp"
 #include "engine_world/atmosphere.hpp"
@@ -2100,6 +2101,38 @@ void test_heightmap_generation_samples_continuously_across_chunk_edges() {
   }
 }
 
+void test_flat_world_streaming_and_raycast() {
+  FlatWorld world;
+  FlatWorldConfig cfg{};
+  cfg.stream_radius_chunks = 1;
+  cfg.evict_radius_chunks = 2;
+  world.init(cfg);
+
+  std::vector<VoxelChunkCoord2D> evicted;
+  const auto generated = world.stream_around(glm::dvec3(0.0, 20.0, 0.0), 16, evicted);
+  assert(generated.size() == 9);
+  assert(evicted.empty());
+  assert(world.chunk_count() == 9);
+
+  // Move far away so initial chunks are outside evict_radius_chunks (2).
+  world.stream_around(glm::dvec3(64.0 * 10.0, 20.0, 0.0), 16, evicted);
+  assert(evicted.size() == 9);
+  assert(world.find_chunk(VoxelChunkCoord2D{0, 0}) == nullptr);
+  assert(world.find_chunk(VoxelChunkCoord2D{10, 0}) != nullptr);
+
+  // Test block placement & 3D DDA raycast in negative and positive coordinates.
+  assert(world.set_block(64 * 10 + 5, 50, -3, VoxelMaterial::Brick));
+  assert(world.material_at(64 * 10 + 5, 50, -3) == VoxelMaterial::Brick);
+  FlatBlockAddress hit{};
+  glm::vec3 normal(0.0f);
+  const bool did_hit = world.raycast(
+      glm::dvec3(64.0 * 10.0 + 5.5, 55.0, -2.5),
+      glm::dvec3(0.0, -1.0, 0.0), 10.0f, hit, normal);
+  assert(did_hit);
+  assert(hit == (FlatBlockAddress{64 * 10 + 5, 50, -3}));
+  assert(normal == glm::vec3(0.0f, 1.0f, 0.0f));
+}
+
 void test_chunk_spherical_planet_generation() {
   VoxelChunk chunk;
   chunk.generate_spherical_planet_seeded(0xBEEF1234u);
@@ -4130,6 +4163,7 @@ int main() {
   test_chunk_seed_determinism();
   test_world_generator_hills_and_valleys_are_deterministic_and_bounded();
   test_heightmap_generation_samples_continuously_across_chunk_edges();
+  test_flat_world_streaming_and_raycast();
   test_chunk_spherical_planet_generation();
   test_voxel_material_surface_assignment();
   test_voxel_material_custom_values_affect_mesh_colors();

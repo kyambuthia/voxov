@@ -11,6 +11,7 @@
 #include <cmath>
 #include <cstdio>
 #include <cstring>
+#include <unordered_map>
 #include <vector>
 
 namespace {
@@ -147,17 +148,35 @@ void NetServer::broadcast_player_states() {
   }
   last_player_broadcast_ms = now;
 
+  // Bucket observers by active body once per tick to avoid cross-body O(N^2)
+  // replication scans.
+  struct ObserverEntry {
+    ENetPeer *peer = nullptr;
+    const ServerClientState *state = nullptr;
+  };
+  std::unordered_map<uint32_t, std::vector<ObserverEntry>> observers_by_body;
+  for (const auto &[observer_peer, observer] : session->clients()) {
+    if (observer.interest.body_id == observer.state.world.body_id) {
+      observers_by_body[observer.state.world.body_id].push_back(
+          {observer_peer, &observer});
+    }
+  }
+
   for (auto &[subject_peer, subject] : session->clients()) {
     (void)subject_peer;
     const uint32_t state_sequence = subject.next_player_state_sequence++;
-    for (auto &[observer_peer, observer] : session->clients()) {
-      if (!session->should_replicate_player_state(observer, subject)) {
+    const auto obs_it = observers_by_body.find(subject.state.world.body_id);
+    if (obs_it == observers_by_body.end()) {
+      continue;
+    }
+    for (const ObserverEntry &obs : obs_it->second) {
+      if (!session->should_replicate_player_state(*obs.state, subject)) {
         continue;
       }
       NetPlayerState player_state = subject.state;
       player_state.sequence = state_sequence;
       if (const size_t sent = send_message(
-              observer_peer, NetChannel::Unreliable, NetMsgType::PlayerState,
+              obs.peer, NetChannel::Unreliable, NetMsgType::PlayerState,
               next_packet_sequence++, player_state, 0)) {
         record_tx(sent);
         debug_counters.player_state_broadcasts_window += 1;

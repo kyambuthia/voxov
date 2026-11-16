@@ -1550,48 +1550,65 @@ Engine::TerrainStreamTimings Engine::stream_block_terrain(
                    static_cast<uint32_t>(stream_speed / std::max(
                        1.0f,
                        kPlayablePlanetConfig.debug_flight_sprint_base_mps)));
-      uint32_t mesh_count = 0;
+      struct MeshBatchEntry {
+        BlockAddress ck;
+        const VoxelChunk *chunk = nullptr;
+        int32_t lod_level = 0;
+        RenderMesh terrain_mesh;
+        RenderMesh grass_mesh;
+      };
+      std::vector<MeshBatchEntry> batch;
+      batch.reserve(active_mesh_budget);
       for (const MeshWorkItem &item : mesh_work) {
-        if (mesh_count >= active_mesh_budget) {
+        if (batch.size() >= active_mesh_budget) {
           break;
         }
-
-        const BlockAddress &ck = item.chunk;
-        const VoxelChunk *chunk = block_world_.find_chunk(ck);
-        if (chunk == nullptr) {
-          continue;
+        const VoxelChunk *chunk = block_world_.find_chunk(item.chunk);
+        if (chunk != nullptr) {
+          batch.push_back(MeshBatchEntry{
+              item.chunk, chunk, item.lod.level, {}, {}});
         }
+      }
 
-        auto solid_at = [this, &ck, chunk](const BlockAddress &na) -> bool {
-          BlockAddress nk = na;
-          nk.block = glm::ivec3(0);
-          const VoxelChunk *nc =
-              (nk == ck) ? chunk : block_world_.find_chunk(nk);
-          if (nc == nullptr) {
-            // Neighbor chunks are streamed independently, but terrain height
-            // is deterministic. Sample the missing column directly so a mesh
-            // can cap a stream boundary with the same voxel profile instead
-            // of either emitting a false wall or leaving a visible slit.
-            const int32_t gx =
-                nk.chunk.x * block_world_.config().chunk_size + na.block.x;
-            const int32_t gz =
-                nk.chunk.z * block_world_.config().chunk_size + na.block.z;
-            const int32_t layer =
-                nk.chunk.y * block_world_.config().chunk_size + na.block.y;
-            const int32_t surface_height =
-                block_world_.terrain_height_at_face_uv(nk.sector, gx, gz);
-            return layer <= surface_height;
-          }
-          return nc->solid(na.block.x, na.block.y, na.block.z);
-        };
+      if (!batch.empty()) {
+        for (size_t bi = 0; bi < batch.size(); ++bi) {
+          chunk_jobs_.schedule([this, &batch, bi]() {
+            MeshBatchEntry &entry = batch[bi];
+            const BlockAddress &ck = entry.ck;
+            const VoxelChunk *chunk = entry.chunk;
+            auto solid_at = [this, &ck, chunk](const BlockAddress &na) -> bool {
+              BlockAddress nk = na;
+              nk.block = glm::ivec3(0);
+              const VoxelChunk *nc =
+                  (nk == ck) ? chunk : block_world_.find_chunk(nk);
+              if (nc == nullptr) {
+                // Neighbor chunks are streamed independently, but terrain
+                // height is deterministic. Sample the missing column directly
+                // so a mesh can cap a stream boundary cleanly.
+                const int32_t gx =
+                    nk.chunk.x * block_world_.config().chunk_size + na.block.x;
+                const int32_t gz =
+                    nk.chunk.z * block_world_.config().chunk_size + na.block.z;
+                const int32_t layer =
+                    nk.chunk.y * block_world_.config().chunk_size + na.block.y;
+                const int32_t surface_height =
+                    block_world_.terrain_height_at_face_uv(nk.sector, gx, gz);
+                return layer <= surface_height;
+              }
+              return nc->solid(na.block.x, na.block.y, na.block.z);
+            };
 
-        RenderMesh mesh = block_world_.build_chunk_mesh(
-            ck, *chunk, solid_at, camera_snap_origin_, item.lod.level);
-        upsert_opaque_mesh(std::move(mesh));
-        RenderMesh grass = vegetation::build_grass_mesh(
-            block_world_, ck, *chunk, camera_snap_origin_, item.lod.level);
-        upsert_opaque_mesh(std::move(grass));
-        ++mesh_count;
+            entry.terrain_mesh = block_world_.build_chunk_mesh(
+                ck, *chunk, solid_at, camera_snap_origin_, entry.lod_level);
+            entry.grass_mesh = vegetation::build_grass_mesh(
+                block_world_, ck, *chunk, camera_snap_origin_, entry.lod_level);
+          });
+        }
+        chunk_jobs_.wait_idle();
+        for (MeshBatchEntry &entry : batch) {
+          upsert_opaque_mesh(std::move(entry.terrain_mesh));
+          upsert_opaque_mesh(std::move(entry.grass_mesh));
+        }
       }
 
       // Save LOD distribution to render stats for HUD display.

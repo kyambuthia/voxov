@@ -74,6 +74,7 @@ ServerSession::ServerSession() { reset(); }
 
 void ServerSession::reset() {
     client_states.clear();
+    dirty_chunks_.clear();
     solar_system_.init(kPlayablePlanetConfig.radius_m);
     body_worlds_.clear();
     const BlockWorldConfig base_config = make_playable_block_world_config();
@@ -335,5 +336,62 @@ bool ServerSession::accept_block_edit(ServerClientState &client,
                  : VoxelMaterial::Air;
     chunk.set_material(addr.block.x, addr.block.y, addr.block.z, mat);
     chunk.set_solid(addr.block.x, addr.block.y, addr.block.z, is_solid);
+    NetChunkCoord key_coord{};
+    key_coord.body_id = edit.chunk.body_id;
+    key_coord.face = edit.chunk.face;
+    key_coord.shell = edit.chunk.shell;
+    key_coord.x = edit.chunk.x;
+    key_coord.y = edit.chunk.y;
+    key_coord.z = edit.chunk.z;
+    dirty_chunks_[NetChunkCoordHash{}(key_coord)] = key_coord;
     return true;
+}
+
+std::vector<ServerDirtyChunkRle> ServerSession::export_dirty_chunks_rle() const {
+    std::vector<ServerDirtyChunkRle> out;
+    out.reserve(dirty_chunks_.size());
+    for (const auto &[hash, coord] : dirty_chunks_) {
+        (void)hash;
+        auto it = body_worlds_.find(coord.body_id);
+        if (it == body_worlds_.end()) {
+            continue;
+        }
+        BlockAddress addr{};
+        addr.sector = static_cast<PlanetFace>(coord.face);
+        addr.shell = static_cast<int32_t>(coord.shell);
+        addr.chunk = glm::ivec3(coord.x, coord.y, coord.z);
+        const VoxelChunk *chunk = it->second->world.find_chunk(addr);
+        if (chunk == nullptr) {
+            continue;
+        }
+        ServerDirtyChunkRle entry{};
+        entry.body_id = coord.body_id;
+        entry.coord = coord;
+        entry.rle_bytes = chunk->encode_rle();
+        out.push_back(std::move(entry));
+    }
+    return out;
+}
+
+bool ServerSession::import_dirty_chunks_rle(
+    const std::vector<ServerDirtyChunkRle> &chunks) {
+    bool all_ok = true;
+    for (const ServerDirtyChunkRle &entry : chunks) {
+        auto it = body_worlds_.find(entry.body_id);
+        if (it == body_worlds_.end() || entry.coord.face >= 6u) {
+            all_ok = false;
+            continue;
+        }
+        BlockAddress addr{};
+        addr.sector = static_cast<PlanetFace>(entry.coord.face);
+        addr.shell = static_cast<int32_t>(entry.coord.shell);
+        addr.chunk = glm::ivec3(entry.coord.x, entry.coord.y, entry.coord.z);
+        VoxelChunk &chunk = it->second->world.get_or_generate_chunk(addr);
+        if (!chunk.decode_rle(entry.rle_bytes)) {
+            all_ok = false;
+            continue;
+        }
+        dirty_chunks_[NetChunkCoordHash{}(entry.coord)] = entry.coord;
+    }
+    return all_ok;
 }

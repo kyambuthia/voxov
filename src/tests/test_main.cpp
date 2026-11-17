@@ -4293,6 +4293,20 @@ void test_server_session_applies_and_validates_block_edits() {
   NetBlockEdit bad_edit = valid_edit;
   bad_edit.chunk.body_id = 999u;
   assert(!session.accept_block_edit(client, bad_edit));
+
+  const std::vector<ServerDirtyChunkRle> exported =
+      session.export_dirty_chunks_rle();
+  assert(exported.size() == 1);
+
+  ServerSession restored;
+  assert(restored.import_dirty_chunks_rle(exported));
+  const VoxelChunk *restored_chunk =
+      restored.world_for_body(client.state.world.body_id)
+          .find_chunk(BlockAddress{spawn_addr.sector, spawn_addr.shell,
+                                   spawn_addr.chunk, glm::ivec3(0)});
+  assert(restored_chunk != nullptr);
+  assert(restored_chunk->material(spawn_addr.block.x, spawn_addr.block.y,
+                                  spawn_addr.block.z) == VoxelMaterial::Planks);
 }
 
 int main() {

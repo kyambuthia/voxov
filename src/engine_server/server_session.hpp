@@ -11,6 +11,7 @@
 #include <memory>
 #include <optional>
 #include <unordered_map>
+#include <vector>
 
 struct _ENetPeer;
 
@@ -21,6 +22,12 @@ struct NetChunkCoordHash {
 struct ServerBodyRuntime {
     BlockWorld world{};
     VoxelCollisionWorld collision{nullptr};
+};
+
+struct ServerDirtyChunkRle {
+    uint32_t body_id = 0;
+    NetChunkCoord coord{};
+    std::vector<uint8_t> rle_bytes{};
 };
 
 struct ServerClientState {
@@ -62,6 +69,8 @@ public:
     bool supports_body(uint32_t body_id) const;
     const VoxelCollisionWorld &collision_for_body(uint32_t body_id) const;
     const BlockWorld &world_for_body(uint32_t body_id) const;
+    std::vector<ServerDirtyChunkRle> export_dirty_chunks_rle() const;
+    bool import_dirty_chunks_rle(const std::vector<ServerDirtyChunkRle> &chunks);
 
 private:
     void simulate_client_tick(ServerClientState &state);
@@ -72,6 +81,7 @@ private:
     std::unordered_map<_ENetPeer *, ServerClientState> client_states;
     SolarSystem solar_system_{};
     std::unordered_map<uint32_t, std::unique_ptr<ServerBodyRuntime>> body_worlds_;
+    std::unordered_map<uint64_t, NetChunkCoord> dirty_chunks_;
     uint32_t next_player_id = 1;
     uint32_t server_sim_tick_value = 0;
 };

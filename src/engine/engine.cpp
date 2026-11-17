@@ -16,6 +16,7 @@
 #include "engine_render/debug_text.hpp"
 #include "engine_world/wireframe_planet.hpp"
 #include "engine_world/world_gen.hpp"
+#include "engine_world/chunk_occlusion.hpp"
 #include "engine_world/vegetation.hpp"
 #include "engine_world/planet.hpp"
 
@@ -1093,6 +1094,63 @@ void Engine::simulate_frame(InputState &gameplay_input,
                 collision_debug = PlayerControllerSystem::simulate_fixed(
                     local_player, step_input, collision_world, step.dt,
                     debug_fly_mode_);
+                if (!debug_fly_mode_) {
+                  const BlockAddress feet_addr = block_world_.address_from_world(
+                      glm::dvec3(local_player.transform.position));
+                  const VoxelChunk *feet_chunk = block_world_.find_chunk(
+                      BlockAddress{feet_addr.sector, feet_addr.shell,
+                                   feet_addr.chunk, glm::ivec3(0)});
+                  const bool feet_in_water =
+                      feet_chunk != nullptr &&
+                      feet_chunk->material(feet_addr.block.x, feet_addr.block.y,
+                                           feet_addr.block.z) ==
+                          VoxelMaterial::Water;
+                  if (feet_in_water) {
+                    const glm::vec3 up = glm::normalize(
+                        local_player.transform.position -
+                        glm::vec3(block_world_.planet().center));
+                    const BlockAddress head_addr =
+                        block_world_.address_from_world(
+                            glm::dvec3(local_player.transform.position) +
+                            glm::dvec3(up) * 1.1);
+                    const VoxelChunk *head_chunk = block_world_.find_chunk(
+                        BlockAddress{head_addr.sector, head_addr.shell,
+                                     head_addr.chunk, glm::ivec3(0)});
+                    const bool head_in_water =
+                        head_chunk != nullptr &&
+                        head_chunk->material(head_addr.block.x,
+                                             head_addr.block.y,
+                                             head_addr.block.z) ==
+                            VoxelMaterial::Water;
+                    const float submerged = head_in_water ? 1.0f : 0.55f;
+                    PlayerControllerSystem::apply_fluid_buoyancy(
+                        local_player, step_input, up, submerged,
+                        static_cast<float>(step.dt));
+                  }
+
+                  if (ship_body_index_ == active_body_index_) {
+                    const glm::dvec3 p_feet(local_player.transform.position);
+                    const glm::dvec3 up = glm::normalize(
+                        p_feet - block_world_.planet().center);
+                    const glm::dvec3 p_chest = p_feet + up * 0.9;
+                    if (spaceship_collides_world_point(ship_, p_feet) ||
+                        spaceship_collides_world_point(ship_, p_chest)) {
+                      const glm::vec3 push = local_player.transform.position -
+                                             glm::vec3(ship_.position);
+                      const float push_len = glm::length(push);
+                      const glm::vec3 push_dir =
+                          (push_len > 1e-4f) ? (push / push_len)
+                                             : glm::vec3(up);
+                      local_player.transform.position =
+                          local_player_prev_position;
+                      const float vn =
+                          glm::dot(local_player.controller.velocity, push_dir);
+                      if (vn < 0.0f) {
+                        local_player.controller.velocity -= push_dir * vn;
+                      }
+                    }
+                  }
+                }
               }
             }
 
@@ -1617,10 +1675,16 @@ Engine::TerrainStreamTimings Engine::stream_block_terrain(
               return nc->solid(na.block.x, na.block.y, na.block.z);
             };
 
+            const ChunkFaceVisibility vis = compute_chunk_face_visibility(*chunk);
             entry.terrain_mesh = block_world_.build_chunk_mesh(
                 ck, *chunk, solid_at, camera_snap_origin_, entry.lod_level);
-            entry.grass_mesh = vegetation::build_grass_mesh(
-                block_world_, ck, *chunk, camera_snap_origin_, entry.lod_level);
+            if (vis.reach[3] != 0) {
+              entry.grass_mesh = vegetation::build_grass_mesh(
+                  block_world_, ck, *chunk, camera_snap_origin_, entry.lod_level);
+            } else {
+              entry.grass_mesh.mesh_id = vegetation::mesh_id(ck);
+              entry.grass_mesh.material = vegetation::kBillboardVegetationMaterial;
+            }
           });
         }
         chunk_jobs_.wait_idle();

@@ -26,6 +26,8 @@ public:
     void set_chunk_interest(const NetChunkInterest &interest);
     bool poll_snapshot(NetSnapshot &out_snapshot);
     bool poll_chunk_state(NetChunkState &out_state);
+    void send_block_edit(const NetBlockEdit &edit);
+    bool poll_block_edit(NetBlockEdit &out_edit);
     uint32_t local_player_id() const;
     NetProtocolInfo protocol_info() const;
     bool has_session_info() const;

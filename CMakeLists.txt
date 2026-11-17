@@ -91,7 +91,11 @@ elseif(EMSCRIPTEN)
     # Sokol stays on the browser main thread. A dedicated pthread owns ENet's
     # blocking POSIX socket bridge to the native WebSocket gateway.
 elseif(NOT EMSCRIPTEN)
-    option(VOXOV_USE_SDL3 "Use SDL3 for desktop windowing and input" ON)
+    if(WIN32)
+        option(VOXOV_USE_SDL3 "Use SDL3 for desktop windowing and input" OFF)
+    else()
+        option(VOXOV_USE_SDL3 "Use SDL3 for desktop windowing and input" ON)
+    endif()
     if(VOXOV_USE_SDL3)
         message(STATUS "Platform backend: SDL3 + sokol_gfx (GLCore)")
         find_package(SDL3 QUIET)

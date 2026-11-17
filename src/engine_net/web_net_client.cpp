@@ -24,6 +24,8 @@ struct WebNetClient::SharedState {
     std::optional<NetChunkInterest> pending_interest;
     std::optional<NetSnapshot> snapshot;
     std::deque<NetChunkState> chunk_updates;
+    std::deque<NetBlockEdit> pending_block_edits;
+    std::deque<NetBlockEdit> block_edit_updates;
     NetClientConnectionState connection_state =
         NetClientConnectionState::Disconnected;
     uint32_t local_player_id = 0;
@@ -79,6 +81,7 @@ void web_network_worker(const std::shared_ptr<WebNetClient::SharedState> &shared
         std::optional<std::pair<std::string, uint16_t>> connect_request;
         std::optional<NetTickInput> input;
         std::optional<NetChunkInterest> interest;
+        std::deque<NetBlockEdit> outgoing_edits;
         bool disconnect_requested = false;
         {
             std::lock_guard lock(shared->mutex);
@@ -90,6 +93,7 @@ void web_network_worker(const std::shared_ptr<WebNetClient::SharedState> &shared
             shared->pending_input.reset();
             interest = shared->pending_interest;
             shared->pending_interest.reset();
+            outgoing_edits.swap(shared->pending_block_edits);
         }
 
         if (disconnect_requested) {
@@ -105,6 +109,10 @@ void web_network_worker(const std::shared_ptr<WebNetClient::SharedState> &shared
         if (input.has_value()) {
             transport.send_input(*input);
         }
+        while (!outgoing_edits.empty()) {
+            transport.send_block_edit(outgoing_edits.front());
+            outgoing_edits.pop_front();
+        }
         transport.pump();
 
         std::optional<NetSnapshot> snapshot;
@@ -116,6 +124,11 @@ void web_network_worker(const std::shared_ptr<WebNetClient::SharedState> &shared
         NetChunkState chunk{};
         while (transport.poll_chunk_state(chunk)) {
             chunks.push_back(chunk);
+        }
+        std::deque<NetBlockEdit> edits;
+        NetBlockEdit edit{};
+        while (transport.poll_block_edit(edit)) {
+            edits.push_back(edit);
         }
 
         {
@@ -135,6 +148,10 @@ void web_network_worker(const std::shared_ptr<WebNetClient::SharedState> &shared
             while (!chunks.empty()) {
                 shared->chunk_updates.push_back(chunks.front());
                 chunks.pop_front();
+            }
+            while (!edits.empty()) {
+                shared->block_edit_updates.push_back(edits.front());
+                edits.pop_front();
             }
         }
         emscripten_thread_sleep(2);
@@ -183,6 +200,8 @@ void WebNetClient::disconnect() {
     shared_->players.clear();
     shared_->target_host.clear();
     shared_->target_port = 0;
+    shared_->pending_block_edits.clear();
+    shared_->block_edit_updates.clear();
 }
 
 void WebNetClient::shutdown() {
@@ -229,6 +248,21 @@ bool WebNetClient::poll_chunk_state(NetChunkState &out_state) {
     }
     out_state = shared_->chunk_updates.front();
     shared_->chunk_updates.pop_front();
+    return true;
+}
+
+void WebNetClient::send_block_edit(const NetBlockEdit &edit) {
+    std::lock_guard lock(shared_->mutex);
+    shared_->pending_block_edits.push_back(edit);
+}
+
+bool WebNetClient::poll_block_edit(NetBlockEdit &out_edit) {
+    std::lock_guard lock(shared_->mutex);
+    if (shared_->block_edit_updates.empty()) {
+        return false;
+    }
+    out_edit = shared_->block_edit_updates.front();
+    shared_->block_edit_updates.pop_front();
     return true;
 }
 

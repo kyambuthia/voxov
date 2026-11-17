@@ -1,5 +1,6 @@
 #include "engine_world/planet_blocks.hpp"
 #include "engine_world/voxel_lighting.hpp"
+#include "engine_world/world_gen.hpp"
 #include "engine_world/voxel_chunk.hpp"
 
 #include <algorithm>
@@ -413,11 +414,50 @@ VoxelMaterial BlockWorld::block_material_at(const BlockAddress &addr,
             static_cast<double>(sh.vertical_layers) /
             static_cast<double>(shell_config(shell_count() - 1).vertical_layers));
 
-    if (layer > scaled_h) return VoxelMaterial::Air;
-    const int32_t depth = scaled_h - layer;
     const int32_t ly = sh.vertical_layers;
-    if (depth <= std::max(1, ly / 32)) return VoxelMaterial::Grass;
-    if (depth <= std::max(1, ly / 8))  return VoxelMaterial::Dirt;
+    const bool is_surface_shell = (addr.shell == shell_count() - 1);
+    const int32_t sea_level = std::max(1, ly / 6);
+    if (layer > scaled_h) {
+        if (is_surface_shell && layer <= sea_level) {
+            return VoxelMaterial::Water;
+        }
+        return VoxelMaterial::Air;
+    }
+
+    const int32_t depth = scaled_h - layer;
+    if (is_surface_shell && depth >= 4 && layer >= 2) {
+        const double gx = static_cast<double>(addr.chunk.x * config_.chunk_size + addr.block.x);
+        const double gz = static_cast<double>(addr.chunk.z * config_.chunk_size + addr.block.z);
+        const float cave = sample_cave_density_3d(
+            gx * 0.12 + static_cast<double>(static_cast<int>(addr.sector)) * 31.0,
+            static_cast<double>(layer) * 0.14,
+            gz * 0.12,
+            0x564F584F56ULL);
+        if (cave > 0.42f) {
+            return VoxelMaterial::Air;
+        }
+    }
+
+    const double res = static_cast<double>(std::max(1, sh.horizontal_res));
+    const double u = -1.0 + (static_cast<double>(addr.chunk.x * config_.chunk_size + addr.block.x) + 0.5) / res * 2.0;
+    const double v = -1.0 + (static_cast<double>(addr.chunk.z * config_.chunk_size + addr.block.z) + 0.5) / res * 2.0;
+    const glm::dvec3 dir = face_uv_to_direction(addr.sector, u, v);
+    const double temperature = 1.0 - std::abs(dir.y);
+    const double moisture = 0.55 + 0.45 * std::sin(dir.x * 2.3 + dir.z * 3.1);
+    const double elevation_norm = static_cast<double>(scaled_h) / static_cast<double>(std::max(1, ly));
+    const PlanetBiome biome = classify_planet_biome(temperature, moisture, elevation_norm);
+
+    if (depth <= std::max(1, ly / 32)) {
+        switch (biome) {
+        case PlanetBiome::Desert: return VoxelMaterial::Sand;
+        case PlanetBiome::Tundra: return VoxelMaterial::Snow;
+        case PlanetBiome::Highlands: return VoxelMaterial::Stone;
+        case PlanetBiome::Plains: default: return VoxelMaterial::Grass;
+        }
+    }
+    if (depth <= std::max(1, ly / 8)) {
+        return (biome == PlanetBiome::Desert) ? VoxelMaterial::Sand : VoxelMaterial::Dirt;
+    }
     return VoxelMaterial::Stone;
 }
 

@@ -1,4 +1,5 @@
 #include "engine_world/planet_blocks.hpp"
+#include "engine_world/voxel_lighting.hpp"
 #include "engine_world/voxel_chunk.hpp"
 
 #include <algorithm>
@@ -806,6 +807,22 @@ RenderMesh BlockWorld::build_chunk_mesh(
     constexpr uint8_t kMaxH = VoxelChunk::kMaxBlockHeight;
     const double kMaxH_d = static_cast<double>(kMaxH);
 
+    thread_local VoxelLightMap light_map;
+    light_map.resize(cs, cs, cs);
+    light_map.compute_sunlight(chunk);
+    auto sample_face_light = [&](int nx, int ny, int nz) -> float {
+        if (nx >= 0 && nx < cs && ny >= 0 && ny < cs && nz >= 0 && nz < cs) {
+            return light_map.brightness(nx, ny, nz);
+        }
+        if (ny >= cs) {
+            return 1.0f;
+        }
+        return light_map.brightness(
+            std::clamp(nx, 0, cs - 1),
+            std::clamp(ny, 0, cs - 1),
+            std::clamp(nz, 0, cs - 1));
+    };
+
     auto resolve_neighbor_address = [&](int nx, int ny, int nz,
                                         BlockAddress &nb_addr) -> bool {
         if (nx >= 0 && nx < cs && ny >= 0 && ny < cs && nz >= 0 && nz < cs) {
@@ -1129,8 +1146,9 @@ RenderMesh BlockWorld::build_chunk_mesh(
                     static_cast<float>(gy0) /
                         static_cast<float>(std::max(1, sh.vertical_layers)),
                     0.0f, 1.0f);
-                const glm::vec3 color = VoxelChunk::material_color(
-                    face_mat, true, height_t);
+                const glm::vec3 color =
+                    VoxelChunk::material_color(face_mat, true, height_t) *
+                    sample_face_light(bx, by + stride, bz);
                 const int32_t ao_y = by + stride;
                 const bool s_xm = sample_solid_occluder(bx - stride, ao_y, bz);
                 const bool s_xp = sample_solid_occluder(bx + stride, ao_y, bz);
@@ -1339,7 +1357,8 @@ RenderMesh BlockWorld::build_chunk_mesh(
 
                         const bool top_face = false;
                         const glm::vec3 color =
-                            VoxelChunk::material_color(mat, top_face, height_t);
+                            VoxelChunk::material_color(mat, top_face, height_t) *
+                            sample_face_light(nx, by, nz);
                         const glm::dvec3 face_center = (v0 + v1 + v2 + v3) * 0.25;
                         emit_quad_ao(v0, v1, v2, v3, ao0, ao1, ao2, ao3,
                                      color, face_center - cell_mid,
@@ -1368,7 +1387,8 @@ RenderMesh BlockWorld::build_chunk_mesh(
 
                         const bool top_face = false;
                         const glm::vec3 color =
-                            VoxelChunk::material_color(mat, top_face, height_t);
+                            VoxelChunk::material_color(mat, top_face, height_t) *
+                            sample_face_light(nx, ny, nz);
                         const glm::dvec3 face_center = (v0 + v1 + v2 + v3) * 0.25;
                         emit_quad(v0, v1, v2, v3, color,
                                   config_.planet.center - face_center,

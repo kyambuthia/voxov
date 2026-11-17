@@ -1879,9 +1879,6 @@ void Engine::append_celestial_meshes(const RenderSurface &surface) {
       if (i == active_body_index_) continue;
 
       const glm::dvec3 body_world = body.position - planet_orbit_pos;
-      const glm::vec3 rel_pos = camera_relative_position(
-          body_world, scene.camera_origin);
-
       const float radius = static_cast<float>(body.orbital.radius);
       if (!body.is_star) {
         // Distant destinations use the same deterministic height source as
@@ -1925,10 +1922,18 @@ void Engine::append_celestial_meshes(const RenderSurface &surface) {
         ++last_celestial_mesh_count_;
         continue;
       }
-      RenderMesh sphere = build_debug_sphere_mesh(glm::vec3(0.0f), radius, body.color);
-      sphere.mesh_id = 0x5354415200000000ull + static_cast<uint64_t>(i);
-      sphere.world_origin = body_world;
-      scene.opaque_meshes.push_back(std::move(sphere));
+      const uint64_t star_id = 0x5354415200000000ull + static_cast<uint64_t>(i);
+      const auto star_it = std::find_if(
+          scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+          [star_id](const RenderMesh &mesh) { return mesh.mesh_id == star_id; });
+      if (star_it != scene.opaque_meshes.end()) {
+        star_it->world_origin = body_world;
+      } else {
+        RenderMesh sphere = build_debug_sphere_mesh(glm::vec3(0.0f), radius, body.color);
+        sphere.mesh_id = star_id;
+        sphere.world_origin = body_world;
+        scene.opaque_meshes.push_back(std::move(sphere));
+      }
       ++last_celestial_mesh_count_;
     }
 

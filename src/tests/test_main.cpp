@@ -1,3 +1,4 @@
+#include "engine_world/voxel_lighting.hpp"
 #include "engine_net/net_reconcile.hpp"
 #include "engine_core/cvar.hpp"
 #include "engine_core/string_id.hpp"
@@ -596,6 +597,27 @@ void test_chunk_runtime_helpers() {
     min_ao = std::min(min_ao, v.color.r);
   }
   assert(min_ao < min_open);
+
+  // VoxelLightMap: vertical sunlight + cave bleed + block light add/remove BFS.
+  VoxelChunk light_chunk(8, 8, 8);
+  for (int x = 0; x < 8; ++x) {
+    for (int z = 0; z < 8; ++z) {
+      light_chunk.set_material(x, 5, z, VoxelMaterial::Stone, VoxelChunk::kMaxBlockHeight);
+    }
+  }
+  light_chunk.set_material(0, 5, 0, VoxelMaterial::Air, 0); // skylight shaft
+  VoxelLightMap lmap(8, 8, 8);
+  lmap.compute_sunlight(light_chunk);
+  assert(lmap.sky_light(0, 4, 0) == 15);
+  assert(lmap.sky_light(1, 4, 0) == 14);
+  assert(lmap.sky_light(2, 4, 0) == 13);
+
+  lmap.add_block_light(light_chunk, 4, 2, 4, 10);
+  assert(lmap.block_light(4, 2, 4) == 10);
+  assert(lmap.block_light(5, 2, 4) == 9);
+  lmap.remove_block_light(light_chunk, 4, 2, 4);
+  assert(lmap.block_light(4, 2, 4) == 0);
+  assert(lmap.block_light(5, 2, 4) == 0);
 }
 
 void test_planet_face_uv_to_direction_unit_vectors() {

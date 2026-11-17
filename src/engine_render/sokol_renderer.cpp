@@ -663,16 +663,18 @@ void SokolRenderer::draw_wireframe(const SokolGpuMesh &mesh,
 // ---------------------------------------------------------------------------
 
 void SokolRenderer::upload_scene(const RenderScene &new_scene) {
-    // Evict stale cached meshes.
-    std::unordered_map<uint64_t, bool> live_ids;
+    // Evict stale cached meshes using persistent scratch buffers.
+    scratch_live_ids_.clear();
     for (const RenderMesh &mesh : new_scene.opaque_meshes) {
-        if (mesh.mesh_id != 0) live_ids[mesh.mesh_id] = true;
+        if (mesh.mesh_id != 0) scratch_live_ids_.insert(mesh.mesh_id);
     }
-    std::vector<uint64_t> stale_ids;
+    scratch_stale_ids_.clear();
     for (const auto &[id, _] : cached_meshes_) {
-        if (live_ids.find(id) == live_ids.end()) stale_ids.push_back(id);
+        if (scratch_live_ids_.find(id) == scratch_live_ids_.end()) {
+            scratch_stale_ids_.push_back(id);
+        }
     }
-    for (uint64_t id : stale_ids) {
+    for (uint64_t id : scratch_stale_ids_) {
         destroy_mesh(cached_meshes_[id]);
         cached_meshes_.erase(id);
     }
@@ -905,14 +907,28 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                   pipelines_.opaque, pipelines_.opaque_u16,
                   ctx.grayscale_view);
 
-        // Each retained mesh carries its own double-precision origin, so a
-        // camera rebase changes only the draw transform, never its GPU data.
+        // Cache VP + frustum by world_origin so all chunks sharing the active
+        // camera_snap_origin_ compute view/projection/frustum once per frame.
+        bool has_cached_origin = false;
+        glm::dvec3 cached_origin(0.0);
+        glm::mat4 cached_vp(1.0f);
+        Frustum cached_frustum{};
+        uint32_t active_pipeline_id = 0;
+
         auto draw_cached_mesh = [&](const SokolGpuMesh &mesh,
                                     sg_pipeline default_u32,
                                     sg_pipeline default_u16) {
-            const glm::mat4 retained_vp = mesh_vp(mesh);
-            const Frustum retained_frustum = extract_frustum(retained_vp);
-            if (!aabb_in_frustum(retained_frustum, mesh.bounds_min,
+            if (!mesh.vertex_buffer.id || !mesh.index_buffer.id ||
+                mesh.index_count == 0) {
+                return;
+            }
+            if (!has_cached_origin || mesh.world_origin != cached_origin) {
+                cached_origin = mesh.world_origin;
+                cached_vp = mesh_vp(mesh);
+                cached_frustum = extract_frustum(cached_vp);
+                has_cached_origin = true;
+            }
+            if (!aabb_in_frustum(cached_frustum, mesh.bounds_min,
                                  mesh.bounds_max)) {
                 return;
             }
@@ -921,9 +937,18 @@ void SokolRenderer::render_frame(const RenderFrameContext &ctx,
                 mesh.double_sided ? pipelines_.debug_no_cull : default_u32;
             const sg_pipeline pipeline_u16 = mesh.double_sided
                 ? pipelines_.debug_no_cull_u16 : default_u16;
-            draw_mesh(mesh, retained_vp, model, camera_pos,
+            const sg_pipeline chosen =
+                mesh.index_type == SG_INDEXTYPE_UINT16 ? pipeline_u16 : pipeline_u32;
+            const sg_pipeline pass_u32 =
+                (chosen.id == active_pipeline_id) ? sg_pipeline{0} : pipeline_u32;
+            const sg_pipeline pass_u16 =
+                (chosen.id == active_pipeline_id) ? sg_pipeline{0} : pipeline_u16;
+            if (chosen.id != 0) {
+                active_pipeline_id = chosen.id;
+            }
+            draw_mesh(mesh, cached_vp, model, camera_pos,
                       mesh.world_origin,
-                      pipeline_u32, pipeline_u16,
+                      pass_u32, pass_u16,
                       ctx.grayscale_view);
         };
 

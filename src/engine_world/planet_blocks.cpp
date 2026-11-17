@@ -1048,7 +1048,8 @@ RenderMesh BlockWorld::build_chunk_mesh(
     // rasterization cracks at chunk boundaries. Keeping one quad per surface
     // cell preserves the block silhouette and gives adjacent chunks identical
     // shared edges.
-    std::vector<int16_t> up_mask(static_cast<size_t>(grid_w * grid_w), 0);
+    thread_local std::vector<int16_t> up_mask;
+    up_mask.assign(static_cast<size_t>(grid_w * grid_w), 0);
     for (int32_t by = 0; by < cs; by += stride) {
         std::fill(up_mask.begin(), up_mask.end(), 0);
         for (int32_t iz = 0; iz < grid_w; ++iz) {

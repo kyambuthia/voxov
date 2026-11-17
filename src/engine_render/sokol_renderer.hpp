@@ -6,6 +6,7 @@
 #include <glm/mat4x4.hpp>
 #include <glm/vec3.hpp>
 #include <unordered_map>
+#include <unordered_set>
 
 #include "sokol_gfx.h"
 
@@ -111,6 +112,8 @@ private:
     SokolGpuMesh debug_world_mesh_{};
     SokolGpuMesh debug_screen_mesh_{};
     std::unordered_map<uint64_t, SokolGpuMesh> cached_meshes_;
+    std::unordered_set<uint64_t> scratch_live_ids_;
+    std::vector<uint64_t> scratch_stale_ids_;
     sg_pass_action pass_action_{};
     SokolDirectionalLight light_{};
     SokolMaterial material_{};

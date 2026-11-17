@@ -1925,9 +1925,9 @@ void Engine::append_celestial_meshes(const RenderSurface &surface) {
         ++last_celestial_mesh_count_;
         continue;
       }
-      RenderMesh sphere = build_debug_sphere_mesh(rel_pos, radius, body.color);
-      sphere.mesh_id = 0; // transient — always re-upload
-      sphere.world_origin = scene.camera_origin.world_origin;
+      RenderMesh sphere = build_debug_sphere_mesh(glm::vec3(0.0f), radius, body.color);
+      sphere.mesh_id = 0x5354415200000000ull + static_cast<uint64_t>(i);
+      sphere.world_origin = body_world;
       scene.opaque_meshes.push_back(std::move(sphere));
       ++last_celestial_mesh_count_;
     }

@@ -637,6 +637,25 @@ void test_chunk_runtime_helpers() {
   const float cd1 = sample_cave_density_3d(12.3, 4.5, -7.8, 42ull);
   const float cd2 = sample_cave_density_3d(12.3, 4.5, -7.8, 42ull);
   assert(cd1 == cd2 && cd1 >= -1.0f && cd1 <= 1.0f);
+
+  // Binary greedy meshing: a 4x1x4 slab merges into 6 quads (24 verts) vs 96+ naive.
+  VoxelChunk slab(8, 8, 8);
+  for (int x = 1; x <= 4; ++x) {
+    for (int z = 1; z <= 4; ++z) {
+      slab.set_material(x, 2, z, VoxelMaterial::Stone, VoxelChunk::kMaxBlockHeight);
+    }
+  }
+  const RenderMesh bgm = slab.build_binary_greedy_mesh();
+  assert(bgm.vertices.size() == 24 && bgm.indices.size() == 36);
+
+  // Fluid buoyancy lifts submerged player upward.
+  PlayerEntity swimmer{};
+  swimmer.controller.velocity = glm::vec3(0.0f, -2.0f, 0.0f);
+  InputState swim_in{};
+  swim_in.jump_held = true;
+  PlayerControllerSystem::apply_fluid_buoyancy(
+      swimmer, swim_in, glm::vec3(0.0f, 1.0f, 0.0f), 1.0f, 0.25f);
+  assert(swimmer.controller.velocity.y > 0.0f);
 }
 
 void test_planet_face_uv_to_direction_unit_vectors() {

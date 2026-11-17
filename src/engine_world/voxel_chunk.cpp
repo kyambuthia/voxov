@@ -1,3 +1,4 @@
+#include <bit>
 #include "engine_world/voxel_chunk.hpp"
 #include "engine_world/world_gen.hpp"
 
@@ -658,4 +659,134 @@ bool VoxelChunk::decode_rle(const std::vector<uint8_t> &encoded) {
   }
   voxels = std::move(decoded);
   return true;
+}
+
+RenderMesh VoxelChunk::build_binary_greedy_mesh(const glm::vec3 &origin,
+                                                float voxel_scale) const {
+  RenderMesh mesh{};
+  if (is_empty() || size_x_ > 64 || size_y_ > 64 || size_z_ > 64) {
+    return mesh;
+  }
+
+  // Binary greedy meshing along +Y/-Y, +X/-X, +Z/-Z using uint64_t row masks.
+  for (int axis = 0; axis < 3; ++axis) {
+    const int u_axis = (axis + 1) % 3;
+    const int v_axis = (axis + 2) % 3;
+    const int dims[3] = {size_x_, size_y_, size_z_};
+    const int d_len = dims[axis];
+    const int u_len = dims[u_axis];
+    const int v_len = dims[v_axis];
+
+    std::vector<uint64_t> slice_mask(static_cast<size_t>(v_len), 0ull);
+    std::vector<VoxelMaterial> slice_mats(static_cast<size_t>(u_len * v_len),
+                                          VoxelMaterial::Air);
+
+    for (int dir : {-1, 1}) {
+      glm::vec3 normal(0.0f);
+      normal[axis] = static_cast<float>(dir);
+
+      for (int d = 0; d < d_len; ++d) {
+        std::fill(slice_mask.begin(), slice_mask.end(), 0ull);
+        std::fill(slice_mats.begin(), slice_mats.end(), VoxelMaterial::Air);
+
+        for (int v = 0; v < v_len; ++v) {
+          uint64_t row_bits = 0ull;
+          for (int u = 0; u < u_len; ++u) {
+            int c[3]{};
+            c[axis] = d;
+            c[u_axis] = u;
+            c[v_axis] = v;
+            if (!solid(c[0], c[1], c[2])) {
+              continue;
+            }
+            int nc[3] = {c[0], c[1], c[2]};
+            nc[axis] += dir;
+            const bool nb_solid =
+                (nc[0] >= 0 && nc[0] < size_x_ && nc[1] >= 0 &&
+                 nc[1] < size_y_ && nc[2] >= 0 && nc[2] < size_z_) &&
+                solid(nc[0], nc[1], nc[2]);
+            if (!nb_solid) {
+              row_bits |= (1ull << u);
+              slice_mats[static_cast<size_t>(v * u_len + u)] =
+                  material(c[0], c[1], c[2]);
+            }
+          }
+          slice_mask[static_cast<size_t>(v)] = row_bits;
+        }
+
+        for (int v = 0; v < v_len; ++v) {
+          while (slice_mask[static_cast<size_t>(v)] != 0ull) {
+            const int u = std::countr_zero(slice_mask[static_cast<size_t>(v)]);
+            const VoxelMaterial mat =
+                slice_mats[static_cast<size_t>(v * u_len + u)];
+            int w = 1;
+            while (u + w < u_len &&
+                   ((slice_mask[static_cast<size_t>(v)] >> (u + w)) & 1ull) &&
+                   slice_mats[static_cast<size_t>(v * u_len + u + w)] == mat) {
+              ++w;
+            }
+            const uint64_t run_mask =
+                (w == 64) ? ~0ull : (((1ull << w) - 1ull) << u);
+
+            int h = 1;
+            while (v + h < v_len &&
+                   (slice_mask[static_cast<size_t>(v + h)] & run_mask) ==
+                       run_mask) {
+              bool mat_match = true;
+              for (int k = 0; k < w; ++k) {
+                if (slice_mats[static_cast<size_t>((v + h) * u_len + u + k)] !=
+                    mat) {
+                  mat_match = false;
+                  break;
+                }
+              }
+              if (!mat_match) {
+                break;
+              }
+              ++h;
+            }
+
+            for (int r = 0; r < h; ++r) {
+              slice_mask[static_cast<size_t>(v + r)] &= ~run_mask;
+            }
+
+            float p0[3]{}, p1[3]{}, p2[3]{}, p3[3]{};
+            const float face_d = static_cast<float>(dir > 0 ? d + 1 : d);
+            p0[axis] = p1[axis] = p2[axis] = p3[axis] = face_d;
+            p0[u_axis] = static_cast<float>(u);
+            p0[v_axis] = static_cast<float>(v);
+            p1[u_axis] = static_cast<float>(u + w);
+            p1[v_axis] = static_cast<float>(v);
+            p2[u_axis] = static_cast<float>(u + w);
+            p2[v_axis] = static_cast<float>(v + h);
+            p3[u_axis] = static_cast<float>(u);
+            p3[v_axis] = static_cast<float>(v + h);
+            if (dir < 0) {
+              std::swap(p1, p3);
+            }
+
+            const glm::vec3 color =
+                material_color(mat, axis == 1 && dir > 0, 0.5f);
+            const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+            auto emit = [&](const float p[3], float tu, float tv) {
+              mesh.vertices.push_back(RenderVertex{
+                  glm::vec3(p[0], p[1], p[2]) * voxel_scale - origin,
+                  color,
+                  normal,
+                  glm::vec3(tu, tv, 0.0f),
+              });
+            };
+            emit(p0, 0.0f, 0.0f);
+            emit(p1, static_cast<float>(w), 0.0f);
+            emit(p2, static_cast<float>(w), static_cast<float>(h));
+            emit(p3, 0.0f, static_cast<float>(h));
+            mesh.indices.insert(mesh.indices.end(),
+                                {base, base + 1, base + 2,
+                                 base, base + 2, base + 3});
+          }
+        }
+      }
+    }
+  }
+  return mesh;
 }

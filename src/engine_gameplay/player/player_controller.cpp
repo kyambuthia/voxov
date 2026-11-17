@@ -895,3 +895,27 @@ void PlayerControllerSystem::update_animation_state(
     player.animation.phase = player.anim_phase;
     player.animation.blend = player.anim_blend;
 }
+
+void PlayerControllerSystem::apply_fluid_buoyancy(
+    PlayerEntity &player,
+    const InputState &input,
+    const glm::vec3 &up,
+    float submerged_fraction,
+    float dt) {
+    if (submerged_fraction <= 0.0f || dt <= 0.0f) {
+        return;
+    }
+    const float clamped_sub = std::clamp(submerged_fraction, 0.0f, 1.0f);
+    // Archimedes upward buoyancy counteracts gravity and lifts submerged actors.
+    constexpr float kBuoyancyAccel = 16.5f;
+    constexpr float kWaterDrag = 3.2f;
+    constexpr float kSwimSpeedAccel = 12.0f;
+
+    player.controller.velocity += up * (kBuoyancyAccel * clamped_sub * dt);
+    if (input.jump_held) {
+        player.controller.velocity += up * (kSwimSpeedAccel * dt);
+    } else if (input.crouch_held) {
+        player.controller.velocity -= up * (kSwimSpeedAccel * dt);
+    }
+    player.controller.velocity *= std::exp(-kWaterDrag * clamped_sub * dt);
+}

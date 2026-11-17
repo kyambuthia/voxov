@@ -53,5 +53,11 @@ public:
         float dt,
         bool noclip);
 
+    static void apply_fluid_buoyancy(
+        PlayerEntity &player,
+        const InputState &input,
+        const glm::vec3 &up,
+        float submerged_fraction,
+        float dt);
     static void update_animation_state(PlayerEntity &player, const InputState &input, float dt, bool noclip, bool was_grounded);
 };

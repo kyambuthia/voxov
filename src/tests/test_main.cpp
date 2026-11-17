@@ -4252,6 +4252,49 @@ void test_spaceship_mesh_is_closed_and_relative_to_origin() {
 
 } // namespace
 
+
+void test_server_session_applies_and_validates_block_edits() {
+  ServerSession session;
+  ServerClientState &client = session.connect_client(nullptr);
+  const BlockWorld &world = session.world_for_body(client.state.world.body_id);
+  const BlockAddress spawn_addr = world.address_from_world(
+      glm::dvec3(client.player.transform.position));
+
+  NetBlockEdit valid_edit{};
+  valid_edit.chunk.body_id = client.state.world.body_id;
+  valid_edit.chunk.face = static_cast<uint8_t>(spawn_addr.sector);
+  valid_edit.chunk.shell = static_cast<uint8_t>(spawn_addr.shell);
+  valid_edit.chunk.x = spawn_addr.chunk.x;
+  valid_edit.chunk.y = spawn_addr.chunk.y;
+  valid_edit.chunk.z = spawn_addr.chunk.z;
+  valid_edit.local_x = static_cast<int8_t>(spawn_addr.block.x);
+  valid_edit.local_y = static_cast<int8_t>(spawn_addr.block.y);
+  valid_edit.local_z = static_cast<int8_t>(spawn_addr.block.z);
+  valid_edit.material = static_cast<uint8_t>(VoxelMaterial::Planks);
+  valid_edit.solid = 1;
+  assert(session.accept_block_edit(client, valid_edit));
+
+  const VoxelChunk *chunk = world.find_chunk(
+      BlockAddress{spawn_addr.sector, spawn_addr.shell, spawn_addr.chunk,
+                   glm::ivec3(0)});
+  assert(chunk != nullptr);
+  assert(chunk->material(spawn_addr.block.x, spawn_addr.block.y,
+                         spawn_addr.block.z) == VoxelMaterial::Planks);
+  assert(chunk->solid(spawn_addr.block.x, spawn_addr.block.y,
+                      spawn_addr.block.z));
+
+  const std::vector<uint8_t> rle = chunk->encode_rle();
+  VoxelChunk decoded(world.config().chunk_size, world.config().chunk_size,
+                     world.config().chunk_size);
+  assert(decoded.decode_rle(rle));
+  assert(decoded.material(spawn_addr.block.x, spawn_addr.block.y,
+                          spawn_addr.block.z) == VoxelMaterial::Planks);
+
+  NetBlockEdit bad_edit = valid_edit;
+  bad_edit.chunk.body_id = 999u;
+  assert(!session.accept_block_edit(client, bad_edit));
+}
+
 int main() {
   test_voxel_model_chunk_bounds_and_geometry();
   test_authored_ship_models_and_boarding_bounds();
@@ -4384,5 +4427,6 @@ int main() {
   test_spaceship_hard_contact_and_fast_moon_approach();
   test_spaceship_guidance_brakes_and_tracks_across_frame_rates();
   test_spaceship_mesh_is_closed_and_relative_to_origin();
+  test_server_session_applies_and_validates_block_edits();
   return 0;
 }

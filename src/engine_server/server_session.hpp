@@ -61,6 +61,7 @@ public:
     uint32_t server_sim_tick() const;
     bool supports_body(uint32_t body_id) const;
     const VoxelCollisionWorld &collision_for_body(uint32_t body_id) const;
+    const BlockWorld &world_for_body(uint32_t body_id) const;
 
 private:
     void simulate_client_tick(ServerClientState &state);

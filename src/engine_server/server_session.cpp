@@ -215,6 +215,10 @@ ServerSession::collision_for_body(uint32_t body_id) const {
     return body_runtime(body_id).collision;
 }
 
+const BlockWorld &ServerSession::world_for_body(uint32_t body_id) const {
+    return body_runtime(body_id).world;
+}
+
 bool ServerSession::accept_interest(ServerClientState &client,
                                     const NetChunkInterest &interest,
                                     uint64_t received_at_ms) {
@@ -303,14 +307,33 @@ uint32_t ServerSession::server_sim_tick() const { return server_sim_tick_value; 
 
 bool ServerSession::accept_block_edit(ServerClientState &client,
                                       const NetBlockEdit &edit) {
-    if (!supports_body(edit.chunk.body_id) ||
+    auto it = body_worlds_.find(edit.chunk.body_id);
+    if (it == body_worlds_.end() ||
         edit.chunk.body_id != client.state.world.body_id ||
-        edit.chunk.face >= 6u || edit.chunk.shell >= 32u ||
-        edit.local_x < 0 || edit.local_x >= 64 ||
-        edit.local_y < 0 || edit.local_y >= 64 ||
-        edit.local_z < 0 || edit.local_z >= 64 ||
+        edit.chunk.face >= 6u ||
         edit.material > static_cast<uint8_t>(kLastVoxelMaterial)) {
         return false;
     }
+    BlockWorld &world = it->second->world;
+    const int32_t shell = static_cast<int32_t>(edit.chunk.shell);
+    const int32_t cs = world.config().chunk_size;
+    if (shell < 0 || shell >= world.shell_count() ||
+        edit.local_x < 0 || edit.local_x >= cs ||
+        edit.local_y < 0 || edit.local_y >= cs ||
+        edit.local_z < 0 || edit.local_z >= cs) {
+        return false;
+    }
+    BlockAddress addr{};
+    addr.sector = static_cast<PlanetFace>(edit.chunk.face);
+    addr.shell = shell;
+    addr.chunk = glm::ivec3(edit.chunk.x, edit.chunk.y, edit.chunk.z);
+    addr.block = glm::ivec3(edit.local_x, edit.local_y, edit.local_z);
+    VoxelChunk &chunk = world.get_or_generate_chunk(addr);
+    const bool is_solid = edit.solid != 0;
+    const VoxelMaterial mat =
+        is_solid ? static_cast<VoxelMaterial>(edit.material)
+                 : VoxelMaterial::Air;
+    chunk.set_material(addr.block.x, addr.block.y, addr.block.z, mat);
+    chunk.set_solid(addr.block.x, addr.block.y, addr.block.z, is_solid);
     return true;
 }

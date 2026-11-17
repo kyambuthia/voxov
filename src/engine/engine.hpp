@@ -30,6 +30,7 @@
 #include "engine_world/atmosphere.hpp"
 #include "engine_world/coordinate_frames.hpp"
 #include "engine_core/jobs.hpp"
+#include "engine_presentation/voxel_particles.hpp"
 #include "engine_world/solar_system.hpp"
 #include <unordered_set>
 #include "platform/platform_services.hpp"
@@ -332,4 +333,5 @@ private:
   std::vector<CompletedChunkJob> completed_chunk_jobs_;
   std::unordered_set<BlockAddress, BlockAddressHash> pending_chunk_jobs_;
   uint64_t terrain_job_epoch_ = 1;
+  VoxelParticleSystem particles_{};
 };

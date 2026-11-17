@@ -447,6 +447,25 @@ void NetServer::pump() {
           }
           break;
         }
+        case NetMsgType::BlockEdit: {
+          NetBlockEdit edit{};
+          if (net_decode_message(event.packet->data,
+                                 event.packet->dataLength, type, edit) &&
+              session->accept_block_edit(*state, edit)) {
+            recognized_message = true;
+            for (auto &[peer_ptr, client_state] : session->clients()) {
+              if (client_state.state.world.body_id != edit.chunk.body_id) {
+                continue;
+              }
+              if (const size_t sent = send_message(
+                      peer_ptr, NetChannel::Reliable, NetMsgType::BlockEdit,
+                      next_packet_sequence++, edit, ENET_PACKET_FLAG_RELIABLE)) {
+                record_tx(sent);
+              }
+            }
+          }
+          break;
+        }
         default:
           break;
         }

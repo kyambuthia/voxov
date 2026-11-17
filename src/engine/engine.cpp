@@ -757,6 +757,17 @@ void Engine::tick(double frame_dt,
   update_coordinate_frames(frame_dt);
 
   append_celestial_meshes(surface);
+  particles_.step(static_cast<float>(frame_dt));
+  if (particles_.active_count() > 0) {
+    RenderMesh particle_mesh{};
+    particle_mesh.mesh_id = 0;
+    particle_mesh.world_origin = scene.camera_origin.world_origin;
+    particle_mesh.double_sided = true;
+    particles_.append_to_mesh(particle_mesh, camera.transform.position);
+    if (!particle_mesh.vertices.empty()) {
+      scene.opaque_meshes.push_back(std::move(particle_mesh));
+    }
+  }
   append_ship_mesh();
 
   // ── Frame profiler: time GPU upload (buffer creation/update) ──
@@ -2850,6 +2861,9 @@ void Engine::update_block_interaction(const InputState &input) {
     chunk.set_solid(addr.block.x, addr.block.y, addr.block.z, false);
     expedition_mission_.on_block_removed(active_body_index_);
     record_block_edit(active_body_index_, addr, VoxelMaterial::Air, false);
+    particles_.emit_burst(
+        camera_relative_position(targeted_hit_pos_, scene.camera_origin),
+        player_up, glm::vec3(0.65f), 10, 4.0f);
     request_save();
     invalidate_block_meshes(addr);
     return;
@@ -2873,6 +2887,10 @@ void Engine::update_block_interaction(const InputState &input) {
   chunk.set_solid(place.block.x, place.block.y, place.block.z, true);
   expedition_mission_.on_block_placed(active_body_index_);
   record_block_edit(active_body_index_, place, material, true);
+  particles_.emit_burst(
+      camera_relative_position(block_world_.world_from_address(place),
+                               scene.camera_origin),
+      player_up, kBlockHotbar[hotbar_slot_].swatch, 6, 2.5f);
   request_save();
   invalidate_block_meshes(place);
 }

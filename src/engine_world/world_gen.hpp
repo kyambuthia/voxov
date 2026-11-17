@@ -30,3 +30,14 @@ private:
 };
 
 
+
+enum class PlanetBiome : uint8_t {
+  Plains = 0,
+  Desert = 1,
+  Tundra = 2,
+  Highlands = 3,
+};
+
+PlanetBiome classify_planet_biome(double temperature, double moisture,
+                                  double elevation_norm);
+float sample_cave_density_3d(double x, double y, double z, uint64_t seed);

@@ -618,6 +618,25 @@ void test_chunk_runtime_helpers() {
   lmap.remove_block_light(light_chunk, 4, 2, 4);
   assert(lmap.block_light(4, 2, 4) == 0);
   assert(lmap.block_light(5, 2, 4) == 0);
+
+  // RLE compression round-trip + malformed check.
+  const std::vector<uint8_t> rle = light_chunk.encode_rle();
+  assert(!rle.empty() && rle.size() < 512);
+  VoxelChunk decoded_chunk(8, 8, 8);
+  assert(decoded_chunk.decode_rle(rle));
+  assert(decoded_chunk.solid(3, 5, 3));
+  assert(!decoded_chunk.solid(0, 5, 0));
+  assert(!decoded_chunk.decode_rle({1, 2, 3})); // odd length rejected
+
+  // Biomes + 3D cave density determinism + water flag.
+  assert(is_fluid_material(VoxelMaterial::Water));
+  assert(!is_fluid_material(VoxelMaterial::Stone));
+  assert(classify_planet_biome(0.1, 0.5, 0.2) == PlanetBiome::Tundra);
+  assert(classify_planet_biome(0.8, 0.1, 0.2) == PlanetBiome::Desert);
+  assert(classify_planet_biome(0.5, 0.5, 0.85) == PlanetBiome::Highlands);
+  const float cd1 = sample_cave_density_3d(12.3, 4.5, -7.8, 42ull);
+  const float cd2 = sample_cave_density_3d(12.3, 4.5, -7.8, 42ull);
+  assert(cd1 == cd2 && cd1 >= -1.0f && cd1 <= 1.0f);
 }
 
 void test_planet_face_uv_to_direction_unit_vectors() {

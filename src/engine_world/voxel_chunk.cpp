@@ -615,3 +615,47 @@ bool VoxelChunk::is_empty() const {
   }
   return true;
 }
+
+std::vector<uint8_t> VoxelChunk::encode_rle() const {
+  std::vector<uint8_t> out;
+  if (voxels.empty()) {
+    return out;
+  }
+  out.reserve(voxels.size() / 4);
+  size_t i = 0;
+  while (i < voxels.size()) {
+    const uint8_t val = voxels[i];
+    size_t run = 1;
+    while (i + run < voxels.size() && voxels[i + run] == val && run < 256) {
+      ++run;
+    }
+    out.push_back(static_cast<uint8_t>(run - 1));
+    out.push_back(val);
+    i += run;
+  }
+  return out;
+}
+
+bool VoxelChunk::decode_rle(const std::vector<uint8_t> &encoded) {
+  if ((encoded.size() % 2) != 0) {
+    return false;
+  }
+  const size_t expected = static_cast<size_t>(size_x_) *
+                          static_cast<size_t>(size_y_) *
+                          static_cast<size_t>(size_z_);
+  std::vector<uint8_t> decoded;
+  decoded.reserve(expected);
+  for (size_t i = 0; i < encoded.size(); i += 2) {
+    const size_t count = static_cast<size_t>(encoded[i]) + 1u;
+    const uint8_t val = encoded[i + 1];
+    if (decoded.size() + count > expected) {
+      return false;
+    }
+    decoded.insert(decoded.end(), count, val);
+  }
+  if (decoded.size() != expected) {
+    return false;
+  }
+  voxels = std::move(decoded);
+  return true;
+}

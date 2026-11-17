@@ -18,9 +18,14 @@ enum class VoxelMaterial : uint8_t {
   Planks = 5,
   Brick = 6,
   Snow = 7,
+  Water = 8,
 };
 
-inline constexpr VoxelMaterial kLastVoxelMaterial = VoxelMaterial::Snow;
+inline constexpr VoxelMaterial kLastVoxelMaterial = VoxelMaterial::Water;
+
+inline constexpr bool is_fluid_material(VoxelMaterial m) {
+  return m == VoxelMaterial::Water;
+}
 
 class VoxelChunk {
 public:
@@ -47,6 +52,8 @@ public:
   VoxelMaterial material(int x, int y, int z) const;
   bool solid(int x, int y, int z) const;
   bool is_empty() const;
+  std::vector<uint8_t> encode_rle() const;
+  bool decode_rle(const std::vector<uint8_t> &encoded);
   /// Returns sub-voxel height (0-63), stored as one of 16 levels.
   /// 0 means the block has zero height (air-like), 63 means full block height.
   uint8_t block_height(int x, int y, int z) const;

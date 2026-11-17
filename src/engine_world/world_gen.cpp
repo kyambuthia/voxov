@@ -105,3 +105,62 @@ float WorldGenerator::sample_height(float world_x, float world_z) const {
 }
 
 
+
+PlanetBiome classify_planet_biome(double temperature, double moisture,
+                                  double elevation_norm) {
+  if (elevation_norm > 0.72) {
+    return PlanetBiome::Highlands;
+  }
+  if (temperature < 0.30) {
+    return PlanetBiome::Tundra;
+  }
+  if (temperature > 0.65 && moisture < 0.35) {
+    return PlanetBiome::Desert;
+  }
+  return PlanetBiome::Plains;
+}
+
+namespace {
+uint64_t hash_3d_int(int64_t x, int64_t y, int64_t z, uint64_t seed) {
+  uint64_t h = seed ^ (static_cast<uint64_t>(x) * 0x9e3779b97f4a7c15ull);
+  h ^= static_cast<uint64_t>(y) * 0xbf58476d1ce4e5b9ull;
+  h ^= static_cast<uint64_t>(z) * 0x94d049bb133111ebull;
+  h ^= h >> 30;
+  h *= 0xbf58476d1ce4e5b9ull;
+  h ^= h >> 27;
+  return h;
+}
+
+double value_noise_3d(double x, double y, double z, uint64_t seed) {
+  const int64_t ix = static_cast<int64_t>(std::floor(x));
+  const int64_t iy = static_cast<int64_t>(std::floor(y));
+  const int64_t iz = static_cast<int64_t>(std::floor(z));
+  const double fx = x - static_cast<double>(ix);
+  const double fy = y - static_cast<double>(iy);
+  const double fz = z - static_cast<double>(iz);
+  const double ux = fx * fx * (3.0 - 2.0 * fx);
+  const double uy = fy * fy * (3.0 - 2.0 * fy);
+  const double uz = fz * fz * (3.0 - 2.0 * fz);
+  auto corner = [&](int dx, int dy, int dz) -> double {
+    const uint64_t h = hash_3d_int(ix + dx, iy + dy, iz + dz, seed);
+    return static_cast<double>(h & 0xFFFFFFu) / static_cast<double>(0xFFFFFFu);
+  };
+  const double c000 = corner(0, 0, 0), c100 = corner(1, 0, 0);
+  const double c010 = corner(0, 1, 0), c110 = corner(1, 1, 0);
+  const double c001 = corner(0, 0, 1), c101 = corner(1, 0, 1);
+  const double c011 = corner(0, 1, 1), c111 = corner(1, 1, 1);
+  const double x00 = c000 + (c100 - c000) * ux;
+  const double x10 = c010 + (c110 - c010) * ux;
+  const double x01 = c001 + (c101 - c001) * ux;
+  const double x11 = c011 + (c111 - c011) * ux;
+  const double y0 = x00 + (x10 - x00) * uy;
+  const double y1 = x01 + (x11 - x01) * uy;
+  return y0 + (y1 - y0) * uz;
+}
+} // namespace
+
+float sample_cave_density_3d(double x, double y, double z, uint64_t seed) {
+  const double n1 = value_noise_3d(x * 0.08, y * 0.08, z * 0.08, seed);
+  const double n2 = value_noise_3d(x * 0.17, y * 0.17, z * 0.17, seed ^ 0x55aa3311ull);
+  return static_cast<float>((n1 * 0.7 + n2 * 0.3) * 2.0 - 1.0);
+}

@@ -647,6 +647,7 @@ void Engine::stop_client_session() {
 }
 
 void Engine::shutdown() {
+  terrain_stream_settled_ = false;
   ++terrain_job_epoch_;
   chunk_jobs_.shutdown();
   {
@@ -1267,6 +1268,13 @@ Engine::TerrainStreamTimings Engine::stream_block_terrain(
         (static_cast<uint64_t>(static_cast<uint32_t>(player_addr.chunk.y)) << 16) ^
         (static_cast<uint64_t>(static_cast<uint8_t>(player_addr.sector)) << 48);
     const bool player_moved = (center_hash != last_chunk_center_hash_);
+    if (!player_moved && !snap_origin_dirty_ && terrain_stream_settled_ &&
+        pending_chunk_jobs_.empty()) {
+      std::lock_guard<std::mutex> lock(completed_chunks_mutex_);
+      if (completed_chunk_jobs_.empty()) {
+        return {};
+      }
+    }
 
     // Predict ahead along the actual flight velocity. Detailed chunks are
     // requested around both the player and the future position, while a wider
@@ -1643,7 +1651,12 @@ Engine::TerrainStreamTimings Engine::stream_block_terrain(
       }
     }
     mesh_build_ms = elapsed_ms(mesh_build_start, PerfClock::now());
+    terrain_stream_settled_ =
+        !player_moved && !snap_origin_dirty_ && missing_chunks.empty() &&
+        pending_chunk_jobs_.empty() && new_chunks.empty() &&
+        remesh_targets.empty() && !has_pending_meshes;
   } else {
+    terrain_stream_settled_ = false;
     // The complete global surface owns the view at altitude. Remove only
     // streamed chunk meshes; clearing the whole opaque scene caused a visible
     // one-frame hole and discarded unrelated stable meshes.
@@ -2812,6 +2825,7 @@ void Engine::flush_pending_save(double frame_dt) {
 }
 
 void Engine::invalidate_block_meshes(const BlockAddress &addr) {
+  terrain_stream_settled_ = false;
   std::unordered_set<uint64_t> stale;
   for (const BlockAddress &chunk : chunks_touching_block(block_world_, addr)) {
     stale.insert(BlockWorld::chunk_mesh_id(chunk));

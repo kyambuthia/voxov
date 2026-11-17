@@ -104,7 +104,7 @@ RenderMesh build_grass_mesh(const BlockWorld &world,
     mesh.double_sided = false;
 
     const int32_t surface_shell = world.shell_count() - 1;
-    if (chunk.shell != surface_shell) {
+    if (chunk.shell != surface_shell || voxels.is_empty()) {
         mesh.content_hash = content_hash(chunk, camera_relative_origin,
                                          lod_level);
         return mesh;

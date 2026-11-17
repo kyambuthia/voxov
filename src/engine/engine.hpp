@@ -333,5 +333,6 @@ private:
   std::vector<CompletedChunkJob> completed_chunk_jobs_;
   std::unordered_set<BlockAddress, BlockAddressHash> pending_chunk_jobs_;
   uint64_t terrain_job_epoch_ = 1;
+  bool terrain_stream_settled_ = false;
   VoxelParticleSystem particles_{};
 };

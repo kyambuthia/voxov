@@ -373,3 +373,15 @@ RenderMesh build_spaceship_mesh(const SpaceshipState &ship,
   }
   return mesh;
 }
+
+bool spaceship_collides_world_point(const SpaceshipState &ship,
+                                  const glm::dvec3 &point) {
+  const glm::vec3 local = glm::vec3(
+      glm::inverse(ship.orientation) * (point - ship.position));
+  const VoxelModel &model = ship_model();
+  if (model.valid) {
+    return model.contains_solid_local(local);
+  }
+  return std::fabs(local.x) <= 2.2f && std::fabs(local.y) <= 0.9f &&
+         std::fabs(local.z) <= 2.4f;
+}

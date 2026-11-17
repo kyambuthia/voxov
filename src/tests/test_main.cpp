@@ -1,3 +1,4 @@
+#include "engine_world/chunk_occlusion.hpp"
 #include "engine_presentation/voxel_particles.hpp"
 #include "engine_world/voxel_lighting.hpp"
 #include "engine_net/net_reconcile.hpp"
@@ -694,6 +695,32 @@ void test_chunk_runtime_helpers() {
   assert(pmesh.vertices.size() == 32 && pmesh.indices.size() == 48);
   particles.step(2.0f); // expires all particles
   assert(particles.active_count() == 0);
+
+  // ChunkFaceVisibility: solid divider wall blocks -X <-> +X traversal.
+  VoxelChunk sealed(8, 8, 8);
+  for (int y = 0; y < 8; ++y) {
+    for (int z = 0; z < 8; ++z) {
+      sealed.set_material(4, y, z, VoxelMaterial::Stone, VoxelChunk::kMaxBlockHeight);
+    }
+  }
+  const ChunkFaceVisibility vis = compute_chunk_face_visibility(sealed);
+  assert(!vis.can_traverse(0, 1)); // -X cannot reach +X
+  assert(vis.can_traverse(0, 2));  // -X can reach -Y on same side
+
+  // Per-voxel ship hull point collision.
+  SpaceshipState hull_ship{};
+  hull_ship.position = glm::dvec3(0.0);
+  bool any_hull_hit = false;
+  for (int y = -4; y <= 4 && !any_hull_hit; ++y) {
+    for (int z = -8; z <= 8 && !any_hull_hit; ++z) {
+      if (spaceship_collides_world_point(
+              hull_ship, glm::dvec3(0.0, y * 0.25, z * 0.25))) {
+        any_hull_hit = true;
+      }
+    }
+  }
+  assert(any_hull_hit);
+  assert(!spaceship_collides_world_point(hull_ship, glm::dvec3(100.0, 0.0, 0.0)));
 }
 
 void test_planet_face_uv_to_direction_unit_vectors() {

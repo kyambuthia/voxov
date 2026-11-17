@@ -104,3 +104,7 @@ glm::vec3 spaceship_hull_extents();
 // Distance to the oriented hull bounds, used for boarding ships of any size.
 double spaceship_hull_distance(const SpaceshipState &ship,
                                const glm::dvec3 &point);
+
+// True when `point` falls inside a solid voxel of the ship hull.
+bool spaceship_collides_world_point(const SpaceshipState &ship,
+                                  const glm::dvec3 &point);

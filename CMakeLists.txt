@@ -230,6 +230,7 @@ add_library(engine_world STATIC
     src/engine_world/solar_system.cpp
     src/engine_world/voxel_chunk.cpp
     src/engine_world/voxel_lighting.cpp
+    src/engine_world/chunk_occlusion.cpp
     src/engine_world/vegetation.cpp
     src/engine_world/world_gen.cpp
     src/engine_world/wireframe_planet.cpp

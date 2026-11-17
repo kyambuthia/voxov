@@ -85,6 +85,8 @@ public:
   void join_nearby_session();
   void leave_session();
   void reset_camera();
+  void consume_gameplay_sfx(uint32_t &out_breaks, uint32_t &out_places,
+                            uint8_t &out_footstep_material);
   GuiMenu::Character preferred_character() const;
   EventBus &events() { return event_bus_; }
   bool capture_screenshot(const char *filepath, int width, int height);
@@ -335,4 +337,8 @@ private:
   uint64_t terrain_job_epoch_ = 1;
   bool terrain_stream_settled_ = false;
   VoxelParticleSystem particles_{};
+  uint32_t pending_block_break_sfx_ = 0;
+  uint32_t pending_block_place_sfx_ = 0;
+  uint8_t pending_footstep_material_sfx_ = 0;
+  double footstep_sfx_timer_ = 0.0;
 };

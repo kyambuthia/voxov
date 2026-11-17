@@ -759,6 +759,29 @@ void Engine::tick(double frame_dt,
   update_coordinate_frames(frame_dt);
 
   append_celestial_meshes(surface);
+  if (!piloting_ship_ && !debug_fly_mode_ && local_player.controller.grounded) {
+    const float speed = glm::length(local_player.controller.velocity);
+    if (speed > 1.25f) {
+      footstep_sfx_timer_ += frame_dt;
+      const double interval = (speed > 7.0f) ? 0.28 : 0.42;
+      if (footstep_sfx_timer_ >= interval) {
+        footstep_sfx_timer_ = 0.0;
+        const glm::dvec3 pos(local_player.transform.position);
+        const glm::dvec3 up = glm::normalize(pos - block_world_.planet().center);
+        const BlockAddress ground_addr = block_world_.address_from_world(pos - up * 0.35);
+        const VoxelChunk *gc = block_world_.find_chunk(BlockAddress{
+            ground_addr.sector, ground_addr.shell, ground_addr.chunk, glm::ivec3(0)});
+        const VoxelMaterial gmat = (gc != nullptr)
+            ? gc->material(ground_addr.block.x, ground_addr.block.y, ground_addr.block.z)
+            : VoxelMaterial::Grass;
+        pending_footstep_material_sfx_ =
+            (gmat == VoxelMaterial::Air) ? static_cast<uint8_t>(VoxelMaterial::Grass)
+                                         : static_cast<uint8_t>(gmat);
+      }
+    } else {
+      footstep_sfx_timer_ = 0.35;
+    }
+  }
   particles_.step(static_cast<float>(frame_dt));
   if (particles_.active_count() > 0) {
     RenderMesh particle_mesh{};
@@ -2353,6 +2376,16 @@ void Engine::sync_network_state(uint32_t sim_tick,
   }
 }
 
+void Engine::consume_gameplay_sfx(uint32_t &out_breaks, uint32_t &out_places,
+                                  uint8_t &out_footstep_material) {
+  out_breaks = pending_block_break_sfx_;
+  out_places = pending_block_place_sfx_;
+  out_footstep_material = pending_footstep_material_sfx_;
+  pending_block_break_sfx_ = 0;
+  pending_block_place_sfx_ = 0;
+  pending_footstep_material_sfx_ = 0;
+}
+
 void Engine::reset_camera() {
   local_player.camera_rig.yaw = 180.0f;
   local_player.camera_rig.pitch = -10.0f;
@@ -2978,6 +3011,7 @@ void Engine::update_block_interaction(const InputState &input) {
       net_edit.solid = 0;
       net_client_.send_block_edit(net_edit);
     }
+    ++pending_block_break_sfx_;
     particles_.emit_burst(
         camera_relative_position(targeted_hit_pos_, scene.camera_origin),
         player_up, glm::vec3(0.65f), 10, 4.0f);
@@ -3019,6 +3053,7 @@ void Engine::update_block_interaction(const InputState &input) {
     net_edit.solid = 1;
     net_client_.send_block_edit(net_edit);
   }
+  ++pending_block_place_sfx_;
   particles_.emit_burst(
       camera_relative_position(block_world_.world_from_address(place),
                                scene.camera_origin),

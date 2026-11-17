@@ -89,6 +89,21 @@ public:
 
         session_flow.update(engine, frame_dt);
         sync_session_state();
+        uint32_t sfx_breaks = 0;
+        uint32_t sfx_places = 0;
+        uint8_t sfx_footstep = 0;
+        engine.consume_gameplay_sfx(sfx_breaks, sfx_places, sfx_footstep);
+        if (preferences.ui_audio_enabled) {
+            if (sfx_breaks > 0) {
+                ui_audio.play_block_break();
+            }
+            if (sfx_places > 0) {
+                ui_audio.play_block_place();
+            }
+            if (sfx_footstep > 0) {
+                ui_audio.play_footstep(sfx_footstep);
+            }
+        }
 
         GameRuntimeInputFrame adjusted_input = input_frame;
         const float look_scale =

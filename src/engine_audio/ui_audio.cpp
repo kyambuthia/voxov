@@ -7,6 +7,9 @@ bool UiAudio::init()     { return false; }
 void UiAudio::shutdown() {}
 void UiAudio::play_move() {}
 void UiAudio::play_click() {}
+void UiAudio::play_block_break() {}
+void UiAudio::play_block_place() {}
+void UiAudio::play_footstep(uint8_t) {}
 
 #else
 
@@ -130,6 +133,22 @@ void UiAudio::play_click() {
         return;
     }
     start_voice(impl->state.click, 980.0f, impl->state.sample_rate / 24);
+}
+
+void UiAudio::play_block_break() {
+    if (!ready || !impl) return;
+    start_voice(impl->state.click, 240.0f, impl->state.sample_rate / 14);
+}
+
+void UiAudio::play_block_place() {
+    if (!ready || !impl) return;
+    start_voice(impl->state.move, 420.0f, impl->state.sample_rate / 20);
+}
+
+void UiAudio::play_footstep(uint8_t material_id) {
+    if (!ready || !impl) return;
+    const float base_hz = 160.0f + static_cast<float>(material_id % 8u) * 28.0f;
+    start_voice(impl->state.move, base_hz, impl->state.sample_rate / 28);
 }
 
 #endif

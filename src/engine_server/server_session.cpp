@@ -300,3 +300,17 @@ bool ServerSession::should_replicate_player_state(
 }
 
 uint32_t ServerSession::server_sim_tick() const { return server_sim_tick_value; }
+
+bool ServerSession::accept_block_edit(ServerClientState &client,
+                                      const NetBlockEdit &edit) {
+    if (!supports_body(edit.chunk.body_id) ||
+        edit.chunk.body_id != client.state.world.body_id ||
+        edit.chunk.face >= 6u || edit.chunk.shell >= 32u ||
+        edit.local_x < 0 || edit.local_x >= 64 ||
+        edit.local_y < 0 || edit.local_y >= 64 ||
+        edit.local_z < 0 || edit.local_z >= 64 ||
+        edit.material > static_cast<uint8_t>(kLastVoxelMaterial)) {
+        return false;
+    }
+    return true;
+}

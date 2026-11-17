@@ -65,7 +65,8 @@ enum class NetMsgType : uint8_t {
   PlayerState = 6,
   PlayerRemove = 7,
   ProtocolInfo = 8,
-  SessionInfo = 9
+  SessionInfo = 9,
+  BlockEdit = 10
 };
 
 constexpr uint32_t k_net_packet_magic = 0x564F5832u; // "VOX2"
@@ -197,6 +198,16 @@ struct NetChunkInterest {
 enum class NetChunkContentType : uint8_t {
   ProceduralFlat = 0,
   SphericalPlanet = 1
+};
+
+struct NetBlockEdit {
+  NetChunkCoord chunk{};
+  int16_t local_x = 0;
+  int16_t local_y = 0;
+  int16_t local_z = 0;
+  uint8_t material = 0;
+  uint8_t solid = 0;
+  uint32_t sequence = 0;
 };
 
 struct NetChunkState {

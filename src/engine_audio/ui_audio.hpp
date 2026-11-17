@@ -1,5 +1,7 @@
 #pragma once
 
+#include <cstdint>
+
 class UiAudio {
 public:
     UiAudio() = default;
@@ -13,6 +15,9 @@ public:
     void shutdown();
     void play_move();
     void play_click();
+    void play_block_break();
+    void play_block_place();
+    void play_footstep(uint8_t material_id);
 
 private:
     bool ready = false;

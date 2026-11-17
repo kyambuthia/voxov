@@ -1,3 +1,4 @@
+#include "engine_presentation/voxel_particles.hpp"
 #include "engine_world/voxel_lighting.hpp"
 #include "engine_net/net_reconcile.hpp"
 #include "engine_core/cvar.hpp"
@@ -656,6 +657,43 @@ void test_chunk_runtime_helpers() {
   PlayerControllerSystem::apply_fluid_buoyancy(
       swimmer, swim_in, glm::vec3(0.0f, 1.0f, 0.0f), 1.0f, 0.25f);
   assert(swimmer.controller.velocity.y > 0.0f);
+
+  // NetBlockEdit wire round-trip + ServerSession validation.
+  NetBlockEdit edit{};
+  edit.chunk.body_id = 1u;
+  edit.chunk.face = 2u;
+  edit.chunk.shell = 1u;
+  edit.local_x = 5;
+  edit.local_y = 6;
+  edit.local_z = 7;
+  edit.material = static_cast<uint8_t>(VoxelMaterial::Brick);
+  edit.solid = 1;
+  edit.sequence = 42u;
+  std::vector<uint8_t> edit_bytes;
+  assert(net_encode_message(NetMsgType::BlockEdit, 11u, edit, edit_bytes));
+  NetBlockEdit edit_out{};
+  assert(net_decode_message(edit_bytes.data(), edit_bytes.size(),
+                            NetMsgType::BlockEdit, edit_out));
+  assert(edit_out.local_x == 5 && edit_out.material == edit.material &&
+         edit_out.sequence == 42u);
+
+  ServerSession edit_session;
+  auto *edit_peer = reinterpret_cast<_ENetPeer *>(uintptr_t{99});
+  ServerClientState &edit_client = edit_session.connect_client(edit_peer);
+  assert(edit_session.accept_block_edit(edit_client, edit));
+  edit.chunk.body_id = 3u; // mismatch with client body 1
+  assert(!edit_session.accept_block_edit(edit_client, edit));
+
+  // VoxelParticleSystem burst, step, and mesh emission.
+  VoxelParticleSystem particles;
+  particles.emit_burst(glm::vec3(0.0f), glm::vec3(0.0f, 1.0f, 0.0f),
+                       glm::vec3(0.8f, 0.4f, 0.2f), 8, 4.0f);
+  assert(particles.active_count() == 8);
+  RenderMesh pmesh{};
+  particles.append_to_mesh(pmesh, glm::vec3(0.0f));
+  assert(pmesh.vertices.size() == 32 && pmesh.indices.size() == 48);
+  particles.step(2.0f); // expires all particles
+  assert(particles.active_count() == 0);
 }
 
 void test_planet_face_uv_to_direction_unit_vectors() {

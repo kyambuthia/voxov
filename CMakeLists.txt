@@ -417,6 +417,7 @@ target_link_libraries(engine_runtime PUBLIC engine_core engine_gameplay engine_n
 add_library(engine_presentation STATIC
     src/engine_presentation/debug_scene_builder.cpp
     src/engine_presentation/hud_composer.cpp
+    src/engine_presentation/voxel_particles.cpp
 )
 target_include_directories(engine_presentation PUBLIC src)
 target_link_libraries(engine_presentation PUBLIC

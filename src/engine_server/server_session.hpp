@@ -50,6 +50,7 @@ public:
 
     void simulate_fixed_tick();
     bool accept_input(ServerClientState &client, const NetTickInput &input);
+    bool accept_block_edit(ServerClientState &client, const NetBlockEdit &edit);
     bool accept_interest(ServerClientState &client,
                          const NetChunkInterest &interest,
                          uint64_t received_at_ms);

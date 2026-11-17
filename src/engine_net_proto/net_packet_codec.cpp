@@ -56,6 +56,9 @@ bool payload_type_matches(NetMsgType type, const NetPlayerState &) {
 bool payload_type_matches(NetMsgType type, const NetPlayerRemove &) {
   return type == NetMsgType::PlayerRemove;
 }
+bool payload_type_matches(NetMsgType type, const NetBlockEdit &) {
+  return type == NetMsgType::BlockEdit;
+}
 
 class Reader {
 public:
@@ -278,6 +281,26 @@ bool read_payload(Reader &reader, NetPlayerRemove &value) {
   return reader.unsigned_value(value.player_id);
 }
 
+void write_payload(Writer &writer, const NetBlockEdit &value) {
+  write_chunk_coord(writer, value.chunk);
+  writer.i16(value.local_x);
+  writer.i16(value.local_y);
+  writer.i16(value.local_z);
+  writer.unsigned_value(value.material);
+  writer.unsigned_value(value.solid);
+  writer.unsigned_value(value.sequence);
+}
+
+bool read_payload(Reader &reader, NetBlockEdit &value) {
+  return read_chunk_coord(reader, value.chunk) &&
+      reader.i16(value.local_x) &&
+      reader.i16(value.local_y) &&
+      reader.i16(value.local_z) &&
+      reader.unsigned_value(value.material) &&
+      reader.unsigned_value(value.solid) &&
+      reader.unsigned_value(value.sequence);
+}
+
 template <typename T>
 bool encode(NetMsgType type, uint32_t sequence, const T &payload,
             std::vector<uint8_t> &out, uint8_t flags) {
@@ -352,5 +375,6 @@ VOXOV_DEFINE_NET_CODEC(NetProtocolInfo)
 VOXOV_DEFINE_NET_CODEC(NetSessionInfo)
 VOXOV_DEFINE_NET_CODEC(NetPlayerState)
 VOXOV_DEFINE_NET_CODEC(NetPlayerRemove)
+VOXOV_DEFINE_NET_CODEC(NetBlockEdit)
 
 #undef VOXOV_DEFINE_NET_CODEC

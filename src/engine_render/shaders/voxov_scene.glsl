@@ -327,8 +327,12 @@ void main() {
     }
 
     vec3 color = vec3(0.002, 0.003, 0.009);
-    float star = step(0.9985, sky_hash(cell));
-    color += vec3(0.7, 0.8, 1.0) * star;
+    float star_seed = sky_hash(cell);
+    float star = step(0.9985, star_seed);
+    float twinkle = 0.78 + 0.22 * sin(sky_style.y * 2.4 + star_seed * 628.3);
+    vec3 star_tint = mix(vec3(1.0, 0.84, 0.68), vec3(0.72, 0.85, 1.0),
+                         sky_hash(cell + vec3(17.0, 31.0, 7.0)));
+    color += star_tint * star * twinkle;
     // The sun is a square in its tangent plane, matching the voxel sky.
     vec3 sun_right = normalize(cross(sun,
         abs(sun.y) < 0.95 ? vec3(0, 1, 0) : vec3(0, 0, 1)));

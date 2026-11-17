@@ -457,18 +457,11 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
         return;
     }
 
-    // Convert RenderVertex → SokolRenderVertex
-    std::vector<SokolRenderVertex> vertices;
-    vertices.reserve(src.vertices.size());
+    static_assert(sizeof(RenderVertex) == sizeof(SokolRenderVertex),
+                  "RenderVertex layout must match SokolRenderVertex");
     glm::vec3 bmin(std::numeric_limits<float>::max());
     glm::vec3 bmax(-std::numeric_limits<float>::max());
     for (const RenderVertex &v : src.vertices) {
-        vertices.push_back({
-            v.position.x, v.position.y, v.position.z,
-            v.color.r, v.color.g, v.color.b,
-            v.normal.x, v.normal.y, v.normal.z,
-            v.texcoord.x, v.texcoord.y, v.texcoord.z,
-        });
         bmin = glm::min(bmin, v.position);
         bmax = glm::max(bmax, v.position);
     }
@@ -482,8 +475,8 @@ void SokolRenderer::upload_mesh(SokolGpuMesh &dst, const RenderMesh &src,
         use_16_bit_indices ? SG_INDEXTYPE_UINT16 : SG_INDEXTYPE_UINT32;
 
     const sg_range vbuf_range{
-        vertices.data(),
-        vertices.size() * sizeof(vertices[0]),
+        src.vertices.data(),
+        src.vertices.size() * sizeof(RenderVertex),
     };
     const void *index_data =
         use_16_bit_indices ? static_cast<const void *>(src.indices16.data())

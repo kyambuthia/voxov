@@ -198,6 +198,10 @@ void main() {
             // voxel grass block instead of letting bright tips dominate it.
             base_color = mix(base_color, vec3(0.34, 0.46, 0.12), 0.22);
         }
+    } else if (v_texcoord.z > -1.0 && v_texcoord.z < -0.25) {
+        float ripple = sin(v_world_pos.x * 2.5 + render_flags.w * 2.4) *
+                       cos(v_world_pos.z * 2.5 - render_flags.w * 1.9);
+        base_color = v_color * (0.92 + 0.08 * ripple);
     } else if (v_texcoord.z >= 0.0) {
         vec2 tiled_uv = fract(v_texcoord.xy);
         vec3 texel;

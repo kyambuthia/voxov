@@ -14,7 +14,7 @@
 
 namespace {
 // Drain enough events per pump to keep up with 32-player broadcast bursts.
-constexpr int kMaxEventsPerPump = 128;
+constexpr int kMaxEventsPerPump = 512;
 
 uint64_t now_ms() {
     const auto now = std::chrono::steady_clock::now().time_since_epoch();

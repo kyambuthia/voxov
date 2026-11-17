@@ -83,6 +83,8 @@ glm::vec3 VoxelChunk::material_color(VoxelMaterial material, bool top_face,
     return glm::vec3(0.72f, 0.36f, 0.30f);
   case VoxelMaterial::Snow:
     return glm::vec3(0.94f, 0.96f, 1.0f);
+  case VoxelMaterial::Water:
+    return glm::vec3(0.14f, 0.46f, 0.80f);
   case VoxelMaterial::Dirt:
   default:
     // Dirt with height variation: lighter at higher elevations.

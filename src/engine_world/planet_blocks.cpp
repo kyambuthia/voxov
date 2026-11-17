@@ -850,6 +850,15 @@ RenderMesh BlockWorld::build_chunk_mesh(
     thread_local VoxelLightMap light_map;
     light_map.resize(cs, cs, cs);
     light_map.compute_sunlight(chunk);
+    for (int32_t lz = 0; lz < cs; ++lz) {
+        for (int32_t ly = 0; ly < cs; ++ly) {
+            for (int32_t lx = 0; lx < cs; ++lx) {
+                if (chunk.material(lx, ly, lz) == VoxelMaterial::Brick) {
+                    light_map.add_block_light(chunk, lx, ly, lz, 12);
+                }
+            }
+        }
+    }
     auto sample_face_light = [&](int nx, int ny, int nz) -> float {
         if (nx >= 0 && nx < cs && ny >= 0 && ny < cs && nz >= 0 && nz < cs) {
             return light_map.brightness(nx, ny, nz);
@@ -1003,6 +1012,7 @@ RenderMesh BlockWorld::build_chunk_mesh(
         if (material == VoxelMaterial::Planks) return 5.0f;
         if (material == VoxelMaterial::Brick) return 6.0f;
         if (material == VoxelMaterial::Snow) return 7.0f;
+        if (material == VoxelMaterial::Water) return -0.5f;
         return 1.0f;
     };
 

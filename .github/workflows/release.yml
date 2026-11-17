@@ -336,6 +336,7 @@ jobs:
       - name: Prepare web artifact
         run: |
           WEB_DIR="VOXOV-${GITHUB_REF_NAME}-web"
+          mkdir -p "${WEB_DIR}"
           cp build/web/release/bin/voxov_web.html "${WEB_DIR}/"
           cp build/web/release/bin/voxov_web.js "${WEB_DIR}/"
           cp build/web/release/bin/voxov_web.wasm "${WEB_DIR}/"

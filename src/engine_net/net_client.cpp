@@ -168,6 +168,7 @@ void NetClient::disconnect() {
     has_last_snapshot_sequence = false;
     last_snapshot_sequence = 0;
     chunk_updates.clear();
+    block_edit_updates.clear();
     replicated_players.clear();
     replicated_player_sequences.clear();
     target_host.clear();
@@ -176,6 +177,7 @@ void NetClient::disconnect() {
 
 void NetClient::shutdown() {
     chunk_updates.clear();
+    block_edit_updates.clear();
     replicated_players.clear();
     replicated_player_sequences.clear();
     assigned_player_id = 0;
@@ -355,6 +357,16 @@ void NetClient::pump() {
                     }
                     break;
                 }
+                case NetMsgType::BlockEdit: {
+                    NetBlockEdit edit{};
+                    if (net_decode_message(event.packet->data,
+                                           event.packet->dataLength, type,
+                                           edit)) {
+                        block_edit_updates.push_back(edit);
+                        recognized_message = true;
+                    }
+                    break;
+                }
                 default:
                     break;
                 }
@@ -406,6 +418,26 @@ bool NetClient::poll_snapshot(NetSnapshot &out_snapshot) {
 
     out_snapshot = latest_snapshot;
     has_snapshot = false;
+    return true;
+}
+
+void NetClient::send_block_edit(const NetBlockEdit &edit) {
+    if (!client || !peer || !connected) {
+        return;
+    }
+    if (const size_t sent = send_message(
+            peer, NetChannel::Reliable, NetMsgType::BlockEdit,
+            next_packet_sequence++, edit, ENET_PACKET_FLAG_RELIABLE)) {
+        record_tx(sent);
+    }
+}
+
+bool NetClient::poll_block_edit(NetBlockEdit &out_edit) {
+    if (block_edit_updates.empty()) {
+        return false;
+    }
+    out_edit = block_edit_updates.front();
+    block_edit_updates.erase(block_edit_updates.begin());
     return true;
 }
 

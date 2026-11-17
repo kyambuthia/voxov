@@ -2263,6 +2263,30 @@ void Engine::sync_network_state(uint32_t sim_tick,
       !piloting_ship_ && !debug_fly_mode_) {
     net_reconcile_player_snapshot(local_player, snapshot);
   }
+
+  NetBlockEdit remote_edit{};
+  while (net_client_.poll_block_edit(remote_edit)) {
+    if (remote_edit.chunk.body_id != static_cast<uint32_t>(active_body_index_) ||
+        remote_edit.chunk.face >= 6u) {
+      continue;
+    }
+    BlockAddress addr{};
+    addr.sector = static_cast<PlanetFace>(remote_edit.chunk.face);
+    addr.shell = static_cast<int32_t>(remote_edit.chunk.shell);
+    addr.chunk = glm::ivec3(remote_edit.chunk.x, remote_edit.chunk.y,
+                            remote_edit.chunk.z);
+    addr.block = glm::ivec3(remote_edit.local_x, remote_edit.local_y,
+                            remote_edit.local_z);
+    VoxelChunk &chunk = block_world_.get_or_generate_chunk(addr);
+    const VoxelMaterial mat = static_cast<VoxelMaterial>(remote_edit.material);
+    const bool is_solid = remote_edit.solid != 0;
+    chunk.set_material(addr.block.x, addr.block.y, addr.block.z,
+                       is_solid ? mat : VoxelMaterial::Air);
+    chunk.set_solid(addr.block.x, addr.block.y, addr.block.z, is_solid);
+    record_block_edit(active_body_index_, addr,
+                      is_solid ? mat : VoxelMaterial::Air, is_solid);
+    invalidate_block_meshes(addr);
+  }
 }
 
 void Engine::reset_camera() {
@@ -2875,6 +2899,21 @@ void Engine::update_block_interaction(const InputState &input) {
     chunk.set_solid(addr.block.x, addr.block.y, addr.block.z, false);
     expedition_mission_.on_block_removed(active_body_index_);
     record_block_edit(active_body_index_, addr, VoxelMaterial::Air, false);
+    if (net_client_.is_connected()) {
+      NetBlockEdit net_edit{};
+      net_edit.chunk.body_id = static_cast<uint32_t>(active_body_index_);
+      net_edit.chunk.face = static_cast<uint8_t>(addr.sector);
+      net_edit.chunk.shell = static_cast<uint8_t>(addr.shell);
+      net_edit.chunk.x = static_cast<int16_t>(addr.chunk.x);
+      net_edit.chunk.y = static_cast<int16_t>(addr.chunk.y);
+      net_edit.chunk.z = static_cast<int16_t>(addr.chunk.z);
+      net_edit.local_x = static_cast<int16_t>(addr.block.x);
+      net_edit.local_y = static_cast<int16_t>(addr.block.y);
+      net_edit.local_z = static_cast<int16_t>(addr.block.z);
+      net_edit.material = static_cast<uint8_t>(VoxelMaterial::Air);
+      net_edit.solid = 0;
+      net_client_.send_block_edit(net_edit);
+    }
     particles_.emit_burst(
         camera_relative_position(targeted_hit_pos_, scene.camera_origin),
         player_up, glm::vec3(0.65f), 10, 4.0f);
@@ -2901,6 +2940,21 @@ void Engine::update_block_interaction(const InputState &input) {
   chunk.set_solid(place.block.x, place.block.y, place.block.z, true);
   expedition_mission_.on_block_placed(active_body_index_);
   record_block_edit(active_body_index_, place, material, true);
+  if (net_client_.is_connected()) {
+    NetBlockEdit net_edit{};
+    net_edit.chunk.body_id = static_cast<uint32_t>(active_body_index_);
+    net_edit.chunk.face = static_cast<uint8_t>(place.sector);
+    net_edit.chunk.shell = static_cast<uint8_t>(place.shell);
+    net_edit.chunk.x = static_cast<int16_t>(place.chunk.x);
+    net_edit.chunk.y = static_cast<int16_t>(place.chunk.y);
+    net_edit.chunk.z = static_cast<int16_t>(place.chunk.z);
+    net_edit.local_x = static_cast<int16_t>(place.block.x);
+    net_edit.local_y = static_cast<int16_t>(place.block.y);
+    net_edit.local_z = static_cast<int16_t>(place.block.z);
+    net_edit.material = static_cast<uint8_t>(material);
+    net_edit.solid = 1;
+    net_client_.send_block_edit(net_edit);
+  }
   particles_.emit_burst(
       camera_relative_position(block_world_.world_from_address(place),
                                scene.camera_origin),

@@ -26,6 +26,8 @@ public:
     void send_input(const NetTickInput &input);
     void set_chunk_interest(const NetChunkInterest &interest);
     bool poll_snapshot(NetSnapshot &out_snapshot);
+    void send_block_edit(const NetBlockEdit &edit);
+    bool poll_block_edit(NetBlockEdit &out_edit);
     bool poll_chunk_state(NetChunkState &out_state);
     uint32_t local_player_id() const;
     NetProtocolInfo protocol_info() const;
@@ -67,6 +69,7 @@ private:
     uint32_t last_snapshot_sequence = 0;
     bool has_last_snapshot_sequence = false;
     std::vector<NetChunkState> chunk_updates;
+    std::vector<NetBlockEdit> block_edit_updates;
     uint32_t assigned_player_id = 0;
     std::unordered_map<uint32_t, NetPlayerState> replicated_players;
     std::unordered_map<uint32_t, uint32_t> replicated_player_sequences;

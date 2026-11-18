@@ -22,7 +22,7 @@ struct RuntimeHudSnapshot {
     bool devhud_enabled = false;
     bool show_minigame_panel = false;
     bool show_hotspot_panel = false;
-    bool show_objective_panel = true;
+    bool show_objective_panel = false;
     float minigame_progress = 0.0f;
     std::string devhud_text;
     std::string minigame_title;

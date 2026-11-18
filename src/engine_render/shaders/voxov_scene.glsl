@@ -130,6 +130,9 @@ vec3 atmosphere_transmittance(vec3 start, vec3 end) {
     if (dist < 4.0) return vec3(1.0);
 
     float R = planet_center_radius.w;
+    if (R <= 0.0) {
+        return vec3(exp(-max(0.0, dist - 24.0) * 0.0028));
+    }
     vec3 center = planet_center_radius.xyz;
     float Hr = atm_params_1.y;
     float Hm = atm_params_1.z;
@@ -312,6 +315,24 @@ void main() {
     float radius = sky_camera_radius.w;
     float height = max(sky_sun_height.w, 0.001);
     vec3 sun = normalize(sky_sun_height.xyz);
+    if (radius <= 0.0) {
+        float up_t = clamp(block_ray.y, 0.0, 1.0);
+        vec3 sky_col = mix(vec3(0.54, 0.72, 0.92), vec3(0.16, 0.42, 0.80), pow(up_t, 0.65));
+        vec3 sun_right = normalize(cross(sun, abs(sun.y) < 0.95 ? vec3(0, 1, 0) : vec3(0, 0, 1)));
+        vec3 sun_up = cross(sun_right, sun);
+        float sun_sq = step(max(abs(dot(ray, sun_right)), abs(dot(ray, sun_up))), 0.022) * step(0.0, dot(ray, sun));
+        sky_col += vec3(1.8, 1.4, 0.8) * sun_sq;
+        if (block_ray.y > 0.02) {
+            float t_cloud = 68.0 / max(block_ray.y, 0.02);
+            vec3 cp = origin + block_ray * min(t_cloud, 900.0);
+            vec3 ccell = floor((cp + vec3(sky_style.y * 0.4, 0.0, sky_style.y * 0.2)) / 12.0);
+            float cl = step(0.62, sky_hash(floor(vec3(ccell.x, 0.0, ccell.z) / 3.0))) * step(0.28, sky_hash(vec3(ccell.x, 0.0, ccell.z)));
+            sky_col = mix(sky_col, vec3(0.94, 0.96, 0.99), cl * smoothstep(0.02, 0.22, block_ray.y) * 0.78);
+        }
+        if (sky_style.x > 0.5) sky_col = vec3(dot(sky_col, vec3(0.2126, 0.7152, 0.0722)));
+        frag_color = vec4(sky_col, 1.0);
+        return;
+    }
     vec2 shell = sky_sphere(origin, block_ray, radius + height);
     vec2 ground = sky_sphere(origin, block_ray, radius);
     float entry = max(0.0, shell.x);

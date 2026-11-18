@@ -17,8 +17,8 @@
 #include "engine_world/wireframe_planet.hpp"
 #include "engine_world/world_gen.hpp"
 #include "engine_world/chunk_occlusion.hpp"
-#include "engine_world/vegetation.hpp"
 #include "engine_world/planet.hpp"
+#include "engine_world/vegetation.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -121,12 +121,15 @@ double smooth_metric(double current, double sample, double alpha = 0.25) {
 uint64_t bytes_to_kib(uint64_t bytes) { return (bytes + 1023u) / 1024u; }
 
 void append_screen_rect(RenderMesh &dst, float x0, float y0, float x1,
-                        float y1, const glm::vec3 &color) {
+                        float y1, const glm::vec3 &color,
+                        float alpha = 1.0f) {
   RenderMesh rect{};
-  rect.vertices.push_back({glm::vec3(x0, y0, 0.0f), color});
-  rect.vertices.push_back({glm::vec3(x1, y0, 0.0f), color});
-  rect.vertices.push_back({glm::vec3(x1, y1, 0.0f), color});
-  rect.vertices.push_back({glm::vec3(x0, y1, 0.0f), color});
+  const glm::vec3 n(0.0f);
+  const glm::vec3 tc(alpha, 0.0f, -2.0f);
+  rect.vertices.push_back({glm::vec3(x0, y0, 0.0f), color, n, tc});
+  rect.vertices.push_back({glm::vec3(x1, y0, 0.0f), color, n, tc});
+  rect.vertices.push_back({glm::vec3(x1, y1, 0.0f), color, n, tc});
+  rect.vertices.push_back({glm::vec3(x0, y1, 0.0f), color, n, tc});
   rect.indices.insert(rect.indices.end(), {0, 1, 2, 0, 2, 3});
   append_mesh(dst, rect);
 }
@@ -209,35 +212,39 @@ void append_touch_button_hint(RenderMesh &dst, float x0, float y0, float x1,
 // Bottom-right block palette: one swatch per slot with its number key,
 // the selected slot outlined and named above the bar.
 void append_block_hotbar(RenderMesh &dst, size_t selected, float aspect) {
-  constexpr float kSlot = 0.062f;
+  constexpr float kSlot = 0.056f;
   constexpr float kGap = 0.014f;
-  constexpr float kRight = 0.94f;
-  constexpr float kTop = -0.66f;
-  // NDC x spans the wider screen axis; scale heights so swatches are square.
+  constexpr float kTop = -0.74f;
   const float slot_height = kSlot * std::max(aspect, 0.1f);
-  const float left = kRight - static_cast<float>(kBlockHotbarSize) * kSlot -
-                     static_cast<float>(kBlockHotbarSize - 1) * kGap;
-  append_screen_rect(dst, left - 0.02f, kTop + 0.11f, kRight + 0.02f,
-                     kTop - slot_height - 0.075f,
-                     glm::vec3(0.04f, 0.07f, 0.10f));
+  const float total_w = static_cast<float>(kBlockHotbarSize) * kSlot +
+                        static_cast<float>(kBlockHotbarSize - 1) * kGap;
+  const float left = -total_w * 0.5f;
+  const float right = total_w * 0.5f;
+  // Subtle translucent slate frame + backing.
+  append_screen_rect(dst, left - 0.024f, kTop + 0.095f, right + 0.024f,
+                     kTop - slot_height - 0.055f,
+                     glm::vec3(0.24f, 0.36f, 0.52f), 0.85f);
+  append_screen_rect(dst, left - 0.019f, kTop + 0.088f, right + 0.019f,
+                     kTop - slot_height - 0.048f,
+                     glm::vec3(0.07f, 0.10f, 0.15f), 0.74f);
   for (size_t i = 0; i < kBlockHotbarSize; ++i) {
     const float x0 = left + static_cast<float>(i) * (kSlot + kGap);
     const float x1 = x0 + kSlot;
     const bool active = i == selected;
-    if (active) {
-      append_screen_rect(dst, x0 - 0.008f, kTop + 0.008f * aspect,
-                         x1 + 0.008f, kTop - slot_height - 0.008f * aspect,
-                         glm::vec3(1.0f, 0.86f, 0.32f));
-    }
-    append_screen_rect(dst, x0, kTop, x1, kTop - slot_height,
-                       kBlockHotbar[i].swatch);
-    append_screen_label(dst, std::to_string(i + 1), x0 + 0.004f,
-                        kTop - slot_height - 0.022f, 0.0036f,
-                        active ? glm::vec3(1.0f, 0.90f, 0.45f)
-                               : glm::vec3(0.70f, 0.78f, 0.86f));
+    append_screen_rect(dst, x0 - 0.006f, kTop + 0.006f * aspect,
+                       x1 + 0.006f, kTop - slot_height - 0.006f * aspect,
+                       active ? glm::vec3(0.28f, 0.78f, 1.0f)
+                              : glm::vec3(0.20f, 0.27f, 0.36f),
+                       active ? 0.98f : 0.75f);
+    const glm::vec3 swatch = glm::pow(kBlockHotbar[i].swatch, glm::vec3(0.75f));
+    append_screen_rect(dst, x0, kTop, x1, kTop - slot_height, swatch, 0.95f);
+    append_screen_label(dst, std::to_string(i + 1), x0 + 0.018f,
+                        kTop - slot_height - 0.018f, 0.0038f,
+                        active ? glm::vec3(0.45f, 0.88f, 1.0f)
+                               : glm::vec3(0.72f, 0.80f, 0.90f));
   }
   append_screen_label(dst, kBlockHotbar[selected].label, left,
-                      kTop + 0.065f, 0.0042f, glm::vec3(0.95f, 0.97f, 1.0f));
+                      kTop + 0.056f, 0.0046f, glm::vec3(0.96f, 0.98f, 1.0f));
 }
 
 void disable_gameplay_actions(InputState &input) {
@@ -294,13 +301,38 @@ void enqueue_animation_runtime_events(EventBus &events,
   }
 }
 
+uint64_t flat_chunk_key(int32_t cx, int32_t cz) {
+  return (static_cast<uint64_t>(static_cast<uint32_t>(cx)) << 32u) |
+         static_cast<uint64_t>(static_cast<uint32_t>(cz));
+}
+
+void decode_flat_chunk_key(uint64_t key, int32_t &cx, int32_t &cz) {
+  cx = static_cast<int32_t>(static_cast<uint32_t>(key >> 32u));
+  cz = static_cast<int32_t>(static_cast<uint32_t>(key & 0xffffffffu));
+}
+
+uint64_t flat_terrain_mesh_id(int32_t cx, int32_t cz) {
+  uint64_t k = flat_chunk_key(cx, cz) ^ 0x464C415454455252ull;
+  return k == 0 ? 1 : k;
+}
+
+int32_t floor_div_i32(int32_t a, int32_t b) {
+  int32_t q = a / b;
+  int32_t r = a % b;
+  if (r != 0 && ((r < 0) != (b < 0))) {
+    --q;
+  }
+  return q;
+}
+
 RenderMesh build_local_player_debug_mesh(
     const PlayerEntity &player,
     const PlayerAnimationRuntime &animation_runtime,
     bool devhud_enabled,
     bool render_local_avatar,
     RuntimeDebugSceneSnapshot::AvatarStyle avatar_style,
-    bool spherical_planet) {
+    bool spherical_planet,
+    const SkinnedModel *selected_player_model) {
   RuntimeDebugSceneSnapshot snapshot{};
   // Planet-local player coordinates are centered on the active body.
   snapshot.spherical_planet = spherical_planet;
@@ -310,6 +342,10 @@ RenderMesh build_local_player_debug_mesh(
   snapshot.avatar_style = avatar_style;
   snapshot.local_player = &player;
   snapshot.local_player_animation = &animation_runtime;
+  snapshot.selected_player_model =
+      (selected_player_model != nullptr && selected_player_model->loaded())
+          ? selected_player_model
+          : nullptr;
   return DebugSceneBuilder{}.build(snapshot);
 }
 
@@ -328,6 +364,18 @@ RuntimeDebugSceneSnapshot::AvatarStyle avatar_style_from_character(
 } // namespace
 
 bool Engine::init(const EngineRuntimeOptions &options) {
+  {
+    std::string model_err;
+    if (!player_skinned_model_.load_from_glb(
+            "./assets/models/player/boxman.glb", model_err) &&
+        !player_skinned_model_.load_from_glb(
+            "assets/models/player/boxman.glb", model_err)) {
+      spdlog::warn("Player model load failed (boxman.glb): {}", model_err);
+    } else {
+      spdlog::info("Loaded player model: boxman.glb ({} clips)",
+                   player_skinned_model_.clips().size());
+    }
+  }
   platform_services = options.platform_services != nullptr
                           ? *options.platform_services
                           : PlatformServices::desktop_default();
@@ -426,26 +474,22 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   atmosphere_wireframe_mesh_ = build_atmosphere_wireframe_mesh(
       planet_def, kPlayablePlanetConfig.atmosphere_height_m);
 
-  // Planet-surface collision from block-world terrain (shell-mapped meters).
-  collision_world.set_planet_surface_collider(
-      glm::vec3(planet_def.center),
-      static_cast<float>(planet_def.radius),
-      static_cast<float>(block_world_.max_surface_height_above_base()),
-      [&bw = block_world_](glm::vec3 direction) -> float {
-        return static_cast<float>(
-            bw.surface_height_above_base(glm::dvec3(direction)));
-      });
-
-  // Player spawn on the sun-facing +X equator of the outer shell.
-  {
-    const int32_t shell = block_world_.shell_count() - 1;
-    const int32_t equator_col =
-        block_world_.shell_config(shell).horizontal_res / 2;
-    local_player = PlayerControllerSystem::spawn_on_planet_surface(
-        block_world_, collision_world, PlanetFace::PosX, equator_col,
-        equator_col, 2.0);
-    local_player.controller.capsuleRadius = 0.7f;
+  flat_world_mode_ = true;
+  flat_chunks_.clear();
+  flat_dirty_chunks_.clear();
+  last_flat_chunk_x_ = 0x7fffffff;
+  last_flat_chunk_z_ = 0x7fffffff;
+  for (int32_t cz = -2; cz <= 2; ++cz) {
+    for (int32_t cx = -2; cx <= 2; ++cx) {
+      const uint64_t key = flat_chunk_key(cx, cz);
+      VoxelChunk &chunk = flat_chunks_[key];
+      chunk.generate_heightmap_terrain_seeded(k_voxov_flat_world_seed, cx, cz);
+      flat_dirty_chunks_.insert(key);
+    }
   }
+  rebuild_flat_collision_world();
+  local_player = PlayerControllerSystem::spawn_player(collision_world);
+  local_player.controller.capsuleRadius = 0.55f;
   local_player.camera_rig.pitch = -20.0f;
   // Third-person orbit rig: distance 0 would be first-person; start in
   // third-person so the new avatar is immediately visible.
@@ -472,11 +516,16 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   camera.z_near = 0.25f;
   update_first_person_camera(local_player, camera);
 
+  const SkinnedModel *active_player_model =
+      (session_state_.selected_character == GuiMenu::Character::Humanoid &&
+       player_skinned_model_.loaded())
+          ? &player_skinned_model_
+          : nullptr;
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled,
       /*render_local_avatar=*/true,
       avatar_style_from_character(session_state_.selected_character),
-      collision_world.has_planet_surface_collider());
+      collision_world.has_planet_surface_collider(), active_player_model);
   refresh_overlay_text();
 
     // Start with fly mode OFF — gravity walks on the sphere surface.
@@ -591,7 +640,9 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   camera_snap_origin_ = glm::dvec3(local_player.transform.position);
   snap_origin_dirty_ = true;
   rebuild_global_planet_surface();
-  load_persistent_game();
+  if (!flat_world_mode_) {
+    load_persistent_game();
+  }
   update_first_person_camera(local_player, camera);
   place_ship_near_player();
 
@@ -766,14 +817,27 @@ void Engine::tick(double frame_dt,
       const double interval = (speed > 7.0f) ? 0.28 : 0.42;
       if (footstep_sfx_timer_ >= interval) {
         footstep_sfx_timer_ = 0.0;
-        const glm::dvec3 pos(local_player.transform.position);
-        const glm::dvec3 up = glm::normalize(pos - block_world_.planet().center);
-        const BlockAddress ground_addr = block_world_.address_from_world(pos - up * 0.35);
-        const VoxelChunk *gc = block_world_.find_chunk(BlockAddress{
-            ground_addr.sector, ground_addr.shell, ground_addr.chunk, glm::ivec3(0)});
-        const VoxelMaterial gmat = (gc != nullptr)
-            ? gc->material(ground_addr.block.x, ground_addr.block.y, ground_addr.block.z)
-            : VoxelMaterial::Grass;
+        VoxelMaterial gmat = VoxelMaterial::Grass;
+        if (flat_world_mode_) {
+          const int32_t gx = static_cast<int32_t>(std::floor(local_player.transform.position.x));
+          const int32_t gy = std::clamp(static_cast<int32_t>(std::floor(local_player.transform.position.y - 0.35f)), 0, VoxelChunk::CHUNK_Y - 1);
+          const int32_t gz = static_cast<int32_t>(std::floor(local_player.transform.position.z));
+          const int32_t cx = floor_div_i32(gx, VoxelChunk::CHUNK_X);
+          const int32_t cz = floor_div_i32(gz, VoxelChunk::CHUNK_Z);
+          const auto it = flat_chunks_.find(flat_chunk_key(cx, cz));
+          if (it != flat_chunks_.end()) {
+            gmat = it->second.material(gx - cx * VoxelChunk::CHUNK_X, gy, gz - cz * VoxelChunk::CHUNK_Z);
+          }
+        } else {
+          const glm::dvec3 pos(local_player.transform.position);
+          const glm::dvec3 up = glm::normalize(pos - block_world_.planet().center);
+          const BlockAddress ground_addr = block_world_.address_from_world(pos - up * 0.35);
+          const VoxelChunk *gc = block_world_.find_chunk(BlockAddress{
+              ground_addr.sector, ground_addr.shell, ground_addr.chunk, glm::ivec3(0)});
+          if (gc != nullptr) {
+            gmat = gc->material(ground_addr.block.x, ground_addr.block.y, ground_addr.block.z);
+          }
+        }
         pending_footstep_material_sfx_ =
             (gmat == VoxelMaterial::Air) ? static_cast<uint8_t>(VoxelMaterial::Grass)
                                          : static_cast<uint8_t>(gmat);
@@ -802,11 +866,16 @@ void Engine::tick(double frame_dt,
 
   update_render_stats(profiling_sample, terrain_timings, gpu_upload_ms);
 
+  const SkinnedModel *active_player_model =
+      (session_state_.selected_character == GuiMenu::Character::Humanoid &&
+       player_skinned_model_.loaded())
+          ? &player_skinned_model_
+          : nullptr;
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled,
       local_player.camera_rig.distance > 0.1f && !piloting_ship_,
       avatar_style_from_character(session_state_.selected_character),
-      collision_world.has_planet_surface_collider());
+      collision_world.has_planet_surface_collider(), active_player_model);
   append_target_outline(scene.debug_world);
   refresh_overlay_text();
   renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
@@ -940,6 +1009,14 @@ void Engine::apply_session_input(InputState &gameplay_input,
     local_player.locomotion.vertical_velocity = 0.0f;
     local_player.controller.velocity = glm::vec3(0.0f);
     last_hud_message_ = debug_fly_mode_ ? "Fly mode ON" : "Fly mode OFF";
+  }
+  if (gameplay_input.debug_reconcile_toggle_pressed) {
+    const uint8_t next_idx = (static_cast<uint8_t>(vegetation_style_) + 1u) %
+        static_cast<uint8_t>(vegetation::VegetationStyle::Count);
+    vegetation_style_ = static_cast<vegetation::VegetationStyle>(next_idx);
+    snap_origin_dirty_ = true;
+    last_hud_message_ = std::string("Vegetation (F5): ") +
+        vegetation::vegetation_style_name(vegetation_style_);
   }
   if (session_state_.menu_open || !session_state_.gameplay_started) {
     disable_gameplay_actions(gameplay_input);
@@ -1295,8 +1372,203 @@ void Engine::simulate_frame(InputState &gameplay_input,
   }
 }
 
+void Engine::rebuild_flat_collision_world() {
+  std::vector<VoxelCollisionChunk> col_chunks;
+  col_chunks.reserve(flat_chunks_.size());
+  for (const auto &[key, chunk] : flat_chunks_) {
+    int32_t cx = 0;
+    int32_t cz = 0;
+    decode_flat_chunk_key(key, cx, cz);
+    col_chunks.push_back(VoxelCollisionChunk{
+        &chunk,
+        cx * VoxelChunk::CHUNK_X,
+        cz * VoxelChunk::CHUNK_Z,
+    });
+  }
+  collision_world = VoxelCollisionWorld(std::move(col_chunks), 1.0f);
+}
+
+Engine::TerrainStreamTimings Engine::stream_flat_terrain() {
+  TerrainStreamTimings timings{};
+  constexpr int32_t kFlatRadius = 3;
+  constexpr int kMaxGenPerFrame = 4;
+  constexpr int kMaxMeshPerFrame = 4;
+
+  const glm::dvec3 player_pos(local_player.transform.position);
+  const int32_t px = static_cast<int32_t>(std::floor(player_pos.x));
+  const int32_t pz = static_cast<int32_t>(std::floor(player_pos.z));
+  const int32_t pcx = floor_div_i32(px, VoxelChunk::CHUNK_X);
+  const int32_t pcz = floor_div_i32(pz, VoxelChunk::CHUNK_Z);
+
+  const glm::dvec3 snap_delta = player_pos - camera_snap_origin_;
+  const bool need_full_rebuild =
+      snap_origin_dirty_ || glm::dot(snap_delta, snap_delta) > (128.0 * 128.0);
+  if (need_full_rebuild) {
+    camera_snap_origin_ = player_pos;
+    snap_origin_dirty_ = false;
+    scene.opaque_meshes.clear();
+    for (const auto &[key, _] : flat_chunks_) {
+      flat_dirty_chunks_.insert(key);
+    }
+  }
+  scene.camera_origin.world_origin = camera_snap_origin_;
+
+  bool collision_dirty = false;
+  if (pcx != last_flat_chunk_x_ || pcz != last_flat_chunk_z_) {
+    last_flat_chunk_x_ = pcx;
+    last_flat_chunk_z_ = pcz;
+
+    std::unordered_set<uint64_t> evicted_mesh_ids;
+    for (auto it = flat_chunks_.begin(); it != flat_chunks_.end();) {
+      int32_t cx = 0;
+      int32_t cz = 0;
+      decode_flat_chunk_key(it->first, cx, cz);
+      if (std::abs(cx - pcx) > kFlatRadius || std::abs(cz - pcz) > kFlatRadius) {
+        evicted_mesh_ids.insert(flat_terrain_mesh_id(cx, cz));
+        evicted_mesh_ids.insert(vegetation::flat_mesh_id(cx, cz));
+        flat_dirty_chunks_.erase(it->first);
+        it = flat_chunks_.erase(it);
+        collision_dirty = true;
+      } else {
+        ++it;
+      }
+    }
+    if (!evicted_mesh_ids.empty()) {
+      scene.opaque_meshes.erase(
+          std::remove_if(scene.opaque_meshes.begin(), scene.opaque_meshes.end(),
+                         [&evicted_mesh_ids](const RenderMesh &m) {
+                           return evicted_mesh_ids.count(m.mesh_id) != 0;
+                         }),
+          scene.opaque_meshes.end());
+    }
+  }
+
+  const PerfClock::time_point gen_start = PerfClock::now();
+  struct PendingFlatGen {
+    int32_t cx = 0;
+    int32_t cz = 0;
+    int32_t dist_sq = 0;
+  };
+  std::vector<PendingFlatGen> missing;
+  for (int32_t dz = -kFlatRadius; dz <= kFlatRadius; ++dz) {
+    for (int32_t dx = -kFlatRadius; dx <= kFlatRadius; ++dx) {
+      const int32_t cx = pcx + dx;
+      const int32_t cz = pcz + dz;
+      if (flat_chunks_.find(flat_chunk_key(cx, cz)) == flat_chunks_.end()) {
+        missing.push_back({cx, cz, dx * dx + dz * dz});
+      }
+    }
+  }
+  std::sort(missing.begin(), missing.end(),
+            [](const PendingFlatGen &a, const PendingFlatGen &b) {
+              return a.dist_sq < b.dist_sq;
+            });
+  const int gen_count = std::min<int>(static_cast<int>(missing.size()), kMaxGenPerFrame);
+  for (int i = 0; i < gen_count; ++i) {
+    const int32_t cx = missing[static_cast<size_t>(i)].cx;
+    const int32_t cz = missing[static_cast<size_t>(i)].cz;
+    const uint64_t key = flat_chunk_key(cx, cz);
+    VoxelChunk &chunk = flat_chunks_[key];
+    chunk.generate_heightmap_terrain_seeded(k_voxov_flat_world_seed, cx, cz);
+    flat_dirty_chunks_.insert(key);
+    for (const auto &[nx, nz] : std::array<std::pair<int32_t, int32_t>, 4>{
+             {{cx - 1, cz}, {cx + 1, cz}, {cx, cz - 1}, {cx, cz + 1}}}) {
+      const uint64_t nkey = flat_chunk_key(nx, nz);
+      if (flat_chunks_.find(nkey) != flat_chunks_.end()) {
+        flat_dirty_chunks_.insert(nkey);
+      }
+    }
+    collision_dirty = true;
+  }
+  if (collision_dirty) {
+    rebuild_flat_collision_world();
+  }
+  timings.chunk_gen_ms = elapsed_ms(gen_start, PerfClock::now());
+
+  const PerfClock::time_point mesh_start = PerfClock::now();
+  std::vector<PendingFlatGen> to_mesh;
+  to_mesh.reserve(flat_dirty_chunks_.size());
+  for (uint64_t key : flat_dirty_chunks_) {
+    int32_t cx = 0;
+    int32_t cz = 0;
+    decode_flat_chunk_key(key, cx, cz);
+    const int32_t dx = cx - pcx;
+    const int32_t dz = cz - pcz;
+    to_mesh.push_back({cx, cz, dx * dx + dz * dz});
+  }
+  std::sort(to_mesh.begin(), to_mesh.end(),
+            [](const PendingFlatGen &a, const PendingFlatGen &b) {
+              return a.dist_sq < b.dist_sq;
+            });
+
+  std::unordered_map<uint64_t, size_t> mesh_idx;
+  mesh_idx.reserve(scene.opaque_meshes.size());
+  for (size_t i = 0; i < scene.opaque_meshes.size(); ++i) {
+    mesh_idx[scene.opaque_meshes[i].mesh_id] = i;
+  }
+  auto upsert = [&](RenderMesh &&m) {
+    const auto it = mesh_idx.find(m.mesh_id);
+    if (it != mesh_idx.end() && it->second < scene.opaque_meshes.size() &&
+        scene.opaque_meshes[it->second].mesh_id == m.mesh_id) {
+      scene.opaque_meshes[it->second] = std::move(m);
+      return;
+    }
+    mesh_idx[m.mesh_id] = scene.opaque_meshes.size();
+    scene.opaque_meshes.push_back(std::move(m));
+  };
+
+  auto world_solid_at = [this](int wx, int wy, int wz) -> bool {
+    if (wy < 0 || wy >= VoxelChunk::CHUNK_Y) {
+      return false;
+    }
+    const int32_t cx = floor_div_i32(wx, VoxelChunk::CHUNK_X);
+    const int32_t cz = floor_div_i32(wz, VoxelChunk::CHUNK_Z);
+    const auto it = flat_chunks_.find(flat_chunk_key(cx, cz));
+    if (it == flat_chunks_.end()) {
+      return false;
+    }
+    return it->second.solid(wx - cx * VoxelChunk::CHUNK_X, wy, wz - cz * VoxelChunk::CHUNK_Z);
+  };
+
+  const int mesh_limit = need_full_rebuild
+                             ? static_cast<int>(to_mesh.size())
+                             : std::min<int>(static_cast<int>(to_mesh.size()), kMaxMeshPerFrame);
+  for (int i = 0; i < mesh_limit; ++i) {
+    const int32_t cx = to_mesh[static_cast<size_t>(i)].cx;
+    const int32_t cz = to_mesh[static_cast<size_t>(i)].cz;
+    const uint64_t key = flat_chunk_key(cx, cz);
+    flat_dirty_chunks_.erase(key);
+    const auto cit = flat_chunks_.find(key);
+    if (cit == flat_chunks_.end()) {
+      continue;
+    }
+    const glm::dvec3 chunk_origin(
+        static_cast<double>(cx * VoxelChunk::CHUNK_X),
+        0.0,
+        static_cast<double>(cz * VoxelChunk::CHUNK_Z));
+    RenderMesh terrain = cit->second.build_binary_greedy_mesh(
+        glm::vec3(camera_snap_origin_ - chunk_origin), 1.0f,
+        cx * VoxelChunk::CHUNK_X, cz * VoxelChunk::CHUNK_Z, world_solid_at);
+    terrain.mesh_id = flat_terrain_mesh_id(cx, cz);
+    terrain.world_origin = camera_snap_origin_;
+    upsert(std::move(terrain));
+
+    RenderMesh veg = vegetation::build_flat_vegetation_mesh(
+        cit->second, cx, cz, camera_snap_origin_, vegetation_style_,
+        k_voxov_flat_world_seed);
+    upsert(std::move(veg));
+  }
+  timings.mesh_build_ms = elapsed_ms(mesh_start, PerfClock::now());
+  terrain_stream_settled_ = missing.empty() && flat_dirty_chunks_.empty();
+  render_stats.streamed_chunk_count = static_cast<uint32_t>(flat_chunks_.size());
+  return timings;
+}
+
 Engine::TerrainStreamTimings Engine::stream_block_terrain(
     double camera_altitude, const RenderSurface &surface) {
+  if (flat_world_mode_) {
+    return stream_flat_terrain();
+  }
   // ── Block world chunk streaming ─────────────────────────────────────
   // Load surface chunks in a radius around the player using the cube-sphere
   // shell architecture (6 sectors, radial shells doubling horizontal res,
@@ -1701,12 +1973,15 @@ Engine::TerrainStreamTimings Engine::stream_block_terrain(
             const ChunkFaceVisibility vis = compute_chunk_face_visibility(*chunk);
             entry.terrain_mesh = block_world_.build_chunk_mesh(
                 ck, *chunk, solid_at, camera_snap_origin_, entry.lod_level);
-            if (vis.reach[3] != 0) {
-              entry.grass_mesh = vegetation::build_grass_mesh(
-                  block_world_, ck, *chunk, camera_snap_origin_, entry.lod_level);
+            if (vis.reach[3] != 0 &&
+                vegetation_style_ != vegetation::VegetationStyle::Off) {
+              entry.grass_mesh = vegetation::build_vegetation_mesh(
+                  block_world_, ck, *chunk, camera_snap_origin_,
+                  vegetation_style_, entry.lod_level);
             } else {
               entry.grass_mesh.mesh_id = vegetation::mesh_id(ck);
-              entry.grass_mesh.material = vegetation::kBillboardVegetationMaterial;
+              entry.grass_mesh.material =
+                  vegetation::kBillboardVegetationMaterial;
             }
           });
         }
@@ -1959,6 +2234,9 @@ void Engine::append_celestial_meshes(const RenderSurface &surface) {
                        }),
         scene.opaque_meshes.end());
     last_celestial_mesh_count_ = 0;
+    if (flat_world_mode_) {
+      return;
+    }
 
     const float screen_height = static_cast<float>(std::max(1, surface.height));
     const int32_t globe_grid = planet_globe_subdivisions(
@@ -2215,8 +2493,9 @@ RenderFrameContext Engine::build_render_context(double frame_dt,
   {
     const auto& atm = atmosphere_.params();
     const glm::vec3 rel_center = -glm::vec3(camera_snap_origin_);
-    ctx.atmosphere.planet_center_radius = glm::vec4(rel_center,
-        static_cast<float>(atm.planet_radius));
+    ctx.atmosphere.planet_center_radius = flat_world_mode_
+        ? glm::vec4(0.0f, 0.0f, 0.0f, 0.0f)
+        : glm::vec4(rel_center, static_cast<float>(atm.planet_radius));
     ctx.atmosphere.atm_params_1 = glm::vec4(
         static_cast<float>(atm.atmosphere_height),
         static_cast<float>(atm.rayleigh_scale_height),
@@ -2965,6 +3244,80 @@ void Engine::update_block_interaction(const InputState &input) {
     targeted_addr_.reset();
     return;
   }
+  if (flat_world_mode_) {
+    targeted_addr_.reset();
+    constexpr float k_reach = 7.0f;
+    const glm::vec3 eye = local_player.transform.position + glm::vec3(0.0f, 1.6f, 0.0f);
+    const glm::vec3 ray_origin = camera.transform.position;
+    const glm::vec3 ray_dir = glm::normalize(camera.forward());
+    float hit_dist = 0.0f;
+    if (!collision_world.raycast(ray_origin, ray_dir,
+                                 glm::length(eye - ray_origin) + k_reach, hit_dist)) {
+      return;
+    }
+    const glm::vec3 hit_pt = ray_origin + ray_dir * hit_dist;
+    if (glm::distance(eye, hit_pt) > k_reach) {
+      return;
+    }
+    auto mark_voxel_dirty = [&](int32_t wx, int32_t wz) {
+      const int32_t cx = floor_div_i32(wx, VoxelChunk::CHUNK_X);
+      const int32_t cz = floor_div_i32(wz, VoxelChunk::CHUNK_Z);
+      flat_dirty_chunks_.insert(flat_chunk_key(cx, cz));
+      const int32_t lx = wx - cx * VoxelChunk::CHUNK_X;
+      const int32_t lz = wz - cz * VoxelChunk::CHUNK_Z;
+      if (lx == 0) flat_dirty_chunks_.insert(flat_chunk_key(cx - 1, cz));
+      if (lx == VoxelChunk::CHUNK_X - 1) flat_dirty_chunks_.insert(flat_chunk_key(cx + 1, cz));
+      if (lz == 0) flat_dirty_chunks_.insert(flat_chunk_key(cx, cz - 1));
+      if (lz == VoxelChunk::CHUNK_Z - 1) flat_dirty_chunks_.insert(flat_chunk_key(cx, cz + 1));
+    };
+    if (input.left_click_pressed) {
+      const glm::vec3 in_pt = hit_pt + ray_dir * 0.02f;
+      const int32_t wx = static_cast<int32_t>(std::floor(in_pt.x));
+      const int32_t wy = static_cast<int32_t>(std::floor(in_pt.y));
+      const int32_t wz = static_cast<int32_t>(std::floor(in_pt.z));
+      if (wy >= 0 && wy < VoxelChunk::CHUNK_Y) {
+        const int32_t cx = floor_div_i32(wx, VoxelChunk::CHUNK_X);
+        const int32_t cz = floor_div_i32(wz, VoxelChunk::CHUNK_Z);
+        const auto it = flat_chunks_.find(flat_chunk_key(cx, cz));
+        if (it != flat_chunks_.end()) {
+          it->second.set_material(wx - cx * VoxelChunk::CHUNK_X, wy, wz - cz * VoxelChunk::CHUNK_Z, VoxelMaterial::Air);
+          it->second.set_solid(wx - cx * VoxelChunk::CHUNK_X, wy, wz - cz * VoxelChunk::CHUNK_Z, false);
+          mark_voxel_dirty(wx, wz);
+          rebuild_flat_collision_world();
+          ++pending_block_break_sfx_;
+        }
+      }
+      return;
+    }
+    if (input.right_click_pressed) {
+      const glm::vec3 out_pt = hit_pt - ray_dir * 0.02f;
+      const int32_t wx = static_cast<int32_t>(std::floor(out_pt.x));
+      const int32_t wy = static_cast<int32_t>(std::floor(out_pt.y));
+      const int32_t wz = static_cast<int32_t>(std::floor(out_pt.z));
+      if (wy >= 0 && wy < VoxelChunk::CHUNK_Y) {
+        const int32_t cx = floor_div_i32(wx, VoxelChunk::CHUNK_X);
+        const int32_t cz = floor_div_i32(wz, VoxelChunk::CHUNK_Z);
+        const auto it = flat_chunks_.find(flat_chunk_key(cx, cz));
+        if (it != flat_chunks_.end()) {
+          const int32_t lx = wx - cx * VoxelChunk::CHUNK_X;
+          const int32_t lz = wz - cz * VoxelChunk::CHUNK_Z;
+          if (!it->second.solid(lx, wy, lz)) {
+            const VoxelMaterial mat = kBlockHotbar[hotbar_slot_].material;
+            it->second.set_material(lx, wy, lz, mat, 63);
+            it->second.set_solid(lx, wy, lz, true);
+            mark_voxel_dirty(wx, wz);
+            rebuild_flat_collision_world();
+            ++pending_block_place_sfx_;
+          }
+        }
+      }
+    }
+    return;
+  }
+  if (false) {
+    targeted_addr_.reset();
+    return;
+  }
   // Pick along the crosshair ray, but measure reach from the player's eye so
   // the third-person orbit distance neither extends nor shortens it.
   constexpr float k_reach = 7.0f;
@@ -3091,16 +3444,15 @@ void Engine::update_first_person_camera(PlayerEntity &player,
   // in the local tangent frame, then set it as an override so the renderer
   // uses the correct orientation regardless of planet curvature.
 
-  // Radial "up" from planet center.
-  glm::vec3 local_up = glm::normalize(render_position);
-  if (glm::length(local_up) < 0.1f) local_up = glm::vec3(0.0f, 1.0f, 0.0f);
-
-  // Use the same transported tangent frame as locomotion. It stays continuous
-  // through the poles instead of switching reference axes abruptly.
-  const glm::vec3 north =
-      player_surface_orientation::reference_forward(player.camera_rig, local_up);
-  const glm::vec3 east =
-      player_surface_orientation::east_from_forward(north, local_up);
+  glm::vec3 local_up(0.0f, 1.0f, 0.0f);
+  glm::vec3 north(0.0f, 0.0f, 1.0f);
+  glm::vec3 east(1.0f, 0.0f, 0.0f);
+  if (collision_world.has_planet_surface_collider()) {
+    local_up = glm::normalize(render_position);
+    if (glm::length(local_up) < 0.1f) local_up = glm::vec3(0.0f, 1.0f, 0.0f);
+    north = player_surface_orientation::reference_forward(player.camera_rig, local_up);
+    east = player_surface_orientation::east_from_forward(north, local_up);
+  }
 
   const float yaw_rad = glm::radians(player.camera_rig.yaw);
   const float pitch_rad = glm::radians(player.camera_rig.pitch);
@@ -3499,6 +3851,8 @@ void Engine::refresh_overlay_text() {
       "\nNetwork status: " + last_net_status_;
   overlay_text += "\nFly mode: ";
   overlay_text += debug_fly_mode_ ? "ON (F4)" : "OFF (F4)";
+  overlay_text += "\nVegetation (F5): ";
+  overlay_text += vegetation::vegetation_style_name(vegetation_style_);
   overlay_text += "\nWorld chunks: ";
   overlay_text += std::to_string(render_stats.streamed_chunk_count);
   // LOD distribution: how many chunks at each level.

@@ -122,12 +122,15 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
     }
 
     const cgltf_accessor *pos_acc = nullptr;
+    const cgltf_accessor *norm_acc = nullptr;
     const cgltf_accessor *joints_acc = nullptr;
     const cgltf_accessor *weights_acc = nullptr;
     for (size_t i = 0; i < prim.attributes_count; ++i) {
         const cgltf_attribute &attr = prim.attributes[i];
         if (attr.type == cgltf_attribute_type_position) {
             pos_acc = attr.data;
+        } else if (attr.type == cgltf_attribute_type_normal) {
+            norm_acc = attr.data;
         } else if (attr.type == cgltf_attribute_type_joints) {
             joints_acc = attr.data;
         } else if (attr.type == cgltf_attribute_type_weights) {
@@ -160,6 +163,13 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
 
         VertexBind v{};
         v.position = glm::vec3(p[0], p[1], p[2]);
+        if (norm_acc && i < norm_acc->count) {
+            std::array<float, 3> n{};
+            cgltf_accessor_read_float(norm_acc, i, n.data(), 3);
+            const glm::vec3 nv(n[0], n[1], n[2]);
+            const float nlen = glm::length(nv);
+            v.normal = (nlen > 1e-5f) ? (nv / nlen) : glm::vec3(0.0f, 1.0f, 0.0f);
+        }
         bounds_min = glm::min(bounds_min, v.position);
         bounds_max = glm::max(bounds_max, v.position);
         v.joints = glm::uvec4(j[0], j[1], j[2], j[3]);
@@ -271,6 +281,30 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
         out_error = "parsed model missing vertices/indices/joints";
         return false;
     }
+
+    // Measure actual skinned idle pose bounds so armature scale/rotation
+    // (e.g. Blender Armature 0.38x) is accounted for in height & ground lift.
+    const PlayerAnimationSample idle_sample = sample_pose(
+        PlayerAnimState::Idle, 0.0f, PlayerAnimState::Idle, 0.0f, 0.0f);
+    const glm::mat3 axis_rot = glm::mat3_cast(model_facing_correction * model_axis_correction);
+    glm::vec3 skinned_min(1.0e30f);
+    glm::vec3 skinned_max(-1.0e30f);
+    for (const VertexBind &v : bind_vertices) {
+        glm::vec4 skinned(0.0f);
+        const glm::vec4 bind_pos(v.position, 1.0f);
+        for (int k = 0; k < 4; ++k) {
+            const uint32_t joint_idx = v.joints[static_cast<size_t>(k)];
+            const float weight = v.weights[static_cast<size_t>(k)];
+            if (weight <= 1e-6f || joint_idx >= idle_sample.skin_matrices.size()) continue;
+            skinned += (idle_sample.skin_matrices[joint_idx] * bind_pos) * weight;
+        }
+        const glm::vec3 p = axis_rot * glm::vec3(skinned);
+        skinned_min = glm::min(skinned_min, p);
+        skinned_max = glm::max(skinned_max, p);
+    }
+    const float skinned_height = std::max(skinned_max.y - skinned_min.y, 1.0e-4f);
+    model_scale = std::clamp(k_target_height / skinned_height, 0.001f, 8.0f);
+    model_ground_lift = -skinned_min.y + 0.02f;
     return true;
 }
 
@@ -350,9 +384,11 @@ RenderMesh SkinnedModel::build_render_mesh(
     out.vertices.resize(bind_vertices.size());
     out.indices = mesh_indices;
 
+    const glm::mat3 world_rot_mat(glm::mat4_cast(world_rotation) * local_adjust);
     for (size_t i = 0; i < bind_vertices.size(); ++i) {
         const VertexBind &v = bind_vertices[i];
         glm::vec4 skinned(0.0f);
+        glm::vec3 skinned_norm(0.0f);
         const glm::vec4 bind_pos(v.position, 1.0f);
         for (int k = 0; k < 4; ++k) {
             const uint32_t joint_idx = v.joints[static_cast<size_t>(k)];
@@ -360,11 +396,17 @@ RenderMesh SkinnedModel::build_render_mesh(
             if (weight <= 1e-6f || joint_idx >= sample.skin_matrices.size()) {
                 continue;
             }
-            skinned += (sample.skin_matrices[joint_idx] * bind_pos) * weight;
+            const glm::mat4 &m = sample.skin_matrices[joint_idx];
+            skinned += (m * bind_pos) * weight;
+            skinned_norm += (glm::mat3(m) * v.normal) * weight;
         }
         const glm::vec4 world_pos = world * glm::vec4(skinned.x, skinned.y, skinned.z, 1.0f);
+        const glm::vec3 wn = world_rot_mat * skinned_norm;
+        const float wlen = glm::length(wn);
         out.vertices[i].position = glm::vec3(world_pos);
+        out.vertices[i].normal = (wlen > 1e-5f) ? (wn / wlen) : glm::vec3(0.0f, 1.0f, 0.0f);
         out.vertices[i].color = color;
+        out.vertices[i].texcoord = glm::vec3(0.0f, 0.0f, -0.1f);
     }
 
     return out;

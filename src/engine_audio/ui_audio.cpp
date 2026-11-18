@@ -18,6 +18,8 @@ void UiAudio::play_footstep(uint8_t) {}
 
 #include <algorithm>
 #include <cmath>
+#include <cstdint>
+#include <mutex>
 #include <new>
 
 namespace {
@@ -27,27 +29,39 @@ constexpr float kPi = 3.14159265358979323846f;
 struct UiVoice {
     float phase = 0.0f;
     float frequency = 440.0f;
+    float amplitude = 0.24f;
+    float noise_mix = 0.0f;
     int frames_remaining = 0;
     int total_frames = 1;
 };
 
 struct SokolUiAudioState {
+    std::mutex mutex{};
     UiVoice move{};
     UiVoice click{};
+    uint32_t rng = 0x12345678u;
     int sample_rate = 44100;
     bool ready = false;
 };
 
 SokolUiAudioState *g_audio_state = nullptr;
 
-void start_voice(UiVoice &voice, float frequency, int frames) {
+float next_noise(uint32_t &rng) {
+    rng = rng * 1664525u + 1013904223u;
+    return static_cast<float>(static_cast<int32_t>(rng >> 8)) / 8388608.0f;
+}
+
+void start_voice(UiVoice &voice, float frequency, int frames,
+                 float amplitude = 0.22f, float noise_mix = 0.0f) {
     voice.phase = 0.0f;
     voice.frequency = frequency;
+    voice.amplitude = amplitude;
+    voice.noise_mix = noise_mix;
     voice.frames_remaining = frames;
     voice.total_frames = std::max(1, frames);
 }
 
-float render_voice(UiVoice &voice, int sample_rate) {
+float render_voice(UiVoice &voice, int sample_rate, uint32_t &rng) {
     if (voice.frames_remaining <= 0) {
         return 0.0f;
     }
@@ -55,24 +69,36 @@ float render_voice(UiVoice &voice, int sample_rate) {
     const int elapsed = voice.total_frames - voice.frames_remaining;
     const float t = static_cast<float>(elapsed) / static_cast<float>(voice.total_frames);
     const float envelope = (1.0f - t) * (1.0f - t);
-    const float sample = 0.24f * envelope * std::sin(voice.phase);
+    const float tone = std::sin(voice.phase);
+    const float noise = (voice.noise_mix > 0.0f) ? next_noise(rng) : 0.0f;
+    const float mixed = tone * (1.0f - voice.noise_mix) + noise * voice.noise_mix;
+    const float sample = voice.amplitude * envelope * mixed;
     voice.phase += (2.0f * kPi * voice.frequency) / static_cast<float>(sample_rate);
     voice.frames_remaining--;
     return sample;
 }
 
 void ui_audio_callback(float *buffer, int num_frames, int num_channels) {
+    const int total_samples = num_frames * num_channels;
     if (!g_audio_state || !g_audio_state->ready) {
+        std::fill_n(buffer, total_samples, 0.0f);
+        return;
+    }
+
+    std::unique_lock<std::mutex> lock(g_audio_state->mutex, std::try_to_lock);
+    if (!lock.owns_lock()) {
+        std::fill_n(buffer, total_samples, 0.0f);
         return;
     }
 
     for (int frame = 0; frame < num_frames; ++frame) {
         float sample = 0.0f;
-        sample += render_voice(g_audio_state->move, g_audio_state->sample_rate);
-        sample += render_voice(g_audio_state->click, g_audio_state->sample_rate);
+        sample += render_voice(g_audio_state->move, g_audio_state->sample_rate, g_audio_state->rng);
+        sample += render_voice(g_audio_state->click, g_audio_state->sample_rate, g_audio_state->rng);
         sample = std::clamp(sample, -0.8f, 0.8f);
         for (int ch = 0; ch < num_channels; ++ch) {
-            buffer[frame * num_channels + ch] += sample;
+            // sokol_audio stream_cb buffers are not guaranteed to be zeroed.
+            buffer[frame * num_channels + ch] = sample;
         }
     }
 }
@@ -113,8 +139,17 @@ bool UiAudio::init() {
 }
 
 void UiAudio::shutdown() {
-    if (impl && g_audio_state == &impl->state) {
-        g_audio_state = nullptr;
+    if (impl) {
+        {
+            std::lock_guard<std::mutex> lock(impl->state.mutex);
+            impl->state.ready = false;
+        }
+        if (saudio_isvalid()) {
+            saudio_shutdown();
+        }
+        if (g_audio_state == &impl->state) {
+            g_audio_state = nullptr;
+        }
     }
     delete impl;
     impl = nullptr;
@@ -125,6 +160,7 @@ void UiAudio::play_move() {
     if (!ready || !impl) {
         return;
     }
+    std::lock_guard<std::mutex> lock(impl->state.mutex);
     start_voice(impl->state.move, 660.0f, impl->state.sample_rate / 18);
 }
 
@@ -132,23 +168,27 @@ void UiAudio::play_click() {
     if (!ready || !impl) {
         return;
     }
+    std::lock_guard<std::mutex> lock(impl->state.mutex);
     start_voice(impl->state.click, 980.0f, impl->state.sample_rate / 24);
 }
 
 void UiAudio::play_block_break() {
     if (!ready || !impl) return;
-    start_voice(impl->state.click, 240.0f, impl->state.sample_rate / 14);
+    std::lock_guard<std::mutex> lock(impl->state.mutex);
+    start_voice(impl->state.click, 140.0f, impl->state.sample_rate / 18, 0.16f, 0.55f);
 }
 
 void UiAudio::play_block_place() {
     if (!ready || !impl) return;
-    start_voice(impl->state.move, 420.0f, impl->state.sample_rate / 20);
+    std::lock_guard<std::mutex> lock(impl->state.mutex);
+    start_voice(impl->state.move, 220.0f, impl->state.sample_rate / 26, 0.14f, 0.25f);
 }
 
 void UiAudio::play_footstep(uint8_t material_id) {
     if (!ready || !impl) return;
-    const float base_hz = 160.0f + static_cast<float>(material_id % 8u) * 28.0f;
-    start_voice(impl->state.move, base_hz, impl->state.sample_rate / 28);
+    std::lock_guard<std::mutex> lock(impl->state.mutex);
+    const float base_hz = 95.0f + static_cast<float>(material_id % 6u) * 14.0f;
+    start_voice(impl->state.move, base_hz, impl->state.sample_rate / 32, 0.08f, 0.65f);
 }
 
 #endif

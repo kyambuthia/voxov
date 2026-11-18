@@ -108,26 +108,16 @@ def load_tile(name: str) -> Image.Image:
 
 
 def main() -> None:
-    rng = random.Random(0x564F584F)
-    generated = {
-        "sand": sand(rng),
-        "planks": planks(rng),
-        "brick": brick(rng),
-        "snow": snow(rng),
-    }
-    for name, image in generated.items():
-        image.save(TILE_DIR / f"{name}_16.png")
-
     dirt = load_tile("dirt")
     layers = [
         load_tile("grass_top"),  # 0
         dirt,                    # 1
         load_tile("stone"),      # 2
         dirt,                    # 3: grass-side composite (shader sentinel)
-        generated["sand"],       # 4
-        generated["planks"],     # 5
-        generated["brick"],      # 6
-        generated["snow"],       # 7
+        load_tile("sand"),       # 4
+        load_tile("planks"),     # 5
+        load_tile("brick"),      # 6
+        load_tile("snow"),       # 7
     ]
 
     values = []

@@ -17,8 +17,8 @@
 #include "engine_world/wireframe_planet.hpp"
 #include "engine_world/world_gen.hpp"
 #include "engine_world/chunk_occlusion.hpp"
-#include "engine_world/vegetation.hpp"
 #include "engine_world/planet.hpp"
+#include "engine_world/vegetation.hpp"
 
 #include <spdlog/spdlog.h>
 
@@ -300,7 +300,8 @@ RenderMesh build_local_player_debug_mesh(
     bool devhud_enabled,
     bool render_local_avatar,
     RuntimeDebugSceneSnapshot::AvatarStyle avatar_style,
-    bool spherical_planet) {
+    bool spherical_planet,
+    const SkinnedModel *selected_player_model) {
   RuntimeDebugSceneSnapshot snapshot{};
   // Planet-local player coordinates are centered on the active body.
   snapshot.spherical_planet = spherical_planet;
@@ -310,6 +311,10 @@ RenderMesh build_local_player_debug_mesh(
   snapshot.avatar_style = avatar_style;
   snapshot.local_player = &player;
   snapshot.local_player_animation = &animation_runtime;
+  snapshot.selected_player_model =
+      (selected_player_model != nullptr && selected_player_model->loaded())
+          ? selected_player_model
+          : nullptr;
   return DebugSceneBuilder{}.build(snapshot);
 }
 
@@ -328,6 +333,18 @@ RuntimeDebugSceneSnapshot::AvatarStyle avatar_style_from_character(
 } // namespace
 
 bool Engine::init(const EngineRuntimeOptions &options) {
+  {
+    std::string model_err;
+    if (!player_skinned_model_.load_from_glb(
+            "./assets/models/player/boxman.glb", model_err) &&
+        !player_skinned_model_.load_from_glb(
+            "assets/models/player/boxman.glb", model_err)) {
+      spdlog::warn("Player model load failed (boxman.glb): {}", model_err);
+    } else {
+      spdlog::info("Loaded player model: boxman.glb ({} clips)",
+                   player_skinned_model_.clips().size());
+    }
+  }
   platform_services = options.platform_services != nullptr
                           ? *options.platform_services
                           : PlatformServices::desktop_default();
@@ -472,11 +489,16 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   camera.z_near = 0.25f;
   update_first_person_camera(local_player, camera);
 
+  const SkinnedModel *active_player_model =
+      (session_state_.selected_character == GuiMenu::Character::Humanoid &&
+       player_skinned_model_.loaded())
+          ? &player_skinned_model_
+          : nullptr;
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled,
       /*render_local_avatar=*/true,
       avatar_style_from_character(session_state_.selected_character),
-      collision_world.has_planet_surface_collider());
+      collision_world.has_planet_surface_collider(), active_player_model);
   refresh_overlay_text();
 
     // Start with fly mode OFF — gravity walks on the sphere surface.
@@ -802,11 +824,16 @@ void Engine::tick(double frame_dt,
 
   update_render_stats(profiling_sample, terrain_timings, gpu_upload_ms);
 
+  const SkinnedModel *active_player_model =
+      (session_state_.selected_character == GuiMenu::Character::Humanoid &&
+       player_skinned_model_.loaded())
+          ? &player_skinned_model_
+          : nullptr;
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled,
       local_player.camera_rig.distance > 0.1f && !piloting_ship_,
       avatar_style_from_character(session_state_.selected_character),
-      collision_world.has_planet_surface_collider());
+      collision_world.has_planet_surface_collider(), active_player_model);
   append_target_outline(scene.debug_world);
   refresh_overlay_text();
   renderer.update_dynamic_meshes(scene.debug_world, scene.debug_screen);
@@ -940,6 +967,14 @@ void Engine::apply_session_input(InputState &gameplay_input,
     local_player.locomotion.vertical_velocity = 0.0f;
     local_player.controller.velocity = glm::vec3(0.0f);
     last_hud_message_ = debug_fly_mode_ ? "Fly mode ON" : "Fly mode OFF";
+  }
+  if (gameplay_input.debug_reconcile_toggle_pressed) {
+    const uint8_t next_idx = (static_cast<uint8_t>(vegetation_style_) + 1u) %
+        static_cast<uint8_t>(vegetation::VegetationStyle::Count);
+    vegetation_style_ = static_cast<vegetation::VegetationStyle>(next_idx);
+    snap_origin_dirty_ = true;
+    last_hud_message_ = std::string("Vegetation (F5): ") +
+        vegetation::vegetation_style_name(vegetation_style_);
   }
   if (session_state_.menu_open || !session_state_.gameplay_started) {
     disable_gameplay_actions(gameplay_input);
@@ -1701,12 +1736,15 @@ Engine::TerrainStreamTimings Engine::stream_block_terrain(
             const ChunkFaceVisibility vis = compute_chunk_face_visibility(*chunk);
             entry.terrain_mesh = block_world_.build_chunk_mesh(
                 ck, *chunk, solid_at, camera_snap_origin_, entry.lod_level);
-            if (vis.reach[3] != 0) {
-              entry.grass_mesh = vegetation::build_grass_mesh(
-                  block_world_, ck, *chunk, camera_snap_origin_, entry.lod_level);
+            if (vis.reach[3] != 0 &&
+                vegetation_style_ != vegetation::VegetationStyle::Off) {
+              entry.grass_mesh = vegetation::build_vegetation_mesh(
+                  block_world_, ck, *chunk, camera_snap_origin_,
+                  vegetation_style_, entry.lod_level);
             } else {
               entry.grass_mesh.mesh_id = vegetation::mesh_id(ck);
-              entry.grass_mesh.material = vegetation::kBillboardVegetationMaterial;
+              entry.grass_mesh.material =
+                  vegetation::kBillboardVegetationMaterial;
             }
           });
         }
@@ -3499,6 +3537,8 @@ void Engine::refresh_overlay_text() {
       "\nNetwork status: " + last_net_status_;
   overlay_text += "\nFly mode: ";
   overlay_text += debug_fly_mode_ ? "ON (F4)" : "OFF (F4)";
+  overlay_text += "\nVegetation (F5): ";
+  overlay_text += vegetation::vegetation_style_name(vegetation_style_);
   overlay_text += "\nWorld chunks: ";
   overlay_text += std::to_string(render_stats.streamed_chunk_count);
   // LOD distribution: how many chunks at each level.

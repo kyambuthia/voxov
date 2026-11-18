@@ -26,6 +26,8 @@
 #include "engine_world/physics/voxel_collision.hpp"
 #include "engine_world/planet.hpp"
 #include "engine_world/planet_blocks.hpp"
+#include "engine_world/vegetation.hpp"
+#include "engine_assets/skinned_model.hpp"
 #include "engine_world/planet_lod.hpp"
 #include "engine_world/atmosphere.hpp"
 #include "engine_world/coordinate_frames.hpp"
@@ -248,6 +250,9 @@ private:
   // altitude so fast flight does not constantly rebuild terrain meshes.
   glm::dvec3 camera_snap_origin_{0.0};
   bool snap_origin_dirty_ = true;       // force initial mesh build
+  SkinnedModel player_skinned_model_{};
+  vegetation::VegetationStyle vegetation_style_ =
+      vegetation::VegetationStyle::MinecraftCrossed;
 
   // Complete terrain-aware globe for compact-world flight and orbit. It is
   // static, cached, and built from the same height sampler as editable chunks.

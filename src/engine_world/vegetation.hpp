@@ -21,11 +21,30 @@ inline constexpr uint8_t kFlowerLayer = 14;
 inline constexpr uint8_t kShrubLayer = 22;
 inline constexpr uint8_t kFernLayer = 30;
 
+enum class VegetationStyle : uint8_t {
+    MinecraftCrossed = 0,
+    VintageStoryWind = 1,
+    VoxelCuboids = 2,
+    ImpostorCards = 3,
+    Off = 4,
+    Count = 5,
+};
+
+const char *vegetation_style_name(VegetationStyle style);
+
 uint64_t mesh_id(const BlockAddress &chunk);
 
-// Build deterministic grass billboards for one streamed surface chunk. The
-// returned mesh is empty but still carries a stable ID when the chunk has no
-// eligible columns, which makes it a valid residency marker for streaming.
+// Build deterministic vegetation geometry for one streamed surface chunk.
+// The returned mesh is empty but still carries a stable ID when the chunk has
+// no eligible columns or style == Off, making it a valid residency marker.
+RenderMesh build_vegetation_mesh(const BlockWorld &world,
+                                 const BlockAddress &chunk,
+                                 const VoxelChunk &voxels,
+                                 const glm::dvec3 &camera_relative_origin,
+                                 VegetationStyle style,
+                                 int32_t lod_level = 0);
+
+// Legacy entry point preserved for existing tests/callers (ImpostorCards).
 RenderMesh build_grass_mesh(const BlockWorld &world,
                             const BlockAddress &chunk,
                             const VoxelChunk &voxels,

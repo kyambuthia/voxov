@@ -50,7 +50,10 @@ InputState DesktopInputBackend::poll() {
     // The click that captures the pointer only enters look mode; it must not
     // also break or place the block under a cursor the player can't see yet.
     const bool clicks_reach_gameplay = look_capture_enabled;
-    if (!sky_navigation_mode && (rmb_pressed || any_mouse_down)) {
+    const bool any_wasd =
+        k(PlatformKey::W) || k(PlatformKey::A) ||
+        k(PlatformKey::S) || k(PlatformKey::D);
+    if (!sky_navigation_mode && (rmb_pressed || any_mouse_down || any_wasd)) {
         look_capture_enabled = true;
     }
 
@@ -199,9 +202,17 @@ InputState DesktopInputBackend::poll() {
         mouse_initialized = true;
     }
 
-    if (pointer_locked) {
+    if (pointer_locked || rmb_down) {
         out.look_delta.x = mouse_dx;
         out.look_delta.y = mouse_dy;
+    }
+    if (!sky_navigation_mode && snap.focused) {
+        const float arrow_yaw =
+            (right_down ? 1.0f : 0.0f) - (left_down ? 1.0f : 0.0f);
+        const float arrow_pitch =
+            (k(PlatformKey::Down) ? 1.0f : 0.0f) - (k(PlatformKey::Up) ? 1.0f : 0.0f);
+        out.look_delta.x += arrow_yaw * 10.0f;
+        out.look_delta.y += arrow_pitch * 7.0f;
     }
 
     if (k(PlatformKey::Q)) {

@@ -81,13 +81,15 @@ void HudComposer::compose(const RuntimeHudSnapshot &snapshot,
   has_last_state_hash_ = true;
 
   auto append_screen_rect = [&](float x0, float y0, float x1, float y1,
-                                const glm::vec3 &color) {
+                                const glm::vec3 &color, float alpha = 0.78f) {
     RenderMesh rect{};
     const uint32_t base = 0;
-    rect.vertices.push_back({glm::vec3(x0, y0, 0.0f), color});
-    rect.vertices.push_back({glm::vec3(x1, y0, 0.0f), color});
-    rect.vertices.push_back({glm::vec3(x1, y1, 0.0f), color});
-    rect.vertices.push_back({glm::vec3(x0, y1, 0.0f), color});
+    const glm::vec3 n(0.0f);
+    const glm::vec3 tc(alpha, 0.0f, -2.0f);
+    rect.vertices.push_back({glm::vec3(x0, y0, 0.0f), color, n, tc});
+    rect.vertices.push_back({glm::vec3(x1, y0, 0.0f), color, n, tc});
+    rect.vertices.push_back({glm::vec3(x1, y1, 0.0f), color, n, tc});
+    rect.vertices.push_back({glm::vec3(x0, y1, 0.0f), color, n, tc});
     rect.indices.insert(rect.indices.end(),
                         {base, base + 1, base + 2, base, base + 2, base + 3});
     append_mesh(scene.debug_screen, rect);
@@ -105,24 +107,22 @@ void HudComposer::compose(const RuntimeHudSnapshot &snapshot,
     float y1 = 0.0f;
   };
 
-  auto draw_panel = [&](const ScreenPanel &panel, const glm::vec3 &outer,
-                        const glm::vec3 &inner) {
-    append_screen_rect(panel.x0, panel.y0, panel.x1, panel.y1, outer);
-    append_screen_rect(panel.x0 + 0.01f, panel.y0 - 0.01f, panel.x1 - 0.01f,
-                       panel.y1 + 0.01f, inner);
+  auto draw_panel = [&](const ScreenPanel &panel, const glm::vec3 &border,
+                        const glm::vec3 &inner, float alpha = 0.74f) {
+    append_screen_rect(panel.x0, panel.y0, panel.x1, panel.y1, border, 0.85f);
+    append_screen_rect(panel.x0 + 0.005f, panel.y0 - 0.007f, panel.x1 - 0.005f,
+                       panel.y1 + 0.007f, inner, alpha);
   };
 
-  const ScreenPanel menu_panel{safe_left - 0.02f, safe_top, 0.18f,
-                               safe_bottom + 0.12f};
-  const ScreenPanel devhud_panel{safe_left - 0.02f, safe_top, 0.14f, 0.12f};
-  const ScreenPanel minigame_panel{0.30f, safe_top, safe_right, 0.70f};
-  const ScreenPanel hotspot_panel{0.46f, -0.73f, safe_right, safe_bottom};
-  const ScreenPanel objective_panel{safe_left - 0.02f, -0.56f, 0.22f,
-                                    safe_bottom};
+  const ScreenPanel menu_panel{-0.52f, 0.82f, 0.42f, -0.76f};
+  const ScreenPanel devhud_panel{safe_left, safe_top, -0.02f, 0.18f};
+  const ScreenPanel minigame_panel{0.34f, safe_top, safe_right, 0.68f};
+  const ScreenPanel hotspot_panel{0.44f, -0.74f, safe_right, safe_bottom};
+  const ScreenPanel objective_panel{safe_left, -0.68f, -0.14f, safe_bottom};
 
   if (menu_view.open) {
-    draw_panel(menu_panel, glm::vec3(0.05f, 0.07f, 0.10f),
-               glm::vec3(0.09f, 0.11f, 0.16f));
+    draw_panel(menu_panel, glm::vec3(0.28f, 0.42f, 0.60f),
+               glm::vec3(0.07f, 0.10f, 0.15f), 0.84f);
 
     float y = menu_panel.y0 - 0.06f;
     if (!menu_view.title.empty()) {
@@ -227,19 +227,22 @@ void HudComposer::compose(const RuntimeHudSnapshot &snapshot,
   }
 
   if (snapshot.show_objective_panel) {
-    draw_panel(objective_panel, glm::vec3(0.04f, 0.06f, 0.08f),
-               glm::vec3(0.08f, 0.10f, 0.13f));
+    draw_panel(objective_panel, glm::vec3(0.24f, 0.36f, 0.52f),
+               glm::vec3(0.07f, 0.10f, 0.15f), 0.72f);
+    append_screen_rect(objective_panel.x0 + 0.005f, objective_panel.y0 - 0.007f,
+                       objective_panel.x0 + 0.015f, objective_panel.y1 + 0.007f,
+                       glm::vec3(0.28f, 0.76f, 0.98f), 0.95f);
     append_mesh(scene.debug_screen,
                 build_screen_text_mesh(snapshot.objective_status,
-                                       objective_panel.x0 + 0.04f,
-                                       objective_panel.y0 - 0.05f, 0.0050f,
-                                       glm::vec3(0.95f, 0.97f, 1.0f)));
+                                       objective_panel.x0 + 0.035f,
+                                       objective_panel.y0 - 0.055f, 0.0054f,
+                                       glm::vec3(0.96f, 0.98f, 1.0f)));
     if (!snapshot.objective_hint.empty()) {
       append_mesh(scene.debug_screen,
                   build_screen_text_mesh(snapshot.objective_hint,
-                                         objective_panel.x0 + 0.04f,
-                                         objective_panel.y0 - 0.11f, 0.0045f,
-                                         glm::vec3(0.84f, 0.90f, 0.98f)));
+                                         objective_panel.x0 + 0.035f,
+                                         objective_panel.y0 - 0.125f, 0.0047f,
+                                         glm::vec3(0.78f, 0.87f, 0.97f)));
     }
   }
 }

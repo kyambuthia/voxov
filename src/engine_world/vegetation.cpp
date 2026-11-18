@@ -299,7 +299,7 @@ RenderMesh build_vegetation_mesh(const BlockWorld &world,
                                               ? kLegacyFoliageLayerA
                                               : kLegacyFoliageLayerB;
                     x_mesh(angle, 0.72, 0.68, layer,
-                           glm::vec3(0.55f, 0.74f, 0.30f));
+                           glm::vec3(0.88f, 0.96f, 0.82f));
                 } else {
                     const uint8_t layer = (unit_float(splitmix64(key ^ 0x65u)) < 0.5f)
                                               ? kLegacyGrassLayerA
@@ -308,7 +308,7 @@ RenderMesh build_vegetation_mesh(const BlockWorld &world,
                         static_cast<double>(unit_float(splitmix64(key ^ 0x37u))) *
                         0.28;
                     x_mesh(angle, 0.68, h, layer,
-                           glm::vec3(0.54f, 0.72f, 0.24f));
+                           glm::vec3(0.92f, 0.98f, 0.86f));
                 }
             } else if (style == VegetationStyle::VintageStoryWind) {
                 auto hash_mesh = [&](double radians, double width, double height,
@@ -340,7 +340,7 @@ RenderMesh build_vegetation_mesh(const BlockWorld &world,
                                               ? kLegacyFoliageLayerA
                                               : kLegacyFoliageLayerB;
                     hash_mesh(angle, 0.80, 0.74, layer,
-                              glm::vec3(0.52f, 0.72f, 0.28f), 3);
+                              glm::vec3(0.88f, 0.96f, 0.82f), 3);
                 } else {
                     const uint8_t layer = (unit_float(splitmix64(key ^ 0x65u)) < 0.5f)
                                               ? kLegacyGrassLayerA
@@ -349,7 +349,7 @@ RenderMesh build_vegetation_mesh(const BlockWorld &world,
                         static_cast<double>(unit_float(splitmix64(key ^ 0x37u))) *
                         0.34;
                     hash_mesh(angle, 0.72, h, layer,
-                              glm::vec3(0.52f, 0.72f, 0.22f), 4);
+                              glm::vec3(0.92f, 0.98f, 0.86f), 4);
                 }
             } else if (style == VegetationStyle::VoxelCuboids) {
                 if (type_roll < 0.08f) {
@@ -560,12 +560,12 @@ RenderMesh build_flat_vegetation_mesh(const VoxelChunk &voxels,
                 } else if (type_roll < 0.22f) {
                     const uint8_t layer = (unit_float(splitmix64(key ^ 0x63u)) < 0.5f)
                                               ? kLegacyFoliageLayerA : kLegacyFoliageLayerB;
-                    x_mesh(angle, 0.72, 0.68, layer, glm::vec3(0.55f, 0.74f, 0.30f));
+                    x_mesh(angle, 0.72, 0.68, layer, glm::vec3(0.88f, 0.96f, 0.82f));
                 } else {
                     const uint8_t layer = (unit_float(splitmix64(key ^ 0x65u)) < 0.5f)
                                               ? kLegacyGrassLayerA : kLegacyGrassLayerB;
                     const double h = 0.52 + static_cast<double>(unit_float(splitmix64(key ^ 0x37u))) * 0.28;
-                    x_mesh(angle, 0.68, h, layer, glm::vec3(0.54f, 0.72f, 0.24f));
+                    x_mesh(angle, 0.68, h, layer, glm::vec3(0.92f, 0.98f, 0.86f));
                 }
             } else if (style == VegetationStyle::VintageStoryWind) {
                 auto hash_mesh = [&](double radians, double width, double height,
@@ -589,12 +589,12 @@ RenderMesh build_flat_vegetation_mesh(const VoxelChunk &voxels,
                 } else if (type_roll < 0.24f) {
                     const uint8_t layer = (unit_float(splitmix64(key ^ 0x63u)) < 0.5f)
                                               ? kLegacyFoliageLayerA : kLegacyFoliageLayerB;
-                    hash_mesh(angle, 0.80, 0.74, layer, glm::vec3(0.52f, 0.72f, 0.28f), 3);
+                    hash_mesh(angle, 0.80, 0.74, layer, glm::vec3(0.88f, 0.96f, 0.82f), 3);
                 } else {
                     const uint8_t layer = (unit_float(splitmix64(key ^ 0x65u)) < 0.5f)
                                               ? kLegacyGrassLayerA : kLegacyGrassLayerB;
                     const double h = 0.58 + static_cast<double>(unit_float(splitmix64(key ^ 0x37u))) * 0.34;
-                    hash_mesh(angle, 0.72, h, layer, glm::vec3(0.52f, 0.72f, 0.22f), 4);
+                    hash_mesh(angle, 0.72, h, layer, glm::vec3(0.92f, 0.98f, 0.86f), 4);
                 }
             } else if (style == VegetationStyle::VoxelCuboids) {
                 if (type_roll < 0.08f) {

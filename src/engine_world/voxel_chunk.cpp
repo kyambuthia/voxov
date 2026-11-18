@@ -591,6 +591,179 @@ RenderMesh VoxelChunk::build_greedy_mesh(
   return mesh;
 }
 
+RenderMesh VoxelChunk::build_binary_greedy_mesh(
+    const glm::vec3 &origin, float voxel_scale,
+    int32_t world_base_x, int32_t world_base_z,
+    const std::function<bool(int, int, int)> &world_solid_at) const {
+  RenderMesh mesh{};
+  if (is_empty() || size_x_ > 64 || size_y_ > 64 || size_z_ > 64) {
+    return mesh;
+  }
+
+  auto texture_layer = [](VoxelMaterial mat, bool top_face) -> float {
+    if (mat == VoxelMaterial::Grass && top_face) return 0.0f;
+    if (mat == VoxelMaterial::Grass) return 3.0f;
+    if (mat == VoxelMaterial::Stone) return 2.0f;
+    if (mat == VoxelMaterial::Sand) return 4.0f;
+    if (mat == VoxelMaterial::Planks) return 5.0f;
+    if (mat == VoxelMaterial::Brick) return 6.0f;
+    if (mat == VoxelMaterial::Snow) return 7.0f;
+    if (mat == VoxelMaterial::Water) return -0.5f;
+    return 1.0f;
+  };
+
+  auto cell_solid = [&](int x, int y, int z) -> bool {
+    if (x >= 0 && x < size_x_ && y >= 0 && y < size_y_ && z >= 0 && z < size_z_) {
+      return solid(x, y, z);
+    }
+    if (y < 0 || y >= size_y_ || !world_solid_at) {
+      return false;
+    }
+    return world_solid_at(world_base_x + x, y, world_base_z + z);
+  };
+
+  for (int axis = 0; axis < 3; ++axis) {
+    const int u_axis = (axis + 1) % 3;
+    const int v_axis = (axis + 2) % 3;
+    const int dims[3] = {size_x_, size_y_, size_z_};
+    const int d_len = dims[axis];
+    const int u_len = dims[u_axis];
+    const int v_len = dims[v_axis];
+
+    std::vector<uint64_t> slice_mask(static_cast<size_t>(v_len), 0ull);
+    std::vector<VoxelMaterial> slice_mats(static_cast<size_t>(u_len * v_len),
+                                          VoxelMaterial::Air);
+
+    for (int dir : {-1, 1}) {
+      glm::vec3 normal(0.0f);
+      normal[axis] = static_cast<float>(dir);
+      const bool top_face = (axis == 1 && dir > 0);
+
+      for (int d = 0; d < d_len; ++d) {
+        std::fill(slice_mask.begin(), slice_mask.end(), 0ull);
+        std::fill(slice_mats.begin(), slice_mats.end(), VoxelMaterial::Air);
+
+        for (int v = 0; v < v_len; ++v) {
+          uint64_t row_bits = 0ull;
+          for (int u = 0; u < u_len; ++u) {
+            int c[3]{};
+            c[axis] = d;
+            c[u_axis] = u;
+            c[v_axis] = v;
+            if (!solid(c[0], c[1], c[2])) {
+              continue;
+            }
+            int nc[3] = {c[0], c[1], c[2]};
+            nc[axis] += dir;
+            if (!cell_solid(nc[0], nc[1], nc[2])) {
+              row_bits |= (1ull << u);
+              slice_mats[static_cast<size_t>(v * u_len + u)] =
+                  material(c[0], c[1], c[2]);
+            }
+          }
+          slice_mask[static_cast<size_t>(v)] = row_bits;
+        }
+
+        for (int v = 0; v < v_len; ++v) {
+          while (slice_mask[static_cast<size_t>(v)] != 0ull) {
+            const int u = std::countr_zero(slice_mask[static_cast<size_t>(v)]);
+            const VoxelMaterial mat =
+                slice_mats[static_cast<size_t>(v * u_len + u)];
+            int w = 1;
+            while (u + w < u_len &&
+                   ((slice_mask[static_cast<size_t>(v)] >> (u + w)) & 1ull) &&
+                   slice_mats[static_cast<size_t>(v * u_len + u + w)] == mat) {
+              ++w;
+            }
+            const uint64_t run_mask =
+                (w == 64) ? ~0ull : (((1ull << w) - 1ull) << u);
+
+            int h = 1;
+            while (v + h < v_len &&
+                   (slice_mask[static_cast<size_t>(v + h)] & run_mask) ==
+                       run_mask) {
+              bool mat_match = true;
+              for (int k = 0; k < w; ++k) {
+                if (slice_mats[static_cast<size_t>((v + h) * u_len + u + k)] !=
+                    mat) {
+                  mat_match = false;
+                  break;
+                }
+              }
+              if (!mat_match) {
+                break;
+              }
+              ++h;
+            }
+
+            for (int r = 0; r < h; ++r) {
+              slice_mask[static_cast<size_t>(v + r)] &= ~run_mask;
+            }
+
+            float p0[3]{}, p1[3]{}, p2[3]{}, p3[3]{};
+            const float face_d = static_cast<float>(dir > 0 ? d + 1 : d);
+            p0[axis] = p1[axis] = p2[axis] = p3[axis] = face_d;
+            p0[u_axis] = static_cast<float>(u);
+            p0[v_axis] = static_cast<float>(v);
+            p1[u_axis] = static_cast<float>(u + w);
+            p1[v_axis] = static_cast<float>(v);
+            p2[u_axis] = static_cast<float>(u + w);
+            p2[v_axis] = static_cast<float>(v + h);
+            p3[u_axis] = static_cast<float>(u);
+            p3[v_axis] = static_cast<float>(v + h);
+
+            // Orient side-face UVs so V runs upward (+Y) for Grass turf lip.
+            float uv0[2] = {0.0f, 0.0f};
+            float uv1[2] = {static_cast<float>(w), 0.0f};
+            float uv2[2] = {static_cast<float>(w), static_cast<float>(h)};
+            float uv3[2] = {0.0f, static_cast<float>(h)};
+            if (axis == 0) { // X faces: u=Y, v=Z -> swap so u=Z, v=Y
+              uv0[0] = 0.0f; uv0[1] = 0.0f;
+              uv1[0] = 0.0f; uv1[1] = static_cast<float>(w);
+              uv2[0] = static_cast<float>(h); uv2[1] = static_cast<float>(w);
+              uv3[0] = static_cast<float>(h); uv3[1] = 0.0f;
+            }
+
+            if (dir < 0) {
+              std::swap(p1, p3);
+              std::swap(uv1[0], uv3[0]);
+              std::swap(uv1[1], uv3[1]);
+            }
+
+            const glm::vec3 color = material_color(mat, top_face, 0.5f);
+            const float layer = texture_layer(mat, top_face);
+            const uint32_t base = static_cast<uint32_t>(mesh.vertices.size());
+            auto emit = [&](const float p[3], float tu, float tv) {
+              mesh.vertices.push_back(RenderVertex{
+                  glm::vec3(p[0], p[1], p[2]) * voxel_scale - origin,
+                  color,
+                  normal,
+                  glm::vec3(tu, tv, layer),
+              });
+            };
+            emit(p0, uv0[0], uv0[1]);
+            emit(p1, uv1[0], uv1[1]);
+            emit(p2, uv2[0], uv2[1]);
+            emit(p3, uv3[0], uv3[1]);
+            mesh.indices.insert(mesh.indices.end(),
+                                {base, base + 1, base + 2,
+                                 base, base + 2, base + 3});
+          }
+        }
+      }
+    }
+  }
+  if (!mesh.vertices.empty() && mesh.vertices.size() < 65536) {
+    mesh.use_16_bit_indices = true;
+    mesh.indices16.reserve(mesh.indices.size());
+    for (uint32_t idx : mesh.indices) {
+      mesh.indices16.push_back(static_cast<uint16_t>(idx));
+    }
+    mesh.indices.clear();
+  }
+  return mesh;
+}
+
 RenderMesh VoxelChunk::build_sky_placeholder(float size) const {
   RenderMesh mesh;
   const float h = size * 0.5f;

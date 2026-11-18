@@ -462,4 +462,188 @@ RenderMesh build_grass_mesh(const BlockWorld &world,
                                  VegetationStyle::ImpostorCards, lod_level);
 }
 
+
+uint64_t flat_mesh_id(int32_t chunk_x, int32_t chunk_z) {
+    uint64_t key = static_cast<uint64_t>(static_cast<uint32_t>(chunk_x)) << 32u;
+    key ^= static_cast<uint64_t>(static_cast<uint32_t>(chunk_z));
+    uint64_t id = splitmix64(key ^ 0x464C4154564547ull);
+    return id == 0 ? 1 : id;
+}
+
+RenderMesh build_flat_vegetation_mesh(const VoxelChunk &voxels,
+                                      int32_t chunk_x,
+                                      int32_t chunk_z,
+                                      const glm::dvec3 &camera_relative_origin,
+                                      VegetationStyle style,
+                                      uint64_t world_seed) {
+    RenderMesh mesh{};
+    mesh.mesh_id = flat_mesh_id(chunk_x, chunk_z);
+    mesh.world_origin = camera_relative_origin;
+    mesh.material = (style == VegetationStyle::VoxelCuboids)
+                        ? 0
+                        : kBillboardVegetationMaterial;
+    mesh.double_sided = false;
+
+    if (style == VegetationStyle::Off || voxels.is_empty()) {
+        return mesh;
+    }
+
+    const int sx = voxels.size_x();
+    const int sy = voxels.size_y();
+    const int sz = voxels.size_z();
+    const int32_t base_x = chunk_x * sx;
+    const int32_t base_z = chunk_z * sz;
+    const uint64_t seed = world_seed ^ 0x4752415353ull;
+    const glm::dvec3 up(0.0, 1.0, 0.0);
+    const glm::dvec3 east(1.0, 0.0, 0.0);
+    const glm::dvec3 north(0.0, 0.0, 1.0);
+
+    mesh.vertices.reserve(512);
+    mesh.indices.reserve(1024);
+
+    for (int z = 0; z < sz; ++z) {
+        for (int x = 0; x < sx; ++x) {
+            int top_y = -1;
+            for (int y = sy - 1; y >= 0; --y) {
+                if (voxels.solid(x, y, z)) {
+                    top_y = y;
+                    break;
+                }
+            }
+            if (top_y < 0 || voxels.material(x, top_y, z) != VoxelMaterial::Grass) {
+                continue;
+            }
+            const int32_t gx = base_x + x;
+            const int32_t gz = base_z + z;
+            const uint64_t key = splitmix64(
+                seed ^
+                (static_cast<uint64_t>(static_cast<uint32_t>(gx)) << 17u) ^
+                static_cast<uint64_t>(static_cast<uint32_t>(gz)));
+            const uint64_t patch_key = splitmix64(
+                seed ^ static_cast<uint64_t>(static_cast<uint32_t>(gx / 4)) * 0x9e3779b9u ^
+                static_cast<uint64_t>(static_cast<uint32_t>(gz / 4)) * 0x85ebca6bu);
+            const float patch = unit_float(patch_key);
+            const float density = (style == VegetationStyle::VintageStoryWind)
+                                      ? (0.28f + patch * 0.36f)
+                                      : (0.20f + patch * 0.30f);
+            if (unit_float(key) > density) continue;
+
+            const float jx = unit_float(splitmix64(key ^ 0x11u)) - 0.5f;
+            const float jz = unit_float(splitmix64(key ^ 0x29u)) - 0.5f;
+            const glm::dvec3 position(
+                static_cast<double>(gx) + 0.5 + static_cast<double>(jx) * 0.32,
+                static_cast<double>(top_y + 1) + 0.005,
+                static_cast<double>(gz) + 0.5 + static_cast<double>(jz) * 0.32);
+
+            const float type_roll = unit_float(splitmix64(key ^ 0x31u));
+            const double angle = static_cast<double>(
+                unit_float(splitmix64(key ^ 0x59u)) * 6.2831853f);
+            auto tangent = [&](double radians) {
+                return east * std::cos(radians) + north * std::sin(radians);
+            };
+
+            if (style == VegetationStyle::MinecraftCrossed) {
+                auto x_mesh = [&](double radians, double width, double height,
+                                  uint8_t layer, const glm::vec3 &color) {
+                    const glm::vec3 base_c = color * 0.62f;
+                    for (int card = 0; card < 2; ++card) {
+                        const double a = radians + 1.5707963 * card;
+                        append_billboard_quad(mesh, position, tangent(a), up,
+                                              width, height, layer, base_c,
+                                              color, camera_relative_origin);
+                    }
+                };
+                if (type_roll < 0.08f) {
+                    const uint8_t layer = (unit_float(splitmix64(key ^ 0x61u)) < 0.5f)
+                                              ? kLegacyFlowerLayerA : kLegacyFlowerLayerB;
+                    x_mesh(angle, 0.52, 0.55, layer, glm::vec3(0.95f));
+                } else if (type_roll < 0.22f) {
+                    const uint8_t layer = (unit_float(splitmix64(key ^ 0x63u)) < 0.5f)
+                                              ? kLegacyFoliageLayerA : kLegacyFoliageLayerB;
+                    x_mesh(angle, 0.72, 0.68, layer, glm::vec3(0.55f, 0.74f, 0.30f));
+                } else {
+                    const uint8_t layer = (unit_float(splitmix64(key ^ 0x65u)) < 0.5f)
+                                              ? kLegacyGrassLayerA : kLegacyGrassLayerB;
+                    const double h = 0.52 + static_cast<double>(unit_float(splitmix64(key ^ 0x37u))) * 0.28;
+                    x_mesh(angle, 0.68, h, layer, glm::vec3(0.54f, 0.72f, 0.24f));
+                }
+            } else if (style == VegetationStyle::VintageStoryWind) {
+                auto hash_mesh = [&](double radians, double width, double height,
+                                     uint8_t layer, const glm::vec3 &color, int planes) {
+                    const glm::vec3 base_c = color * 0.50f;
+                    const glm::vec3 tip_c = color * glm::vec3(1.06f, 1.10f, 0.92f);
+                    for (int card = 0; card < planes; ++card) {
+                        const double a = radians + 3.14159265 * static_cast<double>(card) / static_cast<double>(planes);
+                        const glm::dvec3 t = tangent(a);
+                        const glm::dvec3 n = glm::normalize(glm::cross(t, up));
+                        const glm::dvec3 offset = (planes >= 4) ? n * (width * 0.14 * ((card & 1) ? 1.0 : -1.0)) : glm::dvec3(0.0);
+                        append_billboard_quad(mesh, position + offset, t, up,
+                                              width, height, layer, base_c,
+                                              tip_c, camera_relative_origin);
+                    }
+                };
+                if (type_roll < 0.08f) {
+                    const uint8_t layer = (unit_float(splitmix64(key ^ 0x61u)) < 0.5f)
+                                              ? kLegacyFlowerLayerA : kLegacyFlowerLayerB;
+                    hash_mesh(angle, 0.48, 0.56, layer, glm::vec3(0.98f), 2);
+                } else if (type_roll < 0.24f) {
+                    const uint8_t layer = (unit_float(splitmix64(key ^ 0x63u)) < 0.5f)
+                                              ? kLegacyFoliageLayerA : kLegacyFoliageLayerB;
+                    hash_mesh(angle, 0.80, 0.74, layer, glm::vec3(0.52f, 0.72f, 0.28f), 3);
+                } else {
+                    const uint8_t layer = (unit_float(splitmix64(key ^ 0x65u)) < 0.5f)
+                                              ? kLegacyGrassLayerA : kLegacyGrassLayerB;
+                    const double h = 0.58 + static_cast<double>(unit_float(splitmix64(key ^ 0x37u))) * 0.34;
+                    hash_mesh(angle, 0.72, h, layer, glm::vec3(0.52f, 0.72f, 0.22f), 4);
+                }
+            } else if (style == VegetationStyle::VoxelCuboids) {
+                if (type_roll < 0.08f) {
+                    const double stem_h = 0.28 + static_cast<double>(unit_float(splitmix64(key ^ 0x49u))) * 0.12;
+                    append_voxel_box(mesh, position, east, up, north, 0.03, stem_h, 0.03,
+                                     glm::vec3(0.18f, 0.34f, 0.10f), glm::vec3(0.28f, 0.52f, 0.16f), camera_relative_origin);
+                    const float hue = unit_float(splitmix64(key ^ 0x71u));
+                    const glm::vec3 petal = (hue < 0.33f) ? glm::vec3(0.95f, 0.82f, 0.18f)
+                                          : (hue < 0.66f) ? glm::vec3(0.92f, 0.30f, 0.36f)
+                                                          : glm::vec3(0.52f, 0.68f, 0.96f);
+                    append_voxel_box(mesh, position + up * stem_h, east, up, north, 0.09, 0.08, 0.09,
+                                     petal * 0.85f, petal, camera_relative_origin);
+                } else if (type_roll < 0.18f) {
+                    append_voxel_box(mesh, position, east, up, north, 0.20, 0.30, 0.20,
+                                     glm::vec3(0.20f, 0.34f, 0.10f), glm::vec3(0.38f, 0.58f, 0.18f), camera_relative_origin);
+                    append_voxel_box(mesh, position + east * 0.10 + up * 0.18, east, up, north, 0.13, 0.20, 0.13,
+                                     glm::vec3(0.22f, 0.37f, 0.11f), glm::vec3(0.38f, 0.58f, 0.18f), camera_relative_origin);
+                } else {
+                    for (int b = 0; b < 3; ++b) {
+                        const double ba = angle + 2.0943951 * b;
+                        const glm::dvec3 bx = tangent(ba);
+                        const glm::dvec3 bz = glm::normalize(glm::cross(bx, up));
+                        const double bh = 0.24 + static_cast<double>(unit_float(splitmix64(key ^ (0x81u + b)))) * 0.22;
+                        append_voxel_box(mesh, position + bx * 0.08, bx, up, bz, 0.032, bh, 0.032,
+                                         glm::vec3(0.22f, 0.36f, 0.10f), glm::vec3(0.46f, 0.68f, 0.18f), camera_relative_origin);
+                    }
+                }
+            } else {
+                auto billboard = [&](double radians, double width, double height,
+                                     uint8_t texture_layer, const glm::vec3 &color, int card_count) {
+                    for (int card = 0; card < card_count; ++card) {
+                        const double card_angle = radians + 3.14159265 * static_cast<double>(card) / static_cast<double>(card_count);
+                        append_billboard_quad(mesh, position, tangent(card_angle), up,
+                                              width, height, texture_layer, color, color, camera_relative_origin);
+                    }
+                };
+                if (type_roll < 0.07f) {
+                    billboard(angle, 0.34, 0.58, kFlowerLayer, glm::vec3(0.92f), 2);
+                } else if (type_roll < 0.12f) {
+                    billboard(angle, 1.08, 0.96, kShrubLayer, glm::vec3(0.72f, 0.86f, 0.66f), 3);
+                } else if (type_roll < 0.30f) {
+                    billboard(angle, 0.62, 0.42, kFernLayer, glm::vec3(0.70f, 0.90f, 0.52f), 2);
+                } else {
+                    billboard(angle, 0.42, 0.72, kGrassLayer, glm::vec3(0.68f, 0.84f, 0.28f), 3);
+                }
+            }
+        }
+    }
+    return mesh;
+}
+
 } // namespace vegetation

@@ -51,4 +51,13 @@ RenderMesh build_grass_mesh(const BlockWorld &world,
                             const glm::dvec3 &camera_relative_origin,
                             int32_t lod_level = 0);
 
+uint64_t flat_mesh_id(int32_t chunk_x, int32_t chunk_z);
+
+RenderMesh build_flat_vegetation_mesh(const VoxelChunk &voxels,
+                                      int32_t chunk_x,
+                                      int32_t chunk_z,
+                                      const glm::dvec3 &camera_relative_origin,
+                                      VegetationStyle style,
+                                      uint64_t world_seed);
+
 } // namespace vegetation

@@ -75,6 +75,11 @@ public:
   // Bitmask-accelerated greedy mesher (64-bit occupancy + countr_zero).
   RenderMesh build_binary_greedy_mesh(const glm::vec3 &origin = glm::vec3(0.0f),
                                       float voxel_scale = 1.0f) const;
+  // Textured, neighbor-culled binary greedy mesher for endless flat worlds.
+  RenderMesh build_binary_greedy_mesh(
+      const glm::vec3 &origin, float voxel_scale,
+      int32_t world_base_x, int32_t world_base_z,
+      const std::function<bool(int, int, int)> &world_solid_at) const;
 
   // Variant with world-space solid query for inter-chunk face culling.
   // world_solid_at(wx, wy, wz) → true if the voxel is solid in a neighbor chunk.

@@ -189,9 +189,10 @@ void main() {
         vec4 plant_tex = texture(
             sampler2DArray(vegetation_texture, vegetation_sampler),
             vec3(fract(v_texcoord.xy), vegetation_layer));
-        if (plant_tex.a < 0.35) discard;
+        float alpha_cutoff = (v_texcoord.z < 6.0) ? 0.50 : 0.35;
+        if (plant_tex.a < alpha_cutoff) discard;
         base_color = pow(plant_tex.rgb, vec3(0.78)) * v_color;
-        output_alpha = plant_tex.a;
+        output_alpha = (v_texcoord.z < 6.0) ? 1.0 : plant_tex.a;
         if (v_texcoord.z < 2.0 ||
             (v_texcoord.z >= 6.0 && v_texcoord.z < 14.0)) {
             // Keep generated foliage in the same muted olive family as the
@@ -242,7 +243,10 @@ void main() {
     vec3 diffuse = light_diffuse * material_diffuse * ndl;
     vec3 specular = light_specular * material_specular * spec_factor;
     float sun_boost = max(sun_dir_intensity.w / 20.0, 0.0);
-    vec3 lit = (ambient + diffuse + specular) * sun_boost;
+    float translucency = (render_flags.y > 0.5)
+        ? pow(max(dot(v, -sun_dir), 0.0), 3.0) * 0.28
+        : 0.0;
+    vec3 lit = (ambient + diffuse + specular + light_diffuse * translucency) * sun_boost;
 
     vec3 terrain_lit = base_color * lit * atm_trans;
     float fog_amount = clamp(

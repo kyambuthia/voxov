@@ -691,17 +691,23 @@ void append_player_debug(RenderMesh &mesh, const PlayerEntity &player,
   if (render_markers) {
     append_mesh(mesh, target_marker);
   }
+  glm::quat avatar_orientation = body_orientation;
+  if (render_skinned_avatar && player.locomotion.input_magnitude > 0.05f) {
+    const float move_yaw = glm::radians(-player.locomotion.move_direction_deg);
+    avatar_orientation = glm::normalize(
+        glm::angleAxis(move_yaw, surface_up) * body_orientation);
+  }
   if (render_skinned_avatar && selected_player_model != nullptr) {
     append_mesh(mesh, selected_player_model->build_render_mesh(
                           animation, player.transform.position,
-                          body_orientation,
+                          avatar_orientation,
                           player_color_from_id(player.network_id)));
   }
   if (render_skeleton_only ||
       (render_skinned_avatar && (collision_debug_enabled || devhud_enabled))) {
     if (render_skinned_avatar && selected_player_model != nullptr) {
       selected_player_model->append_debug_skeleton(
-          mesh, animation, player.transform.position, body_orientation,
+          mesh, animation, player.transform.position, avatar_orientation,
           skeleton_color, skeleton_thickness);
     } else {
       const SkeletonPose pose = SkeletalAnimator::sample_pose(

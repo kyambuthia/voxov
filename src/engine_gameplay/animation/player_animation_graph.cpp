@@ -34,7 +34,7 @@ const std::vector<StateDef> &definitions_storage() {
         {
             PlayerAnimState::StartMove,
             "start_move",
-            {"start_move", "move_start", "walk_start", "run_start"},
+            {"start_move", "move_start", "walk_start", "run_start", "start_forward"},
             {PlayerAnimState::LocomotionWalk, PlayerAnimState::LocomotionRun},
             {
                 EventDef{0.42f, PlayerAnimEventType::Footstep, "start_step"},
@@ -47,7 +47,7 @@ const std::vector<StateDef> &definitions_storage() {
         {
             PlayerAnimState::StopMove,
             "stop_move",
-            {"stop_move", "move_stop", "brake", "halt"},
+            {"stop_move", "move_stop", "brake", "halt", "stop"},
             {PlayerAnimState::Idle},
             {
                 EventDef{0.22f, PlayerAnimEventType::Footstep, "stop_step"},
@@ -60,7 +60,7 @@ const std::vector<StateDef> &definitions_storage() {
         {
             PlayerAnimState::LocomotionWalk,
             "locomotion_walk",
-            {"locomotion_walk", "walk", "jog"},
+            {"locomotion_walk", "walk", "jog", "run"},
             {},
             {
                 EventDef{0.14f, PlayerAnimEventType::Footstep, "left"},
@@ -172,7 +172,7 @@ const std::vector<StateDef> &definitions_storage() {
         {
             PlayerAnimState::LocomotionRun,
             "locomotion_run",
-            {"locomotion_run", "run", "sprint"},
+            {"locomotion_run", "sprint", "run"},
             {PlayerAnimState::LocomotionWalk},
             {
                 EventDef{0.12f, PlayerAnimEventType::Footstep, "left"},
@@ -300,7 +300,7 @@ const std::vector<StateDef> &definitions_storage() {
         {
             PlayerAnimState::JumpTakeoff,
             "jump_takeoff",
-            {"jump_takeoff", "jump_start", "takeoff", "jump"},
+            {"jump_takeoff", "jump_start", "takeoff", "jump_idle", "jump"},
             {PlayerAnimState::JumpLoop},
             {
                 EventDef{0.08f, PlayerAnimEventType::SoundTrigger, "jump"},
@@ -313,7 +313,7 @@ const std::vector<StateDef> &definitions_storage() {
         {
             PlayerAnimState::JumpLoop,
             "jump_loop",
-            {"jump_loop", "airborne_rise", "rise", "jump_up"},
+            {"jump_loop", "airborne_rise", "rise", "jump_up", "jump_running", "jump_idle"},
             {PlayerAnimState::FallLoop},
             {},
             AnimationLoopMode::Loop,
@@ -324,7 +324,7 @@ const std::vector<StateDef> &definitions_storage() {
         {
             PlayerAnimState::FallLoop,
             "fall_loop",
-            {"fall_loop", "airborne_fall", "fall", "airborne"},
+            {"fall_loop", "airborne_fall", "falling", "fall", "airborne"},
             {PlayerAnimState::JumpLoop},
             {},
             AnimationLoopMode::Loop,
@@ -335,7 +335,7 @@ const std::vector<StateDef> &definitions_storage() {
         {
             PlayerAnimState::LandSoft,
             "land_soft",
-            {"land_soft", "land", "landing"},
+            {"land_soft", "land", "landing", "drop_idle"},
             {PlayerAnimState::Idle, PlayerAnimState::LocomotionWalk},
             {
                 EventDef{0.08f, PlayerAnimEventType::Landing, "soft"},
@@ -349,7 +349,7 @@ const std::vector<StateDef> &definitions_storage() {
         {
             PlayerAnimState::LandHard,
             "land_hard",
-            {"land_hard", "hard_land", "heavy_land", "stumble"},
+            {"land_hard", "hard_land", "heavy_land", "stumble", "drop_running_roll"},
             {PlayerAnimState::Recovery, PlayerAnimState::Idle},
             {
                 EventDef{0.08f, PlayerAnimEventType::Landing, "hard"},
@@ -389,7 +389,7 @@ const std::vector<StateDef> &definitions_storage() {
         {
             PlayerAnimState::TurnInPlaceLeft,
             "turn_in_place_left",
-            {"turn_in_place_left", "turn_left", "idle_turn_left"},
+            {"turn_in_place_left", "turn_left", "idle_turn_left", "rotate_left"},
             {PlayerAnimState::Idle},
             {
                 EventDef{0.26f, PlayerAnimEventType::Footstep, "turn_left"},
@@ -402,7 +402,7 @@ const std::vector<StateDef> &definitions_storage() {
         {
             PlayerAnimState::TurnInPlaceRight,
             "turn_in_place_right",
-            {"turn_in_place_right", "turn_right", "idle_turn_right"},
+            {"turn_in_place_right", "turn_right", "idle_turn_right", "rotate_right"},
             {PlayerAnimState::Idle},
             {
                 EventDef{0.26f, PlayerAnimEventType::Footstep, "turn_right"},

@@ -4,6 +4,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cctype>
 #include <cmath>
 
 #include <glm/gtx/quaternion.hpp>
@@ -96,7 +97,29 @@ void sample_clip_pose(
     }
 }
 
+bool equals_ignore_case(std::string_view a, std::string_view b) {
+    if (a.size() != b.size()) {
+        return false;
+    }
+    for (size_t i = 0; i < a.size(); ++i) {
+        if (std::tolower(static_cast<unsigned char>(a[i])) !=
+            std::tolower(static_cast<unsigned char>(b[i]))) {
+            return false;
+        }
+    }
+    return true;
+}
+
 int find_clip_index_for_alias(const std::vector<AnimationClip> &clips, const std::vector<std::string> &aliases) {
+    // Prefer exact clip-name matches before substring matches so e.g.
+    // "idle" does not resolve to "drop_idle" or "run" to "drop_running".
+    for (const std::string &alias : aliases) {
+        for (size_t i = 0; i < clips.size(); ++i) {
+            if (equals_ignore_case(clips[i].name, alias)) {
+                return static_cast<int>(i);
+            }
+        }
+    }
     for (const std::string &alias : aliases) {
         for (size_t i = 0; i < clips.size(); ++i) {
             if (player_animation_matches_alias(clips[i].name, alias)) {
@@ -282,11 +305,26 @@ void animation_build_global_matrices(
     const AnimationSkeleton &skeleton,
     const std::vector<AnimationTransform> &local_pose,
     std::vector<glm::mat4> &out_global) {
-    out_global.resize(skeleton.nodes.size(), glm::mat4(1.0f));
-    for (size_t i = 0; i < skeleton.nodes.size(); ++i) {
-        const glm::mat4 local = animation_compose_trs(local_pose[i]);
-        const int parent = skeleton.nodes[i].parent;
-        out_global[i] = parent >= 0 ? out_global[static_cast<size_t>(parent)] * local : local;
+    const size_t n = skeleton.nodes.size();
+    out_global.assign(n, glm::mat4(1.0f));
+    std::vector<uint8_t> state(n, 0); // 0=unvisited, 1=visiting, 2=done
+    auto resolve = [&](auto &self, size_t idx) -> const glm::mat4 & {
+        if (state[idx] != 0) {
+            return out_global[idx];
+        }
+        state[idx] = 1;
+        const glm::mat4 local = animation_compose_trs(local_pose[idx]);
+        const int parent = skeleton.nodes[idx].parent;
+        if (parent >= 0 && static_cast<size_t>(parent) < n) {
+            out_global[idx] = self(self, static_cast<size_t>(parent)) * local;
+        } else {
+            out_global[idx] = local;
+        }
+        state[idx] = 2;
+        return out_global[idx];
+    };
+    for (size_t i = 0; i < n; ++i) {
+        resolve(resolve, i);
     }
 }
 

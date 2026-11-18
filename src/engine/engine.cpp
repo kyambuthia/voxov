@@ -3767,20 +3767,6 @@ void Engine::refresh_overlay_text() {
                              "CROUCH");
   }
 
-  append_screen_rect(scene.debug_screen, -0.94f, -0.63f, 0.24f, -0.88f,
-                     expedition_mission_.complete()
-                         ? glm::vec3(0.05f, 0.18f, 0.13f)
-                         : glm::vec3(0.04f, 0.07f, 0.10f));
-  append_screen_label(scene.debug_screen,
-                      std::string(expedition_mission_.status()), -0.90f,
-                      -0.69f, 0.0045f,
-                      expedition_mission_.complete()
-                          ? glm::vec3(0.45f, 1.0f, 0.68f)
-                          : glm::vec3(0.92f, 0.96f, 1.0f));
-  append_screen_label(scene.debug_screen,
-                      std::string(expedition_mission_.hint()), -0.90f,
-                      -0.78f, 0.0040f, glm::vec3(0.75f, 0.84f, 0.92f));
-
   if (piloting_ship_) {
     append_ship_hud();
   } else {

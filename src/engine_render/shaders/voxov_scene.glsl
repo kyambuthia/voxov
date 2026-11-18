@@ -127,7 +127,7 @@ float impostor_frame_layer(float base_layer) {
 vec3 atmosphere_transmittance(vec3 start, vec3 end) {
     vec3 dir = end - start;
     float dist = length(dir);
-    if (dist < 0.001) return vec3(1.0);
+    if (dist < 4.0) return vec3(1.0);
 
     float R = planet_center_radius.w;
     vec3 center = planet_center_radius.xyz;
@@ -148,13 +148,15 @@ vec3 atmosphere_transmittance(vec3 start, vec3 end) {
     float entry = max(0.0, -b - root);
     float exit_atm = min(dist, -b + root);
     if (exit_atm <= entry) return vec3(1.0);
-    float step_length = (exit_atm - entry) / 4.0;
+    float step_length = (exit_atm - entry) * 0.5;
     vec3 optical_depth = vec3(0.0);
-    for (int i = 0; i < 4; ++i) {
+    float inv_Hr = 1.0 / max(Hr, 0.001);
+    float inv_Hm = 1.0 / max(Hm, 0.001);
+    for (int i = 0; i < 2; ++i) {
         float altitude = max(0.0, length(origin + direction *
             (entry + (float(i) + 0.5) * step_length)) - R);
-        optical_depth += (betaR * exp(-altitude / max(Hr, 0.001)) +
-            vec3(betaM * 1.1 * exp(-altitude / max(Hm, 0.001)))) * step_length;
+        optical_depth += (betaR * exp(-altitude * inv_Hr) +
+            vec3(betaM * 1.1 * exp(-altitude * inv_Hm))) * step_length;
     }
     return exp(-optical_depth);
 }
@@ -248,7 +250,8 @@ void main() {
         : 0.0;
     vec3 lit = (ambient + diffuse + specular + light_diffuse * translucency) * sun_boost;
 
-    vec3 terrain_lit = base_color * lit * atm_trans;
+    vec3 raw_lit = base_color * lit;
+    vec3 terrain_lit = (raw_lit / (vec3(1.0) + raw_lit * 0.22)) * atm_trans;
     float fog_amount = clamp(
         (1.0 - dot(atm_trans, vec3(0.333333))) * 0.55, 0.0, 0.72);
     vec3 aerial_color = vec3(0.42, 0.61, 0.88);
@@ -272,7 +275,7 @@ void main() {
     // to infinity in the float projection (the sky-navigation view).
     vec4 ray = inverse_view_projection * vec4(corner, 0.0, 1.0);
     sky_ray = ray.xyz / ray.w;
-    gl_Position = vec4(corner, 0.5, 1.0);
+    gl_Position = vec4(corner, 1.0, 1.0);
 }
 @end
 
@@ -317,21 +320,23 @@ void main() {
 
     vec3 scatter = vec3(0.0);
     float optical_depth = 0.0;
-    float step_length = max(0.0, exit_atm - entry) / 8.0;
+    float step_length = max(0.0, exit_atm - entry) * 0.25;
     float mu = dot(block_ray, sun);
-    for (int i = 0; i < 8; ++i) {
+    float phase = 0.75 * (1.0 + mu * mu);
+    vec3 rayleigh = vec3(0.28, 0.65, 1.65) * phase;
+    vec3 haze = vec3(0.85, 0.68, 0.48) * pow(max(mu, 0.0), 16.0);
+    vec3 scatter_coeff = rayleigh + haze;
+    float inv_scale_h = 1.0 / (height * 0.25);
+    float inv_h = 1.0 / height;
+    for (int i = 0; i < 4; ++i) {
         vec3 point = origin + block_ray *
             (entry + (float(i) + 0.5) * step_length);
         float altitude = max(0.0, length(point) - radius);
-        float density = exp(-altitude / (height * 0.25));
-        float depth = density * step_length / height;
+        float depth = exp(-altitude * inv_scale_h) * step_length * inv_h;
         optical_depth += depth;
         vec2 shadow = sky_sphere(point, sun, radius);
         float lit = shadow.x > 0.001 ? 0.0 : 1.0;
-        float phase = 0.75 * (1.0 + mu * mu);
-        vec3 rayleigh = vec3(0.28, 0.65, 1.65) * phase;
-        vec3 haze = vec3(0.85, 0.68, 0.48) * pow(max(mu, 0.0), 16.0);
-        scatter += (rayleigh + haze) * lit * depth * exp(-optical_depth);
+        scatter += scatter_coeff * (lit * depth * exp(-optical_depth));
     }
 
     vec3 color = vec3(0.002, 0.003, 0.009);

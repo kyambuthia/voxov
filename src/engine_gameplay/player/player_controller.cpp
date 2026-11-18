@@ -797,13 +797,12 @@ PlayerCollisionDebug PlayerControllerSystem::simulate_fixed(
     const float facing_rad = to_radians(motion.facing_yaw_deg);
     glm::vec3 facing_forward(std::sin(facing_rad), 0.0f, std::cos(facing_rad));
     if (collision_world.has_planet_surface_collider()) {
-        // Same tangent basis as camera and movement for consistent orientation.
-        glm::vec3 world_ref = glm::vec3(0.0f, 1.0f, 0.0f);
-        if (std::abs(glm::dot(current_up, world_ref)) > 0.99f) {
-            world_ref = glm::vec3(0.0f, 0.0f, 1.0f);
-        }
-        const glm::vec3 east = glm::normalize(glm::cross(world_ref, current_up));
-        const glm::vec3 north = glm::normalize(glm::cross(current_up, east));
+        // Use the same transported tangent basis as camera and movement so
+        // character facing never drifts or flips as the player walks around the planet.
+        const glm::vec3 north =
+            player_surface_orientation::reference_forward(player.camera_rig, current_up);
+        const glm::vec3 east =
+            player_surface_orientation::east_from_forward(north, current_up);
         facing_forward =
             glm::normalize(north * std::cos(facing_rad) + east * std::sin(facing_rad));
     }

@@ -121,12 +121,15 @@ double smooth_metric(double current, double sample, double alpha = 0.25) {
 uint64_t bytes_to_kib(uint64_t bytes) { return (bytes + 1023u) / 1024u; }
 
 void append_screen_rect(RenderMesh &dst, float x0, float y0, float x1,
-                        float y1, const glm::vec3 &color) {
+                        float y1, const glm::vec3 &color,
+                        float alpha = 1.0f) {
   RenderMesh rect{};
-  rect.vertices.push_back({glm::vec3(x0, y0, 0.0f), color});
-  rect.vertices.push_back({glm::vec3(x1, y0, 0.0f), color});
-  rect.vertices.push_back({glm::vec3(x1, y1, 0.0f), color});
-  rect.vertices.push_back({glm::vec3(x0, y1, 0.0f), color});
+  const glm::vec3 n(0.0f);
+  const glm::vec3 tc(alpha, 0.0f, -2.0f);
+  rect.vertices.push_back({glm::vec3(x0, y0, 0.0f), color, n, tc});
+  rect.vertices.push_back({glm::vec3(x1, y0, 0.0f), color, n, tc});
+  rect.vertices.push_back({glm::vec3(x1, y1, 0.0f), color, n, tc});
+  rect.vertices.push_back({glm::vec3(x0, y1, 0.0f), color, n, tc});
   rect.indices.insert(rect.indices.end(), {0, 1, 2, 0, 2, 3});
   append_mesh(dst, rect);
 }
@@ -209,35 +212,39 @@ void append_touch_button_hint(RenderMesh &dst, float x0, float y0, float x1,
 // Bottom-right block palette: one swatch per slot with its number key,
 // the selected slot outlined and named above the bar.
 void append_block_hotbar(RenderMesh &dst, size_t selected, float aspect) {
-  constexpr float kSlot = 0.062f;
+  constexpr float kSlot = 0.056f;
   constexpr float kGap = 0.014f;
-  constexpr float kRight = 0.94f;
-  constexpr float kTop = -0.66f;
-  // NDC x spans the wider screen axis; scale heights so swatches are square.
+  constexpr float kTop = -0.74f;
   const float slot_height = kSlot * std::max(aspect, 0.1f);
-  const float left = kRight - static_cast<float>(kBlockHotbarSize) * kSlot -
-                     static_cast<float>(kBlockHotbarSize - 1) * kGap;
-  append_screen_rect(dst, left - 0.02f, kTop + 0.11f, kRight + 0.02f,
-                     kTop - slot_height - 0.075f,
-                     glm::vec3(0.04f, 0.07f, 0.10f));
+  const float total_w = static_cast<float>(kBlockHotbarSize) * kSlot +
+                        static_cast<float>(kBlockHotbarSize - 1) * kGap;
+  const float left = -total_w * 0.5f;
+  const float right = total_w * 0.5f;
+  // Subtle translucent slate frame + backing.
+  append_screen_rect(dst, left - 0.024f, kTop + 0.095f, right + 0.024f,
+                     kTop - slot_height - 0.055f,
+                     glm::vec3(0.24f, 0.36f, 0.52f), 0.85f);
+  append_screen_rect(dst, left - 0.019f, kTop + 0.088f, right + 0.019f,
+                     kTop - slot_height - 0.048f,
+                     glm::vec3(0.07f, 0.10f, 0.15f), 0.74f);
   for (size_t i = 0; i < kBlockHotbarSize; ++i) {
     const float x0 = left + static_cast<float>(i) * (kSlot + kGap);
     const float x1 = x0 + kSlot;
     const bool active = i == selected;
-    if (active) {
-      append_screen_rect(dst, x0 - 0.008f, kTop + 0.008f * aspect,
-                         x1 + 0.008f, kTop - slot_height - 0.008f * aspect,
-                         glm::vec3(1.0f, 0.86f, 0.32f));
-    }
-    append_screen_rect(dst, x0, kTop, x1, kTop - slot_height,
-                       kBlockHotbar[i].swatch);
-    append_screen_label(dst, std::to_string(i + 1), x0 + 0.004f,
-                        kTop - slot_height - 0.022f, 0.0036f,
-                        active ? glm::vec3(1.0f, 0.90f, 0.45f)
-                               : glm::vec3(0.70f, 0.78f, 0.86f));
+    append_screen_rect(dst, x0 - 0.006f, kTop + 0.006f * aspect,
+                       x1 + 0.006f, kTop - slot_height - 0.006f * aspect,
+                       active ? glm::vec3(0.28f, 0.78f, 1.0f)
+                              : glm::vec3(0.20f, 0.27f, 0.36f),
+                       active ? 0.98f : 0.75f);
+    const glm::vec3 swatch = glm::pow(kBlockHotbar[i].swatch, glm::vec3(0.75f));
+    append_screen_rect(dst, x0, kTop, x1, kTop - slot_height, swatch, 0.95f);
+    append_screen_label(dst, std::to_string(i + 1), x0 + 0.018f,
+                        kTop - slot_height - 0.018f, 0.0038f,
+                        active ? glm::vec3(0.45f, 0.88f, 1.0f)
+                               : glm::vec3(0.72f, 0.80f, 0.90f));
   }
   append_screen_label(dst, kBlockHotbar[selected].label, left,
-                      kTop + 0.065f, 0.0042f, glm::vec3(0.95f, 0.97f, 1.0f));
+                      kTop + 0.056f, 0.0046f, glm::vec3(0.96f, 0.98f, 1.0f));
 }
 
 void disable_gameplay_actions(InputState &input) {

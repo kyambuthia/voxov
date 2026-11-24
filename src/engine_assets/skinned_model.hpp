@@ -44,6 +44,7 @@ private:
     struct VertexBind {
         glm::vec3 position = glm::vec3(0.0f);
         glm::vec3 normal = glm::vec3(0.0f, 1.0f, 0.0f);
+        glm::vec3 color = glm::vec3(1.0f);
         glm::uvec4 joints = glm::uvec4(0u);
         glm::vec4 weights = glm::vec4(1.0f, 0.0f, 0.0f, 0.0f);
     };
@@ -56,6 +57,7 @@ private:
         float transition_alpha) const;
 
     bool ready = false;
+    bool has_vertex_colors = false;
     float model_scale = 1.0f;
     float model_ground_lift = 0.0f;
     glm::quat model_axis_correction = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);

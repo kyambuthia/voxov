@@ -48,6 +48,7 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
     model_ground_lift = 0.0f;
     model_axis_correction = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
     model_facing_correction = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
+    has_vertex_colors = false;
     bind_vertices.clear();
     mesh_indices.clear();
     animation_skeleton = AnimationSkeleton{};
@@ -125,6 +126,7 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
     const cgltf_accessor *norm_acc = nullptr;
     const cgltf_accessor *joints_acc = nullptr;
     const cgltf_accessor *weights_acc = nullptr;
+    const cgltf_accessor *color_acc = nullptr;
     for (size_t i = 0; i < prim.attributes_count; ++i) {
         const cgltf_attribute &attr = prim.attributes[i];
         if (attr.type == cgltf_attribute_type_position) {
@@ -135,6 +137,8 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
             joints_acc = attr.data;
         } else if (attr.type == cgltf_attribute_type_weights) {
             weights_acc = attr.data;
+        } else if (attr.type == cgltf_attribute_type_color && attr.index == 0) {
+            color_acc = attr.data;
         }
     }
     if (!pos_acc || !joints_acc || !weights_acc) {
@@ -143,6 +147,7 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
         return false;
     }
 
+    has_vertex_colors = (color_acc != nullptr);
     const size_t vcount = pos_acc->count;
     bind_vertices.resize(vcount);
     glm::vec3 bounds_min(1.0e30f);
@@ -172,6 +177,11 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
         }
         bounds_min = glm::min(bounds_min, v.position);
         bounds_max = glm::max(bounds_max, v.position);
+        if (color_acc && i < color_acc->count) {
+            std::array<float, 4> vc{1.0f, 1.0f, 1.0f, 1.0f};
+            cgltf_accessor_read_float(color_acc, i, vc.data(), 4);
+            v.color = glm::vec3(vc[0], vc[1], vc[2]);
+        }
         v.joints = glm::uvec4(j[0], j[1], j[2], j[3]);
         v.weights = glm::vec4(w[0], w[1], w[2], w[3]) / wsum;
         bind_vertices[i] = v;
@@ -404,7 +414,7 @@ RenderMesh SkinnedModel::build_render_mesh(
         const float wlen = glm::length(wn);
         out.vertices[i].position = glm::vec3(world_pos);
         out.vertices[i].normal = (wlen > 1e-5f) ? (wn / wlen) : glm::vec3(0.0f, 1.0f, 0.0f);
-        out.vertices[i].color = color;
+        out.vertices[i].color = has_vertex_colors ? v.color : color;
         out.vertices[i].texcoord = glm::vec3(0.0f, 0.0f, -0.1f);
     }
 

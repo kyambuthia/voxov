@@ -178,18 +178,17 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
     }
     const glm::vec3 extent = glm::max(bounds_max - bounds_min, glm::vec3(1.0e-4f));
     float source_height = extent.y;
-    const bool force_z_up = str_contains_ci(path, "cesiumman") || str_contains_ci(path, "humanoid");
+    const bool force_z_up = str_contains_ci(path, "humanoid");
     if (force_z_up) {
         source_height = extent.z;
         model_axis_correction = glm::angleAxis(-1.57079632679f, glm::vec3(1.0f, 0.0f, 0.0f));
-        // CesiumMan comes in facing +X after Z-up to Y-up conversion; rotate into engine +Z.
         model_facing_correction = glm::angleAxis(-1.57079632679f, glm::vec3(0.0f, 1.0f, 0.0f));
         model_ground_lift = -bounds_min.z + 0.02f;
     } else {
         model_facing_correction = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
         model_ground_lift = -bounds_min.y + 0.02f;
     }
-    constexpr float k_target_height = 1.7f;
+    const float k_target_height = str_contains_ci(path, "fox") ? 0.85f : 1.7f;
     model_scale = k_target_height / source_height;
     model_scale = std::clamp(model_scale, 0.001f, 4.0f);
 

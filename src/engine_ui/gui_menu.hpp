@@ -59,7 +59,9 @@ public:
     enum class Character {
         Humanoid = 0,
         Capsule = 1,
-        Skeleton = 2
+        Skeleton = 2,
+        Boxman = 3,
+        Fox = 4
     };
 
     enum class Page {

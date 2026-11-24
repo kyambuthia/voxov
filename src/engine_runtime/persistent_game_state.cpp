@@ -113,7 +113,7 @@ bool encode_persistent_game_state(
         return false;
     }
     if (state.character < GuiMenu::Character::Humanoid ||
-        state.character > GuiMenu::Character::Skeleton) {
+        state.character > GuiMenu::Character::Fox) {
         out_error = "invalid character";
         return false;
     }

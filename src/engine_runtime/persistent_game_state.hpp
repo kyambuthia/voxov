@@ -26,7 +26,7 @@ struct PersistentGameState {
     static constexpr uint16_t kGeneratorVersion = 1;
 
     ExpeditionStage expedition_stage = ExpeditionStage::CollectSample;
-    GuiMenu::Character character = GuiMenu::Character::Capsule;
+    GuiMenu::Character character = GuiMenu::Character::Humanoid;
     int32_t active_body_index = 1;
     glm::dvec3 player_local_position{0.0};
     std::vector<PersistentBlockEdit> block_edits;

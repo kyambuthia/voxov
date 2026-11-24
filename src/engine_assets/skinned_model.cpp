@@ -188,7 +188,7 @@ bool SkinnedModel::load_from_glb(const std::string &path, std::string &out_error
         model_facing_correction = glm::quat(1.0f, 0.0f, 0.0f, 0.0f);
         model_ground_lift = -bounds_min.y + 0.02f;
     }
-    const float k_target_height = str_contains_ci(path, "fox") ? 0.85f : 1.7f;
+    constexpr float k_target_height = 1.7f;
     model_scale = k_target_height / source_height;
     model_scale = std::clamp(model_scale, 0.001f, 4.0f);
 

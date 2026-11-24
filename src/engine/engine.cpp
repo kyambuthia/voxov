@@ -314,17 +314,8 @@ RenderMesh build_local_player_debug_mesh(
 
 RuntimeDebugSceneSnapshot::AvatarStyle avatar_style_from_character(
     GuiMenu::Character character) {
-  switch (character) {
-  case GuiMenu::Character::Humanoid:
-  case GuiMenu::Character::Boxman:
-  case GuiMenu::Character::Fox:
-    return RuntimeDebugSceneSnapshot::AvatarStyle::Humanoid;
-  case GuiMenu::Character::Skeleton:
-    return RuntimeDebugSceneSnapshot::AvatarStyle::Skeleton;
-  case GuiMenu::Character::Capsule:
-    break;
-  }
-  return RuntimeDebugSceneSnapshot::AvatarStyle::Capsule;
+  (void)character;
+  return RuntimeDebugSceneSnapshot::AvatarStyle::Humanoid;
 }
 } // namespace
 
@@ -340,16 +331,7 @@ bool Engine::init(const EngineRuntimeOptions &options) {
       spdlog::info("Loaded player model: boxman.glb ({} clips)",
                    player_skinned_model_.clips().size());
     }
-    std::string fox_err;
-    if (!fox_skinned_model_.load_from_glb(
-            "./assets/models/player/Fox.glb", fox_err) &&
-        !fox_skinned_model_.load_from_glb(
-            "assets/models/player/Fox.glb", fox_err)) {
-      spdlog::warn("Player model load failed (Fox.glb): {}", fox_err);
-    } else {
-      spdlog::info("Loaded player model: Fox.glb ({} clips)",
-                   fox_skinned_model_.clips().size());
-    }
+
   }
   platform_services = options.platform_services != nullptr
                           ? *options.platform_services
@@ -491,14 +473,8 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   camera.z_near = 0.25f;
   update_first_person_camera(local_player, camera);
 
-  const SkinnedModel *active_player_model = nullptr;
-  if (session_state_.selected_character == GuiMenu::Character::Boxman &&
-      player_skinned_model_.loaded()) {
-    active_player_model = &player_skinned_model_;
-  } else if (session_state_.selected_character == GuiMenu::Character::Fox &&
-             fox_skinned_model_.loaded()) {
-    active_player_model = &fox_skinned_model_;
-  }
+  const SkinnedModel *active_player_model =
+      player_skinned_model_.loaded() ? &player_skinned_model_ : nullptr;
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled,
       /*render_local_avatar=*/true,
@@ -844,14 +820,8 @@ void Engine::tick(double frame_dt,
 
   update_render_stats(profiling_sample, terrain_timings, gpu_upload_ms);
 
-  const SkinnedModel *active_player_model = nullptr;
-  if (session_state_.selected_character == GuiMenu::Character::Boxman &&
-      player_skinned_model_.loaded()) {
-    active_player_model = &player_skinned_model_;
-  } else if (session_state_.selected_character == GuiMenu::Character::Fox &&
-             fox_skinned_model_.loaded()) {
-    active_player_model = &fox_skinned_model_;
-  }
+  const SkinnedModel *active_player_model =
+      player_skinned_model_.loaded() ? &player_skinned_model_ : nullptr;
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled,
       local_player.camera_rig.distance > 0.1f && !piloting_ship_,

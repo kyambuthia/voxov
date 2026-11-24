@@ -259,7 +259,6 @@ private:
   void rebuild_flat_collision_world();
   TerrainStreamTimings stream_flat_terrain();
   SkinnedModel player_skinned_model_{};
-  SkinnedModel fox_skinned_model_{};
   vegetation::VegetationStyle vegetation_style_ =
       vegetation::VegetationStyle::MinecraftCrossed;
 

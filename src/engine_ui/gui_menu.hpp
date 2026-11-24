@@ -57,11 +57,7 @@ float look_sensitivity_scale(LookSensitivity sensitivity);
 class GuiMenu {
 public:
     enum class Character {
-        Humanoid = 0,
-        Capsule = 1,
-        Skeleton = 2,
-        Boxman = 3,
-        Fox = 4
+        Humanoid = 0
     };
 
     enum class Page {

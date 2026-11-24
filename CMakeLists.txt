@@ -406,9 +406,10 @@ target_include_directories(engine_audio PUBLIC ${VOXOV_SOKOL_DIR})
 
 add_library(engine_ui STATIC
     src/engine_ui/gui_menu.cpp
+    src/engine_ui/ui_context.cpp
 )
 target_include_directories(engine_ui PUBLIC src)
-target_link_libraries(engine_ui PUBLIC glm::glm)
+target_link_libraries(engine_ui PUBLIC engine_render_core glm::glm)
 
 add_library(engine_runtime STATIC
     src/engine_runtime/persistent_game_state.cpp

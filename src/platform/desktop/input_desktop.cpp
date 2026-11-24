@@ -78,6 +78,8 @@ InputState DesktopInputBackend::poll() {
     out.rmb_down = rmb_down;
     out.left_click_pressed = lmb_pressed && clicks_reach_gameplay;
     out.right_click_pressed = rmb_pressed && clicks_reach_gameplay;
+    out.ui_left_click_pressed = lmb_pressed;
+    out.scroll_y = snap.scroll_delta.y;
     out.pointer_locked = pointer_locked;
     out.look_enabled = active_look_mode;
 

@@ -42,6 +42,8 @@ struct InputState {
     // Block interaction: mouse button states (0=left, 1=right)
     bool left_click_pressed = false;   // break block
     bool right_click_pressed = false;  // place block
+    bool ui_left_click_pressed = false; // raw LMB click for UI buttons
+    float scroll_y = 0.0f;             // mouse wheel delta
 };
 
 class IInputBackend {

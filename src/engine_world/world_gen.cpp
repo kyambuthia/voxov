@@ -65,32 +65,39 @@ uint64_t WorldGenerator::chunk_seed(VoxelChunkCoord2D coord) const {
 
 TerrainColumnSample WorldGenerator::sample_column(float world_x,
                                                    float world_z) const {
+  const float warp_x =
+      value_noise(world_x, world_z, 128.0f, seed, 0x1a2b3c4d5e6f7081ull) * 24.0f;
+  const float warp_z =
+      value_noise(world_x, world_z, 128.0f, seed, 0x9182736455463728ull) * 24.0f;
+  const float wx = world_x + warp_x;
+  const float wz = world_z + warp_z;
+
   const float continental =
-      value_noise(world_x, world_z, 256.0f, seed, 0x2f6e2b1d54a32f71ull);
+      value_noise(wx, wz, 220.0f, seed, 0x2f6e2b1d54a32f71ull);
   const float broad_hills =
-      value_noise(world_x, world_z, 112.0f, seed, 0xb43ac574127b3b55ull);
+      value_noise(wx, wz, 78.0f, seed, 0xb43ac574127b3b55ull);
   const float rolling_hills =
-      value_noise(world_x, world_z, 46.0f, seed, 0x9642a7c13d42e0bdull);
+      value_noise(wx, wz, 34.0f, seed, 0x9642a7c13d42e0bdull);
   const float surface_detail =
-      value_noise(world_x, world_z, 18.0f, seed, 0x6f54789be80a9d2bull);
+      value_noise(world_x, world_z, 14.0f, seed, 0x6f54789be80a9d2bull);
 
   const float ridge_source =
-      1.0f - std::fabs(value_noise(world_x, world_z, 92.0f, seed,
+      1.0f - std::fabs(value_noise(wx, wz, 72.0f, seed,
                                    0xe290a3ac986dc3d7ull));
-  const float ridge_factor = smoothstep_range(0.38f, 0.86f, ridge_source);
+  const float ridge_factor = smoothstep_range(0.30f, 0.84f, ridge_source);
 
   const float valley_source =
-      1.0f - std::fabs(value_noise(world_x, world_z, 176.0f, seed,
+      1.0f - std::fabs(value_noise(wx, wz, 110.0f, seed,
                                    0x47dfd298cba61d31ull));
-  const float valley_factor = smoothstep_range(0.56f, 0.94f, valley_source);
+  const float valley_factor = smoothstep_range(0.45f, 0.92f, valley_source);
 
-  float surface_height = 11.0f;
-  surface_height += continental * 4.0f;
-  surface_height += broad_hills * 3.4f;
-  surface_height += rolling_hills * 2.1f;
-  surface_height += ridge_factor * ridge_factor * 4.8f;
-  surface_height -= valley_factor * (3.2f + ridge_factor * 1.7f);
-  surface_height += surface_detail * 0.7f;
+  float surface_height = 13.5f;
+  surface_height += continental * 5.2f;
+  surface_height += broad_hills * 5.6f;
+  surface_height += rolling_hills * 3.0f;
+  surface_height += ridge_factor * ridge_factor * 10.5f;
+  surface_height -= valley_factor * (6.8f + ridge_factor * 2.5f);
+  surface_height += surface_detail * 0.9f;
 
   TerrainColumnSample sample{};
   sample.surface_height =

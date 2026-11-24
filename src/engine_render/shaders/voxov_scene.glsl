@@ -297,6 +297,37 @@ float sky_hash(vec3 p) {
     return fract((p.x + p.y) * p.z);
 }
 
+float sky_noise3(vec3 p) {
+    vec3 i = floor(p);
+    vec3 f = fract(p);
+    f = f * f * (3.0 - 2.0 * f);
+    float n000 = sky_hash(i + vec3(0, 0, 0));
+    float n100 = sky_hash(i + vec3(1, 0, 0));
+    float n010 = sky_hash(i + vec3(0, 1, 0));
+    float n110 = sky_hash(i + vec3(1, 1, 0));
+    float n001 = sky_hash(i + vec3(0, 0, 1));
+    float n101 = sky_hash(i + vec3(1, 0, 1));
+    float n011 = sky_hash(i + vec3(0, 1, 1));
+    float n111 = sky_hash(i + vec3(1, 1, 1));
+    float nx00 = mix(n000, n100, f.x);
+    float nx10 = mix(n010, n110, f.x);
+    float nx01 = mix(n001, n101, f.x);
+    float nx11 = mix(n011, n111, f.x);
+    float nxy0 = mix(nx00, nx10, f.y);
+    float nxy1 = mix(nx01, nx11, f.y);
+    return mix(nxy0, nxy1, f.z);
+}
+
+float cloud_density(vec3 p, float time_val) {
+    float h = clamp((p.y - 56.0) / 30.0, 0.0, 1.0);
+    float profile = smoothstep(0.0, 0.18, h) * smoothstep(1.0, 0.36, h);
+    if (profile <= 0.001) return 0.0;
+    vec3 q = p + vec3(time_val * 2.4, 0.0, time_val * 1.1);
+    float n = sky_noise3(q * 0.022) * 0.65 + sky_noise3(q * 0.058 + vec3(13.7, 5.2, 9.1)) * 0.35;
+    float d = smoothstep(0.48, 0.74, n * profile * 1.25);
+    return d;
+}
+
 vec2 sky_sphere(vec3 origin, vec3 direction, float radius) {
     float b = dot(origin, direction);
     float d = b * b - dot(origin, origin) + radius * radius;
@@ -322,12 +353,35 @@ void main() {
         vec3 sun_up = cross(sun_right, sun);
         float sun_sq = step(max(abs(dot(ray, sun_right)), abs(dot(ray, sun_up))), 0.022) * step(0.0, dot(ray, sun));
         sky_col += vec3(1.8, 1.4, 0.8) * sun_sq;
-        if (block_ray.y > 0.02) {
-            float t_cloud = 68.0 / max(block_ray.y, 0.02);
-            vec3 cp = origin + block_ray * min(t_cloud, 900.0);
-            vec3 ccell = floor((cp + vec3(sky_style.y * 0.4, 0.0, sky_style.y * 0.2)) / 12.0);
-            float cl = step(0.62, sky_hash(floor(vec3(ccell.x, 0.0, ccell.z) / 3.0))) * step(0.28, sky_hash(vec3(ccell.x, 0.0, ccell.z)));
-            sky_col = mix(sky_col, vec3(0.94, 0.96, 0.99), cl * smoothstep(0.02, 0.22, block_ray.y) * 0.78);
+        if (ray.y > 0.015) {
+            float t0 = max(0.0, (56.0 - origin.y) / ray.y);
+            float t1 = min(950.0, (86.0 - origin.y) / ray.y);
+            if (t1 > t0) {
+                const int kSteps = 12;
+                float step_len = (t1 - t0) / float(kSteps);
+                float transmittance = 1.0;
+                vec3 cloud_accum = vec3(0.0);
+                float day_lit = smoothstep(-0.15, 0.25, sun.y);
+                vec3 lit_col = mix(vec3(0.18, 0.22, 0.32), vec3(1.0, 0.98, 0.94), day_lit);
+                vec3 shadow_col = mix(vec3(0.06, 0.08, 0.14), vec3(0.48, 0.58, 0.74), day_lit);
+                for (int i = 0; i < kSteps; ++i) {
+                    float t = t0 + (float(i) + 0.5) * step_len;
+                    vec3 pos = origin + ray * t;
+                    float d = cloud_density(pos, sky_style.y);
+                    if (d > 0.002) {
+                        float h_norm = clamp((pos.y - 56.0) / 30.0, 0.0, 1.0);
+                        float sun_occ = cloud_density(pos + sun * 10.0, sky_style.y);
+                        float light_t = clamp((0.35 + 0.65 * h_norm) * (1.0 - sun_occ * 0.75), 0.0, 1.0);
+                        vec3 sample_col = mix(shadow_col, lit_col, light_t);
+                        float alpha = 1.0 - exp(-d * step_len * 0.075);
+                        cloud_accum += transmittance * sample_col * alpha;
+                        transmittance *= (1.0 - alpha);
+                        if (transmittance < 0.02) break;
+                    }
+                }
+                float horizon_fade = smoothstep(0.015, 0.16, ray.y);
+                sky_col = mix(sky_col, cloud_accum + sky_col * transmittance, horizon_fade * 0.92);
+            }
         }
         if (sky_style.x > 0.5) sky_col = vec3(dot(sky_col, vec3(0.2126, 0.7152, 0.0722)));
         frag_color = vec4(sky_col, 1.0);

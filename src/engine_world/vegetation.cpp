@@ -519,32 +519,20 @@ RenderMesh build_flat_vegetation_mesh(const VoxelChunk &voxels,
                 seed ^
                 (static_cast<uint64_t>(static_cast<uint32_t>(gx)) << 17u) ^
                 static_cast<uint64_t>(static_cast<uint32_t>(gz)));
-            const uint64_t patch_key = splitmix64(
-                seed ^ static_cast<uint64_t>(static_cast<uint32_t>(gx / 4)) * 0x9e3779b9u ^
-                static_cast<uint64_t>(static_cast<uint32_t>(gz / 4)) * 0x85ebca6bu);
-            const float patch = unit_float(patch_key);
-            const float density = (style == VegetationStyle::VintageStoryWind)
-                                      ? (0.28f + patch * 0.36f)
-                                      : (0.20f + patch * 0.30f);
-            if (unit_float(key) > density) continue;
-
+            const double angle = static_cast<double>(
+                unit_float(splitmix64(key ^ 0x59u)) * 6.2831853f);
+            auto tangent = [&](double radians) {
+                return east * std::cos(radians) + north * std::sin(radians);
+            };
             const float jx = unit_float(splitmix64(key ^ 0x11u)) - 0.5f;
             const float jz = unit_float(splitmix64(key ^ 0x29u)) - 0.5f;
             const glm::dvec3 position(
                 static_cast<double>(gx) + 0.5 + static_cast<double>(jx) * 0.32,
                 static_cast<double>(top_y + 1) + 0.005,
                 static_cast<double>(gz) + 0.5 + static_cast<double>(jz) * 0.32);
-
-            const float type_roll = unit_float(splitmix64(key ^ 0x31u));
-            const double angle = static_cast<double>(
-                unit_float(splitmix64(key ^ 0x59u)) * 6.2831853f);
-            auto tangent = [&](double radians) {
-                return east * std::cos(radians) + north * std::sin(radians);
-            };
-
             const float tree_roll = unit_float(splitmix64(key ^ 0x99u));
             if (x >= 2 && x < sx - 2 && z >= 2 && z < sz - 2 &&
-                tree_roll < 0.016f) {
+                tree_roll < 0.035f) {
                 const glm::vec3 bark_dark(0.24f, 0.15f, 0.09f);
                 const glm::vec3 bark_light(0.36f, 0.24f, 0.14f);
                 const bool is_pine = unit_float(splitmix64(key ^ 0xA3u)) < 0.42f;
@@ -623,6 +611,17 @@ RenderMesh build_flat_vegetation_mesh(const VoxelChunk &voxels,
                 }
                 continue;
             }
+            const uint64_t patch_key = splitmix64(
+                seed ^ static_cast<uint64_t>(static_cast<uint32_t>(gx / 4)) * 0x9e3779b9u ^
+                static_cast<uint64_t>(static_cast<uint32_t>(gz / 4)) * 0x85ebca6bu);
+            const float patch = unit_float(patch_key);
+            const float density = (style == VegetationStyle::VintageStoryWind)
+                                      ? (0.28f + patch * 0.36f)
+                                      : (0.20f + patch * 0.30f);
+            if (unit_float(key) > density) continue;
+
+            const float type_roll = unit_float(splitmix64(key ^ 0x31u));
+
             if (style == VegetationStyle::MinecraftCrossed) {
                 auto x_mesh = [&](double radians, double width, double height,
                                   uint8_t layer, const glm::vec3 &color) {

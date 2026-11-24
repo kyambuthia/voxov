@@ -12,4 +12,6 @@ RenderMesh build_screen_text_mesh(
     float origin_y_ndc,
     float cell_size_ndc,
     const glm::vec3 &color,
-    float line_spacing_scale = 1.0f);
+    float line_spacing_scale = 1.0f,
+    float aspect_ratio = 1.0f);
+float debug_text_advance_ratio();

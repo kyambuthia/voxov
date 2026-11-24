@@ -284,10 +284,12 @@ void add_screen_pixel_rect_ndc(RenderMesh &mesh, float origin_x_ndc,
                                float origin_y_ndc, float x, float y,
                                float width, float height, float cell_size_ndc,
                                const glm::vec3 &color,
-                               float text_alpha = -1.0f) {
-  const float x0 = origin_x_ndc + x * cell_size_ndc;
+                               float text_alpha = -1.0f,
+                               float aspect_ratio = 1.0f) {
+  const float x_scale = cell_size_ndc / std::max(0.1f, aspect_ratio);
+  const float x0 = origin_x_ndc + x * x_scale;
   const float y0 = origin_y_ndc - y * cell_size_ndc;
-  const float x1 = x0 + width * cell_size_ndc;
+  const float x1 = x0 + width * x_scale;
   const float y1 = y0 - height * cell_size_ndc;
 
   const glm::vec3 p0(x0, y0, 0.0f);
@@ -381,7 +383,7 @@ void append_raster_glyph_world(RenderMesh &mesh, const RasterFont &font, char c,
 void append_raster_glyph_screen(RenderMesh &mesh, const RasterFont &font,
                                 char c, float origin_x_ndc, float origin_y_ndc,
                                 float pen_x, float pen_y, float cell_size_ndc,
-                                const glm::vec3 &color) {
+                                const glm::vec3 &color, float aspect_ratio) {
   const unsigned char code = static_cast<unsigned char>(c);
   if (code >= font.glyphs.size()) {
     return;
@@ -424,7 +426,7 @@ void append_raster_glyph_screen(RenderMesh &mesh, const RasterFont &font,
                                   glyph_x + static_cast<float>(run_start),
                                   glyph_y + static_cast<float>(row),
                                   static_cast<float>(col - run_start), 1.0f,
-                                  cell_size_ndc, color, run_alpha);
+                                  cell_size_ndc, color, run_alpha, aspect_ratio);
         run_start = -1;
       }
     }
@@ -496,10 +498,19 @@ RenderMesh build_camera_text_mesh(const Camera &camera,
   return mesh;
 }
 
+float debug_text_advance_ratio() {
+  if (const RasterFont *font = debug_font()) {
+    return static_cast<float>(font->mono_advance) /
+           static_cast<float>(std::max(1, font->pixel_height));
+  }
+  return 6.0f / 7.0f;
+}
+
 RenderMesh build_screen_text_mesh(const std::string &text, float origin_x_ndc,
                                   float origin_y_ndc, float cell_size_ndc,
                                   const glm::vec3 &color,
-                                  float line_spacing_scale) {
+                                  float line_spacing_scale,
+                                  float aspect_ratio) {
   RenderMesh mesh;
   if (text.empty() || cell_size_ndc <= 0.0f) {
     return mesh;
@@ -522,7 +533,8 @@ RenderMesh build_screen_text_mesh(const std::string &text, float origin_x_ndc,
         continue;
       }
       append_raster_glyph_screen(mesh, *font, c, origin_x_ndc, origin_y_ndc,
-                                 pen_x, pen_y, font_cell_size_ndc, color);
+                                 pen_x, pen_y, font_cell_size_ndc, color,
+                                 aspect_ratio);
       pen_x += static_cast<float>(font->mono_advance);
     }
     return mesh;
@@ -544,7 +556,8 @@ RenderMesh build_screen_text_mesh(const std::string &text, float origin_x_ndc,
         }
         add_screen_pixel_rect_ndc(
             mesh, origin_x_ndc, origin_y_ndc, pen_x + static_cast<float>(col),
-            pen_y + static_cast<float>(row), 1.0f, 1.0f, cell_size_ndc, color);
+            pen_y + static_cast<float>(row), 1.0f, 1.0f, cell_size_ndc, color,
+            -1.0f, aspect_ratio);
       }
     }
     pen_x += char_width;

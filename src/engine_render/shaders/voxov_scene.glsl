@@ -361,19 +361,18 @@ void main() {
                 float step_len = (t1 - t0) / float(kSteps);
                 float transmittance = 1.0;
                 vec3 cloud_accum = vec3(0.0);
-                float day_lit = smoothstep(-0.15, 0.25, sun.y);
-                vec3 lit_col = mix(vec3(0.18, 0.22, 0.32), vec3(1.0, 0.98, 0.94), day_lit);
-                vec3 shadow_col = mix(vec3(0.06, 0.08, 0.14), vec3(0.48, 0.58, 0.74), day_lit);
+                vec3 lit_col = vec3(0.99, 0.99, 1.00);
+                vec3 shadow_col = vec3(0.68, 0.76, 0.88);
                 for (int i = 0; i < kSteps; ++i) {
                     float t = t0 + (float(i) + 0.5) * step_len;
                     vec3 pos = origin + ray * t;
                     float d = cloud_density(pos, sky_style.y);
                     if (d > 0.002) {
                         float h_norm = clamp((pos.y - 56.0) / 30.0, 0.0, 1.0);
-                        float sun_occ = cloud_density(pos + sun * 10.0, sky_style.y);
-                        float light_t = clamp((0.35 + 0.65 * h_norm) * (1.0 - sun_occ * 0.75), 0.0, 1.0);
+                        float sun_occ = cloud_density(pos + vec3(sun.x, abs(sun.y) + 0.25, sun.z) * 8.0, sky_style.y);
+                        float light_t = clamp((0.35 + 0.65 * h_norm) * (1.0 - sun_occ * 0.55), 0.0, 1.0);
                         vec3 sample_col = mix(shadow_col, lit_col, light_t);
-                        float alpha = 1.0 - exp(-d * step_len * 0.075);
+                        float alpha = 1.0 - exp(-d * min(step_len, 8.0) * 0.14);
                         cloud_accum += transmittance * sample_col * alpha;
                         transmittance *= (1.0 - alpha);
                         if (transmittance < 0.02) break;

@@ -542,6 +542,87 @@ RenderMesh build_flat_vegetation_mesh(const VoxelChunk &voxels,
                 return east * std::cos(radians) + north * std::sin(radians);
             };
 
+            const float tree_roll = unit_float(splitmix64(key ^ 0x99u));
+            if (x >= 2 && x < sx - 2 && z >= 2 && z < sz - 2 &&
+                tree_roll < 0.016f) {
+                const glm::vec3 bark_dark(0.24f, 0.15f, 0.09f);
+                const glm::vec3 bark_light(0.36f, 0.24f, 0.14f);
+                const bool is_pine = unit_float(splitmix64(key ^ 0xA3u)) < 0.42f;
+                const double scale =
+                    0.85 + static_cast<double>(unit_float(splitmix64(key ^ 0xA5u))) * 0.45;
+                if (is_pine) {
+                    const double trunk_h = 4.6 * scale;
+                    append_voxel_box(mesh, position, east, up, north,
+                                     0.16 * scale, trunk_h * 0.55, 0.16 * scale,
+                                     bark_dark, bark_light, camera_relative_origin);
+                    append_voxel_box(mesh, position + up * (trunk_h * 0.52), east, up, north,
+                                     0.11 * scale, trunk_h * 0.45, 0.11 * scale,
+                                     bark_dark, bark_light, camera_relative_origin);
+                    const glm::vec3 pine_dark(0.09f, 0.24f, 0.13f);
+                    const glm::vec3 pine_tip(0.18f, 0.42f, 0.22f);
+                    for (int tier = 0; tier < 5; ++tier) {
+                        const double ty = (1.35 + 0.68 * static_cast<double>(tier)) * scale;
+                        const double tr = (0.92 - 0.16 * static_cast<double>(tier)) * scale;
+                        const double th = (0.48 - 0.05 * static_cast<double>(tier)) * scale;
+                        append_voxel_box(mesh, position + up * ty, east, up, north,
+                                         tr, th, tr, pine_dark, pine_tip, camera_relative_origin);
+                        append_voxel_box(mesh, position + up * (ty + th * 0.65), east, up, north,
+                                         tr * 0.68, th * 0.72, tr * 0.68,
+                                         pine_dark * 1.1f, pine_tip, camera_relative_origin);
+                    }
+                    append_voxel_box(mesh, position + up * (trunk_h + 0.12 * scale), east, up, north,
+                                     0.14 * scale, 0.36 * scale, 0.14 * scale,
+                                     pine_tip * 0.9f, pine_tip, camera_relative_origin);
+                } else {
+                    const double trunk_h = 3.2 * scale;
+                    for (int r = 0; r < 4; ++r) {
+                        const double ra = angle + 1.5707963 * r;
+                        const glm::dvec3 rdir = tangent(ra);
+                        append_voxel_box(mesh, position + rdir * (0.20 * scale), east, up, north,
+                                         0.12 * scale, 0.26 * scale, 0.12 * scale,
+                                         bark_dark, bark_light, camera_relative_origin);
+                    }
+                    append_voxel_box(mesh, position, east, up, north,
+                                     0.20 * scale, trunk_h * 0.55, 0.20 * scale,
+                                     bark_dark, bark_light, camera_relative_origin);
+                    append_voxel_box(mesh, position + up * (trunk_h * 0.52), east, up, north,
+                                     0.15 * scale, trunk_h * 0.50, 0.15 * scale,
+                                     bark_dark, bark_light, camera_relative_origin);
+
+                    const glm::vec3 leaf_dark(0.14f, 0.34f, 0.11f);
+                    const glm::vec3 leaf_bright(0.32f, 0.60f, 0.18f);
+                    for (int b = 0; b < 4; ++b) {
+                        const double ba = angle + 1.5707963 * b + 0.35;
+                        const glm::dvec3 bdir = tangent(ba);
+                        const double by = (2.15 + 0.22 * (b % 2)) * scale;
+                        append_voxel_box(mesh, position + up * by + bdir * (0.42 * scale),
+                                         east, up, north,
+                                         0.11 * scale, 0.11 * scale, 0.42 * scale,
+                                         bark_dark, bark_light, camera_relative_origin);
+                        const glm::dvec3 pod_pos = position + up * (by + 0.12 * scale) + bdir * (0.78 * scale);
+                        append_voxel_box(mesh, pod_pos, east, up, north,
+                                         0.52 * scale, 0.48 * scale, 0.52 * scale,
+                                         leaf_dark, leaf_bright, camera_relative_origin);
+                        append_voxel_box(mesh, pod_pos + up * (0.42 * scale) + bdir * (0.14 * scale),
+                                         east, up, north,
+                                         0.28 * scale, 0.24 * scale, 0.28 * scale,
+                                         leaf_dark * 1.15f, leaf_bright, camera_relative_origin);
+                    }
+                    append_voxel_box(mesh, position + up * (trunk_h - 0.1 * scale),
+                                     east, up, north,
+                                     0.74 * scale, 0.56 * scale, 0.74 * scale,
+                                     leaf_dark, leaf_bright, camera_relative_origin);
+                    append_voxel_box(mesh, position + up * (trunk_h + 0.42 * scale),
+                                     east, up, north,
+                                     0.46 * scale, 0.38 * scale, 0.46 * scale,
+                                     leaf_dark * 1.1f, leaf_bright, camera_relative_origin);
+                    append_voxel_box(mesh, position + up * (trunk_h + 0.76 * scale) + east * (0.12 * scale),
+                                     east, up, north,
+                                     0.22 * scale, 0.20 * scale, 0.22 * scale,
+                                     leaf_bright * 0.85f, leaf_bright, camera_relative_origin);
+                }
+                continue;
+            }
             if (style == VegetationStyle::MinecraftCrossed) {
                 auto x_mesh = [&](double radians, double width, double height,
                                   uint8_t layer, const glm::vec3 &color) {
@@ -597,86 +678,7 @@ RenderMesh build_flat_vegetation_mesh(const VoxelChunk &voxels,
                     hash_mesh(angle, 0.72, h, layer, glm::vec3(0.92f, 0.98f, 0.86f), 4);
                 }
             } else if (style == VegetationStyle::VoxelCuboids) {
-                const float tree_roll = unit_float(splitmix64(key ^ 0x99u));
-                if (x >= 2 && x < sx - 2 && z >= 2 && z < sz - 2 &&
-                    tree_roll < 0.016f) {
-                    const glm::vec3 bark_dark(0.24f, 0.15f, 0.09f);
-                    const glm::vec3 bark_light(0.36f, 0.24f, 0.14f);
-                    const bool is_pine = unit_float(splitmix64(key ^ 0xA3u)) < 0.42f;
-                    const double scale =
-                        0.85 + static_cast<double>(unit_float(splitmix64(key ^ 0xA5u))) * 0.45;
-                    if (is_pine) {
-                        const double trunk_h = 4.6 * scale;
-                        append_voxel_box(mesh, position, east, up, north,
-                                         0.16 * scale, trunk_h * 0.55, 0.16 * scale,
-                                         bark_dark, bark_light, camera_relative_origin);
-                        append_voxel_box(mesh, position + up * (trunk_h * 0.52), east, up, north,
-                                         0.11 * scale, trunk_h * 0.45, 0.11 * scale,
-                                         bark_dark, bark_light, camera_relative_origin);
-                        const glm::vec3 pine_dark(0.09f, 0.24f, 0.13f);
-                        const glm::vec3 pine_tip(0.18f, 0.42f, 0.22f);
-                        for (int tier = 0; tier < 5; ++tier) {
-                            const double ty = (1.35 + 0.68 * static_cast<double>(tier)) * scale;
-                            const double tr = (0.92 - 0.16 * static_cast<double>(tier)) * scale;
-                            const double th = (0.48 - 0.05 * static_cast<double>(tier)) * scale;
-                            append_voxel_box(mesh, position + up * ty, east, up, north,
-                                             tr, th, tr, pine_dark, pine_tip, camera_relative_origin);
-                            append_voxel_box(mesh, position + up * (ty + th * 0.65), east, up, north,
-                                             tr * 0.68, th * 0.72, tr * 0.68,
-                                             pine_dark * 1.1f, pine_tip, camera_relative_origin);
-                        }
-                        append_voxel_box(mesh, position + up * (trunk_h + 0.12 * scale), east, up, north,
-                                         0.14 * scale, 0.36 * scale, 0.14 * scale,
-                                         pine_tip * 0.9f, pine_tip, camera_relative_origin);
-                    } else {
-                        const double trunk_h = 3.2 * scale;
-                        for (int r = 0; r < 4; ++r) {
-                            const double ra = angle + 1.5707963 * r;
-                            const glm::dvec3 rdir = tangent(ra);
-                            append_voxel_box(mesh, position + rdir * (0.20 * scale), east, up, north,
-                                             0.12 * scale, 0.26 * scale, 0.12 * scale,
-                                             bark_dark, bark_light, camera_relative_origin);
-                        }
-                        append_voxel_box(mesh, position, east, up, north,
-                                         0.20 * scale, trunk_h * 0.55, 0.20 * scale,
-                                         bark_dark, bark_light, camera_relative_origin);
-                        append_voxel_box(mesh, position + up * (trunk_h * 0.52), east, up, north,
-                                         0.15 * scale, trunk_h * 0.50, 0.15 * scale,
-                                         bark_dark, bark_light, camera_relative_origin);
-
-                        const glm::vec3 leaf_dark(0.14f, 0.34f, 0.11f);
-                        const glm::vec3 leaf_bright(0.32f, 0.60f, 0.18f);
-                        for (int b = 0; b < 4; ++b) {
-                            const double ba = angle + 1.5707963 * b + 0.35;
-                            const glm::dvec3 bdir = tangent(ba);
-                            const double by = (2.15 + 0.22 * (b % 2)) * scale;
-                            append_voxel_box(mesh, position + up * by + bdir * (0.42 * scale),
-                                             east, up, north,
-                                             0.11 * scale, 0.11 * scale, 0.42 * scale,
-                                             bark_dark, bark_light, camera_relative_origin);
-                            const glm::dvec3 pod_pos = position + up * (by + 0.12 * scale) + bdir * (0.78 * scale);
-                            append_voxel_box(mesh, pod_pos, east, up, north,
-                                             0.52 * scale, 0.48 * scale, 0.52 * scale,
-                                             leaf_dark, leaf_bright, camera_relative_origin);
-                            append_voxel_box(mesh, pod_pos + up * (0.42 * scale) + bdir * (0.14 * scale),
-                                             east, up, north,
-                                             0.28 * scale, 0.24 * scale, 0.28 * scale,
-                                             leaf_dark * 1.15f, leaf_bright, camera_relative_origin);
-                        }
-                        append_voxel_box(mesh, position + up * (trunk_h - 0.1 * scale),
-                                         east, up, north,
-                                         0.74 * scale, 0.56 * scale, 0.74 * scale,
-                                         leaf_dark, leaf_bright, camera_relative_origin);
-                        append_voxel_box(mesh, position + up * (trunk_h + 0.42 * scale),
-                                         east, up, north,
-                                         0.46 * scale, 0.38 * scale, 0.46 * scale,
-                                         leaf_dark * 1.1f, leaf_bright, camera_relative_origin);
-                        append_voxel_box(mesh, position + up * (trunk_h + 0.76 * scale) + east * (0.12 * scale),
-                                         east, up, north,
-                                         0.22 * scale, 0.20 * scale, 0.22 * scale,
-                                         leaf_bright * 0.85f, leaf_bright, camera_relative_origin);
-                    }
-                } else if (type_roll < 0.08f) {
+                if (type_roll < 0.08f) {
                     const double stem_h = 0.28 + static_cast<double>(unit_float(splitmix64(key ^ 0x49u))) * 0.12;
                     append_voxel_box(mesh, position, east, up, north, 0.03, stem_h, 0.03,
                                      glm::vec3(0.18f, 0.34f, 0.10f), glm::vec3(0.28f, 0.52f, 0.16f), camera_relative_origin);

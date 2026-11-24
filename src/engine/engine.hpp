@@ -259,10 +259,6 @@ private:
   void rebuild_flat_collision_world();
   TerrainStreamTimings stream_flat_terrain();
   SkinnedModel player_skinned_model_{};
-  SkinnedModel trooper_skinned_model_{};
-  SkinnedModel ranger_skinned_model_{};
-  SkinnedModel bot_skinned_model_{};
-  SkinnedModel medic_skinned_model_{};
   vegetation::VegetationStyle vegetation_style_ =
       vegetation::VegetationStyle::MinecraftCrossed;
 

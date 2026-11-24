@@ -331,21 +331,6 @@ bool Engine::init(const EngineRuntimeOptions &options) {
       spdlog::info("Loaded player model: boxman.glb ({} clips)",
                    player_skinned_model_.clips().size());
     }
-    auto load_variant = [](SkinnedModel &dst, const char *filename) {
-      std::string err;
-      const std::string p1 = std::string("./assets/models/player/") + filename;
-      const std::string p2 = std::string("assets/models/player/") + filename;
-      if (!dst.load_from_glb(p1, err) && !dst.load_from_glb(p2, err)) {
-        spdlog::warn("Player model load failed ({}): {}", filename, err);
-      } else {
-        spdlog::info("Loaded player model: {} ({} clips)", filename,
-                     dst.clips().size());
-      }
-    };
-    load_variant(trooper_skinned_model_, "trooper.glb");
-    load_variant(ranger_skinned_model_, "ranger.glb");
-    load_variant(bot_skinned_model_, "bot.glb");
-    load_variant(medic_skinned_model_, "medic.glb");
 
   }
   platform_services = options.platform_services != nullptr
@@ -490,23 +475,6 @@ bool Engine::init(const EngineRuntimeOptions &options) {
 
   const SkinnedModel *active_player_model =
       player_skinned_model_.loaded() ? &player_skinned_model_ : nullptr;
-  switch (session_state_.selected_character) {
-  case GuiMenu::Character::Trooper:
-    if (trooper_skinned_model_.loaded()) active_player_model = &trooper_skinned_model_;
-    break;
-  case GuiMenu::Character::Ranger:
-    if (ranger_skinned_model_.loaded()) active_player_model = &ranger_skinned_model_;
-    break;
-  case GuiMenu::Character::Bot:
-    if (bot_skinned_model_.loaded()) active_player_model = &bot_skinned_model_;
-    break;
-  case GuiMenu::Character::Medic:
-    if (medic_skinned_model_.loaded()) active_player_model = &medic_skinned_model_;
-    break;
-  case GuiMenu::Character::Humanoid:
-  default:
-    break;
-  }
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled,
       /*render_local_avatar=*/true,
@@ -854,23 +822,6 @@ void Engine::tick(double frame_dt,
 
   const SkinnedModel *active_player_model =
       player_skinned_model_.loaded() ? &player_skinned_model_ : nullptr;
-  switch (session_state_.selected_character) {
-  case GuiMenu::Character::Trooper:
-    if (trooper_skinned_model_.loaded()) active_player_model = &trooper_skinned_model_;
-    break;
-  case GuiMenu::Character::Ranger:
-    if (ranger_skinned_model_.loaded()) active_player_model = &ranger_skinned_model_;
-    break;
-  case GuiMenu::Character::Bot:
-    if (bot_skinned_model_.loaded()) active_player_model = &bot_skinned_model_;
-    break;
-  case GuiMenu::Character::Medic:
-    if (medic_skinned_model_.loaded()) active_player_model = &medic_skinned_model_;
-    break;
-  case GuiMenu::Character::Humanoid:
-  default:
-    break;
-  }
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled,
       local_player.camera_rig.distance > 0.1f && !piloting_ship_,

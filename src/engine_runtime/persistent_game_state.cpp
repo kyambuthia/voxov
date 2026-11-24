@@ -113,7 +113,7 @@ bool encode_persistent_game_state(
         return false;
     }
     if (state.character < GuiMenu::Character::Humanoid ||
-        state.character > GuiMenu::Character::Medic) {
+        state.character > GuiMenu::Character::Humanoid) {
         out_error = "invalid character";
         return false;
     }

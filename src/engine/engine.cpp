@@ -316,6 +316,8 @@ RuntimeDebugSceneSnapshot::AvatarStyle avatar_style_from_character(
     GuiMenu::Character character) {
   switch (character) {
   case GuiMenu::Character::Humanoid:
+  case GuiMenu::Character::Boxman:
+  case GuiMenu::Character::Fox:
     return RuntimeDebugSceneSnapshot::AvatarStyle::Humanoid;
   case GuiMenu::Character::Skeleton:
     return RuntimeDebugSceneSnapshot::AvatarStyle::Skeleton;
@@ -337,6 +339,16 @@ bool Engine::init(const EngineRuntimeOptions &options) {
     } else {
       spdlog::info("Loaded player model: boxman.glb ({} clips)",
                    player_skinned_model_.clips().size());
+    }
+    std::string fox_err;
+    if (!fox_skinned_model_.load_from_glb(
+            "./assets/models/player/Fox.glb", fox_err) &&
+        !fox_skinned_model_.load_from_glb(
+            "assets/models/player/Fox.glb", fox_err)) {
+      spdlog::warn("Player model load failed (Fox.glb): {}", fox_err);
+    } else {
+      spdlog::info("Loaded player model: Fox.glb ({} clips)",
+                   fox_skinned_model_.clips().size());
     }
   }
   platform_services = options.platform_services != nullptr
@@ -479,11 +491,14 @@ bool Engine::init(const EngineRuntimeOptions &options) {
   camera.z_near = 0.25f;
   update_first_person_camera(local_player, camera);
 
-  const SkinnedModel *active_player_model =
-      (session_state_.selected_character == GuiMenu::Character::Humanoid &&
-       player_skinned_model_.loaded())
-          ? &player_skinned_model_
-          : nullptr;
+  const SkinnedModel *active_player_model = nullptr;
+  if (session_state_.selected_character == GuiMenu::Character::Boxman &&
+      player_skinned_model_.loaded()) {
+    active_player_model = &player_skinned_model_;
+  } else if (session_state_.selected_character == GuiMenu::Character::Fox &&
+             fox_skinned_model_.loaded()) {
+    active_player_model = &fox_skinned_model_;
+  }
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled,
       /*render_local_avatar=*/true,
@@ -829,11 +844,14 @@ void Engine::tick(double frame_dt,
 
   update_render_stats(profiling_sample, terrain_timings, gpu_upload_ms);
 
-  const SkinnedModel *active_player_model =
-      (session_state_.selected_character == GuiMenu::Character::Humanoid &&
-       player_skinned_model_.loaded())
-          ? &player_skinned_model_
-          : nullptr;
+  const SkinnedModel *active_player_model = nullptr;
+  if (session_state_.selected_character == GuiMenu::Character::Boxman &&
+      player_skinned_model_.loaded()) {
+    active_player_model = &player_skinned_model_;
+  } else if (session_state_.selected_character == GuiMenu::Character::Fox &&
+             fox_skinned_model_.loaded()) {
+    active_player_model = &fox_skinned_model_;
+  }
   scene.debug_world = build_local_player_debug_mesh(
       local_player, local_player_animation, session_state_.devhud_enabled,
       local_player.camera_rig.distance > 0.1f && !piloting_ship_,
@@ -3657,12 +3675,13 @@ void Engine::refresh_overlay_text() {
     const float px = (ui.width() - panel_w) * 0.5f;
     const float py = std::max(24.0f, (ui.height() - panel_h) * 0.5f);
 
-    ui.panel({px, py, panel_w, panel_h}, ui.theme().accent, 1.5f);
+    ui.panel({px, py, panel_w, panel_h}, ui.theme().accent, 1.0f);
     ui.text("VOXOV", px + kPad, py + 16.0f, 12.0f, ui.theme().accent);
     if (!menu.title.empty()) {
       ui.text(menu.title, px + kPad, py + 34.0f, 22.0f,
               ui.theme().text_primary);
     }
+    ui.divider(px + kPad, py + kPad + kHeaderH - 10.0f, panel_w - 2.0f * kPad);
 
     float cy = py + kPad + kHeaderH;
     for (size_t i = 0; i < menu.items.size(); ++i) {
@@ -3834,10 +3853,11 @@ void Engine::refresh_overlay_text() {
   }
 
   if (!session_state_.devhud_enabled) {
-    ui.panel({16.0f, ui.height() - 44.0f, 330.0f, 28.0f},
+    const std::string hint = "ESC Menu   F3 Debug   1-7 / Wheel Blocks";
+    const float hint_w = ui.measure_text_width(hint, 12.0f) + 24.0f;
+    ui.panel({16.0f, ui.height() - 44.0f, hint_w, 28.0f},
              ui.theme().panel_border, 1.0f);
-    ui.text("ESC Menu   F3 Debug   1-7 / Wheel Blocks", 26.0f,
-            ui.height() - 36.0f, 12.0f, ui.theme().text_muted);
+    ui.text(hint, 28.0f, ui.height() - 36.0f, 12.0f, ui.theme().text_muted);
     return;
   }
 
@@ -3974,8 +3994,9 @@ void Engine::refresh_overlay_text() {
     constexpr float kHeaderH = 30.0f;
     const float h_px =
         kHeaderH + static_cast<float>(lines.size()) * kLineH + kPad;
-    ui.panel({x_px, kTop, w_px, h_px}, accent, 1.5f);
-    ui.text(title, x_px + kPad, kTop + 10.0f, 14.0f, accent);
+    ui.panel({x_px, kTop, w_px, h_px}, accent, 1.0f);
+    ui.text(title, x_px + kPad, kTop + 9.0f, 13.0f, accent);
+    ui.divider(x_px + kPad, kTop + kHeaderH - 2.0f, w_px - 2.0f * kPad);
     std::string body;
     for (size_t i = 0; i < lines.size(); ++i) {
       if (i > 0) body += "\n";

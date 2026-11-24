@@ -45,14 +45,38 @@ void UiContext::rect(UiRect r, const glm::vec3 &color, float alpha) {
 }
 
 void UiContext::panel(UiRect r, const glm::vec3 &accent, float border_px) {
-    rect(r, theme_.panel_border, theme_.border_alpha);
+    rect(r, theme_.panel_border, 0.72f);
     rect({r.x + border_px, r.y + border_px,
           std::max(0.0f, r.w - 2.0f * border_px),
           std::max(0.0f, r.h - 2.0f * border_px)},
-         theme_.panel_bg, theme_.panel_alpha);
+         theme_.panel_bg, 0.90f);
     rect({r.x + border_px, r.y + border_px,
-          std::max(0.0f, r.w - 2.0f * border_px), 3.0f},
+          std::max(0.0f, r.w - 2.0f * border_px), 2.0f},
          accent, 0.95f);
+}
+
+void UiContext::divider(float x_px, float y_px, float w_px) {
+    rect({x_px, y_px, w_px, 1.0f}, theme_.panel_border, 0.45f);
+}
+
+float UiContext::measure_text_width(const std::string &str,
+                                    float height_px) const {
+    if (str.empty() || height_px <= 0.0f) {
+        return 0.0f;
+    }
+    size_t max_chars = 0;
+    size_t cur = 0;
+    for (char c : str) {
+        if (c == '\n') {
+            max_chars = std::max(max_chars, cur);
+            cur = 0;
+        } else {
+            ++cur;
+        }
+    }
+    max_chars = std::max(max_chars, cur);
+    return static_cast<float>(max_chars) * height_px *
+           debug_text_advance_ratio();
 }
 
 void UiContext::text(const std::string &str, float x_px, float y_px,
@@ -62,8 +86,10 @@ void UiContext::text(const std::string &str, float x_px, float y_px,
         return;
     }
     const float cell_ndc = (height_px / logical_h_) * (2.0f / 7.0f);
+    const float aspect = logical_w_ / logical_h_;
     append_mesh(*dst_, build_screen_text_mesh(str, to_ndc_x(x_px), to_ndc_y(y_px),
-                                              cell_ndc, color, line_spacing));
+                                              cell_ndc, color, line_spacing,
+                                              aspect));
 }
 
 void UiContext::text_centered(const std::string &str, UiRect r, float height_px,
@@ -71,8 +97,7 @@ void UiContext::text_centered(const std::string &str, UiRect r, float height_px,
     if (str.empty()) {
         return;
     }
-    const float approx_char_w = height_px * 0.60f;
-    const float text_w = static_cast<float>(str.size()) * approx_char_w;
+    const float text_w = measure_text_width(str, height_px);
     const float x = r.x + std::max(4.0f, (r.w - text_w) * 0.5f);
     const float y = r.y + (r.h - height_px) * 0.5f;
     text(str, x, y, height_px, color);
@@ -90,17 +115,17 @@ bool UiContext::button(UiRect r, const std::string &label, bool selected,
                : (is_hovered ? theme_.btn_hover
                              : (selected ? theme_.btn_selected : theme_.btn_bg));
 
-    rect(r, border, (is_hovered || selected) ? 0.95f : 0.72f);
-    rect({r.x + 1.5f, r.y + 1.5f, r.w - 3.0f, r.h - 3.0f}, fill, 0.94f);
+    rect(r, border, (is_hovered || selected) ? 0.90f : 0.45f);
+    rect({r.x + 1.0f, r.y + 1.0f, r.w - 2.0f, r.h - 2.0f}, fill, 0.94f);
     if (selected || is_hovered) {
-        rect({r.x + 1.5f, r.y + 1.5f, 4.0f, r.h - 3.0f},
+        rect({r.x + 1.0f, r.y + 1.0f, 3.0f, r.h - 2.0f},
              danger ? glm::vec3(0.96f, 0.42f, 0.44f) : theme_.accent, 0.98f);
     }
 
     const glm::vec3 label_color =
         danger ? glm::vec3(1.0f, 0.86f, 0.86f)
                : (selected ? theme_.text_selected : theme_.text_primary);
-    const float font_h = std::clamp(r.h * 0.46f, 12.0f, 20.0f);
+    const float font_h = std::clamp(r.h * 0.42f, 13.0f, 18.0f);
     text(label, r.x + 16.0f, r.y + (r.h - font_h) * 0.5f, font_h, label_color);
 
     return mouse_clicked_ && is_hovered;

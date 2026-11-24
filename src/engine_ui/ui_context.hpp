@@ -51,7 +51,9 @@ public:
     bool hovered(UiRect r) const { return r.contains(cursor_px_); }
 
     void rect(UiRect r, const glm::vec3 &color, float alpha = 1.0f);
-    void panel(UiRect r, const glm::vec3 &accent, float border_px = 1.5f);
+    void panel(UiRect r, const glm::vec3 &accent, float border_px = 1.0f);
+    void divider(float x_px, float y_px, float w_px);
+    float measure_text_width(const std::string &str, float height_px) const;
     void text(const std::string &str, float x_px, float y_px, float height_px,
               const glm::vec3 &color, float line_spacing = 1.12f);
     void text_centered(const std::string &str, UiRect r, float height_px,

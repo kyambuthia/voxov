@@ -71,9 +71,21 @@ public:
             .host_lan = [this]() { session_flow.host_lan_session(engine); },
             .join_nearby = [this]() { session_flow.join_nearby_session(engine); },
         };
+        InputState menu_input = input_frame.primary;
+        int hover_idx = -1;
+        int activate_idx = -1;
+        if (engine.consume_menu_interaction(hover_idx, activate_idx) &&
+            gui_menu.open()) {
+            if (activate_idx >= 0) {
+                gui_menu.set_selected(activate_idx);
+                menu_input.menu_select_pressed = true;
+            } else if (hover_idx >= 0) {
+                gui_menu.set_selected(hover_idx);
+            }
+        }
         const RuntimeMenuResult menu_result =
             session_controller.handle_menu_input(
-                input_frame.primary,
+                menu_input,
                 gui_menu,
                 callbacks);
         const PlayerPreferences &preferences = gui_menu.preferences();

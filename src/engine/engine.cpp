@@ -907,6 +907,9 @@ void Engine::tick(double frame_dt,
 
 void Engine::apply_session_input(InputState &gameplay_input,
                                  const RenderSurface &surface) {
+  last_surface_ = surface;
+  ui_cursor_pos_ = gameplay_input.cursor_position;
+  ui_left_click_pressed_ = gameplay_input.ui_left_click_pressed;
   if (surface.width > 0 && surface.height > 0) {
     sky_navigation_cursor_ndc_ = glm::vec2(
         gameplay_input.cursor_position.x /
@@ -1037,6 +1040,15 @@ void Engine::apply_session_input(InputState &gameplay_input,
       static_cast<size_t>(gameplay_input.hotbar_slot_pressed) <
           kBlockHotbarSize) {
     hotbar_slot_ = static_cast<size_t>(gameplay_input.hotbar_slot_pressed);
+    last_hud_message_ =
+        std::string("Placing ") + kBlockHotbar[hotbar_slot_].label;
+  }
+  if (!session_state_.menu_open && !sky_navigation_mode_ &&
+      std::abs(gameplay_input.scroll_y) > 0.01f) {
+    const int step = gameplay_input.scroll_y > 0.0f ? -1 : 1;
+    const int count = static_cast<int>(kBlockHotbarSize);
+    hotbar_slot_ = static_cast<size_t>(
+        (static_cast<int>(hotbar_slot_) + step + count) % count);
     last_hud_message_ =
         std::string("Placing ") + kBlockHotbar[hotbar_slot_].label;
   }
@@ -3664,39 +3676,75 @@ void Engine::refresh_overlay_text() {
   scene.debug_screen = RenderMesh{};
   scene.debug_screen.content_hash = frame_index + 1;
 
+  UiContext ui;
+  ui.begin(scene.debug_screen, last_surface_.width, last_surface_.height,
+           last_surface_.content_scale, ui_cursor_pos_,
+           ui_left_click_pressed_);
+
   if (session_state_.menu_open) {
-    append_screen_rect(scene.debug_screen, -0.95f, 0.90f, 0.32f, -0.86f,
-                       glm::vec3(0.05f, 0.07f, 0.10f));
-    append_screen_rect(scene.debug_screen, -0.93f, 0.87f, 0.30f, -0.83f,
-                       glm::vec3(0.09f, 0.11f, 0.16f));
+    ui.rect({0.0f, 0.0f, ui.width(), ui.height()}, ui.theme().backdrop,
+            ui.theme().backdrop_alpha);
 
     const GuiMenuView &menu = session_state_.menu_view;
-    float y = 0.80f;
+    const float panel_w = std::min(480.0f, std::max(280.0f, ui.width() - 48.0f));
+    constexpr float kPad = 24.0f;
+    constexpr float kBtnH = 40.0f;
+    constexpr float kBtnGap = 8.0f;
+    constexpr float kHeaderH = 66.0f;
+    const float guide_h =
+        menu.guide_lines.empty()
+            ? 0.0f
+            : (14.0f + static_cast<float>(menu.guide_lines.size()) * 20.0f);
+    const float status_h = menu.status.empty() ? 0.0f : 34.0f;
+    constexpr float kFooterH = 34.0f;
+    const float items_h =
+        static_cast<float>(menu.items.size()) * kBtnH +
+        static_cast<float>(std::max<size_t>(1, menu.items.size()) - 1) * kBtnGap;
+    const float panel_h =
+        kPad + kHeaderH + items_h + guide_h + status_h + kFooterH + kPad;
+    const float px = (ui.width() - panel_w) * 0.5f;
+    const float py = std::max(24.0f, (ui.height() - panel_h) * 0.5f);
+
+    ui.panel({px, py, panel_w, panel_h}, ui.theme().accent, 1.5f);
+    ui.text("VOXOV", px + kPad, py + 16.0f, 12.0f, ui.theme().accent);
     if (!menu.title.empty()) {
-      append_screen_label(scene.debug_screen, menu.title, -0.88f, y, 0.0082f,
-                          glm::vec3(0.98f, 0.98f, 1.0f));
-      y -= 0.12f;
+      ui.text(menu.title, px + kPad, py + 34.0f, 22.0f,
+              ui.theme().text_primary);
     }
+
+    float cy = py + kPad + kHeaderH;
     for (size_t i = 0; i < menu.items.size(); ++i) {
+      const UiRect btn_r{px + kPad, cy, panel_w - 2.0f * kPad, kBtnH};
       const bool selected = static_cast<int>(i) == menu.selected;
-      append_screen_label(scene.debug_screen,
-                          selected ? "> " + menu.items[i]
-                                   : "  " + menu.items[i],
-                          -0.86f, y, 0.0067f,
-                          selected ? glm::vec3(1.0f, 0.96f, 0.72f)
-                                   : glm::vec3(0.86f, 0.91f, 0.98f));
-      y -= 0.09f;
+      const bool is_quit = menu.items[i] == "QUIT GAME";
+      if (ui.hovered(btn_r)) {
+        pending_menu_hover_index_ = static_cast<int>(i);
+      }
+      if (ui.button(btn_r, menu.items[i], selected, is_quit)) {
+        pending_menu_activate_index_ = static_cast<int>(i);
+      }
+      cy += kBtnH + kBtnGap;
     }
-    for (const std::string &line : menu.guide_lines) {
-      append_screen_label(scene.debug_screen, line, -0.86f, y, 0.0056f,
-                          glm::vec3(0.80f, 0.88f, 0.97f));
-      y -= 0.07f;
+
+    if (!menu.guide_lines.empty()) {
+      cy += 8.0f;
+      for (const std::string &line : menu.guide_lines) {
+        ui.text(line, px + kPad, cy, 13.0f, ui.theme().text_muted);
+        cy += 20.0f;
+      }
     }
     if (!menu.status.empty()) {
-      append_screen_label(scene.debug_screen, "STATUS: " + menu.status,
-                          -0.88f, -0.76f, 0.0055f,
-                          glm::vec3(0.88f, 0.93f, 0.99f));
+      cy += 6.0f;
+      ui.rect({px + kPad, cy, panel_w - 2.0f * kPad, 26.0f},
+              glm::vec3(0.11f, 0.17f, 0.25f), 0.90f);
+      ui.text("STATUS: " + menu.status, px + kPad + 10.0f, cy + 6.0f, 13.0f,
+              ui.theme().accent_alt);
+      cy += 30.0f;
     }
+
+    ui.text("ESC Resume/Back   Click or Enter Select   Ctrl+Q Quit",
+            px + kPad, py + panel_h - 26.0f, 12.0f, ui.theme().text_muted);
+
     if (touch_controls_visible_) {
       append_screen_label(scene.debug_screen,
                           "Touch: RUN=DOWN  CROUCH=UP  JUMP=SELECT  MENU=CLOSE",
@@ -3781,40 +3829,63 @@ void Engine::refresh_overlay_text() {
   if (piloting_ship_) {
     append_ship_hud();
   } else {
-    append_block_hotbar(scene.debug_screen, hotbar_slot_,
-                        sky_navigation_aspect_ratio_);
+    constexpr float kSlot = 44.0f;
+    constexpr float kGap = 8.0f;
+    const float total_w = static_cast<float>(kBlockHotbarSize) * kSlot +
+                          static_cast<float>(kBlockHotbarSize - 1) * kGap;
+    const float bar_w = total_w + 24.0f;
+    const float bar_h = kSlot + 42.0f;
+    const float bar_x = (ui.width() - bar_w) * 0.5f;
+    const float bar_y = ui.height() - bar_h - 18.0f;
+    ui.panel({bar_x, bar_y, bar_w, bar_h}, ui.theme().accent, 1.5f);
+    ui.text_centered(kBlockHotbar[hotbar_slot_].label,
+                     {bar_x, bar_y + 6.0f, bar_w, 18.0f}, 13.0f,
+                     ui.theme().text_primary);
+    const float slots_x = bar_x + 12.0f;
+    const float slots_y = bar_y + 26.0f;
+    for (size_t i = 0; i < kBlockHotbarSize; ++i) {
+      const float sx = slots_x + static_cast<float>(i) * (kSlot + kGap);
+      const bool active = i == hotbar_slot_;
+      ui.rect({sx - 2.0f, slots_y - 2.0f, kSlot + 4.0f, kSlot + 4.0f},
+              active ? ui.theme().accent : glm::vec3(0.20f, 0.27f, 0.36f),
+              active ? 0.98f : 0.78f);
+      const glm::vec3 swatch =
+          glm::pow(kBlockHotbar[i].swatch, glm::vec3(0.75f));
+      ui.rect({sx, slots_y, kSlot, kSlot}, swatch, 0.96f);
+      ui.text(std::to_string(i + 1), sx + 4.0f, slots_y + 3.0f, 11.0f,
+              active ? glm::vec3(1.0f, 0.98f, 0.78f)
+                     : glm::vec3(0.92f, 0.95f, 1.0f));
+    }
     if (player_near_ship()) {
-      append_screen_label(scene.debug_screen, "E  BOARD SHIP", -0.10f, -0.22f,
-                          0.0050f, glm::vec3(1.0f, 0.88f, 0.45f));
+      ui.text_centered("E  BOARD SHIP",
+                       {0.0f, bar_y - 32.0f, ui.width(), 22.0f}, 14.0f,
+                       glm::vec3(1.0f, 0.88f, 0.45f));
     }
   }
 
-  // ── Crosshair ──────────────────────────────────────────────────────
-  // Always draw the crosshair (even when DevHUD is open) with a subtle
-  // dark backing so it stays readable against bright sky and snow blocks.
   {
-    const float aspect = std::max(sky_navigation_aspect_ratio_, 0.1f);
-    constexpr float ch_size = 0.015f;
-    constexpr float ch_thick = 0.0024f;
-    constexpr float ch_pad = 0.0018f;
-    const float v_size = ch_size * aspect;
-    const float v_thick = ch_thick * aspect;
-    const float v_pad = ch_pad * aspect;
-    const glm::vec3 shadow_color(0.04f, 0.06f, 0.09f);
-    const glm::vec3 crosshair_color(0.96f, 0.98f, 1.0f);
-    append_screen_rect(scene.debug_screen, -ch_size - ch_pad,
-                       v_thick + v_pad, ch_size + ch_pad, -v_thick - v_pad,
-                       shadow_color, 0.72f);
-    append_screen_rect(scene.debug_screen, -ch_thick - ch_pad,
-                       v_size + v_pad, ch_thick + ch_pad, -v_size - v_pad,
-                       shadow_color, 0.72f);
-    append_screen_rect(scene.debug_screen, -ch_size, v_thick, ch_size,
-                       -v_thick, crosshair_color, 0.95f);
-    append_screen_rect(scene.debug_screen, -ch_thick, v_size, ch_thick,
-                       -v_size, crosshair_color, 0.95f);
+    const float cx = ui.width() * 0.5f;
+    const float cy = ui.height() * 0.5f;
+    constexpr float kArm = 8.0f;
+    constexpr float kThick = 2.0f;
+    constexpr float kPad = 1.0f;
+    const glm::vec3 shadow(0.04f, 0.06f, 0.09f);
+    const glm::vec3 fg(0.96f, 0.98f, 1.0f);
+    ui.rect({cx - kArm - kPad, cy - kThick * 0.5f - kPad,
+             (kArm + kPad) * 2.0f, kThick + kPad * 2.0f},
+            shadow, 0.72f);
+    ui.rect({cx - kThick * 0.5f - kPad, cy - kArm - kPad,
+             kThick + kPad * 2.0f, (kArm + kPad) * 2.0f},
+            shadow, 0.72f);
+    ui.rect({cx - kArm, cy - kThick * 0.5f, kArm * 2.0f, kThick}, fg, 0.96f);
+    ui.rect({cx - kThick * 0.5f, cy - kArm, kThick, kArm * 2.0f}, fg, 0.96f);
   }
 
   if (!session_state_.devhud_enabled) {
+    ui.panel({16.0f, ui.height() - 44.0f, 330.0f, 28.0f},
+             ui.theme().panel_border, 1.0f);
+    ui.text("ESC Menu   F3 Debug   1-7 / Wheel Blocks", 26.0f,
+            ui.height() - 36.0f, 12.0f, ui.theme().text_muted);
     return;
   }
 
@@ -3830,7 +3901,6 @@ void Engine::refresh_overlay_text() {
     return std::to_string(static_cast<int>(v * 100.0) / 100.0).substr(0, 5);
   };
 
-  // Left card: Performance & Engine stats
   std::vector<std::string> perf_lines;
   perf_lines.push_back(
       "FPS " + std::to_string(static_cast<int>(render_stats.fps + 0.5)) +
@@ -3869,7 +3939,6 @@ void Engine::refresh_overlay_text() {
       "  NET " + std::to_string(net_events_seen_));
   perf_lines.push_back("NET STATUS: " + last_net_status_);
 
-  // Right card: World, Player & Controls
   std::vector<std::string> world_lines;
   const glm::vec3 local_up = glm::normalize(local_player.transform.position);
   world_lines.push_back(
@@ -3944,31 +4013,39 @@ void Engine::refresh_overlay_text() {
     world_lines.push_back(last_hud_message_);
   }
 
-  auto draw_debug_card = [&](float x0, float x1, const std::string &title,
+  auto draw_debug_card = [&](float x_px, float w_px, const std::string &title,
                              const std::vector<std::string> &lines,
                              const glm::vec3 &accent) {
-    constexpr float kTop = 0.94f;
-    constexpr float kHeaderScale = 0.0046f;
-    constexpr float kBodyScale = 0.0041f;
-    constexpr float kLineStep = 0.041f;
-    constexpr float kHeaderGap = 0.068f;
-    const float bottom =
-        kTop - kHeaderGap - static_cast<float>(lines.size()) * kLineStep - 0.025f;
-    append_slate_panel(scene.debug_screen, x0, kTop, x1, bottom, accent);
-    append_screen_label(scene.debug_screen, title, x0 + 0.024f, kTop - 0.044f,
-                        kHeaderScale, accent);
+    constexpr float kTop = 16.0f;
+    constexpr float kPad = 14.0f;
+    constexpr float kLineH = 18.0f;
+    constexpr float kHeaderH = 30.0f;
+    const float h_px =
+        kHeaderH + static_cast<float>(lines.size()) * kLineH + kPad;
+    ui.panel({x_px, kTop, w_px, h_px}, accent, 1.5f);
+    ui.text(title, x_px + kPad, kTop + 10.0f, 14.0f, accent);
     std::string body;
     for (size_t i = 0; i < lines.size(); ++i) {
       if (i > 0) body += "\n";
       body += lines[i];
     }
-    append_screen_label(scene.debug_screen, body, x0 + 0.024f,
-                        kTop - kHeaderGap - 0.020f, kBodyScale,
-                        glm::vec3(0.90f, 0.94f, 0.99f));
+    ui.text(body, x_px + kPad, kTop + kHeaderH + 4.0f, 12.0f,
+            ui.theme().text_primary, 1.18f);
   };
 
-  draw_debug_card(-0.96f, -0.15f, "PERF & ENGINE  [F3]", perf_lines,
-                  glm::vec3(0.32f, 0.82f, 1.0f));
-  draw_debug_card(0.15f, 0.96f, "WORLD & PLAYER", world_lines,
-                  glm::vec3(0.45f, 0.92f, 0.72f));
+  const float card_w = std::min(430.0f, std::max(260.0f, ui.width() * 0.36f));
+  draw_debug_card(16.0f, card_w, "PERF & ENGINE  [F3]", perf_lines,
+                  ui.theme().accent);
+  draw_debug_card(ui.width() - card_w - 16.0f, card_w, "WORLD & PLAYER",
+                  world_lines, ui.theme().accent_alt);
+}
+
+
+bool Engine::consume_menu_interaction(int &out_hover_index,
+                                      int &out_activate_index) {
+  out_hover_index = pending_menu_hover_index_;
+  out_activate_index = pending_menu_activate_index_;
+  pending_menu_hover_index_ = -1;
+  pending_menu_activate_index_ = -1;
+  return out_hover_index >= 0 || out_activate_index >= 0;
 }

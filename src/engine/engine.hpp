@@ -78,6 +78,7 @@ public:
             const RenderSurface &surface);
   const RenderStats &stats() const;
   void set_session_state(const EngineSessionState &state);
+  bool consume_menu_interaction(int &out_hover_index, int &out_activate_index);
   RuntimeSessionSnapshot session_snapshot() const;
   void pump_lan_discovery();
   bool pop_discovered_host(LanHostEntry &host);
@@ -321,6 +322,11 @@ private:
     // ── Block interaction (first-person pick/break/place) ─────────────────
   // Targeted block from camera center raycast.
   size_t hotbar_slot_ = 0; // index into kBlockHotbar
+  RenderSurface last_surface_{1280, 720, 1.0f};
+  glm::vec2 ui_cursor_pos_{0.0f};
+  bool ui_left_click_pressed_ = false;
+  int pending_menu_hover_index_ = -1;
+  int pending_menu_activate_index_ = -1;
   SpaceshipState ship_{};
   SpaceshipTuning ship_tuning_{};
   SpaceshipInput ship_input_{};

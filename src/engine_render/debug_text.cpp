@@ -418,7 +418,7 @@ void append_raster_glyph_screen(RenderMesh &mesh, const RasterFont &font,
             glyph_x + static_cast<float>(run_start),
             glyph_y + static_cast<float>(row),
             static_cast<float>(col - run_start), 1.0f, cell_size_ndc, color,
-            run_alpha);
+            run_alpha, aspect_ratio);
         run_start = col;
         run_alpha = alpha;
       } else if (alpha <= 0.0f && run_start >= 0) {

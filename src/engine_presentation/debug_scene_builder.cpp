@@ -654,6 +654,8 @@ void append_player_debug(RenderMesh &mesh, const PlayerEntity &player,
   // visible character in third-person. Feet/target markers stay devhud-only.
   const bool humanoid_style =
       avatar_style == RuntimeDebugSceneSnapshot::AvatarStyle::Humanoid;
+  const bool skeleton_style =
+      avatar_style == RuntimeDebugSceneSnapshot::AvatarStyle::Skeleton;
   // The pivot/feet markers are debug aids; the always-on gameplay avatar
   // must not drag them into normal play.
   const bool render_markers =
@@ -671,6 +673,12 @@ void append_player_debug(RenderMesh &mesh, const PlayerEntity &player,
       SkeletalAnimator::append_blocky_mesh(
           mesh, pose, player.transform.position, body_orientation,
           player_color_from_id(player.network_id));
+    } else if (skeleton_style && !render_skinned_avatar) {
+      const SkeletonPose pose = SkeletalAnimator::sample_pose(
+          player.anim_state, player.anim_phase, player.anim_blend);
+      SkeletalAnimator::append_debug_skeleton(
+          mesh, pose, player.transform.position, body_orientation,
+          glm::vec3(0.92f, 0.90f, 0.82f), 0.045f);
     } else {
       append_mesh(mesh, player_capsule);
       if (avatar_with_head) {
@@ -703,7 +711,7 @@ void append_player_debug(RenderMesh &mesh, const PlayerEntity &player,
                           avatar_orientation,
                           player_color_from_id(player.network_id)));
   }
-  if (render_skeleton_only ||
+  if ((render_skeleton_only && !skeleton_style) ||
       (render_skinned_avatar && (collision_debug_enabled || devhud_enabled))) {
     if (render_skinned_avatar && selected_player_model != nullptr) {
       selected_player_model->append_debug_skeleton(

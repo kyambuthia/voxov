@@ -319,13 +319,16 @@ float sky_noise3(vec3 p) {
 }
 
 float cloud_density(vec3 p, float time_val) {
-    float h = clamp((p.y - 56.0) / 30.0, 0.0, 1.0);
-    float profile = smoothstep(0.0, 0.18, h) * smoothstep(1.0, 0.36, h);
-    if (profile <= 0.001) return 0.0;
+    if (p.y < 56.0 || p.y > 86.0) return 0.0;
     vec3 q = p + vec3(time_val * 2.4, 0.0, time_val * 1.1);
-    float n = sky_noise3(q * 0.022) * 0.65 + sky_noise3(q * 0.058 + vec3(13.7, 5.2, 9.1)) * 0.35;
-    float d = smoothstep(0.48, 0.74, n * profile * 1.25);
-    return d;
+    vec3 vox = floor(q / vec3(12.0, 6.0, 12.0));
+    vec3 macro = floor(vec3(vox.x, 0.0, vox.z) / 3.0);
+    float cluster = step(0.62, sky_hash(macro));
+    if (cluster < 0.5) return 0.0;
+    float h = clamp((p.y - 56.0) / 30.0, 0.0, 1.0);
+    float layer_prob = 1.0 - abs(h - 0.42) * 1.55;
+    float cell = sky_hash(vox);
+    return step(0.28, cell * max(0.0, layer_prob));
 }
 
 vec2 sky_sphere(vec3 origin, vec3 direction, float radius) {
@@ -357,7 +360,7 @@ void main() {
             float t0 = max(0.0, (56.0 - origin.y) / ray.y);
             float t1 = min(950.0, (86.0 - origin.y) / ray.y);
             if (t1 > t0) {
-                const int kSteps = 12;
+                const int kSteps = 18;
                 float step_len = (t1 - t0) / float(kSteps);
                 float transmittance = 1.0;
                 vec3 cloud_accum = vec3(0.0);
@@ -372,7 +375,7 @@ void main() {
                         float sun_occ = cloud_density(pos + vec3(sun.x, abs(sun.y) + 0.25, sun.z) * 8.0, sky_style.y);
                         float light_t = clamp((0.35 + 0.65 * h_norm) * (1.0 - sun_occ * 0.55), 0.0, 1.0);
                         vec3 sample_col = mix(shadow_col, lit_col, light_t);
-                        float alpha = 1.0 - exp(-d * min(step_len, 8.0) * 0.14);
+                        float alpha = 1.0 - exp(-d * min(step_len, 8.0) * 0.22);
                         cloud_accum += transmittance * sample_col * alpha;
                         transmittance *= (1.0 - alpha);
                         if (transmittance < 0.02) break;

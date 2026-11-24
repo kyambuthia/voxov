@@ -223,41 +223,142 @@ def build_clip(arm_obj, clip_name, frames, pose_fn):
 
 
 def create_animations(arm_obj):
-    # Note: In local bone space, X rotation pitches forward/back, Z twists
     def pose_idle(t):
-        s = math.sin(t * 2.0 * math.pi)
-        set_bone_loc(arm_obj, "Pelvis", lz=0.015 * s)
-        set_bone_rot(arm_obj, "Chest", rx_deg=2.0 * s)
-        set_bone_rot(arm_obj, "Head", rx_deg=-2.0 * s)
-        set_bone_rot(arm_obj, "UpperArm.L", rx_deg=3.0 * s, ry_deg=-4.0)
-        set_bone_rot(arm_obj, "UpperArm.R", rx_deg=-3.0 * s, ry_deg=4.0)
-        set_bone_rot(arm_obj, "Forearm.L", rx_deg=-8.0)
-        set_bone_rot(arm_obj, "Forearm.R", rx_deg=-8.0)
+        w = t * 2.0 * math.pi
+        s = math.sin(w)
+        s2 = math.sin(w * 0.5)
+        set_bone_loc(arm_obj, "Pelvis", lz=0.016 * s, lx=0.008 * s2)
+        set_bone_rot(arm_obj, "Spine", rx_deg=1.8 * s, rz_deg=1.5 * s2)
+        set_bone_rot(arm_obj, "Chest", rx_deg=2.2 * s, rz_deg=-1.5 * s2)
+        set_bone_rot(arm_obj, "Head", rx_deg=-3.0 * s, ry_deg=2.0 * s2)
+        set_bone_rot(arm_obj, "UpperArm.L", rx_deg=3.5 * s, ry_deg=-5.0)
+        set_bone_rot(arm_obj, "Forearm.L", rx_deg=-10.0 - 3.0 * math.cos(w))
+        set_bone_rot(arm_obj, "Hand.L", rx_deg=-4.0 * s)
+        set_bone_rot(arm_obj, "UpperArm.R", rx_deg=-3.5 * s, ry_deg=5.0)
+        set_bone_rot(arm_obj, "Forearm.R", rx_deg=-10.0 + 3.0 * math.cos(w))
+        set_bone_rot(arm_obj, "Hand.R", rx_deg=4.0 * s)
 
-    def pose_locomotion(t, amp, lean, bob):
-        s = math.sin(t * 2.0 * math.pi)
-        c = math.cos(t * 2.0 * math.pi)
-        s2 = abs(s)
-        set_bone_loc(arm_obj, "Pelvis", lz=-bob * s2)
-        set_bone_rot(arm_obj, "Chest", rx_deg=lean, rz_deg=amp * 0.2 * s)
-        set_bone_rot(arm_obj, "Head", rx_deg=-lean * 0.6)
-        set_bone_rot(arm_obj, "Thigh.L", rx_deg=amp * s)
-        set_bone_rot(arm_obj, "Shin.L", rx_deg=max(0.0, -amp * 0.9 * c))
-        set_bone_rot(arm_obj, "Thigh.R", rx_deg=-amp * s)
-        set_bone_rot(arm_obj, "Shin.R", rx_deg=max(0.0, amp * 0.9 * c))
-        set_bone_rot(arm_obj, "UpperArm.L", rx_deg=-amp * 0.85 * s, ry_deg=-4.0)
-        set_bone_rot(arm_obj, "Forearm.L", rx_deg=-22.0 - max(0.0, -amp * 0.4 * s))
-        set_bone_rot(arm_obj, "UpperArm.R", rx_deg=amp * 0.85 * s, ry_deg=4.0)
-        set_bone_rot(arm_obj, "Forearm.R", rx_deg=-22.0 - max(0.0, amp * 0.4 * s))
+    def pose_move(t, amp, lean, bob, dir_x=0.0, dir_y=1.0):
+        # dir_y: +1 forward, -1 backward; dir_x: +1 right, -1 left
+        w = t * 2.0 * math.pi
+        s = math.sin(w)
+        c = math.cos(w)
+        s_lag = math.sin(w - 0.55)
+        c_lag = math.cos(w - 0.55)
+        double_s = abs(s)
 
-    def pose_jump(t):
-        set_bone_loc(arm_obj, "Pelvis", lz=0.05)
-        set_bone_rot(arm_obj, "Thigh.L", rx_deg=-28.0)
-        set_bone_rot(arm_obj, "Shin.L", rx_deg=45.0)
-        set_bone_rot(arm_obj, "Thigh.R", rx_deg=12.0)
-        set_bone_rot(arm_obj, "Shin.R", rx_deg=20.0)
-        set_bone_rot(arm_obj, "UpperArm.L", rx_deg=-40.0, ry_deg=-15.0)
-        set_bone_rot(arm_obj, "UpperArm.R", rx_deg=-40.0, ry_deg=15.0)
+        # Lateral weight shift onto planted foot + vertical stride bob
+        lat_shift = 0.032 * c
+        set_bone_loc(arm_obj, "Pelvis", lx=lat_shift, lz=-bob * double_s)
+        hip_yaw = (10.0 * dir_y - 6.0 * dir_x) * s
+        hip_roll = 4.5 * c
+        set_bone_rot(arm_obj, "Pelvis", ry_deg=hip_roll, rz_deg=hip_yaw)
+
+        # Counter-rotating spine & chest + head stabilization
+        set_bone_rot(arm_obj, "Spine", rx_deg=lean * 0.4 * dir_y, ry_deg=-hip_roll * 0.5, rz_deg=-hip_yaw * 0.45)
+        set_bone_rot(arm_obj, "Chest", rx_deg=lean * 0.6 * dir_y + 2.5 * double_s, ry_deg=-hip_roll * 0.4, rz_deg=-hip_yaw * 0.75)
+        set_bone_rot(arm_obj, "Neck", rx_deg=-lean * 0.35 * dir_y)
+        set_bone_rot(arm_obj, "Head", rx_deg=-lean * 0.45 * dir_y - 2.0 * double_s, rz_deg=hip_yaw * 0.25)
+
+        # Legs: stride along forward/back + strafe along X + ankle heel-strike/toe-off
+        fwd_l = amp * dir_y * s
+        fwd_r = -amp * dir_y * s
+        side_l = amp * 0.55 * dir_x * s
+        side_r = -amp * 0.55 * dir_x * s
+
+        knee_l = max(0.0, -amp * 1.05 * c) + 6.0
+        knee_r = max(0.0, amp * 1.05 * c) + 6.0
+        set_bone_rot(arm_obj, "Thigh.L", rx_deg=fwd_l, ry_deg=-side_l)
+        set_bone_rot(arm_obj, "Shin.L", rx_deg=knee_l)
+        set_bone_rot(arm_obj, "Foot.L", rx_deg=-0.45 * fwd_l - 0.35 * knee_l + 8.0 * c_lag)
+
+        set_bone_rot(arm_obj, "Thigh.R", rx_deg=fwd_r, ry_deg=-side_r)
+        set_bone_rot(arm_obj, "Shin.R", rx_deg=knee_r)
+        set_bone_rot(arm_obj, "Foot.R", rx_deg=-0.45 * fwd_r - 0.35 * knee_r - 8.0 * c_lag)
+
+        # Arms: opposite swing with delayed forearm & wrist follow-through
+        arm_amp = amp * 0.85
+        set_bone_rot(arm_obj, "UpperArm.L", rx_deg=-arm_amp * dir_y * s, ry_deg=-5.0 - 6.0 * abs(dir_x))
+        set_bone_rot(arm_obj, "Forearm.L", rx_deg=-18.0 - max(0.0, -arm_amp * 0.65 * s_lag))
+        set_bone_rot(arm_obj, "Hand.L", rx_deg=-6.0 * s_lag)
+
+        set_bone_rot(arm_obj, "UpperArm.R", rx_deg=arm_amp * dir_y * s, ry_deg=5.0 + 6.0 * abs(dir_x))
+        set_bone_rot(arm_obj, "Forearm.R", rx_deg=-18.0 - max(0.0, arm_amp * 0.65 * s_lag))
+        set_bone_rot(arm_obj, "Hand.R", rx_deg=6.0 * s_lag)
+
+    def pose_start(t):
+        # Quick anticipation -> lean into first stride
+        e = math.sin(t * 0.5 * math.pi)
+        set_bone_loc(arm_obj, "Pelvis", lz=-0.04 * math.sin(t * math.pi))
+        set_bone_rot(arm_obj, "Chest", rx_deg=10.0 * e)
+        set_bone_rot(arm_obj, "Head", rx_deg=-6.0 * e)
+        set_bone_rot(arm_obj, "Thigh.L", rx_deg=24.0 * e)
+        set_bone_rot(arm_obj, "Shin.L", rx_deg=18.0 * (1.0 - e))
+        set_bone_rot(arm_obj, "Thigh.R", rx_deg=-18.0 * e)
+        set_bone_rot(arm_obj, "UpperArm.L", rx_deg=-22.0 * e)
+        set_bone_rot(arm_obj, "UpperArm.R", rx_deg=22.0 * e)
+
+    def pose_stop(t):
+        # Braking lean back -> settle upright
+        e = 1.0 - math.sin(t * 0.5 * math.pi)
+        set_bone_loc(arm_obj, "Pelvis", lz=-0.04 * e)
+        set_bone_rot(arm_obj, "Chest", rx_deg=-8.0 * e)
+        set_bone_rot(arm_obj, "Thigh.L", rx_deg=-16.0 * e)
+        set_bone_rot(arm_obj, "Shin.L", rx_deg=22.0 * e)
+        set_bone_rot(arm_obj, "Thigh.R", rx_deg=14.0 * e)
+        set_bone_rot(arm_obj, "UpperArm.L", rx_deg=14.0 * e, ry_deg=-8.0 * e)
+        set_bone_rot(arm_obj, "UpperArm.R", rx_deg=-14.0 * e, ry_deg=8.0 * e)
+
+    def pose_jump_takeoff(t):
+        crouch = math.sin(min(1.0, t * 2.0) * math.pi)
+        lift = max(0.0, t - 0.4) * 1.6
+        set_bone_loc(arm_obj, "Pelvis", lz=-0.12 * crouch + 0.08 * lift)
+        set_bone_rot(arm_obj, "Chest", rx_deg=14.0 * crouch - 6.0 * lift)
+        set_bone_rot(arm_obj, "Thigh.L", rx_deg=-35.0 * crouch - 24.0 * lift)
+        set_bone_rot(arm_obj, "Shin.L", rx_deg=55.0 * crouch + 38.0 * lift)
+        set_bone_rot(arm_obj, "Thigh.R", rx_deg=-30.0 * crouch + 10.0 * lift)
+        set_bone_rot(arm_obj, "Shin.R", rx_deg=50.0 * crouch + 18.0 * lift)
+        set_bone_rot(arm_obj, "UpperArm.L", rx_deg=25.0 * crouch - 55.0 * lift, ry_deg=-14.0)
+        set_bone_rot(arm_obj, "UpperArm.R", rx_deg=25.0 * crouch - 55.0 * lift, ry_deg=14.0)
+
+    def pose_airborne(t, fall=False):
+        s = math.sin(t * 2.0 * math.pi)
+        set_bone_loc(arm_obj, "Pelvis", lz=0.04 + 0.02 * s)
+        set_bone_rot(arm_obj, "Chest", rx_deg=-6.0 if not fall else 8.0)
+        set_bone_rot(arm_obj, "Thigh.L", rx_deg=-28.0 + 6.0 * s)
+        set_bone_rot(arm_obj, "Shin.L", rx_deg=48.0 + 8.0 * s)
+        set_bone_rot(arm_obj, "Thigh.R", rx_deg=12.0 - 6.0 * s)
+        set_bone_rot(arm_obj, "Shin.R", rx_deg=24.0 - 6.0 * s)
+        set_bone_rot(arm_obj, "UpperArm.L", rx_deg=-48.0 + 10.0 * s, ry_deg=-18.0)
+        set_bone_rot(arm_obj, "Forearm.L", rx_deg=-28.0)
+        set_bone_rot(arm_obj, "UpperArm.R", rx_deg=-44.0 - 10.0 * s, ry_deg=18.0)
+        set_bone_rot(arm_obj, "Forearm.R", rx_deg=-28.0)
+
+    def pose_land(t, heavy=False):
+        impact = math.sin(t * math.pi)
+        depth = 0.22 if heavy else 0.12
+        set_bone_loc(arm_obj, "Pelvis", lz=-depth * impact)
+        set_bone_rot(arm_obj, "Chest", rx_deg=(24.0 if heavy else 14.0) * impact)
+        set_bone_rot(arm_obj, "Head", rx_deg=-12.0 * impact)
+        set_bone_rot(arm_obj, "Thigh.L", rx_deg=(-48.0 if heavy else -30.0) * impact)
+        set_bone_rot(arm_obj, "Shin.L", rx_deg=(78.0 if heavy else 50.0) * impact)
+        set_bone_rot(arm_obj, "Thigh.R", rx_deg=(-44.0 if heavy else -28.0) * impact)
+        set_bone_rot(arm_obj, "Shin.R", rx_deg=(72.0 if heavy else 46.0) * impact)
+        set_bone_rot(arm_obj, "UpperArm.L", rx_deg=20.0 * impact, ry_deg=-16.0 * impact)
+        set_bone_rot(arm_obj, "UpperArm.R", rx_deg=20.0 * impact, ry_deg=16.0 * impact)
+
+    def pose_turn(t, sign):
+        w = t * 2.0 * math.pi
+        s = math.sin(w)
+        set_bone_loc(arm_obj, "Pelvis", lz=-0.025 * abs(s))
+        set_bone_rot(arm_obj, "Pelvis", rz_deg=12.0 * sign * s)
+        set_bone_rot(arm_obj, "Chest", rz_deg=-10.0 * sign * s)
+        set_bone_rot(arm_obj, "Thigh.L", rx_deg=18.0 * s)
+        set_bone_rot(arm_obj, "Shin.L", rx_deg=max(0.0, 24.0 * s))
+        set_bone_rot(arm_obj, "Thigh.R", rx_deg=-18.0 * s)
+        set_bone_rot(arm_obj, "Shin.R", rx_deg=max(0.0, -24.0 * s))
+        set_bone_rot(arm_obj, "UpperArm.L", rx_deg=-12.0 * s, ry_deg=-5.0)
+        set_bone_rot(arm_obj, "UpperArm.R", rx_deg=12.0 * s, ry_deg=5.0)
 
     def pose_aim(t, recoil=0.0):
         k = recoil * math.sin(t * math.pi)
@@ -292,22 +393,52 @@ def create_animations(arm_obj):
         set_bone_rot(arm_obj, "UpperArm.R", rx_deg=-25.0)
         set_bone_rot(arm_obj, "Forearm.R", rx_deg=-35.0)
 
-    loop_9 = [(1 + i * 3, i / 8.0) for i in range(9)]
-    build_clip(arm_obj, "idle", loop_9, pose_idle)
-    build_clip(arm_obj, "walk", loop_9, lambda t: pose_locomotion(t, 28.0, 5.0, 0.03))
-    build_clip(arm_obj, "run", loop_9, lambda t: pose_locomotion(t, 44.0, 12.0, 0.06))
-    build_clip(arm_obj, "sprint", loop_9, lambda t: pose_locomotion(t, 56.0, 18.0, 0.08))
-    build_clip(arm_obj, "jump_idle", [(1, 0.0), (10, 1.0)], pose_jump)
-    build_clip(arm_obj, "jump_running", [(1, 0.0), (10, 1.0)], pose_jump)
-    build_clip(arm_obj, "falling", [(1, 0.0), (10, 1.0)], pose_jump)
-    build_clip(arm_obj, "drop_idle", [(1, 0.0), (10, 1.0)], pose_idle)
-    build_clip(arm_obj, "rotate_left", loop_9, lambda t: pose_locomotion(t, 16.0, 2.0, 0.02))
-    build_clip(arm_obj, "rotate_right", loop_9, lambda t: pose_locomotion(t, 16.0, 2.0, 0.02))
-    build_clip(arm_obj, "stop", [(1, 0.0), (8, 1.0)], pose_idle)
-    build_clip(arm_obj, "aim_idle", [(1, 0.0), (10, 1.0)], lambda t: pose_aim(t, 0.0))
-    build_clip(arm_obj, "shoot", [(1, 0.0), (4, 0.5), (9, 1.0)], lambda t: pose_aim(t, 1.0))
-    build_clip(arm_obj, "driving", loop_9, pose_driving)
-    build_clip(arm_obj, "sitting", [(1, 0.0), (10, 1.0)], pose_sitting)
+    # Dense 25-keyframe smooth loops for fluid cubic/sampled motion
+    loop_25 = [(1 + i, i / 24.0) for i in range(25)]
+    oneshot_13 = [(1 + i, i / 12.0) for i in range(13)]
+
+    build_clip(arm_obj, "idle", loop_25, pose_idle)
+    build_clip(arm_obj, "start_forward", oneshot_13, pose_start)
+    build_clip(arm_obj, "stop", oneshot_13, pose_stop)
+
+    # 8-way walk
+    build_clip(arm_obj, "walk", loop_25, lambda t: pose_move(t, 28.0, 5.0, 0.032, 0.0, 1.0))
+    build_clip(arm_obj, "walk_forward_right", loop_25, lambda t: pose_move(t, 26.0, 5.0, 0.030, 0.7, 0.7))
+    build_clip(arm_obj, "walk_right", loop_25, lambda t: pose_move(t, 24.0, 3.0, 0.028, 1.0, 0.0))
+    build_clip(arm_obj, "walk_backward_right", loop_25, lambda t: pose_move(t, 24.0, 4.0, 0.028, 0.7, -0.7))
+    build_clip(arm_obj, "walk_backward", loop_25, lambda t: pose_move(t, 25.0, 4.0, 0.030, 0.0, -1.0))
+    build_clip(arm_obj, "walk_backward_left", loop_25, lambda t: pose_move(t, 24.0, 4.0, 0.028, -0.7, -0.7))
+    build_clip(arm_obj, "walk_left", loop_25, lambda t: pose_move(t, 24.0, 3.0, 0.028, -1.0, 0.0))
+    build_clip(arm_obj, "walk_forward_left", loop_25, lambda t: pose_move(t, 26.0, 5.0, 0.030, -0.7, 0.7))
+
+    # 8-way run/sprint
+    build_clip(arm_obj, "sprint", loop_25, lambda t: pose_move(t, 48.0, 14.0, 0.068, 0.0, 1.0))
+    build_clip(arm_obj, "run_forward_right", loop_25, lambda t: pose_move(t, 44.0, 12.0, 0.060, 0.7, 0.7))
+    build_clip(arm_obj, "run_right", loop_25, lambda t: pose_move(t, 40.0, 8.0, 0.052, 1.0, 0.0))
+    build_clip(arm_obj, "run_backward_right", loop_25, lambda t: pose_move(t, 38.0, 8.0, 0.050, 0.7, -0.7))
+    build_clip(arm_obj, "run_backward", loop_25, lambda t: pose_move(t, 40.0, 8.0, 0.052, 0.0, -1.0))
+    build_clip(arm_obj, "run_backward_left", loop_25, lambda t: pose_move(t, 38.0, 8.0, 0.050, -0.7, -0.7))
+    build_clip(arm_obj, "run_left", loop_25, lambda t: pose_move(t, 40.0, 8.0, 0.052, -1.0, 0.0))
+    build_clip(arm_obj, "run_forward_left", loop_25, lambda t: pose_move(t, 44.0, 12.0, 0.060, -0.7, 0.7))
+
+    # Airborne, landing, turns
+    build_clip(arm_obj, "jump_takeoff", oneshot_13, pose_jump_takeoff)
+    build_clip(arm_obj, "jump_loop", loop_25, lambda t: pose_airborne(t, False))
+    build_clip(arm_obj, "fall_loop", loop_25, lambda t: pose_airborne(t, True))
+    build_clip(arm_obj, "land_soft", oneshot_13, lambda t: pose_land(t, False))
+    build_clip(arm_obj, "land_hard", oneshot_13, lambda t: pose_land(t, True))
+    build_clip(arm_obj, "recovery", oneshot_13, lambda t: pose_land(1.0 - t, False))
+    build_clip(arm_obj, "turn_in_place_left", loop_25, lambda t: pose_turn(t, 1.0))
+    build_clip(arm_obj, "turn_in_place_right", loop_25, lambda t: pose_turn(t, -1.0))
+    build_clip(arm_obj, "pivot_left", oneshot_13, lambda t: pose_turn(t * 0.5, 1.0))
+    build_clip(arm_obj, "pivot_right", oneshot_13, lambda t: pose_turn(t * 0.5, -1.0))
+    build_clip(arm_obj, "moving_turn", loop_25, lambda t: pose_move(t, 32.0, 8.0, 0.04, 0.35, 0.9))
+
+    # Combat & vehicles
+    build_clip(arm_obj, "aim_idle", [(1, 0.0), (13, 1.0)], lambda t: pose_aim(t, 0.0))
+    build_clip(arm_obj, "shoot", oneshot_13, lambda t: pose_aim(t, 1.0))
+    build_clip(arm_obj, "driving", loop_25, pose_driving)
+    build_clip(arm_obj, "sitting", [(1, 0.0), (13, 1.0)], pose_sitting)
 
 
 CHARACTERS = [

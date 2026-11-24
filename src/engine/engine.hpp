@@ -260,7 +260,7 @@ private:
   TerrainStreamTimings stream_flat_terrain();
   SkinnedModel player_skinned_model_{};
   vegetation::VegetationStyle vegetation_style_ =
-      vegetation::VegetationStyle::MinecraftCrossed;
+      vegetation::VegetationStyle::VoxelCuboids;
 
   // Complete terrain-aware globe for compact-world flight and orbit. It is
   // static, cached, and built from the same height sampler as editable chunks.

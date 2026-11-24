@@ -52,7 +52,7 @@ int GuiMenu::item_count() const {
     case MenuPage::MultiplayerGuide:
         return 1;
     case MenuPage::CharacterSelect:
-        return 2;
+        return 6;
     default:
         return 0;
     }
@@ -212,18 +212,16 @@ void GuiMenu::activate_index(int index, bool devhud_enabled, bool noclip_enabled
 
     if (page == MenuPage::CharacterSelect) {
         switch (selected_item) {
-        case 0:
-            selected_character = Character::Humanoid;
-            page = MenuPage::Main;
-            selected_item = 0;
-            break;
-        case 1:
-            page = MenuPage::Main;
-            selected_item = 0;
-            break;
-        default:
-            break;
+        case 0: selected_character = Character::Humanoid; break;
+        case 1: selected_character = Character::Trooper; break;
+        case 2: selected_character = Character::Ranger; break;
+        case 3: selected_character = Character::Bot; break;
+        case 4: selected_character = Character::Medic; break;
+        case 5: break;
+        default: return;
         }
+        page = MenuPage::Main;
+        selected_item = 0;
     }
 }
 
@@ -322,10 +320,18 @@ std::string GuiMenu::build_text(bool devhud_enabled, bool noclip_enabled, const 
         std::snprintf(
             buffer,
             sizeof(buffer),
-            "CHARACTER SELECT\n\n%s BOXMAN (GLB) %s\n%s BACK\n\nUP/DOWN + ENTER | ESC",
+            "CHARACTER SELECT\n\n%s BOXMAN %s\n%s TROOPER %s\n%s RANGER %s\n%s VOXEL BOT %s\n%s MEDIC %s\n%s BACK\n\nUP/DOWN + ENTER | ESC",
             selected_item == 0 ? ">" : " ",
             selected_character == Character::Humanoid ? "[SELECTED]" : "",
-            selected_item == 1 ? ">" : " ");
+            selected_item == 1 ? ">" : " ",
+            selected_character == Character::Trooper ? "[SELECTED]" : "",
+            selected_item == 2 ? ">" : " ",
+            selected_character == Character::Ranger ? "[SELECTED]" : "",
+            selected_item == 3 ? ">" : " ",
+            selected_character == Character::Bot ? "[SELECTED]" : "",
+            selected_item == 4 ? ">" : " ",
+            selected_character == Character::Medic ? "[SELECTED]" : "",
+            selected_item == 5 ? ">" : " ");
         return std::string(buffer);
     }
 
@@ -428,8 +434,12 @@ std::string GuiMenu::item_label(int index, bool devhud_enabled, bool noclip_enab
         return std::string();
     case MenuPage::CharacterSelect:
         switch (index) {
-        case 0: return std::string("BOXMAN (GLB) ") + (selected_character == Character::Humanoid ? "[SELECTED]" : "");
-        case 1: return "BACK";
+        case 0: return std::string("BOXMAN ") + (selected_character == Character::Humanoid ? "[SELECTED]" : "");
+        case 1: return std::string("TROOPER ") + (selected_character == Character::Trooper ? "[SELECTED]" : "");
+        case 2: return std::string("RANGER ") + (selected_character == Character::Ranger ? "[SELECTED]" : "");
+        case 3: return std::string("VOXEL BOT ") + (selected_character == Character::Bot ? "[SELECTED]" : "");
+        case 4: return std::string("MEDIC ") + (selected_character == Character::Medic ? "[SELECTED]" : "");
+        case 5: return "BACK";
         default: return std::string();
         }
     default:

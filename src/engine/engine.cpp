@@ -338,7 +338,6 @@ bool Engine::init(const EngineRuntimeOptions &options) {
                           : PlatformServices::desktop_default();
   runtime_options = options;
   runtime_options.platform_services = nullptr;
-  load_spaceship_model(platform_services);
   session_state_.gameplay_started = true;
   session_state_.menu_open = false;
   session_state_.selected_character = GuiMenu::Character::Humanoid;
@@ -598,7 +597,6 @@ bool Engine::init(const EngineRuntimeOptions &options) {
     load_persistent_game();
   }
   update_first_person_camera(local_player, camera);
-  place_ship_near_player();
 
   if (!renderer.init(RendererCreateInfo{
       .backend = runtime_options.render_backend,
@@ -701,7 +699,6 @@ void Engine::tick(double frame_dt,
   apply_session_input(gameplay_input, surface);
 
   apply_sky_navigation_assist(gameplay_input, frame_dt);
-  update_ship_controls(gameplay_input, frame_dt);
   touch_controls_visible_ = input_frame.touch_mode;
 
   PlayerControllerSystem::update_camera_rig(
@@ -710,7 +707,6 @@ void Engine::tick(double frame_dt,
 
   ProfilingSnapshot profiling_sample{};
   simulate_frame(gameplay_input, input_frame, frame_dt, profiling_sample);
-  transfer_ship_between_bodies();
 
   const double camera_altitude = update_camera(frame_dt, surface);
 
@@ -811,7 +807,6 @@ void Engine::tick(double frame_dt,
       scene.opaque_meshes.push_back(std::move(particle_mesh));
     }
   }
-  append_ship_mesh();
 
   // ── Frame profiler: time GPU upload (buffer creation/update) ──
   const PerfClock::time_point gpu_upload_start = PerfClock::now();

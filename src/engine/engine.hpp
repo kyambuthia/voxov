@@ -330,7 +330,7 @@ private:
   SpaceshipState ship_{};
   SpaceshipTuning ship_tuning_{};
   SpaceshipInput ship_input_{};
-  int32_t ship_body_index_ = kVoxovBodyIndex;
+  int32_t ship_body_index_ = -1;
   bool piloting_ship_ = false;
   bool ship_camera_initialized_ = false;
   glm::dvec3 ship_camera_eye_{0.0};

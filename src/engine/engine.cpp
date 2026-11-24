@@ -141,6 +141,17 @@ void append_screen_label(RenderMesh &dst, const std::string &text, float x,
   append_mesh(dst, build_screen_text_mesh(text, x, y, scale, color));
 }
 
+void append_slate_panel(RenderMesh &dst, float x0, float y0, float x1, float y1,
+                        const glm::vec3 &accent = glm::vec3(0.28f, 0.78f,
+                                                            1.0f)) {
+  append_screen_rect(dst, x0, y0, x1, y1, glm::vec3(0.24f, 0.36f, 0.52f),
+                     0.85f);
+  append_screen_rect(dst, x0 + 0.005f, y0 - 0.006f, x1 - 0.005f, y1 + 0.006f,
+                     glm::vec3(0.07f, 0.10f, 0.15f), 0.78f);
+  append_screen_rect(dst, x0 + 0.005f, y0 - 0.006f, x1 - 0.005f, y0 - 0.014f,
+                     accent, 0.92f);
+}
+
 void append_screen_cursor(RenderMesh &dst, const glm::vec2 &position,
                           const glm::vec3 &color) {
   constexpr float kArm = 0.014f;
@@ -3778,199 +3789,186 @@ void Engine::refresh_overlay_text() {
     }
   }
 
+  // ── Crosshair ──────────────────────────────────────────────────────
+  // Always draw the crosshair (even when DevHUD is open) with a subtle
+  // dark backing so it stays readable against bright sky and snow blocks.
+  {
+    const float aspect = std::max(sky_navigation_aspect_ratio_, 0.1f);
+    constexpr float ch_size = 0.015f;
+    constexpr float ch_thick = 0.0024f;
+    constexpr float ch_pad = 0.0018f;
+    const float v_size = ch_size * aspect;
+    const float v_thick = ch_thick * aspect;
+    const float v_pad = ch_pad * aspect;
+    const glm::vec3 shadow_color(0.04f, 0.06f, 0.09f);
+    const glm::vec3 crosshair_color(0.96f, 0.98f, 1.0f);
+    append_screen_rect(scene.debug_screen, -ch_size - ch_pad,
+                       v_thick + v_pad, ch_size + ch_pad, -v_thick - v_pad,
+                       shadow_color, 0.72f);
+    append_screen_rect(scene.debug_screen, -ch_thick - ch_pad,
+                       v_size + v_pad, ch_thick + ch_pad, -v_size - v_pad,
+                       shadow_color, 0.72f);
+    append_screen_rect(scene.debug_screen, -ch_size, v_thick, ch_size,
+                       -v_thick, crosshair_color, 0.95f);
+    append_screen_rect(scene.debug_screen, -ch_thick, v_size, ch_thick,
+                       -v_size, crosshair_color, 0.95f);
+  }
+
   if (!session_state_.devhud_enabled) {
-    // ── Crosshair ────────────────────────────────────────────────────
-    // Draw a small white cross at screen center for first-person aiming.
-    const glm::vec3 crosshair_color(0.95f, 0.95f, 0.95f);
-    constexpr float ch_size = 0.018f;   // arm length in NDC
-    constexpr float ch_thick = 0.003f;  // arm thickness in NDC
-    // Horizontal bar
-    append_screen_rect(scene.debug_screen,
-        -ch_size, ch_thick, ch_size, -ch_thick, crosshair_color);
-    // Vertical bar
-    append_screen_rect(scene.debug_screen,
-        -ch_thick, ch_size, ch_thick, -ch_size, crosshair_color);
     return;
   }
 
   const ProfilingSnapshot &profiling = render_stats.profiling;
-
-  // Get player block address for debug display.
   const BlockAddress player_dbg_addr =
       block_world_.address_from_world(
           glm::dvec3(local_player.transform.position));
 
-  std::string overlay_text =
-      "FPS: " + std::to_string(static_cast<int>(render_stats.fps + 0.5)) +
-      "\nCPU: " + std::to_string(render_stats.cpu_ms).substr(0, 5) +
-      " ms  Frame: " + std::to_string(render_stats.frame_ms).substr(0, 5) +
-      " ms" +
-      "\nRender: " + std::to_string(render_stats.render_cpu_ms).substr(0, 5) +
-      " ms  Fixed: " + std::to_string(render_stats.fixed_cpu_ms).substr(0, 5) +
-      " ms x" + std::to_string(render_stats.fixed_steps) +
-      "\nChunk gen: " + std::to_string(render_stats.chunk_gen_ms).substr(0, 5) +
-      " ms  Mesh build: " + std::to_string(render_stats.mesh_build_ms).substr(0, 5) +
-      " ms" +
-      "\nGPU upload: " + std::to_string(render_stats.gpu_upload_ms).substr(0, 5) +
-      " ms  Draw calls: " + std::to_string(render_stats.draw_call_count) +
-      "\nVertices: " + std::to_string(render_stats.total_vertices) +
-      "  Indices: " + std::to_string(render_stats.total_indices) +
-      "\nGameplay: " +
-      std::to_string(profiling.gameplay_cpu_ms).substr(0, 5) +
-      " ms  Anim: " +
-      std::to_string(profiling.animation_cpu_ms).substr(0, 5) + " ms" +
-      "\nPhysics: " + std::to_string(profiling.physics_cpu_ms).substr(0, 5) +
-      " ms" +
-      "\nEvents fixed/frame: " +
-      std::to_string(profiling.fixed_event_drain_cpu_ms).substr(0, 5) +
-      " / " +
-      std::to_string(profiling.frame_event_drain_cpu_ms).substr(0, 5) +
-      " ms" +
-      "\nMemory allocs: " +
-      std::to_string(profiling.memory_current_allocations) + "/" +
-      std::to_string(profiling.memory_total_allocations) + "  KiB: " +
-      std::to_string(bytes_to_kib(profiling.memory_current_bytes)) + "/" +
-      std::to_string(bytes_to_kib(profiling.memory_total_bytes)) +
-      "\nFrame events: " + std::to_string(presentation_frame_events_seen_) +
-      "\nCollisions: " + std::to_string(collision_count_) +
-      "\nNetwork events: " + std::to_string(net_events_seen_) +
-      "\nNetwork status: " + last_net_status_;
-  overlay_text += "\nFly mode: ";
-  overlay_text += debug_fly_mode_ ? "ON (F4)" : "OFF (F4)";
-  overlay_text += "\nVegetation (F5): ";
-  overlay_text += vegetation::vegetation_style_name(vegetation_style_);
-  overlay_text += "\nWorld chunks: ";
-  overlay_text += std::to_string(render_stats.streamed_chunk_count);
-  // LOD distribution: how many chunks at each level.
-  overlay_text += "\nLOD: L0=" + std::to_string(render_stats.lod_chunk_count[0]) +
-      " L1=" + std::to_string(render_stats.lod_chunk_count[1]) +
-      " L2=" + std::to_string(render_stats.lod_chunk_count[2]) +
-      " L3=" + std::to_string(render_stats.lod_chunk_count[3]);
+  auto fmt_ms = [](double v) -> std::string {
+    return std::to_string(v).substr(0, 5);
+  };
+  auto fmt_f2 = [](double v) -> std::string {
+    return std::to_string(static_cast<int>(v * 100.0) / 100.0).substr(0, 5);
+  };
 
-  // Player position and block address debug info.
-  overlay_text += "\nPos: (" +
+  // Left card: Performance & Engine stats
+  std::vector<std::string> perf_lines;
+  perf_lines.push_back(
+      "FPS " + std::to_string(static_cast<int>(render_stats.fps + 0.5)) +
+      "   FRAME " + fmt_ms(render_stats.frame_ms) + "ms   CPU " +
+      fmt_ms(render_stats.cpu_ms) + "ms");
+  perf_lines.push_back(
+      "RENDER " + fmt_ms(render_stats.render_cpu_ms) + "ms   FIXED " +
+      fmt_ms(render_stats.fixed_cpu_ms) + "ms x" +
+      std::to_string(render_stats.fixed_steps));
+  perf_lines.push_back(
+      "GEN " + fmt_ms(render_stats.chunk_gen_ms) + "ms  MESH " +
+      fmt_ms(render_stats.mesh_build_ms) + "ms  GPU " +
+      fmt_ms(render_stats.gpu_upload_ms) + "ms");
+  perf_lines.push_back(
+      "GAME " + fmt_ms(profiling.gameplay_cpu_ms) + "ms  ANIM " +
+      fmt_ms(profiling.animation_cpu_ms) + "ms  PHYS " +
+      fmt_ms(profiling.physics_cpu_ms) + "ms");
+  perf_lines.push_back(
+      "DRAWS " + std::to_string(render_stats.draw_call_count) +
+      "  OPAQUES " + std::to_string(scene.opaque_meshes.size()) +
+      "  VERTS " + std::to_string(render_stats.total_vertices));
+  perf_lines.push_back(
+      "CHUNKS " + std::to_string(render_stats.streamed_chunk_count) +
+      "   LOD " + std::to_string(render_stats.lod_chunk_count[0]) + "/" +
+      std::to_string(render_stats.lod_chunk_count[1]) + "/" +
+      std::to_string(render_stats.lod_chunk_count[2]) + "/" +
+      std::to_string(render_stats.lod_chunk_count[3]));
+  perf_lines.push_back(
+      "MEM " + std::to_string(bytes_to_kib(profiling.memory_current_bytes)) +
+      "/" + std::to_string(bytes_to_kib(profiling.memory_total_bytes)) +
+      " KiB (" + std::to_string(profiling.memory_current_allocations) + "/" +
+      std::to_string(profiling.memory_total_allocations) + ")");
+  perf_lines.push_back(
+      "EVENTS " + std::to_string(presentation_frame_events_seen_) +
+      "  COL " + std::to_string(collision_count_) +
+      "  NET " + std::to_string(net_events_seen_));
+  perf_lines.push_back("NET STATUS: " + last_net_status_);
+
+  // Right card: World, Player & Controls
+  std::vector<std::string> world_lines;
+  const glm::vec3 local_up = glm::normalize(local_player.transform.position);
+  world_lines.push_back(
+      "POS (" +
       std::to_string(static_cast<int>(local_player.transform.position.x)) + ", " +
       std::to_string(static_cast<int>(local_player.transform.position.y)) + ", " +
-      std::to_string(static_cast<int>(local_player.transform.position.z)) + ")";
-  overlay_text += "\nSector: " + std::to_string(static_cast<int>(player_dbg_addr.sector)) +
-      " Shell: " + std::to_string(player_dbg_addr.shell);
-  overlay_text += "\nChunk: (" + std::to_string(player_dbg_addr.chunk.x) + ", " +
-      std::to_string(player_dbg_addr.chunk.y) + ", " +
-      std::to_string(player_dbg_addr.chunk.z) + ")";
-  overlay_text += "\nOpaques: " + std::to_string(scene.opaque_meshes.size());
-
-  // ── Solar system HUD info ───────────────────────────────────────────
-  overlay_text += "\nSolar system: ";
-  overlay_text += std::to_string(solar_system_.body_count()) + " bodies";
-  overlay_text += "\nSun dir: (" +
-      std::to_string(static_cast<int>(atmosphere_.params().sun_direction.x * 100.0) / 100.0) + ", " +
-      std::to_string(static_cast<int>(atmosphere_.params().sun_direction.y * 100.0) / 100.0) + ", " +
-      std::to_string(static_cast<int>(atmosphere_.params().sun_direction.z * 100.0) / 100.0) + ")";
-  {
-    const glm::dvec3 planet_pos =
-        solar_system_.body_position(active_body_index_);
-    overlay_text += "\nPlanet orbit pos: (" +
-        std::to_string(static_cast<int>(planet_pos.x)) + ", " +
-        std::to_string(static_cast<int>(planet_pos.y)) + ", " +
-        std::to_string(static_cast<int>(planet_pos.z)) + ")";
-  }
-  overlay_text += "\nSolar time: " + std::to_string(static_cast<int>(solar_system_time_)) + "s";
-
-  // ── Coordinate frame HUD info ──────────────────────────────────────
-  overlay_text += "\nFrame: " + std::string(active_frame_label_);
-  overlay_text += "  Body: ";
-  {
-    const auto& bodies = solar_system_.bodies();
-    if (active_body_index_ >= 0 &&
-        active_body_index_ < static_cast<int32_t>(bodies.size())) {
-      overlay_text += bodies[static_cast<size_t>(active_body_index_)].name;
-    } else {
-      overlay_text += "?";
-    }
-  }
-  {
-    // Show altitude above current body surface.
-    const double planet_radius = block_world_.planet().radius;
-    double altitude = 0.0;
-    if (flight_vehicle_spawned_ &&
-        flight_vehicle_.state().engine_active) {
-      altitude = glm::length(flight_vehicle_.state().position) - planet_radius;
-    } else {
-      altitude = glm::length(glm::dvec3(local_player.transform.position))
-                 - planet_radius;
-    }
-    overlay_text += "\nAltitude: " + std::to_string(static_cast<int>(altitude)) + "m";
-  }
-  // Frame transition cooldown timer.
-  if (frame_transition_cooldown_ > 0.0) {
-    overlay_text += "  Cooldown: " +
-        std::to_string(frame_transition_cooldown_).substr(0, 3) + "s";
-  }
-
-  // ── Atmosphere HUD info ─────────────────────────────────────────────
-  overlay_text += "\nAtmosphere: ";
-  overlay_text += atmosphere_enabled_ ? "ON" : "OFF";
-  overlay_text += "\nSky color: (" +
-      std::to_string(atmosphere_state_.sky_color.r).substr(0, 5) + ", " +
-      std::to_string(atmosphere_state_.sky_color.g).substr(0, 5) + ", " +
-      std::to_string(atmosphere_state_.sky_color.b).substr(0, 5) + ")";
-  overlay_text += "\nSun cos(angle): " + std::to_string(atmosphere_state_.sun_angle_cos).substr(0, 5);
-
-  // Camera debug info for visual debugging.
-  const glm::vec3 local_up = glm::normalize(local_player.transform.position);
-  overlay_text += "\nCam pitch: " + std::to_string(static_cast<int>(local_player.camera_rig.pitch)) +
-      " yaw: " + std::to_string(static_cast<int>(local_player.camera_rig.yaw));
-  overlay_text += "\nCam dist: " + std::to_string(static_cast<int>(local_player.camera_rig.distance));
-  overlay_text += "\nLocal up: (" +
-      std::to_string(local_up.x).substr(0, 4) + ", " +
-      std::to_string(local_up.y).substr(0, 4) + ", " +
-      std::to_string(local_up.z).substr(0, 4) + ")";
-  overlay_text += "\nTerrain h: " + std::to_string(
-      block_world_.terrain_height_at(glm::dvec3(local_up)));
-
-  // Gameplay state debug info.
-  overlay_text += "\nGrounded: " + std::string(local_player.controller.grounded ? "YES" : "NO");
-  overlay_text += "\nVel: " + std::to_string(static_cast<int>(
-      glm::length(local_player.controller.velocity)));
-  overlay_text += "\nLocomotion: " + std::string(
-      player_locomotion_state_name(local_player.locomotion.state));
-
-  // ── Flight vehicle HUD ──────────────────────────────────────────────
-  if (flight_vehicle_spawned_) {
-    const auto& vs = flight_vehicle_.state();
-    const auto& vf = flight_vehicle_.forces();
-    overlay_text += "\n--- Vehicle ---";
-    overlay_text += "\nEngine: " + std::string(vs.engine_active ? "ON (T)" : "OFF (T)");
-    overlay_text += "\nThrottle: " + std::to_string(static_cast<int>(vs.throttle * 100)) + "%";
-    overlay_text += "\nFuel: " + std::to_string(static_cast<int>(vs.fuel_remaining)) + "kg";
-    overlay_text += "\nSpeed: " + std::to_string(static_cast<int>(glm::length(vs.velocity))) + "m/s";
-    overlay_text += "\nAltitude: " + std::to_string(static_cast<int>(
-        glm::length(vs.position) - block_world_.planet().radius)) + "m";
-    overlay_text += "\nAtmo: " + std::string(flight_vehicle_.in_atmosphere() ? "YES" : "SPACE");
-    // Force magnitudes in kN for readability.
-    const auto kn = [](double n) -> int { return static_cast<int>(n / 1000.0); };
-    overlay_text += "\nThrust: " + std::to_string(kn(glm::length(vf.thrust))) + "kN";
-    overlay_text += "\nLift: " + std::to_string(kn(glm::length(vf.lift))) + "kN";
-    overlay_text += "\nDrag: " + std::to_string(kn(glm::length(vf.drag))) + "kN";
-  }
-
-  // Block targeting debug info.
+      std::to_string(static_cast<int>(local_player.transform.position.z)) +
+      ")  TERRAIN H " +
+      std::to_string(block_world_.terrain_height_at(glm::dvec3(local_up))));
+  world_lines.push_back(
+      "SECTOR " + std::to_string(static_cast<int>(player_dbg_addr.sector)) +
+      "  SHELL " + std::to_string(player_dbg_addr.shell) +
+      "  CHUNK (" + std::to_string(player_dbg_addr.chunk.x) + "," +
+      std::to_string(player_dbg_addr.chunk.y) + "," +
+      std::to_string(player_dbg_addr.chunk.z) + ")");
+  world_lines.push_back(
+      std::string("GROUNDED ") +
+      (local_player.controller.grounded ? "YES" : "NO") +
+      "  VEL " + std::to_string(static_cast<int>(
+          glm::length(local_player.controller.velocity))) +
+      "  " + player_locomotion_state_name(local_player.locomotion.state));
+  world_lines.push_back(
+      "CAM YAW " + std::to_string(static_cast<int>(local_player.camera_rig.yaw)) +
+      "  PITCH " + std::to_string(static_cast<int>(local_player.camera_rig.pitch)) +
+      "  DIST " + std::to_string(static_cast<int>(local_player.camera_rig.distance)));
   if (targeted_addr_.has_value()) {
     const BlockAddress &ta = *targeted_addr_;
-    overlay_text += "\nTarget block: (" + std::to_string(ta.block.x) + "," +
-        std::to_string(ta.block.y) + "," + std::to_string(ta.block.z) + ")";
-    overlay_text += "\nFace normal: (" +
-        std::to_string(static_cast<int>(targeted_face_normal_.x)) + "," +
-        std::to_string(static_cast<int>(targeted_face_normal_.y)) + "," +
-        std::to_string(static_cast<int>(targeted_face_normal_.z)) + ")";
+    world_lines.push_back(
+        "TARGET (" + std::to_string(ta.block.x) + "," +
+        std::to_string(ta.block.y) + "," + std::to_string(ta.block.z) +
+        ")  N(" + std::to_string(static_cast<int>(targeted_face_normal_.x)) +
+        "," + std::to_string(static_cast<int>(targeted_face_normal_.y)) +
+        "," + std::to_string(static_cast<int>(targeted_face_normal_.z)) + ")");
   } else {
-    overlay_text += "\nTarget: NONE";
+    world_lines.push_back("TARGET NONE");
+  }
+  world_lines.push_back(
+      std::string("FLY [F4] ") + (debug_fly_mode_ ? "ON" : "OFF") +
+      "   VEG [F5] " + vegetation::vegetation_style_name(vegetation_style_));
+
+  std::string body_name = "?";
+  {
+    const auto &bodies = solar_system_.bodies();
+    if (active_body_index_ >= 0 &&
+        active_body_index_ < static_cast<int32_t>(bodies.size())) {
+      body_name = bodies[static_cast<size_t>(active_body_index_)].name;
+    }
+  }
+  const double planet_radius = block_world_.planet().radius;
+  const double altitude =
+      (flight_vehicle_spawned_ && flight_vehicle_.state().engine_active)
+          ? glm::length(flight_vehicle_.state().position) - planet_radius
+          : glm::length(glm::dvec3(local_player.transform.position)) -
+                planet_radius;
+  world_lines.push_back(
+      "BODY " + uppercase_ascii(body_name) + " (" + active_frame_label_ +
+      ")  ALT " + std::to_string(static_cast<int>(altitude)) + "m");
+  world_lines.push_back(
+      std::string("ATMO ") + (atmosphere_enabled_ ? "ON" : "OFF") +
+      "  SUN COS " + fmt_f2(atmosphere_state_.sun_angle_cos) +
+      "  T " + std::to_string(static_cast<int>(solar_system_time_)) + "s");
+
+  if (flight_vehicle_spawned_) {
+    const auto &vs = flight_vehicle_.state();
+    world_lines.push_back(
+        std::string("SHIP ENG ") + (vs.engine_active ? "ON(T)" : "OFF(T)") +
+        "  THR " + std::to_string(static_cast<int>(vs.throttle * 100)) + "%" +
+        "  SPD " + std::to_string(static_cast<int>(glm::length(vs.velocity))) +
+        "m/s");
+  }
+  if (!last_hud_message_.empty()) {
+    world_lines.push_back(last_hud_message_);
   }
 
-  if (!last_hud_message_.empty()) {
-    overlay_text += "\n" + last_hud_message_;
-  }
-  append_mesh(scene.debug_screen,
-              build_screen_text_mesh(overlay_text, -0.92f, 0.90f, 0.0049f,
-                                     glm::vec3(0.95f, 0.95f, 0.82f)));
+  auto draw_debug_card = [&](float x0, float x1, const std::string &title,
+                             const std::vector<std::string> &lines,
+                             const glm::vec3 &accent) {
+    constexpr float kTop = 0.94f;
+    constexpr float kHeaderScale = 0.0046f;
+    constexpr float kBodyScale = 0.0041f;
+    constexpr float kLineStep = 0.041f;
+    constexpr float kHeaderGap = 0.068f;
+    const float bottom =
+        kTop - kHeaderGap - static_cast<float>(lines.size()) * kLineStep - 0.025f;
+    append_slate_panel(scene.debug_screen, x0, kTop, x1, bottom, accent);
+    append_screen_label(scene.debug_screen, title, x0 + 0.024f, kTop - 0.044f,
+                        kHeaderScale, accent);
+    std::string body;
+    for (size_t i = 0; i < lines.size(); ++i) {
+      if (i > 0) body += "\n";
+      body += lines[i];
+    }
+    append_screen_label(scene.debug_screen, body, x0 + 0.024f,
+                        kTop - kHeaderGap - 0.020f, kBodyScale,
+                        glm::vec3(0.90f, 0.94f, 0.99f));
+  };
+
+  draw_debug_card(-0.96f, -0.15f, "PERF & ENGINE  [F3]", perf_lines,
+                  glm::vec3(0.32f, 0.82f, 1.0f));
+  draw_debug_card(0.15f, 0.96f, "WORLD & PLAYER", world_lines,
+                  glm::vec3(0.45f, 0.92f, 0.72f));
 }

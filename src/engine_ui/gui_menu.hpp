@@ -16,6 +16,7 @@ struct GuiMenuActions {
     bool toggle_noclip = false;
     bool reset_camera = false;
     bool close_menu = false;
+    bool quit_game = false;
     bool ui_move_sfx = false;
     bool ui_select_sfx = false;
 };

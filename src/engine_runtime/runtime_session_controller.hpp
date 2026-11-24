@@ -32,6 +32,7 @@ struct RuntimeMenuResult {
     bool ui_move_sfx = false;
     bool ui_select_sfx = false;
     bool reset_camera_requested = false;
+    bool quit_requested = false;
 };
 
 class RuntimeSessionController {

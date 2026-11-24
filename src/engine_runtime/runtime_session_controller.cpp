@@ -122,4 +122,7 @@ void RuntimeSessionController::apply_menu_actions(
     if (actions.reset_camera) {
         out_result.reset_camera_requested = true;
     }
+    if (actions.quit_game) {
+        out_result.quit_requested = true;
+    }
 }

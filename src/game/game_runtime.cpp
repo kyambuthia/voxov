@@ -86,6 +86,9 @@ public:
         if (menu_result.reset_camera_requested) {
             engine.reset_camera();
         }
+        if (menu_result.quit_requested) {
+            quit_requested = true;
+        }
 
         session_flow.update(engine, frame_dt);
         sync_session_state();
@@ -139,7 +142,8 @@ public:
     }
 
     bool should_close() const {
-        return platform_adapter != nullptr && platform_adapter->should_close();
+        return quit_requested ||
+               (platform_adapter != nullptr && platform_adapter->should_close());
     }
 
     const RenderStats &stats() const {
@@ -183,6 +187,7 @@ private:
     double fps_accumulator = 0.0;
     uint32_t fps_frames = 0;
     bool initialized = false;
+    bool quit_requested = false;
 };
 
 GameRuntime::GameRuntime() : impl_(std::make_unique<Impl>()) {}

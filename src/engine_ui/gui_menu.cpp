@@ -44,7 +44,7 @@ LookSensitivity next_look_sensitivity(LookSensitivity sensitivity) {
 int GuiMenu::item_count() const {
     switch (page) {
     case MenuPage::Main:
-        return 5;
+        return 6;
     case MenuPage::Multiplayer:
         return 6;
     case MenuPage::Settings:
@@ -125,6 +125,9 @@ void GuiMenu::activate_index(int index, bool devhud_enabled, bool noclip_enabled
         case 4:
             is_open = false;
             out_actions.close_menu = true;
+            break;
+        case 5:
+            out_actions.quit_game = true;
             break;
         default:
             break;
@@ -385,6 +388,7 @@ std::string GuiMenu::item_label(int index, bool devhud_enabled, bool noclip_enab
         case 2: return "MULTIPLAYER";
         case 3: return "SETTINGS";
         case 4: return "CLOSE MENU";
+        case 5: return "QUIT GAME";
         default: return std::string();
         }
     case MenuPage::Multiplayer:

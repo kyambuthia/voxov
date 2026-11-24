@@ -56,6 +56,10 @@ void DesktopRuntimeInputAdapter::set_splitscreen_enabled(bool enabled) {
     splitscreen_enabled_ = enabled;
 }
 
+void DesktopRuntimeInputAdapter::set_menu_open(bool open) {
+    input_backend_.set_menu_open(open);
+}
+
 DesktopRuntimePlatformAdapter::DesktopRuntimePlatformAdapter(DesktopPlatform &platform)
     : platform_(platform) {}
 

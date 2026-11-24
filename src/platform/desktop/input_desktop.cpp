@@ -10,6 +10,13 @@
 DesktopInputBackend::DesktopInputBackend(DesktopPlatform &platform)
     : platform_(platform) {}
 
+void DesktopInputBackend::set_menu_open(bool open) {
+    menu_open_ = open;
+    if (menu_open_) {
+        look_capture_enabled = false;
+    }
+}
+
 void DesktopInputBackend::set_pointer_lock(bool enabled) {
     if (pointer_locked == enabled) {
         return;
@@ -47,18 +54,25 @@ InputState DesktopInputBackend::poll() {
         }
     }
 
+    const bool escape_now = k(PlatformKey::Escape);
+    const bool escape_just_pressed = escape_now && !prev_escape_down;
+    if (menu_open_ || escape_just_pressed) {
+        look_capture_enabled = false;
+    }
+
     // The click that captures the pointer only enters look mode; it must not
     // also break or place the block under a cursor the player can't see yet.
-    const bool clicks_reach_gameplay = look_capture_enabled;
+    const bool clicks_reach_gameplay = look_capture_enabled && !menu_open_;
     const bool any_wasd =
         k(PlatformKey::W) || k(PlatformKey::A) ||
         k(PlatformKey::S) || k(PlatformKey::D);
-    if (!sky_navigation_mode && (rmb_pressed || any_mouse_down || any_wasd)) {
+    if (!menu_open_ && !escape_just_pressed && !sky_navigation_mode &&
+        (rmb_pressed || any_mouse_down || any_wasd)) {
         look_capture_enabled = true;
     }
 
     const bool active_look_mode = snap.focused && look_capture_enabled &&
-                                  !sky_navigation_mode;
+                                  !sky_navigation_mode && !menu_open_;
     set_pointer_lock(active_look_mode);
     out.look_mode = active_look_mode;
     out.rmb_down = rmb_down;

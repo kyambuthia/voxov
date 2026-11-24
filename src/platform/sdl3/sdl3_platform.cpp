@@ -142,6 +142,13 @@ void DesktopPlatform::poll_events() {
             should_close_ = true;
             break;
         case SDL_EVENT_KEY_DOWN: {
+            if (((ev.key.mod & SDL_KMOD_ALT) != 0 &&
+                 ev.key.scancode == SDL_SCANCODE_F4) ||
+                ((ev.key.mod & SDL_KMOD_CTRL) != 0 &&
+                 ev.key.scancode == SDL_SCANCODE_Q)) {
+                should_close_ = true;
+                break;
+            }
             const PlatformKey pk = map_sdl_scancode(ev.key.scancode);
             if (pk != PlatformKey::Unknown) {
                 input_.keys_down.set(static_cast<size_t>(pk));

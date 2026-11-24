@@ -162,6 +162,7 @@ int main(int argc, char **argv) {
         }
 
         runtime.tick(pacer.frame_dt());
+        runtime_input.set_menu_open(runtime.stats().menu_open);
         platform.swap_buffers();
 
         if (const char *path = std::getenv("VOXOV_AUTO_SCREENSHOT")) {

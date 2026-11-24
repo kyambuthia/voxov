@@ -10,6 +10,7 @@ class DesktopInputBackend : public IInputBackend {
 public:
     explicit DesktopInputBackend(DesktopPlatform &platform);
     InputState poll() override;
+    void set_menu_open(bool open);
 
 private:
     void set_pointer_lock(bool enabled);
@@ -39,6 +40,7 @@ private:
     bool prev_right_down = false;
     bool look_capture_enabled = true;
     bool sky_navigation_mode = false;
+    bool menu_open_ = false;
     double prev_mouse_x = 0.0;
     double prev_mouse_y = 0.0;
     bool mouse_initialized = false;

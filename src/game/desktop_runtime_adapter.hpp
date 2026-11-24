@@ -10,6 +10,7 @@ public:
 
     GameRuntimeInputFrame poll_input() override;
     void set_splitscreen_enabled(bool enabled);
+    void set_menu_open(bool open);
 
 private:
     DesktopPlatform &platform_;
